@@ -1255,7 +1255,8 @@ export async function fillOffer(
 
         assetCarrierSats?: bigint;
 
-        emulator: EmulatorProvider | string;
+        /** Unneeded when arkd holds the offer's co-signer key: the fill then goes to arkd. */
+        emulator?: EmulatorProvider | string;
 
         emulatorPubkey?: string;
     },

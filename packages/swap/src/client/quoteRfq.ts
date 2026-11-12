@@ -411,6 +411,10 @@ const quoteArkadeAsset = async (
         makerPkScript: receivePkScript,
         makerPublicKey: maker.publicKey,
         contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
+        emulatorPubkey: covenantCosigner(
+            input.info,
+            input.corridors.get("arkade").deps.emulatorPubkey,
+        ),
     });
     const {
         quote: wire,
@@ -627,6 +631,7 @@ const quoteLightningSend = async (
     // A leg we fund needs only the refund key (P belongs to the payee). One address read, so
     // the refund address and refund script cannot come from two different rotations.
     const secrets = await provisionRefundKey(input.wallet);
+    const covenant = covenantInputs(input);
 
     const wire = await input.transport.requestQuote(
         lightningSendRequest({
@@ -634,6 +639,7 @@ const quoteLightningSend = async (
             invoice: invoice.bolt11,
             refundAddress: secrets.address,
             senderPubkey: secrets.pubkey,
+            emulatorPubkey: covenant.emulatorPubkey,
         }),
     );
     verifyPair(wire.pair, pair);
@@ -641,7 +647,6 @@ const quoteLightningSend = async (
     // Exact-out: `to_amount` is the invoice verbatim and `from_amount` adds the fee.
     verifySendInvoice({ invoiced: invoice.amount, give: parsed.give, take: parsed.take });
 
-    const covenant = covenantInputs(input);
     const derived = verifyingDerivation(() =>
         deriveLightningSend({
             quote: wire,
@@ -729,6 +734,7 @@ const quoteLightningReceive = async (
                   minAmount: binds ? pinned.value : undefined,
               })
             : undefined;
+    const covenant = covenantInputs(input);
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(
@@ -741,6 +747,7 @@ const quoteLightningReceive = async (
                 // Placeholder: `withCanonicalAmount` writes the canonical decimal string.
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
+                emulatorPubkey: covenant.emulatorPubkey,
             }),
             pinned.value,
         ),
@@ -749,7 +756,6 @@ const quoteLightningReceive = async (
     const parsed = parseRfqQuote(wire, input.policy);
     verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
 
-    const covenant = covenantInputs(input);
     const derived = verifyingDerivation(() =>
         deriveLightningReceive({
             quote: wire,
@@ -876,6 +882,7 @@ const quoteOnchainSend = async (
         provisionRefundKey(input.wallet),
     ]);
     const paymentHash = hex.encode(secrets.paymentHash);
+    const covenant = covenantInputs(input);
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(
@@ -887,6 +894,7 @@ const quoteOnchainSend = async (
                 senderPubkey: secrets.pubkey,
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
+                emulatorPubkey: covenant.emulatorPubkey,
             }),
             quoted.value,
         ),
@@ -909,7 +917,6 @@ const quoteOnchainSend = async (
         }
     }
 
-    const covenant = covenantInputs(input);
     const derived = verifyingDerivation(() =>
         deriveOnchainSend({
             quote: wire,
@@ -1020,6 +1027,7 @@ const quoteOnchainReceive = async (
     // Fixed at quote time: the manager refuses a record without it, and a refund must never be
     // built against a destination chosen after the money moved.
     const refundPkScript = l1ScriptForAddress(boardingAddress, l1Network);
+    const covenant = covenantInputs(input);
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(
@@ -1032,6 +1040,7 @@ const quoteOnchainReceive = async (
                 // Placeholder: `withCanonicalAmount` writes the canonical decimal string.
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
+                emulatorPubkey: covenant.emulatorPubkey,
             }),
             pinned.value,
         ),
@@ -1040,7 +1049,6 @@ const quoteOnchainReceive = async (
     const parsed = parseRfqQuote(wire, input.policy);
     verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
 
-    const covenant = covenantInputs(input);
     const derived = verifyingDerivation(() =>
         deriveOnchainReceive({
             quote: wire,
