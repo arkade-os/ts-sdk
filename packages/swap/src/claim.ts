@@ -225,7 +225,11 @@ export async function finalizePendingClaim(
                         unroll,
                     ).checkpoints,
             )
-            .find((built) => built.every((checkpoint, i) => checkpoint.id === spent[i]!.spentBy));
+            .find(
+                (built) =>
+                    built.length === spent.length &&
+                    built.every((checkpoint, i) => checkpoint.id === spent[i]!.spentBy),
+            );
         if (!checkpoints) continue;
 
         const { txs } = await indexer.getVirtualTxs(checkpoints.map((checkpoint) => checkpoint.id));
