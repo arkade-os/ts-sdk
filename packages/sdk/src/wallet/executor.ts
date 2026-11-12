@@ -29,9 +29,10 @@ export const DELEGATION_EXPIRES_KEY = "delegationExpiresAt";
 export const DELEGATION_ADDRESS_KEY = "delegationAddress";
 
 /**
- * The status of a contract row the SDK watches but never registered with the service: the local
+ * The status of a contract row the SDK watches but did not register with the service: the local
  * companion of a registration (the renewal contract of a boarding watch, the boarding contract of
- * a renewal watch). Never a live delegation.
+ * a renewal watch). Not a live delegation until the service says it watches it, which another
+ * device may have made it do: {@link IExecutorManager.refreshStatus} asks, and adopts the answer.
  */
 export const DELEGATION_LOCAL_STATUS = "local";
 /**
@@ -431,8 +432,6 @@ export class ExecutorManagerImpl implements IExecutorManager {
             const template = row.params.template;
             if (template !== "renewal" && template !== "boarding") continue;
             const persisted = row.metadata?.[DELEGATION_STATUS_KEY];
-            // Watched but never registered with the service: nothing to ask about.
-            if (persisted === DELEGATION_LOCAL_STATUS) continue;
             let address: string;
             try {
                 address = await this.watchAddress(row, template);
@@ -459,6 +458,15 @@ export class ExecutorManagerImpl implements IExecutorManager {
                         : {}),
                 });
             } catch (e) {
+                if (
+                    e instanceof ExecutorRequestError &&
+                    e.status === 404 &&
+                    persisted === DELEGATION_LOCAL_STATUS
+                ) {
+                    // A companion nobody registered: the service not knowing it is expected.
+                    refreshed.push({ script: row.script, address, status: persisted });
+                    continue;
+                }
                 if (
                     e instanceof ExecutorRequestError &&
                     e.status === 404 &&

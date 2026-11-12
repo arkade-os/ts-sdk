@@ -386,8 +386,10 @@ style and have not been backfilled.
   registration now also persists the address the service knows the watch by
   (`delegationAddress`), so a row written before it can be refreshed too. The
   companion rows of a registration (watched, never registered) are marked
-  `local`, never a delegation; the rows a restore re-derives carry no status,
-  so a refresh asks the service about them. A watch whose address the service
+  `local`, not a delegation until the service says it watches them: a refresh
+  asks about them too and adopts the answer, as another device may have
+  registered them. The rows a restore re-derives carry no status, so a refresh
+  asks the service about them. A watch whose address the service
   derived differently is refused before anything is persisted, ended or not.
   A 404 ends a watch only when the service itself answers: a base URL or a
   proxy that 404s every path, `getInfo` included, is a failure to reach the

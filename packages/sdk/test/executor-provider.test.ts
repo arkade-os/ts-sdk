@@ -591,16 +591,54 @@ describe("ExecutorManagerImpl.refreshStatus", () => {
         expect(repo.updateContract).not.toHaveBeenCalled();
     });
 
-    it("does not ask the service about a row it never registered", async () => {
+    it("keeps a companion local while the service does not know it", async () => {
         const row = await makeRow({ delegationStatus: "local" });
         const { repo, w } = makeRefreshManager([row]);
         const provider = makeProvider();
+        provider.getDelegation.mockRejectedValue(
+            new ExecutorRequestError("Failed to get delegation (404): delegation not found", 404),
+        );
 
         const got = await new ExecutorManagerImpl(provider, w).refreshStatus();
 
-        expect(got).toEqual([]);
-        expect(provider.getDelegation).not.toHaveBeenCalled();
+        expect(got).toEqual([
+            { script: row.script, address: vectors.renewal.address, status: "local" },
+        ]);
         expect(repo.updateContract).not.toHaveBeenCalled();
+    });
+
+    it("adopts a companion another device registered with the service", async () => {
+        const row = await makeRow({ delegationStatus: "local" });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockResolvedValue({
+            delegation: {
+                id: 1,
+                address: vectors.renewal.address,
+                status: "active",
+                variables: {},
+                expiresAt: 1_700_000_000,
+            },
+            vtxos: [],
+        });
+
+        const got = await new ExecutorManagerImpl(provider, w).refreshStatus();
+
+        expect(got).toEqual([
+            {
+                script: row.script,
+                address: vectors.renewal.address,
+                status: "active",
+                expiresAt: 1_700_000_000,
+            },
+        ]);
+        expect(repo.updateContract).toHaveBeenCalledWith(row.script, {
+            metadata: {
+                delegationStatus: "active",
+                delegationExpiresAt: 1_700_000_000,
+                delegationAddress: vectors.renewal.address,
+            },
+        });
     });
 
     it("asks about a row written before the watch address was persisted", async () => {
