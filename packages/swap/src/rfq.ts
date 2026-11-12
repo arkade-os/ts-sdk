@@ -9,8 +9,8 @@
  *   ({@link lightningSendContract}). A failed swap refunds by the user's `sender` key, or, if that
  *   key is lost, via the `nonInteractiveRefund` leaf the emulator co-signs under a covenant paying
  *   only the user's pre-committed address.
- * - receive (`lightning|onchain:BTC -> arkade:BTC`): the user generates `P`, pays the hold invoice
- *   or funds the L1 HTLC, and may go offline once a request has sealed `P` to covclaimd; the
+ * - receive (`lightning:BTC -> arkade:BTC`): the user generates `P`, pays the hold invoice,
+ *   and may go offline once a request has sealed `P` to covclaimd; the
  *   solver funds a lockup pinned to the user's payout ({@link lightningReceiveContract}), and the
  *   claim reveals `P`, settling the user's side.
  * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; any
@@ -127,8 +127,6 @@ export const LIGHTNING_SEND_PAIR = rfqPair(ARKADE_BTC, LIGHTNING_BTC);
 /** On-board via Lightning: pay the solver's hold invoice, land on Arkade. */
 export const LIGHTNING_RECEIVE_PAIR = rfqPair(LIGHTNING_BTC, ARKADE_BTC);
 export const ONCHAIN_SEND_PAIR = rfqPair(ARKADE_BTC, ONCHAIN_BTC);
-/** On-board: a Bitcoin-L1 HTLC in, Arkade sats out. */
-export const ONCHAIN_RECEIVE_PAIR = rfqPair(ONCHAIN_BTC, ARKADE_BTC);
 // ── Errors and closed sets ───────────────────────────────────────────────────
 
 /** The closed refusal set. Treat any unknown reason as a generic decline. */
@@ -543,8 +541,7 @@ const matchQuotedLockup = (
  * stable `reason`. `onchain` adds the L1-HTLC gates and is required for the onchain pairs.
  *
  * The lightning-receive leg uses {@link assertReceivable} instead: `refund_locktime` is the
- * SOLVER's there and the hold invoice is the clock that runs out. Onchain-receive stays here,
- * where the headroom check is over-strict but never unsafe. EVM pairs fail closed: their
+ * SOLVER's there and the hold invoice is the clock that runs out. EVM pairs fail closed: their
  * contract, finality and deadline checks are not implemented yet. */
 export const assertFundable = (input: {
     quote: RfqQuote | EvmRfqQuote;
@@ -553,8 +550,6 @@ export const assertFundable = (input: {
     onchain?: {
         htlcLocktime: number;
         minConfirmations: number;
-        /** "send" = arkade->onchain (the L1 timelock-order gate applies). */
-        direction: "send" | "receive";
     };
     /**
      * The most this client will pay: the GREATER of the two bounds (a flat fee is a large share of
@@ -647,7 +642,7 @@ export const assertFundable = (input: {
         }
     }
     if (input.onchain) {
-        const { htlcLocktime, minConfirmations, direction } = input.onchain;
+        const { htlcLocktime, minConfirmations } = input.onchain;
         if (
             !Number.isInteger(minConfirmations) ||
             minConfirmations < 1 ||
@@ -664,18 +659,16 @@ export const assertFundable = (input: {
         if (htlcLocktime - input.now <= needed) {
             fail("claim_window_too_short", "L1 HTLC locktime leaves no safe claim window");
         }
-        if (direction === "send") {
-            // The solver claims Arkade with P AFTER the user's L1 claim; the
-            // user's Arkade refund must therefore open LAST, with reorg margin.
-            if (
-                input.quote.refund_locktime === undefined ||
-                htlcLocktime + ONCHAIN_ORDER_MARGIN_SECONDS > input.quote.refund_locktime
-            ) {
-                fail(
-                    "timelock_order",
-                    "L1 HTLC locktime + margin must fall before the Arkade refund locktime",
-                );
-            }
+        // The solver claims Arkade with P AFTER the user's L1 claim; the
+        // user's Arkade refund must therefore open LAST, with reorg margin.
+        if (
+            input.quote.refund_locktime === undefined ||
+            htlcLocktime + ONCHAIN_ORDER_MARGIN_SECONDS > input.quote.refund_locktime
+        ) {
+            fail(
+                "timelock_order",
+                "L1 HTLC locktime + margin must fall before the Arkade refund locktime",
+            );
         }
     }
 };
@@ -1604,39 +1597,6 @@ export const lightningReceiveRequest = (input: {
     },
 });
 
-/** The rfq_request for `onchain:BTC->arkade:BTC`. The user funds the L1 HTLC (holding its refund
- * role); when P travels sealed to covclaimd, the user can go offline. Only an exact-out request
- * is guaranteed to seal it. */
-export const onchainReceiveRequest = (input: {
-    rfqId: string;
-    paymentHash: string;
-    /** Trader's arkade address — where the swapped sats land. */
-    payoutAddress: string;
-    /** Trader's x-only arkade key — the covenant's `receiver` role. */
-    payoutPubkey: Uint8Array;
-    /** Trader's x-only L1 key for the HTLC's refund leaf. */
-    refundPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64. Omitted when there is none to seal to —
-     * see {@link lightningReceiveRequest}. */
-    claimPacket?: string;
-    amount: number;
-    amountSide: "from" | "to";
-}): Record<string, unknown> => ({
-    v: 1,
-    type: "rfq_request",
-    rfq_id: input.rfqId,
-    pair: ONCHAIN_RECEIVE_PAIR,
-    amount_side: input.amountSide,
-    amount: input.amount,
-    profile: {
-        payment_hash: input.paymentHash,
-        ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
-        refund_pubkey: hex.encode(input.refundPubkey),
-        payout_address: input.payoutAddress,
-        payout_pubkey: hex.encode(input.payoutPubkey),
-    },
-});
-
 /**
  * The pure core of {@link requestOnchainSend}: derive BOTH contracts locally
  * from the quote's binding fields plus the user's own data, and refuse on any
@@ -1856,7 +1816,6 @@ export async function requestOnchainSend(
         onchain: {
             htlcLocktime: derived.htlcLocktime,
             minConfirmations: derived.minConfirmations,
-            direction: "send",
         },
     });
 
@@ -2021,14 +1980,13 @@ export const assertReceivable = (input: {
 /** Compile the RECEIVE-direction VHTLC: the same suite-carrying tree as {@link
  * lightningSendContract} with the roles inverted — the trader is the
  * `receiver` (it generated `P` and claims the lockup with it), the solver is
- * the `sender` (it funds the lockup and holds the refund recourse). Shared by both receive
- * corridors.
+ * the `sender` (it funds the lockup and holds the refund recourse).
  *
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function lightningReceiveContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote — VHTLC's
-     * `sender` role on the receive corridors. */
+     * `sender` role on the receive corridor. */
     solverPubkey: Uint8Array;
     /** Binding field #2: the SOLVER's own refund deadline on these legs, from
      * the quote — after it the solver may reclaim an unclaimed lockup. */
@@ -2069,7 +2027,7 @@ export function lightningReceiveContract(params: {
  */
 export type LightningReceiveContractParams = Parameters<typeof lightningReceiveContract>[0];
 
-/** Both receive corridors' covenant: the inputs, and the quoted shape they match. */
+/** The receive corridor's covenant: the inputs, and the quoted shape they match. */
 const matchReceiveLockup = (
     input: {
         quote: RfqQuote;
@@ -2158,11 +2116,10 @@ export function deriveLightningReceive(input: {
     };
 }
 
-/** Both receive flows' setup; `persistBefore` names the step the warning is for. */
+/** The receive flow's setup. */
 const provisionReceive = async (
     wallet: IWallet,
     params: { covclaimdPubkey?: Uint8Array; amount: number; amountSide: "from" | "to" },
-    persistBefore: "paying" | "funding",
 ) => {
     const [secrets, info, payoutAddress] = await Promise.all([
         provisionClaimSecret(wallet),
@@ -2171,7 +2128,7 @@ const provisionReceive = async (
     ]);
     if (secrets.mustPersistPreimage) {
         console.warn(
-            `[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before ${persistBefore}`,
+            "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before paying",
         );
     }
     const preimage = secrets.preimage;
@@ -2200,11 +2157,10 @@ const quoteReceive = async (
     wallet: IWallet,
     transport: RfqTransport,
     params: Parameters<typeof provisionReceive>[1],
-    persistBefore: "paying" | "funding",
     request: (provisioned: Awaited<ReturnType<typeof provisionReceive>>) => Record<string, unknown>,
 ) => {
     for (let attempt = 0; ; attempt++) {
-        const provisioned = await provisionReceive(wallet, params, persistBefore);
+        const provisioned = await provisionReceive(wallet, params);
         try {
             return { ...provisioned, quote: await transport.requestQuote(request(provisioned)) };
         } catch (error) {
@@ -2284,7 +2240,6 @@ export async function requestLightningReceive(
         wallet,
         transport,
         params,
-        "paying",
         ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
             lightningReceiveRequest({
                 rfqId,
@@ -2336,189 +2291,5 @@ export async function requestLightningReceive(
         payoutPubkey,
         secrets,
         contractParams: derived.contractParams,
-    };
-}
-
-/**
- * The pure core of {@link requestOnchainReceive}: derive BOTH contracts
- * locally — the solver-funded Arkade covenant and the L1 HTLC the trader
- * funds — and refuse on any mismatch. Binding: `solver_pubkey`,
- * `refund_locktime`, `claim_pubkey`, `htlc_locktime`, `min_confirmations`;
- * `lockup_address` and `htlc_address` are compare-only.
- */
-export function deriveOnchainReceive(input: {
-    quote: RfqQuote;
-    paymentHash: string;
-    payoutPubkey: Uint8Array;
-    payoutAddress: string;
-    /** The trader's own x-only L1 key — the HTLC's refund role. */
-    refundPubkey: Uint8Array;
-    operatorPubkey: Uint8Array;
-    emulatorPubkey: Uint8Array;
-    claimDelay: number;
-    hrp: string;
-    l1Network: OnchainNetwork;
-}): {
-    address: string;
-    swapPkScript: Uint8Array;
-    script: InstanceType<typeof VHTLC.ScriptV2>;
-    /** The L1 HTLC the trader funds, derived locally — fund only this. */
-    htlc: OnchainHtlc;
-    /** The inputs {@link htlc} was derived from; a restore rebuilds it from these. */
-    htlcParams: OnchainHtlcParams;
-    refundLocktime: number;
-    htlcLocktime: number;
-    minConfirmations: number;
-} {
-    const { quote } = input;
-    const profile = quote.profile ?? {};
-    const refundLocktime = quote.refund_locktime;
-    const claimPubkey = profile.claim_pubkey as string | undefined;
-    const htlcLocktime = profile.htlc_locktime as number | undefined;
-    const htlcAddress = profile.htlc_address as string | undefined;
-    const minConfirmations = profile.min_confirmations as number | undefined;
-    const solverRefundPkScriptHex = profile.solver_refund_pk_script as string | undefined;
-    if (
-        refundLocktime === undefined ||
-        claimPubkey === undefined ||
-        htlcLocktime === undefined ||
-        minConfirmations === undefined ||
-        solverRefundPkScriptHex === undefined
-    ) {
-        throw new Error("onchain-receive quote is missing a binding field");
-    }
-
-    const { script, address } = matchReceiveLockup(
-        input,
-        refundLocktime,
-        solverRefundPkScriptHex,
-    ).matched;
-
-    const htlcParams: OnchainHtlcParams = {
-        paymentHash: input.paymentHash,
-        claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
-        refundKey: input.refundPubkey,
-        refundLocktime: htlcLocktime,
-    };
-    const htlc = onchainHtlcScript(htlcParams, input.l1Network);
-    if (htlc.address !== htlcAddress) throw new AddressMismatch(htlc.address, htlcAddress);
-
-    return {
-        address,
-        swapPkScript: script.pkScript,
-        script,
-        htlc,
-        htlcParams,
-        refundLocktime,
-        htlcLocktime,
-        minConfirmations,
-    };
-}
-
-/**
- * The `onchain:BTC->arkade:BTC` user flow: quote → derive BOTH contracts
- * locally → verify → gate. Returns the L1 HTLC for the trader's own L1 wallet to fund with
- * `fundAmount`. After `min_confirmations` the solver funds the Arkade lockup; the trader claims it
- * with `P`.
- *
- * Persist `secrets` BEFORE funding. If the swap never settles, the L1 refund leaf opens at
- * `htlc.refundLocktime` (see `buildHtlcRefund`).
- */
-export async function requestOnchainReceive(
-    wallet: IWallet,
-    transport: RfqTransport,
-    params: {
-        amount: number;
-        amountSide: "from" | "to";
-        /** Co-signer key override (33-byte compressed hex); see
-         * {@link resolveEmulatorPubkey}. */
-        emulatorPubkey?: string;
-        /** Trader's x-only L1 key for the HTLC's refund leaf. */
-        refundPubkey: Uint8Array;
-        /** covclaimd's 33-byte compressed pubkey. Only an exact-out request (`amountSide: "to"`)
-         * is guaranteed a claim packet; see {@link requestLightningReceive}. */
-        covclaimdPubkey?: Uint8Array;
-        rfqId?: string;
-    },
-): Promise<{
-    rfqId: string;
-    quote: RfqQuote;
-    /** The trader's OWN derivation of the lockup the solver must fund. */
-    address: string;
-    /** What the trader's L1 funding must carry: the quote's `from_amount`. */
-    fundAmount: number;
-    /** What the solver's lockup must carry: the quote's `to_amount`. Persist
-     * it with the record — see {@link requestLightningReceive}. */
-    expectedAmount: number;
-    swapPkScript: Uint8Array;
-    script: InstanceType<typeof VHTLC.ScriptV2>;
-    /** The EXPECTED L1 contract, derived locally — fund only this address. */
-    htlc: OnchainHtlc;
-    payoutAddress: string;
-    payoutPubkey: Uint8Array;
-    /** How the preimage and the payout key are recovered later — map it
-     * through `swapSecretsToRecord` and persist BEFORE funding. Public unless
-     * `mustPersistPreimage` says the wallet could not derive P. */
-    secrets: ProvisionedClaimSecret;
-}> {
-    const rfqId = params.rfqId ?? newRfqId();
-    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
-        wallet,
-        transport,
-        params,
-        "funding",
-        ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
-            onchainReceiveRequest({
-                rfqId,
-                paymentHash,
-                payoutAddress,
-                payoutPubkey,
-                refundPubkey: params.refundPubkey,
-                claimPacket: claimPacket?.packet,
-                amount: params.amount,
-                amountSide: params.amountSide,
-            }),
-    );
-    assertQuotedAmount(quote, params.amountSide, params.amount);
-
-    const derived = deriveOnchainReceive({
-        quote,
-        paymentHash,
-        payoutPubkey,
-        payoutAddress,
-        refundPubkey: params.refundPubkey,
-        ...operatorTerms(info, params.emulatorPubkey),
-        l1Network: l1NetworkFromArk(info.network),
-    });
-    assertFundable({
-        quote,
-        now: Math.floor(Date.now() / 1000),
-        onchain: {
-            htlcLocktime: derived.htlcLocktime,
-            minConfirmations: derived.minConfirmations,
-            direction: "receive",
-        },
-    });
-
-    // Watch the solver-funded lockup from the moment its address exists.
-    await registerLockupContract(
-        await wallet.getContractManager(),
-        derived.script,
-        derived.address,
-        { scope: wallet },
-    );
-
-    return {
-        rfqId,
-        quote,
-        address: derived.address,
-        fundAmount: quoteSats(quote.from_amount, "from_amount"),
-        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
-        swapPkScript: derived.swapPkScript,
-        script: derived.script,
-        htlc: derived.htlc,
-        payoutAddress,
-        payoutPubkey,
-        secrets,
     };
 }
