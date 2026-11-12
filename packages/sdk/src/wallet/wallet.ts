@@ -171,7 +171,7 @@ import type {
 } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
-import { DelegatedContractHandler } from "../contracts/handlers/delegated";
+import { DelegatedContractHandler } from "../contracts/handlers/executor";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
@@ -948,7 +948,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _delegatedBoardingAddress?: string;
 
     /**
-     * With an executor configured, the wallet's own delegated contracts (newest renewal and
+     * With an Executor configured, the wallet's own delegated contracts (newest renewal and
      * boarding rows for its key and current operator, registered active and not expired) are its default addresses: receiving, change
      * and settlement land in delegated coins. Without one, the defaults are the wallet's own and
      * the delegated rows stay watched, so their coins still count and spend. Read from the
@@ -1321,8 +1321,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Returns the onchain boarding address used to move funds into Arkade: the delegated
-     * boarding address when the wallet delegates, which the executor boards into the renewal
-     * address. Deposits there are not the wallet's boarding outputs until the executor boards them.
+     * boarding address when the wallet delegates, which the Executor boards into the renewal
+     * address. Deposits there are not the wallet's boarding outputs until the Executor boards them.
      */
     async getBoardingAddress(): Promise<string> {
         await this.syncDelegatedDefaults();
@@ -3795,7 +3795,7 @@ export class Wallet
         return this._delegateManager;
     }
 
-    /** Returns the executor manager when configured. */
+    /** Returns the Executor manager when configured. */
     async getExecutorManager(): Promise<IExecutorManager | undefined> {
         return this._executorManager;
     }

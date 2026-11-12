@@ -1602,7 +1602,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Coins at the wallet's delegated contracts are the executor's to renew, in place, even with
+     * Coins at the wallet's delegated contracts are the Executor's to renew, in place, even with
      * delegation turned off: its watch stays registered, so renewing them too would race it.
      * Once swept or expired the service can no longer renew them, so the wallet recovers them.
      */

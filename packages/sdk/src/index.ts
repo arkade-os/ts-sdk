@@ -555,8 +555,8 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
-import { DelegatedContractHandler } from "./contracts/handlers/delegated";
-import type { DelegatedContractParams } from "./contracts/handlers/delegated";
+import { DelegatedContractHandler } from "./contracts/handlers/executor";
+import type { DelegatedContractParams } from "./contracts/handlers/executor";
 import type { ArkadeService } from "./arkade/service";
 import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {

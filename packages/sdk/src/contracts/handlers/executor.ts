@@ -7,7 +7,7 @@ import { Contract, ContractHandler, PathContext, PathSelection } from "../types"
 import { isCsvSpendable } from "./helpers";
 
 /**
- * Typed parameters for delegated contracts: a default template's variables and the executor's
+ * Typed parameters for delegated contracts: a default template's variables and the Executor's
  * keys. Keys are compressed, delays are BIP 68 sequences.
  */
 export interface DelegatedContractParams {
@@ -39,7 +39,7 @@ function integer(value: string | undefined, name: string): number {
     return n;
 }
 
-/** The emulator-enforced leaf is the executor's to use; it is never offered. */
+/** The emulator-enforced leaf is the Executor's to use; it is never offered. */
 function paths(
     script: DefaultVtxo.Script,
     context: PathContext,
@@ -54,15 +54,15 @@ function paths(
 }
 
 /**
- * Handler for the coins a wallet delegated to the executor under its default templates:
- * virtual outputs at the renewal contract, which the executor renews in place, and onchain
+ * Handler for the coins a wallet delegated to the Executor under its default templates:
+ * virtual outputs at the renewal contract, which the Executor renews in place, and onchain
  * deposits at the boarding contract, which it boards to the renewal contract. The scripts derive
- * from the bundled templates, the owner key, the params and the executor's keys, so a restored
- * wallet needs no round-trip to the executor.
+ * from the bundled templates, the owner key, the params and the Executor's keys, so a restored
+ * wallet needs no round-trip to the Executor.
  *
  * - forfeit: (Owner + Operator) multisig, the wallet's collaborative path
  * - exit: (Owner) + CSV, the wallet's unilateral path
- * - renew/board: (Operator + Emulator), emulator-enforced, the executor's; never offered
+ * - renew/board: (Operator + Emulator), emulator-enforced, the Executor's; never offered
  */
 export const DelegatedContractHandler: ContractHandler<
     DelegatedContractParams,
@@ -117,7 +117,7 @@ export const DelegatedContractHandler: ContractHandler<
 
     deserializeParams(params: Record<string, string>): DelegatedContractParams {
         if (!TEMPLATES.includes(params.template)) {
-            throw new Error(`unknown executor template ${params.template}`);
+            throw new Error(`unknown Executor template ${params.template}`);
         }
         return {
             template: params.template as ExecutorDefault,

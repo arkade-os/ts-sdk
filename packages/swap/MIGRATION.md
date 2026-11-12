@@ -4,11 +4,11 @@ Newest first. Each section is one upgrade; nothing below `0.1.0` auto-upgrades i
 it under npm's `0.0.x` rules, so a consumer arriving from an old pin meets several of these in one
 jump and should read down until the version it left.
 
-## Offline Lightning-receive claims are made by the executor
+## Offline Lightning-receive claims are made by the Executor
 
-A Lightning receive seals the preimage to the executor's `noninteractiveclaim` template, so the
-executor claims the lockup while the client is offline. Pass
-`lightning.executor: { encryptionPubkey }` (the executor's `GET /v1/info` key) in place of
+A Lightning receive seals the preimage to the Executor's `noninteractiveclaim` template, so the
+Executor claims the lockup while the client is offline. Pass
+`lightning.executor: { encryptionPubkey }` (the Executor's `GET /v1/info` key) in place of
 `lightning.covclaimd: { pubkey }`. The Reveal client
 (`covclaimdClient`, `revealClaimPacket`, `revealFieldsFromScript`) and `SEALED_CIPHERTEXT_LENGTH`
 are removed; `sealClaimPacket` returns `{ packet }` only, and `claimPacketShape` reads `none` or

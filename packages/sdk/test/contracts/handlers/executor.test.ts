@@ -151,7 +151,7 @@ describe("DelegatedContractHandler", () => {
         const p = params("renewal");
         expect(() =>
             DelegatedContractHandler.deserializeParams({ ...p, template: "renewal_watch" }),
-        ).toThrow(/unknown executor template/);
+        ).toThrow(/unknown Executor template/);
         expect(() =>
             DelegatedContractHandler.deserializeParams({ ...p, owner: vectors.owner.slice(2) }),
         ).toThrow(/compressed/);

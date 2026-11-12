@@ -461,7 +461,7 @@ interface ServiceWorkerWalletOptions {
     identity: ReadonlyIdentity | Identity;
     /** @deprecated Legacy pre-signed delegator URL; use executorUrl. */
     delegateUrl?: string;
-    /** URL of the executor, the service that renews and boards the wallet's coins. */
+    /** URL of the Executor, the service that renews and boards the wallet's coins. */
     executorUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.

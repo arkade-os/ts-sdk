@@ -171,14 +171,14 @@ describe("ExecutorManagerImpl.register", () => {
     it("refuses a watch the service returns as no longer active", async () => {
         const manager = new ExecutorManagerImpl(makeProvider({ status: "expired" }), wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            `executor watch ${vectors.boarding.address} is expired`,
+            `Executor watch ${vectors.boarding.address} is expired`,
         );
     });
 
     it("refuses an address the service derived differently, e.g. under another delegate key", async () => {
         const manager = new ExecutorManagerImpl(makeProvider({ address: "bcrt1pother" }), wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            `executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
+            `Executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
         );
     });
 

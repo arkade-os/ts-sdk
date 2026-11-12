@@ -50,7 +50,7 @@ export interface LightningReceiveProfile extends Record<string, unknown> {
     expectedAmount: number;
     /** Where the claim pays. */
     payoutAddress: string;
-    /** `P` was sealed to the executor. */
+    /** `P` was sealed to the Executor. */
     executorClaims?: true;
     /**
      * Our Arkade claim's txid, once submitted.

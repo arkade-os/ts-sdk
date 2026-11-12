@@ -1147,7 +1147,7 @@ describe("VtxoManager - Renewal", () => {
             expect(expiring[1].txid).toBe("vtxo2");
         });
 
-        it("leaves coins at delegated contracts to the executor until they need recovery", async () => {
+        it("leaves coins at delegated contracts to the Executor until they need recovery", async () => {
             const now = Date.now();
             const soon = (txid: string, script: string) =>
                 ({
@@ -1172,7 +1172,7 @@ describe("VtxoManager - Renewal", () => {
             const vtxos = [soon("own", "51own"), soon("delegated", "51delegated"), swept];
             const config = { vtxoThreshold: 100 };
 
-            // no executor manager: delegation turned off still leaves them to the service, but a
+            // no Executor manager: delegation turned off still leaves them to the service, but a
             // swept one is the wallet's to recover
             const wallet = createMockWallet(vtxos, undefined, { contractManager } as never);
             const expiring = await new VtxoManager(wallet, config).getExpiringVtxos();

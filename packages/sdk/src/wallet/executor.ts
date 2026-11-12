@@ -7,7 +7,7 @@ import type {
     ExecutorProvider,
 } from "../providers/executor";
 import type { Contract } from "../contracts/types";
-import { DelegatedContractHandler } from "../contracts/handlers/delegated";
+import { DelegatedContractHandler } from "../contracts/handlers/executor";
 import { getNetwork, type NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 import {
@@ -26,7 +26,7 @@ export interface ExecutorWatchRegistration {
     templateId: string;
     /** The template's variables, canonical hex. */
     variables: Record<string, string>;
-    /** The executor's keys the wallet's delegated contracts are derived from. */
+    /** The Executor's keys the wallet's delegated contracts are derived from. */
     keys: DelegatedContractKeys;
     delegation: ExecutorDelegation;
 }
@@ -110,7 +110,7 @@ export interface IExecutorManager {
         options?: { expiresAt?: number },
     ): Promise<ExecutorWatchRegistration>;
     /**
-     * Migrate the wallet to the executor: register the renewal watch, send its generically
+     * Migrate the wallet to the Executor: register the renewal watch, send its generically
      * spendable virtual outputs, with their assets, to the renewal address and retire its own receive
      * contracts (inactive, still watched). txid is absent when there was nothing to send.
      * Idempotent: run it again to move coins that reach a retired address later.
@@ -121,7 +121,7 @@ export interface IExecutorManager {
     ): Promise<ExecutorWatchRegistration & { txid?: string }>;
 }
 
-/** Client-side watch registration with the executor. */
+/** Client-side watch registration with the Executor. */
 export class ExecutorManagerImpl implements IExecutorManager {
     constructor(
         readonly executorProvider: ExecutorProvider,
@@ -139,7 +139,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const missing = Object.entries(ids).filter(([, id]) => !active.has(id));
         if (missing.length > 0) {
             throw new Error(
-                `executor does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
+                `Executor does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
             );
         }
         return ids;
@@ -224,7 +224,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const operator = hex.encode(serverPubKey);
         if (info.serverPubkey.slice(2).toLowerCase() !== operator) {
             throw new Error(
-                `executor's operator key ${info.serverPubkey} is not the wallet's operator ${operator}`,
+                `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${operator}`,
             );
         }
         const keys = {
@@ -250,11 +250,11 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // The same address proves the service resolved the template under GetInfo's keys and
         // commits to the same tapscripts.
         if (delegation.status !== "active") {
-            throw new Error(`executor watch ${delegation.address} is ${delegation.status}`);
+            throw new Error(`Executor watch ${delegation.address} is ${delegation.status}`);
         }
         if (delegation.address !== watchAddress) {
             throw new Error(
-                `executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
+                `Executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
             );
         }
         const contracts = await watchDelegatedContracts(this.wallet, keys, params);

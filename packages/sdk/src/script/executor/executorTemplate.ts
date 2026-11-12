@@ -15,7 +15,7 @@ import renewDocument from "./renew.json";
 export interface DelegationParams {
     /** BIP 68 sequence of the owner's exit from a delegated virtual output, at least the operator's. */
     exitDelay: number;
-    /** Seconds before expiry the executor renews a virtual output. */
+    /** Seconds before expiry the Executor renews a virtual output. */
     renewalWindow: number;
     /** Satoshis a renewal may cost. */
     maxFee: number;

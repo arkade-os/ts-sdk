@@ -3,7 +3,7 @@
  *
  * These live here rather than in `src/claimPacket.ts` for two reasons. A full
  * ECIES *decrypt* next to production code is an invitation to misuse: nothing
- * in this package ever decrypts a packet, the executor does. And deterministic
+ * in this package ever decrypts a packet, the Executor does. And deterministic
  * sealing must not be reachable from a production import path at all: AES-GCM
  * under a repeated (key, nonce) pair is a total break, so the only safe place
  * for a fixed nonce is a file that ships with the tests.
@@ -59,7 +59,7 @@ const amountBytes = (amount: bigint): Uint8Array => {
     return bytes;
 };
 
-/** The executor's side of the scheme: recover P from a sealed packet. */
+/** The Executor's side of the scheme: recover P from a sealed packet. */
 export async function openClaimPacket(
     packetBase64: string,
     recipientSecretKey: Uint8Array,

@@ -1,5 +1,5 @@
 /**
- * The claim packet against a REAL solver and a REAL executor — the only place
+ * The claim packet against a REAL solver and a REAL Executor — the only place
  * its bug could live, since one wire format has three implementations and unit
  * tests reach only the two in TypeScript. The property: the client never calls
  * `pushClaim`, yet the money arrives. Unstamped, the lockup sits until expiry.
@@ -47,7 +47,7 @@ const lncli = (node: string, args: string): string =>
 
 // vi.waitFor over expect.poll: the timeout error gets to name what never
 // happened. vi.waitFor retries ANY throw until the deadline, so a real error
-// from `fn` (LND down, executor unreachable) would burn the whole timeout:
+// from `fn` (LND down, Executor unreachable) would burn the whole timeout:
 // capture it, stop polling, rethrow at once — only a `false` (not ready yet)
 // may spin. The 2s cadence keeps Docker/LND round-trip pressure as before.
 const waitFor = (
@@ -115,7 +115,7 @@ beforeAll(async () => {
 }, 300_000);
 
 describe("claim packet, end to end (regtest)", () => {
-    it("lets the executor claim a lockup the client never touches", async () => {
+    it("lets the Executor claim a lockup the client never touches", async () => {
         // Nothing spendable to start: the closing assertion has one possible cause.
         expect((await wallet.getBalance()).available).toBe(0);
 
@@ -171,17 +171,17 @@ describe("claim packet, end to end (regtest)", () => {
         const shape = claimPacketShape(base64.encode(stamped!.serialize()));
         expect(shape.kind).toBe("packet");
         if (shape.kind !== "packet") return;
-        // `0x02` present is the solver's stamp; the executor ignores a body without
-        // it. `0x03` is what tells the executor the packet is addressed to it.
+        // `0x02` present is the solver's stamp; the Executor ignores a body without
+        // it. `0x03` is what tells the Executor the packet is addressed to it.
         expect(shape.needsArkadeScript).toBe(false);
         expect(hex.encode(shape.encryptionPubkey)).toBe(hex.encode(encryptionPubkey));
 
         // `available`, NOT `total`: this wallet watches the lockup contract, so
         // the lockup counts toward total the moment the solver funds it and this
-        // would pass with the executor switched off. Only a claim is spendable.
+        // would pass with the Executor switched off. Only a claim is spendable.
         await waitFor(async () => (await wallet.getBalance()).available >= RECEIVE_SATS, {
             timeout: 300_000,
-            what: "the executor to claim the lockup into spendable funds",
+            what: "the Executor to claim the lockup into spendable funds",
         });
 
         // `some`, not `every`: every() is vacuously true on an empty vtxo list.

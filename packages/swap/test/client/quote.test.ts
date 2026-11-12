@@ -186,7 +186,7 @@ describe("quote() on lightning -> arkade", () => {
     });
 
     describe("the claim packet", () => {
-        it("is omitted when no executor key is configured", async () => {
+        it("is omitted when no Executor key is configured", async () => {
             const { client, transport } = await setup();
             await client.quote(receive());
 

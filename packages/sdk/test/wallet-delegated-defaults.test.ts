@@ -35,7 +35,7 @@ const arkInfo = {
 const identity = SingleKey.fromHex(
     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
 );
-// an executor is configured; the wallet never calls it for its addresses
+// an Executor is configured; the wallet never calls it for its addresses
 const executorProvider = {} as ExecutorProvider;
 
 async function delegatedRow(template: "renewal" | "boarding") {
@@ -125,7 +125,7 @@ describe("delegated default addresses", () => {
         expect(hex.encode(tapscript.pkScript)).toBe(renewal.contract.script);
     });
 
-    it("keeps the wallet's own addresses without an executor, the rows staying watched", async () => {
+    it("keeps the wallet's own addresses without an Executor, the rows staying watched", async () => {
         const { wallet, renewal } = await walletWith({ executor: false, rows: true });
         const own = wallet.arkAddress.encode();
 
