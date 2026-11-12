@@ -55,6 +55,7 @@ const hashlocked = renewableWith({ asm: ["SHA256", "$hash", "EQUAL"], witness: [
 async function keeper(
     stream: (signal: AbortSignal) => AsyncIterableIterator<never>,
     info: Record<string, unknown> = {},
+    serverCosigns = false,
 ) {
     const server = xOnly();
     const registerIntent = vi.fn(async () => "intent-1");
@@ -84,6 +85,7 @@ async function keeper(
         emulator: { submitIntent: vi.fn(async ({ proof }) => proof) } as any,
         indexer: { getVtxos: vi.fn(), getVirtualTxs },
         network: networks.regtest,
+        ...(serverCosigns ? { emulatorPubkey: "02" + hex.encode(server) } : {}),
     });
     const contract = ark.contract(renewable, { owner: xOnly() });
     const coin = {
@@ -170,6 +172,25 @@ describe("renewProgramContractOutputs", () => {
             /needs a signature besides the server's/,
         );
         expect(registerIntent).not.toHaveBeenCalled();
+    });
+
+    it("renews a covenant whose leaf names the server only tweaked by it", async () => {
+        const { ark, target, registerIntent } = await keeper(
+            () =>
+                (async function* () {
+                    throw new Error("stream closed");
+                })(),
+            {},
+            true,
+        );
+        expect(target.contract.program.functions.renew.tapscript.signers).toEqual([
+            { tweak: "$server", fn: "renew" },
+        ]);
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /stream closed/,
+        );
+        expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 
     it("registers no intent when the caller aborts while the proof is being signed", async () => {

@@ -112,6 +112,8 @@ import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
     serializeArkadeContractParams,
+    serverSignsKey,
+    tweakServerSigners,
     witnessRefToBytes,
     validateParamValue,
     type ArkadeArgValue,
@@ -607,6 +609,8 @@ export class Arkade {
      * Declared `server`/`user` params default to the client's keys. Compiler
      * artifacts reserve the operator key and exit delay to the connected operator.
      * Struct and array params are passed whole by name (see {@link ArkadeNestedValue}).
+     * When the co-signer key is the operator's own, covenant leaves name the operator only tweaked
+     * by their covenant; the result's `program` is that rewritten one, which `register()` stores.
      */
     contract<const P extends Program>(
         program: P,
@@ -643,7 +647,8 @@ export class Arkade {
             }
             args = { ...args, SERVER_EXIT_DELAY: sequence };
         }
-        return new ArkadeContract(this, program, args);
+        const keys = { serverKey: this.serverKey, emulatorKey: this.emulatorKey };
+        return new ArkadeContract(this, tweakServerSigners(program, keys), args);
     }
 
     /**
@@ -1228,19 +1233,24 @@ export class ArkadeTransactionBuilder {
         const client = this.client;
         const userKey = client.userKey;
         for (const { contract, fn } of this.unlockers()) {
+            const { serverKey } = contract.keys;
             if (
                 fn.def.tapscript.signers.some(
-                    (signer) => typeof signer === "object" && "tweak" in signer,
+                    (signer, i) =>
+                        typeof signer === "object" &&
+                        "tweak" in signer &&
+                        !serverSignsKey(fn, serverKey, fn.signerKeys[i]),
                 )
             ) {
                 throw new Error(
                     `${fn.name}: covenant-tweaked leaf signing is not supported by Identity; use a signer that supports the covenant tweak with build()`,
                 );
             }
-            const { serverKey } = contract.keys;
             if (
                 fn.signerKeys.some(
-                    (key) => !equalBytes(key, serverKey) && (!userKey || !equalBytes(key, userKey)),
+                    (key) =>
+                        !serverSignsKey(fn, serverKey, key) &&
+                        (!userKey || !equalBytes(key, userKey)),
                 )
             ) {
                 throw new Error(

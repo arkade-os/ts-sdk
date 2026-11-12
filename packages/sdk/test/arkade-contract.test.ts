@@ -1,16 +1,19 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { RawWitness, Script } from "@scure/btc-signer";
 import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import {
     arkade,
+    ArkadeContractHandler,
     ConditionMultisigTapscript,
     CSVMultisigTapscript,
     Extension,
     networks,
     Transaction,
     VtxoScript,
+    type Contract,
     type EmulatorInfo,
     type EmulatorProvider,
     type IContractManager,
@@ -863,6 +866,102 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 arkade: arkProviderReporting(server, "constructor"),
             });
             expect(ark.contract(program).address.startsWith("ark1")).toBe(true);
+        });
+    });
+
+    describe("with the operator as co-signer", () => {
+        const pub = (byte: number) => schnorr.getPublicKey(new Uint8Array(32).fill(byte));
+        const operator = pub(0x11);
+        const escrow = arkade.programFromArtifact(
+            JSON.parse(
+                readFileSync(
+                    new URL("./fixtures/arkadec/escrow.artifact.json", import.meta.url),
+                    "utf8",
+                ),
+            ),
+        );
+        const escrowArgs = {
+            partyAPk: pub(0x12),
+            partyBPk: pub(0x13),
+            oraclePk: pub(0x14),
+            oracleMessageHash: new Uint8Array(32).fill(0x7a),
+            partyAScript: new Uint8Array(32).fill(0xa1),
+            partyBScript: new Uint8Array(32).fill(0xb2),
+            settlementAmount: 500_000n,
+            timeoutHeight: 900_000n,
+            exit: 1_008n,
+        };
+        // Derived by master 182ee7f6, before the rewrite existed.
+        const LEGACY_SCRIPT =
+            "512092a3d16f0eeda358e513a669530e80053b824ce14c086e11af3303a7ca66ebfd";
+        const LEGACY_ADDRESS =
+            "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc64y4r69hsamdrtrj38fnf2v8gqpfmsfxwznqgdcg67vcr5l9xd6lakg0uv9";
+
+        async function connectToOperator() {
+            const { arkProvider, indexer, emulator, captured } = stubProviders(operator, operator);
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProvider,
+                emulator,
+                indexer,
+                network: networks.regtest,
+                emulatorPubkey: "02" + hex.encode(operator),
+            });
+            return { ark, captured };
+        }
+
+        it("persists the rewritten program, which a restore compiles as stored", async () => {
+            const { ark } = await connectToOperator();
+            const contract = ark.contract(escrow, escrowArgs);
+            const row = contract.toContractParams() as Contract;
+
+            const stored = arkade.deserializeArkadeContractParams(row.params).program;
+            expect(stored.functions.complete.tapscript).toMatchObject({
+                signers: [{ tweak: "$server", fn: "complete" }],
+                emulator: null,
+            });
+            expect(stored.functions.complete.tapscript.emulatorIndex).toBeUndefined();
+            expect(hex.encode(ArkadeContractHandler.createScript(row.params).pkScript)).toBe(
+                row.script,
+            );
+            expect(arkade.ArkadeContract.fromContract(ark, row).address).toBe(contract.address);
+            expect(row.script).not.toBe(LEGACY_SCRIPT);
+        });
+
+        it("restores a row stored before the rewrite at its original address", async () => {
+            const { ark } = await connectToOperator();
+            const params = arkade.serializeArkadeContractParams({
+                program: escrow,
+                args: { ...escrowArgs, server: operator },
+                serverKey: operator,
+                emulatorKey: hex.decode("02" + hex.encode(operator)),
+            });
+            const restored = arkade.ArkadeContract.fromContract(ark, {
+                type: "arkade",
+                params,
+            } as Contract);
+
+            expect(hex.encode(ArkadeContractHandler.createScript(params).pkScript)).toBe(
+                LEGACY_SCRIPT,
+            );
+            expect(hex.encode(restored.pkScript)).toBe(LEGACY_SCRIPT);
+            expect(restored.address).toBe(LEGACY_ADDRESS);
+            expect(ark.contract(escrow, escrowArgs).address).not.toBe(LEGACY_ADDRESS);
+        });
+
+        it("spends a rewritten covenant through the co-signer", async () => {
+            const { ark, captured } = await connectToOperator();
+            const contract = ark.contract(htlcProgram(), args);
+            const leaf = ConditionMultisigTapscript.encode({
+                conditionScript: arkade.resolveAsm(["HASH160", "$hash", "EQUALVERIFY"], args),
+                pubkeys: [
+                    arkade.computeArkadeScriptPublicKey(operator, arkade.resolveAsm(payTo, args)),
+                ],
+            }).script;
+            expect(hex.encode(contract.pkScript)).toBe(hex.encode(new VtxoScript([leaf]).pkScript));
+
+            const out = new Uint8Array([0x51, 0x20, ...receiver]);
+            await contract.functions.claim(new Uint8Array(32)).to(out, AMOUNT).send();
+            expect(captured.arkTx).toBeDefined();
         });
     });
 

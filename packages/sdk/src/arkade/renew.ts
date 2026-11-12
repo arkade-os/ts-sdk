@@ -1,6 +1,5 @@
 import { base64, hex } from "@scure/base";
 import { RawWitness } from "@scure/btc-signer";
-import { equalBytes } from "@scure/btc-signer/utils.js";
 import { Estimator } from "../arkfee";
 import { Extension } from "../extension";
 import { EmulatorPacket } from "../extension/emulator";
@@ -16,7 +15,7 @@ import { Batch } from "../wallet/batch";
 import { isNoMatchingIntentsError } from "../wallet/intentReconciliation";
 import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
-import { staticWitness } from "./program";
+import { serverSignsKey, staticWitness } from "./program";
 
 const ABORTED = "renewProgramContractOutputs: aborted before the batch completed";
 /** What the renewal and its batch handler call on the server. */
@@ -89,7 +88,11 @@ export async function renewProgramContractOutputs(
             throw new Error(`renewProgramContractOutputs: ${fn} is not a covenant function`);
         }
         // No owner signs a renewal: a leaf naming any key but the server's could never complete.
-        if (compiled.signerKeys.some((key) => !equalBytes(key, contract.keys.serverKey))) {
+        if (
+            compiled.signerKeys.some(
+                (key) => !serverSignsKey(compiled, contract.keys.serverKey, key),
+            )
+        ) {
             throw new Error(
                 `renewProgramContractOutputs: ${fn} needs a signature besides the server's`,
             );
