@@ -1597,6 +1597,8 @@ export class RfqSwapManager {
                 bump ? { bump } : undefined,
             );
             swap.claimTxid = txid;
+            // Pinned to what the claim spent: the first sighting may have been replaced.
+            swap.funding = { txid: utxo.txid, vout: utxo.vout, amount: Number(utxo.amount) };
             swap.claimBroadcastAt = this.config.now();
             delete swap.claimConfirmed;
             if (feeRateSatVb !== undefined) swap.claimFeeRateSatVb = feeRateSatVb;

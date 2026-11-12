@@ -123,6 +123,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **An onchain send keeps bumping its L1 claim past other outputs at the HTLC
+  address.** `classifyOnchainHtlc` judged the phase by the largest output at
+  the script, so an output paid there after the claim (even an unconfirmed
+  one) hid the spent fill: the claim was never fee-bumped or re-published, and
+  a claim stuck past `htlcLocktime` could be replaced by the solver's refund
+  after `P` was public. It now reads the recorded funding's spend first, and
+  `RfqSwapManager` pins `funding` to the outpoint its claim spent rather than
+  the first output it saw, which a replaced fill left stale.
+
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's
   `notifyIncomingFunds` returns. When that function threw after the funds

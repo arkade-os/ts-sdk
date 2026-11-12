@@ -517,7 +517,8 @@ export type OnchainHtlcPhase =
 /**
  * Classify an HTLC from chain state alone. `funding` (the known outpoint from
  * the stored record) is what distinguishes "never funded" from "funded and
- * already spent": without it a spent HTLC looks unfunded.
+ * already spent": without it a spent HTLC looks unfunded. Its spend is read
+ * before anything else at the script, so an output paid there later cannot hide it.
  *
  * `claimed` carries the preimage read from the spend's witness — the receipt;
  * `swept` is a spend that reveals no matching preimage.
@@ -531,22 +532,21 @@ export async function classifyOnchainHtlc(
     },
 ): Promise<OnchainHtlcPhase> {
     const utxos = await chain.getScriptUtxos(input.htlc.pkScript);
-    const best = utxos.sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
-    if (!best) {
-        if (!input.funding) return { phase: "unfunded" };
-        const spend = await chain.getSpendingTx(
-            input.funding.txid,
-            input.funding.vout,
-            input.htlc.pkScript,
-        );
-        if (!spend) return { phase: "unfunded" };
-        const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
-        const txid = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
-            allowUnknownInputs: true,
-            allowUnknownOutputs: true,
-        }).id;
-        return preimage ? { phase: "claimed", txid, preimage } : { phase: "swept", txid };
+    const { funding } = input;
+    const pinned = funding && utxos.find((u) => u.txid === funding.txid && u.vout === funding.vout);
+    if (funding && !pinned) {
+        const spend = await chain.getSpendingTx(funding.txid, funding.vout, input.htlc.pkScript);
+        if (spend) {
+            const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
+            const txid = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
+                allowUnknownInputs: true,
+                allowUnknownOutputs: true,
+            }).id;
+            return preimage ? { phase: "claimed", txid, preimage } : { phase: "swept", txid };
+        }
     }
+    const best = pinned || utxos.sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
+    if (!best) return { phase: "unfunded" };
     if (best.confirmations < input.minConfirmations)
         return { phase: "awaiting_confirmations", utxo: best };
     const mtp = await chain.getMtp();
