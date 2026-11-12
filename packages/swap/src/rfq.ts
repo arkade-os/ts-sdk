@@ -329,6 +329,9 @@ export interface RfqStatus {
     [key: string]: unknown;
 }
 
+const namedCosigner = (key: Uint8Array | undefined) =>
+    key === undefined ? {} : { emulator_pubkey: hex.encode(key) };
+
 /** The rfq_request for the lightning send profile. BOLT11 is exact-out: the invoice fixes the
  * amount. `senderPubkey` is the trader's key for the VHTLC's sender-side leaves (see
  * {@link lightningSendContract}), sent as `client_refund_pubkey`; the solver's schema
@@ -340,6 +343,7 @@ export const lightningSendRequest = (input: {
     invoice: string;
     refundAddress: string;
     senderPubkey: Uint8Array;
+    emulatorPubkey?: Uint8Array;
 }): Record<string, unknown> => ({
     v: 1,
     type: "rfq_request",
@@ -350,6 +354,7 @@ export const lightningSendRequest = (input: {
         invoice: input.invoice,
         refund_address: input.refundAddress,
         client_refund_pubkey: hex.encode(input.senderPubkey),
+        ...namedCosigner(input.emulatorPubkey),
     },
 });
 
@@ -379,6 +384,7 @@ export const arkadeSwapRequest = (input: {
     makerPublicKey: Uint8Array | string;
     /** Covenants the trader can settle, most preferred first; omit for the baseline. */
     contractVersions?: readonly string[];
+    emulatorPubkey?: Uint8Array;
 }): Record<string, unknown> & { rfq_id: string } => {
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
@@ -405,6 +411,7 @@ export const arkadeSwapRequest = (input: {
         profile: {
             maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
             maker_public_key: normalizeMakerPublicKey(input.makerPublicKey),
+            ...namedCosigner(input.emulatorPubkey),
         },
     };
 };
@@ -1287,9 +1294,16 @@ export async function requestLightningSend(
     ]);
     const senderPubkey = secrets.pubkey;
     const refundAddress = secrets.address;
+    const emulatorPubkey = covenantCosigner(info, params.emulatorPubkey);
 
     const quote = await transport.requestQuote(
-        lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
+        lightningSendRequest({
+            rfqId,
+            invoice: params.invoice.raw,
+            refundAddress,
+            senderPubkey,
+            emulatorPubkey,
+        }),
     );
     const now = Math.floor(Date.now() / 1000);
     const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
@@ -1313,7 +1327,7 @@ export async function requestLightningSend(
         senderPubkey,
         refundPkScript: secrets.pkScript,
         operatorPubkey,
-        emulatorPubkey: covenantCosigner(info, params.emulatorPubkey),
+        emulatorPubkey,
         claimDelay,
         hrp: network.hrp,
         now,
@@ -1497,24 +1511,18 @@ export async function requestArkadeSwap(
     }
     const amountSide = params.amountSide ?? "from";
     const receiveAddress = params.receiveAddress;
-    const [makerAddress, makerPublicKey] = await Promise.all([
+    const [makerAddress, makerPublicKey, info] = await Promise.all([
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
+        wallet.getArkadeInfo({ requireLive: true }),
     ]);
     const ownPkScript = ArkAddress.decode(makerAddress).pkScript;
-    const info =
-        receiveAddress === undefined
-            ? undefined
-            : await wallet.getArkadeInfo({ requireLive: true });
-    const makerPkScript =
-        info === undefined
-            ? ownPkScript
-            : resolveReceivePkScript(
-                  receiveAddress,
-                  ownPkScript,
-                  networkFromOperatorInfo(info).hrp,
-                  toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
-              );
+    const makerPkScript = resolveReceivePkScript(
+        receiveAddress,
+        ownPkScript,
+        networkFromOperatorInfo(info).hrp,
+        toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+    );
     const pair = rfqPair(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
@@ -1530,6 +1538,7 @@ export async function requestArkadeSwap(
             makerPkScript,
             makerPublicKey,
             contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
+            emulatorPubkey: covenantCosigner(info, params.emulatorPubkey),
         }),
         ASSET_SWAP_CONTRACT_VERSIONS,
     );
@@ -1573,12 +1582,11 @@ export async function requestArkadeSwap(
             );
         }
     }
-    const offerInfo = info ?? (await wallet.getArkadeInfo({ requireLive: true }));
     const carrierSats =
-        params.offerAsset === undefined ? 0n : quoteCarrierSats(quote, offerInfo.dust);
+        params.offerAsset === undefined ? 0n : quoteCarrierSats(quote, info.dust);
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
-        info: offerInfo,
+        info,
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
@@ -1643,6 +1651,7 @@ export const onchainSendRequest = (input: {
     senderPubkey: Uint8Array;
     amount: number;
     amountSide: "from" | "to";
+    emulatorPubkey?: Uint8Array;
 }): Record<string, unknown> => ({
     v: 1,
     type: "rfq_request",
@@ -1655,6 +1664,7 @@ export const onchainSendRequest = (input: {
         payout_pubkey: hex.encode(input.payoutPubkey),
         refund_address: input.refundAddress,
         client_refund_pubkey: hex.encode(input.senderPubkey),
+        ...namedCosigner(input.emulatorPubkey),
     },
 });
 
@@ -1674,6 +1684,7 @@ export const lightningReceiveRequest = (input: {
     claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
+    emulatorPubkey?: Uint8Array;
 }): Record<string, unknown> => ({
     v: 1,
     type: "rfq_request",
@@ -1686,6 +1697,7 @@ export const lightningReceiveRequest = (input: {
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
         ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
+        ...namedCosigner(input.emulatorPubkey),
     },
 });
 
@@ -1875,6 +1887,7 @@ export async function requestOnchainSend(
     }
     const paymentHash = hex.encode(secrets.paymentHash);
     const senderPubkey = secrets.pubkey;
+    const terms = operatorTerms(info, params.emulatorPubkey);
 
     const quote = await transport.requestQuote(
         onchainSendRequest({
@@ -1885,6 +1898,7 @@ export async function requestOnchainSend(
             senderPubkey,
             amount: params.amount,
             amountSide: params.amountSide,
+            emulatorPubkey: terms.emulatorPubkey,
         }),
     );
     // `fundAmount` below is `quote.from_amount` verbatim, so without this a
@@ -1895,7 +1909,7 @@ export async function requestOnchainSend(
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
-        ...operatorTerms(info, params.emulatorPubkey),
+        ...terms,
         l1Network: l1NetworkFromArk(info.network),
         refundAddress,
         senderPubkey,
@@ -2334,7 +2348,7 @@ export async function requestLightningReceive(
         wallet,
         transport,
         params,
-        ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
+        ({ paymentHash, payoutAddress, payoutPubkey, claimPacket, info }) =>
             lightningReceiveRequest({
                 rfqId,
                 paymentHash,
@@ -2343,6 +2357,7 @@ export async function requestLightningReceive(
                 claimPacket: claimPacket?.packet,
                 amount: params.amount,
                 amountSide: params.amountSide,
+                emulatorPubkey: covenantCosigner(info, params.emulatorPubkey),
             }),
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
