@@ -187,6 +187,7 @@ export async function renewProgramContractOutputs(
     const [signedProof, deleteProof] = await Promise.all(
         [message, deleteMessage].map((m) => {
             const proof = base64.encode(Proof.create(m, coins, outputs).toPSBT());
+            // With no emulator the proof goes unsigned: arkd signs Arkade proofs on receipt.
             return emulator ? emulator.submitIntent({ proof, message: m }) : proof;
         }),
     );

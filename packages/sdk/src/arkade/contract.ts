@@ -1306,16 +1306,18 @@ export class ArkadeTransactionBuilder {
             }
         });
 
-        const viaOperator = inputs.every(
+        const emulated = inputs.find(
             ({ unlocker }) =>
-                !unlocker.fn.arkadeScript ||
-                client.operatorCosigns(unlocker.contract.keys.emulatorKey),
+                unlocker.fn.arkadeScript &&
+                !client.operatorCosigns(unlocker.contract.keys.emulatorKey),
         );
-        if (!viaOperator) {
+        if (emulated) {
             // Covenant path: the emulator runs the arkade script, adds the remaining
             // co-signatures (incl. the contract checkpoint) and finalizes with arkd.
             if (!client.emulator) {
-                throw new Error("covenant spends require an `emulator` on the Arkade client");
+                throw new Error(
+                    `${emulated.unlocker.fn.name}: arkd does not hold this covenant's co-signer key, so the spend needs an \`emulator\` on the Arkade client`,
+                );
             }
             return submitViaEmulator(client.emulator, { arkTx, checkpoints }, client.identity, {
                 inputIndexes: userInputs,
@@ -1340,10 +1342,13 @@ export class ArkadeTransactionBuilder {
             { arkTx, checkpoints },
             {
                 signArkTx: async (tx) => ({ arkTx: await this.signArk(tx, userInputs) }),
-                signCheckpoint: async (checkpoint) =>
-                    userCheckpoints.has(checkpoint.id)
-                        ? identity!.sign(checkpoint, [0])
-                        : checkpoint,
+                signCheckpoint: async (checkpoint) => {
+                    if (!userCheckpoints.has(checkpoint.id)) return checkpoint;
+                    if (!identity) {
+                        throw new Error("a signing identity is required for non-covenant spends");
+                    }
+                    return identity.sign(checkpoint, [0]);
+                },
             },
             undefined,
             // arkd keeps a checkpoint it signs alone two-step: no client signature selects one-shot.
