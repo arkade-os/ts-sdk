@@ -226,7 +226,7 @@ describe("ExecutorManagerImpl.register", () => {
             wallet,
         );
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            "executor derived a different address",
+            "Executor derived a different address",
         );
         // a row must never carry an address that does not derive from its script
         expect(contractManager.createContract).not.toHaveBeenCalled();
