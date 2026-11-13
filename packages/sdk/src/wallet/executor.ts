@@ -212,7 +212,8 @@ export interface IExecutorManager {
      *
      * A watch the service cannot be asked about (it is down, or the request failed) keeps the
      * status it had: a network failure never moves the wallet's addresses, and the watch's
-     * expiry is the hard bound.
+     * expiry is the hard bound. So does a watch whose keys are not the service's: another
+     * executor's 404 says nothing about it.
      */
     refreshStatus(): Promise<ExecutorStatusRefresh[]>;
 }
@@ -337,6 +338,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 ? script.onchainAddress(getNetwork(info.network as NetworkName))
                 : script.address(hrp, serverPubKey).encode();
         const templateId = DEFAULT_TEMPLATE_IDS[kind];
+        const asked = nextTicket();
         // Registration is idempotent on the service: repeating it returns the existing watch.
         const delegation = await this.executorProvider.registerDelegation(
             templateId,
@@ -363,6 +365,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             await this.persistStatus(
                 ended,
                 kind,
+                asked,
                 delegation.status,
                 delegation.expiresAt,
                 delegation.address,
@@ -380,6 +383,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         await this.persistStatus(
             contracts,
             kind,
+            asked,
             delegation.status,
             delegation.expiresAt,
             delegation.address,
@@ -390,11 +394,12 @@ export class ExecutorManagerImpl implements IExecutorManager {
     /**
      * Write the service's answer for a watch on its contract row. The wallet's default addresses
      * follow the persisted status, so this is what stops a delegated address from being
-     * advertised once the service ended it.
+     * advertised once the service ended it. A refresh asked after `asked` holds the newer answer.
      */
     private async persistStatus(
         contracts: Contract[],
         template: ExecutorDefault,
+        asked: number,
         status: string,
         expiresAt: number | undefined,
         address: string,
@@ -402,10 +407,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const row = contracts.find((c) => c.params.template === template);
         if (!row) return;
         const manager = await this.wallet.getContractManager();
-        await serializeWrite(() =>
-            manager.updateContract(row.script, {
-                metadata: statusMetadata(row, status, expiresAt, address),
-            }),
+        await writeStatus(manager, row.script, asked, (fresh) =>
+            statusMetadata(fresh, status, expiresAt, address),
         );
     }
 
@@ -421,23 +424,27 @@ export class ExecutorManagerImpl implements IExecutorManager {
     async refreshStatus(): Promise<ExecutorStatusRefresh[]> {
         const manager = await this.wallet.getContractManager();
         const rows = await manager.getContracts({ type: [ExecutorContractHandler.type] });
+        let info: ExecutorInfo | undefined;
+        const serviceInfo = async () => (info ??= await this.executorProvider.getInfo());
         const refreshed: ExecutorStatusRefresh[] = [];
         for (const row of rows) {
             const template = row.params.template;
             if (template !== "renewal" && template !== "boarding") continue;
             const persisted = row.metadata?.[DELEGATION_STATUS_KEY];
+            const kept = (address: string, error: string): ExecutorStatusRefresh => ({
+                script: row.script,
+                address,
+                status: typeof persisted === "string" ? persisted : DELEGATION_UNKNOWN_STATUS,
+                error,
+            });
             let address: string;
             try {
-                address = await this.watchAddress(row, template);
+                address = await this.watchAddress(row, template, serviceInfo);
             } catch (e) {
-                refreshed.push({
-                    script: row.script,
-                    address: "",
-                    status: typeof persisted === "string" ? persisted : DELEGATION_UNKNOWN_STATUS,
-                    error: errorMessage(e),
-                });
+                refreshed.push(kept("", errorMessage(e)));
                 continue;
             }
+            const asked = nextTicket();
             try {
                 const { delegation } = await this.executorProvider.getDelegation(address);
                 if (delegation.address !== address) {
@@ -445,7 +452,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                         `executor answered for ${delegation.address}, asked about ${address}`,
                     );
                 }
-                const outcome = await this.writeIfUnchanged(manager, row, (fresh) =>
+                const outcome = await writeStatus(manager, row.script, asked, (fresh) =>
                     statusMetadata(fresh, delegation.status, delegation.expiresAt, address),
                 );
                 if (outcome === undefined) continue;
@@ -468,8 +475,13 @@ export class ExecutorManagerImpl implements IExecutorManager {
                         refreshed.push({ script: row.script, address, status: persisted });
                         continue;
                     }
+                    const foreign = await foreignService(row, serviceInfo);
+                    if (foreign !== undefined) {
+                        refreshed.push(kept(address, foreign));
+                        continue;
+                    }
                     // The service does not know this watch: it is over, whatever it was.
-                    const outcome = await this.writeIfUnchanged(manager, row, (fresh) =>
+                    const outcome = await writeStatus(manager, row.script, asked, (fresh) =>
                         statusMetadata(fresh, DELEGATION_GONE_STATUS, undefined, address),
                     );
                     if (outcome === undefined) continue;
@@ -480,38 +492,10 @@ export class ExecutorManagerImpl implements IExecutorManager {
                     );
                     continue;
                 }
-                refreshed.push({
-                    script: row.script,
-                    address,
-                    status: typeof persisted === "string" ? persisted : DELEGATION_UNKNOWN_STATUS,
-                    error: errorMessage(e),
-                });
+                refreshed.push(kept(address, errorMessage(e)));
             }
         }
         return refreshed;
-    }
-
-    /**
-     * Write a refreshed answer on a row unless its watch changed since `row` was read: a
-     * concurrent writer (a `register`) got there after this answer was asked for, so theirs is
-     * the newer one. Returns true once written, the row as it now stands when superseded, and
-     * undefined when the row is gone. The metadata is built from the row as it stands, so other
-     * keys survive.
-     */
-    private writeIfUnchanged(
-        manager: IContractManager,
-        row: Contract,
-        build: (fresh: Contract) => Record<string, unknown>,
-    ): Promise<true | Contract | undefined> {
-        return serializeWrite(async () => {
-            const [fresh] = await manager.getContracts({ script: row.script });
-            if (!fresh) return undefined;
-            if (WATCH_KEYS.some((key) => fresh.metadata?.[key] !== row.metadata?.[key])) {
-                return fresh;
-            }
-            await manager.updateContract(row.script, { metadata: build(fresh) });
-            return true;
-        });
     }
 
     /**
@@ -519,7 +503,11 @@ export class ExecutorManagerImpl implements IExecutorManager {
      * address of a boarding one. Persisted on the row when the watch was registered, recomputed
      * for rows written before it was.
      */
-    private async watchAddress(row: Contract, template: ExecutorDefault): Promise<string> {
+    private async watchAddress(
+        row: Contract,
+        template: ExecutorDefault,
+        serviceInfo: () => Promise<ExecutorInfo>,
+    ): Promise<string> {
         const persisted = row.metadata?.[DELEGATION_ADDRESS_KEY];
         if (typeof persisted === "string" && persisted.length > 0) return persisted;
         const script = ExecutorContractHandler.createScript(row.params);
@@ -529,23 +517,78 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 .address(hrp, hex.decode(toXOnlySignerHex(row.params.serverPubKey)))
                 .encode();
         }
-        const info = await this.executorProvider.getInfo();
-        return script.onchainAddress(getNetwork(info.network as NetworkName));
+        const { network } = await serviceInfo();
+        return script.onchainAddress(getNetwork(network as NetworkName));
     }
 }
 
-const WATCH_KEYS = [DELEGATION_STATUS_KEY, DELEGATION_EXPIRES_KEY, DELEGATION_ADDRESS_KEY];
+/**
+ * Why a 404 says nothing about a row's watch, or undefined when it does: only a service holding
+ * the keys the watch was registered under can tell it does not know it. Another executor's 404
+ * is about its own watches.
+ */
+async function foreignService(
+    row: Contract,
+    serviceInfo: () => Promise<ExecutorInfo>,
+): Promise<string | undefined> {
+    let info: ExecutorInfo;
+    try {
+        info = await serviceInfo();
+    } catch (e) {
+        return `cannot check the executor's keys: ${errorMessage(e)}`;
+    }
+    const { cosignerPubKey, serverPubKey, emulatorPubKey } = row.params;
+    if (
+        info.cosignerPubkey.toLowerCase() === cosignerPubKey &&
+        info.serverPubkey.toLowerCase() === serverPubKey &&
+        info.emulatorPubkey.toLowerCase() === emulatorPubKey
+    ) {
+        return undefined;
+    }
+    return `executor ${info.cosignerPubkey} does not hold this watch's keys: its 404 does not end it`;
+}
 
 /**
- * Status writes read a row, then replace its metadata, with awaits in between: unserialized, a
- * `register` landing between a refresh's read and write is lost. Both run in this realm (the
- * service worker wallet's manager runs on the page too); another tab is out of reach.
+ * Status writes read a row, then replace its metadata, with awaits in between, and the answers
+ * they carry arrive in any order. Writes are serialized, and each carries the ticket taken when
+ * its question was asked: the answer to the latest question wins, whatever order the answers
+ * land in. Both run in this realm (the service worker wallet's manager runs on the page too);
+ * another tab is out of reach.
  */
 let statusWrites: Promise<unknown> = Promise.resolve();
+let tickets = 0;
+/** Per row, the ticket of the answer it carries. */
+const answered = new Map<string, number>();
+
+function nextTicket(): number {
+    return ++tickets;
+}
+
 function serializeWrite<T>(write: () => Promise<T>): Promise<T> {
     const run = statusWrites.then(write);
     statusWrites = run.catch(() => undefined);
     return run;
+}
+
+/**
+ * Write an answer on a row unless it carries one asked for later. Returns true once written, the
+ * row as it now stands when superseded, and undefined when the row is gone. The metadata is built
+ * from the row as it stands, so other keys survive.
+ */
+function writeStatus(
+    manager: IContractManager,
+    script: string,
+    asked: number,
+    build: (fresh: Contract) => Record<string, unknown>,
+): Promise<true | Contract | undefined> {
+    return serializeWrite(async () => {
+        const [fresh] = await manager.getContracts({ script });
+        if (!fresh) return undefined;
+        if ((answered.get(script) ?? 0) > asked) return fresh;
+        await manager.updateContract(script, { metadata: build(fresh) });
+        answered.set(script, asked);
+        return true;
+    });
 }
 
 function currentStatus(row: Contract, address: string): ExecutorStatusRefresh {

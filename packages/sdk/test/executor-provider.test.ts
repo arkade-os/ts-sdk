@@ -458,6 +458,60 @@ describe("ExecutorManagerImpl.refreshStatus", () => {
         return { repo, w: { ...wallet, getContractManager: async () => repo } };
     }
 
+    /** A repository that hands out copies, as a real one does; `exists` false until created. */
+    function makeStore(row: Awaited<ReturnType<typeof makeRow>>, exists = true) {
+        let stored: Record<string, unknown> = { ...row.metadata };
+        let hydrated: Promise<void> = Promise.resolve();
+        const current = () => [{ ...row, metadata: { ...stored } }];
+        const repo = {
+            getContracts: vi.fn(async () => (exists ? current() : [])),
+            updateContract: vi.fn(async (_script: string, u: { metadata: typeof stored }) => {
+                stored = u.metadata;
+            }),
+            // a new row is persisted, then hydrated from the indexer, as createContract does
+            createContract: vi.fn(async (c: { metadata?: typeof stored }) => {
+                if (!exists) {
+                    exists = true;
+                    stored = { ...c.metadata };
+                    await hydrated;
+                }
+                return current()[0];
+            }),
+        };
+        return {
+            repo,
+            w: { ...wallet, getContractManager: async () => repo },
+            stored: () => stored,
+            pauseHydration: () => {
+                let release!: () => void;
+                hydrated = new Promise((r) => (release = r));
+                return release;
+            },
+        };
+    }
+
+    const answer = (status: string, expiresAt?: number) => ({
+        delegation: { id: 1, address: vectors.renewal.address, status, variables: {}, expiresAt },
+        vtxos: [],
+    });
+
+    function deferred<T>() {
+        let resolve!: (v: T) => void;
+        let reject!: (e: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        return { promise, resolve, reject };
+    }
+
+    const renewalProvider = () =>
+        makeProvider({
+            address: vectors.renewal.address,
+            templateId: ids.renewal,
+            variables: vectors.renewal.variables,
+        });
+
     it("persists the status the service reports", async () => {
         const row = await makeRow({
             delegationStatus: "active",
@@ -518,45 +572,55 @@ describe("ExecutorManagerImpl.refreshStatus", () => {
         });
     });
 
-    it("does not overwrite a watch a concurrent register rewrote", async () => {
+    it("does not let an older 404 end a watch a register re-created meanwhile", async () => {
         const row = await makeRow({
-            delegationStatus: "expired",
+            delegationStatus: "active",
             delegationAddress: vectors.renewal.address,
         });
-        const { repo, w } = makeRefreshManager([row]);
-        const provider = makeProvider();
-        provider.getDelegation.mockImplementation(async () => {
-            // register() re-activates the watch while this answer is on the wire
-            row.metadata = {
-                delegationStatus: "active",
-                delegationExpiresAt: 1_700_000_000,
-                delegationAddress: vectors.renewal.address,
-            };
-            return {
-                delegation: {
-                    id: 1,
-                    address: vectors.renewal.address,
-                    status: "expired",
-                    variables: {},
-                    expiresAt: undefined,
-                },
-                vtxos: [],
-            };
+        expect(row.script).toBe(vectors.renewal.pkScript);
+        const store = makeStore(row);
+        const provider = renewalProvider();
+        const pending = deferred<never>();
+        provider.getDelegation.mockReturnValue(pending.promise);
+        const manager = new ExecutorManagerImpl(provider, store.w);
+
+        const refresh = manager.refreshStatus();
+        await vi.waitFor(() => expect(provider.getDelegation).toHaveBeenCalled());
+        // the service had dropped the watch: registering re-creates it, with the same values
+        await manager.registerRenewal(params);
+        pending.reject(new ExecutorRequestError("Failed (404): delegation not found", 404));
+        const got = await refresh;
+
+        expect(store.stored()).toEqual({
+            delegationStatus: "active",
+            delegationAddress: vectors.renewal.address,
         });
-        const stale = { ...row, metadata: { ...row.metadata } };
-        repo.getContracts.mockResolvedValueOnce([stale]);
-
-        const got = await new ExecutorManagerImpl(provider, w).refreshStatus();
-
-        expect(repo.updateContract).not.toHaveBeenCalled();
         expect(got).toEqual([
-            {
-                script: row.script,
-                address: vectors.renewal.address,
-                status: "active",
-                expiresAt: 1_700_000_000,
-            },
+            { script: row.script, address: vectors.renewal.address, status: "active" },
         ]);
+    });
+
+    it("does not let a register's older answer undo a refresh asked after it", async () => {
+        const row = await makeRow({});
+        const store = makeStore(row, false);
+        const release = store.pauseHydration();
+        const provider = renewalProvider();
+        provider.getDelegation.mockResolvedValue(answer("cancelled"));
+        const manager = new ExecutorManagerImpl(provider, store.w);
+
+        const registering = manager.registerRenewal(params);
+        await vi.waitFor(() => expect(store.repo.createContract).toHaveBeenCalled());
+        // the row is visible while it hydrates; the watch is cancelled meanwhile
+        await expect(manager.refreshStatus()).resolves.toEqual([
+            { script: row.script, address: vectors.renewal.address, status: "cancelled" },
+        ]);
+        release();
+        await registering;
+
+        expect(store.stored()).toEqual({
+            delegationStatus: "cancelled",
+            delegationAddress: vectors.renewal.address,
+        });
     });
 
     it("keeps the metadata keys a concurrent writer added", async () => {
@@ -642,6 +706,57 @@ describe("ExecutorManagerImpl.refreshStatus", () => {
         expect(repo.updateContract).not.toHaveBeenCalled();
     });
 
+    it("keeps a watch another executor's 404 says nothing about", async () => {
+        const row = await makeRow({
+            delegationStatus: "active",
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        // the same storage, opened against a service whose cosigner key is not the watch's
+        provider.getInfo.mockResolvedValue(makeInfo());
+        provider.getDelegation.mockRejectedValue(
+            new ExecutorRequestError("Failed (404): delegation not found", 404),
+        );
+
+        const got = await new ExecutorManagerImpl(provider, w).refreshStatus();
+
+        expect(got).toEqual([
+            {
+                script: row.script,
+                address: vectors.renewal.address,
+                status: "active",
+                error: `executor ${hex.encode(compressedKey)} does not hold this watch's keys: its 404 does not end it`,
+            },
+        ]);
+        expect(repo.updateContract).not.toHaveBeenCalled();
+    });
+
+    it("keeps the persisted status on a 404 when the executor's keys cannot be checked", async () => {
+        const row = await makeRow({
+            delegationStatus: "active",
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getInfo.mockRejectedValue(new Error("connection reset"));
+        provider.getDelegation.mockRejectedValue(
+            new ExecutorRequestError("Failed (404): delegation not found", 404),
+        );
+
+        const got = await new ExecutorManagerImpl(provider, w).refreshStatus();
+
+        expect(got).toEqual([
+            {
+                script: row.script,
+                address: vectors.renewal.address,
+                status: "active",
+                error: "cannot check the executor's keys: connection reset",
+            },
+        ]);
+        expect(repo.updateContract).not.toHaveBeenCalled();
+    });
+
     it("refuses an answer about another address", async () => {
         const row = await makeRow({
             delegationStatus: "active",
@@ -698,50 +813,33 @@ describe("ExecutorManagerImpl.refreshStatus", () => {
         expect(repo.updateContract).not.toHaveBeenCalled();
     });
 
-    it("serializes concurrent status writes on a row", async () => {
+    it("keeps the answer to the latest question, whatever order the answers arrive in", async () => {
         const row = await makeRow({
             delegationStatus: "active",
             delegationAddress: vectors.renewal.address,
         });
-        // a repository that hands out copies, as a real one does
-        let stored: Record<string, unknown> = { ...row.metadata };
-        const repo = {
-            getContracts: vi.fn(async () => [{ ...row, metadata: { ...stored } }]),
-            updateContract: vi.fn(async (_script: string, u: { metadata: typeof stored }) => {
-                stored = u.metadata;
-            }),
-        };
-        const w = { ...wallet, getContractManager: async () => repo };
+        const store = makeStore(row);
         const provider = makeProvider();
+        const first = deferred<ReturnType<typeof answer>>();
+        const second = deferred<ReturnType<typeof answer>>();
         provider.getDelegation
-            .mockResolvedValueOnce({
-                delegation: {
-                    id: 1,
-                    address: vectors.renewal.address,
-                    status: "expired",
-                    variables: {},
-                    expiresAt: undefined,
-                },
-                vtxos: [],
-            })
-            .mockResolvedValueOnce({
-                delegation: {
-                    id: 1,
-                    address: vectors.renewal.address,
-                    status: "active",
-                    variables: {},
-                    expiresAt: undefined,
-                },
-                vtxos: [],
-            });
-        const manager = new ExecutorManagerImpl(provider, w);
+            .mockReturnValueOnce(first.promise)
+            .mockReturnValueOnce(second.promise);
+        const manager = new ExecutorManagerImpl(provider, store.w);
 
-        // both read the row as "active"; the second must see the first's write and stand down
-        await Promise.all([manager.refreshStatus(), manager.refreshStatus()]);
+        const older = manager.refreshStatus();
+        await vi.waitFor(() => expect(provider.getDelegation).toHaveBeenCalledTimes(1));
+        const newer = manager.refreshStatus();
+        await vi.waitFor(() => expect(provider.getDelegation).toHaveBeenCalledTimes(2));
+        second.resolve(answer("active", 9));
+        await newer;
+        first.resolve(answer("expired"));
+        await older;
 
-        expect(repo.updateContract).toHaveBeenCalledTimes(1);
-        expect(stored).toEqual({
-            delegationStatus: "expired",
+        expect(store.repo.updateContract).toHaveBeenCalledTimes(1);
+        expect(store.stored()).toEqual({
+            delegationStatus: "active",
+            delegationExpiresAt: 9,
             delegationAddress: vectors.renewal.address,
         });
     });

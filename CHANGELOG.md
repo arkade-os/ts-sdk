@@ -396,10 +396,15 @@ style and have not been backfilled.
   a wrong base URL, a proxy, or a service that does not route
   `GET /v1/delegation` 404s too, with the same gRPC code, so `getDelegation`
   reports any other 404 without a status and the row keeps the status it had.
-  A refresh writes only what a concurrent `register` has not changed since the
-  row was read: status writes are serialized, a refresh re-reads the row
-  before writing, keeps its other metadata, and drops an answer asked for
-  before the row's watch was rewritten.
+  A 404 also ends a watch only when the service holds the keys the watch was
+  registered under: the same storage opened against another executor keeps its
+  watches, and the refresh reports why.
+  Status writes are serialized and the answer to the latest question wins,
+  whatever order the answers arrive in: a refresh's 404 asked before a
+  `register` re-created the watch, even with the same values, no longer ends
+  it, and a `register` whose row was refreshed while it hydrated no longer
+  restores its older answer. Every write re-reads the row and keeps its other
+  metadata.
 
 ### Changed
 

@@ -49,7 +49,8 @@ export interface ExecutorDelegationDetails {
 /**
  * An executor request that failed. `status` is the HTTP status when the service answered, and
  * undefined when the request never reached it or got an answer that is not the service's. A
- * 404 from `getDelegation` means the service does not know the watch: the wallet ends it.
+ * 404 from `getDelegation` means the service does not know the watch: the wallet ends it, once
+ * it checked the service holds the watch's keys.
  */
 export class ExecutorRequestError extends Error {
     constructor(
