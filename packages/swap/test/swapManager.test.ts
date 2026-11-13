@@ -1084,6 +1084,28 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(swap.blockedReason).toMatch(/below the agreed/);
     });
 
+    it("keeps the value gate when a spend of the lockup reveals P, scoped to Lightning receives", async () => {
+        // A Lightning receive reads `P` off the lockup; here the L1 refund path could take both
+        // legs, so the gate stays on until a claim of ours is recorded.
+        const claim = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
+        const s = spies();
+        const { swap } = await drive({
+            spies: s,
+            indexer: fakeIndexer({
+                vtxos: [...spentBy(claim.txid), { ...LOCKUP_OUTPOINT, vout: 1, spentBy: "" }],
+                txs: [claim],
+            }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                vtxos: () => [{ ...LOCKUP_OUTPOINT, vout: 1, value: LOCKUP_VALUE - 1 }],
+            }),
+            chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+        });
+
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(swap.blockedReason).toMatch(/below the agreed/);
+    });
+
     it("skips that gate only once a claim of ours has published P", async () => {
         const s = spies();
         await drive({
@@ -2695,6 +2717,77 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             expect(called).toBe(false);
             expect(s.lockupClaims).toEqual([]);
             expect(swap.blockedReason).toMatch(/below the agreed/);
+        });
+
+        describe("P read off a spend of the lockup, with no recorded claimTxid", () => {
+            /** A claim that revealed `P` on output 0, beside a live output 1: the chain state after
+             * a crash (or a lost finalize response) before `claimTxid` reached storage. */
+            const partlyClaimed = () => {
+                const claim = spendOfLockup({
+                    script: RECEIVE_LOCKUP,
+                    conditionWitness: [PREIMAGE],
+                });
+                return fakeIndexer({
+                    vtxos: [...spentBy(claim.txid), { ...LOCKUP_OUTPOINT, vout: 1, spentBy: "" }],
+                    txs: [claim],
+                });
+            };
+            const nothingPending = (s: Spies) =>
+                withFinalize(
+                    s,
+                    async () => {},
+                    async () => [],
+                );
+
+            it("claims the rest with the value gate off", async () => {
+                const s = spies();
+                const swap = receiveSwap();
+                const m = manager({
+                    indexer: partlyClaimed(),
+                    contracts: fundedContracts(1_000, { vout: 1 }),
+                    now: BEFORE_DEADLINE,
+                    spies: s,
+                    install: nothingPending(s),
+                });
+                await pass(m, swap);
+
+                expect(swap.blockedReason).toBeUndefined();
+                expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+                expect(swap.claimTxid).toBe(CLAIM_TXID);
+            });
+
+            it("keeps the claimed label within the lag", async () => {
+                const s = spies();
+                const swap = receiveSwap({ state: "claimable" });
+                const m = manager({
+                    indexer: partlyClaimed(),
+                    contracts: fundedContracts(1_000, { vout: 1 }),
+                    now: REFUND_LOCKTIME,
+                    spies: s,
+                    install: nothingPending(s),
+                });
+                await pass(m, swap);
+
+                expect(swap.blockedReason).toBeUndefined();
+                expect(swap.state).toBe("claimable");
+                expect(s.lockupClaims).toEqual([]);
+            });
+
+            it("ends refunded, not failed, past the lag", async () => {
+                const s = spies();
+                const swap = receiveSwap({ state: "claimable", claimFailure: "response lost" });
+                const m = manager({
+                    indexer: partlyClaimed(),
+                    contracts: fundedContracts(1_000, { vout: 1 }),
+                    now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS,
+                    spies: s,
+                    install: nothingPending(s),
+                });
+                await pass(m, swap);
+
+                expect(swap.state).toBe("refunded");
+                expect(swap.failure).toBeUndefined();
+            });
         });
 
         it("keeps the swap unsettled while the finalize fails", async () => {

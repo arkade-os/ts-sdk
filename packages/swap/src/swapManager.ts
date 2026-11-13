@@ -378,8 +378,9 @@ export interface RfqSwapManagerCallbacks {
         swap: ReceiveLockupSwap,
         vtxos: readonly LockupVtxo[],
         options: {
-            /** A claim of ours is already out, so `P` is public and the value gate has
-             * nothing left to protect; lets a piecemeal funding still be swept. */
+            /** `P` is already public on this lockup (a claim of ours, or any spend whose
+             * witness hashes to `paymentHash`), so the value gate has nothing left to
+             * protect; lets a piecemeal funding still be swept. */
             partiallyClaimed: boolean;
         },
     ) => Promise<{ txid: string; amount: number; spent?: readonly LockupVtxo[] }>;
@@ -1385,10 +1386,14 @@ export class RfqSwapManager {
         //    refund on the solver's leaf, failing forever against a key we do not hold.
         if (swap.kind === "lightning_receive") {
             if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
-            if (fate.fate === "open") return this.driveReceiveClaim(swap);
+            if (fate.fate === "open") {
+                return this.driveReceiveClaim(swap, fate.preimage !== undefined);
+            }
             // A recorded claim of ours ends on chain evidence, never on a read that learned nothing.
             if (fate.fate === "unknown" && swap.claimTxid !== undefined) return;
-            if (this.config.now() >= swap.refundLocktime) return this.driveReceiveClaim(swap);
+            if (this.config.now() >= swap.refundLocktime) {
+                return this.driveReceiveClaim(swap, false);
+            }
             return;
         }
 
@@ -1419,7 +1424,8 @@ export class RfqSwapManager {
             const pending = await pendingClaims(swap);
             if (pending.length === 0) return "none";
             // `P` went out with the submit, whether or not the finalize lands: recorded first, so
-            // a lost response or a restart cannot forget it and re-apply the value gate.
+            // a lost response cannot forget it; a crash before this pass's save is covered by
+            // reading `P` off the lockup.
             if (swap.claimTxid === undefined) {
                 swap.claimTxid = pending[0];
                 this.touch(swap);
@@ -1456,8 +1462,10 @@ export class RfqSwapManager {
      *
      * After the window the trader has no move; the manager only watches.
      */
-    private async driveReceiveClaim(swap: ReceiveLockupSwap): Promise<void> {
+    private async driveReceiveClaim(swap: ReceiveLockupSwap, revealed: boolean): Promise<void> {
         const now = this.config.now();
+        // `P` is public: a claim of ours is recorded, or the lockup's own spends reveal it.
+        const claimOut = swap.claimTxid !== undefined || revealed;
 
         if (now < swap.refundLocktime) {
             let vtxos: readonly LockupVtxo[];
@@ -1469,14 +1477,14 @@ export class RfqSwapManager {
                 this.emitFailed(swap, error);
                 return;
             }
-            return this.claimIfFunded(swap, vtxos);
+            return this.claimIfFunded(swap, vtxos, claimOut);
         }
 
         // Past the window: keep watching so step 1 can end the swap on chain evidence (the
         // solver's MTP-based reclaim lands within the lag).
         if (now < swap.refundLocktime + REFUND_MTP_LAG_SECONDS) {
             // A submitted claim keeps its `claimed` label.
-            if (swap.claimTxid) return;
+            if (claimOut) return;
             return this.block(
                 swap,
                 "the claim window closed with the lockup unclaimed — only the solver can act now",
@@ -1486,7 +1494,7 @@ export class RfqSwapManager {
         // Nothing further to observe: ending here gives up telling "reclaimed" from "never
         // funded".
         const failure = swap.claimFailure;
-        if (failure && !swap.claimTxid) {
+        if (failure && !claimOut) {
             // We had a claimable lockup and could not take it: `failed`, so a broken claim
             // callback does not read as a swap that simply did not happen.
             return this.fail(swap, new Error(failure));
@@ -1499,11 +1507,11 @@ export class RfqSwapManager {
     private async claimIfFunded(
         swap: ReceiveLockupSwap,
         vtxos: readonly LockupVtxo[],
+        partiallyClaimed: boolean,
     ): Promise<void> {
         if (vtxos.length === 0) return this.unblock(swap);
 
         // `P` is already public, so the value gate has nothing left to protect.
-        const partiallyClaimed = swap.claimTxid !== undefined;
         const toClaim = partiallyClaimed ? this.unclaimed(swap.rfqId, vtxos) : vtxos;
         if (toClaim.length === 0) {
             // Indexer lag; re-submitting would fail and report a working swap as broken.
@@ -1618,7 +1626,7 @@ export class RfqSwapManager {
                     "sides of the trade — the solver's reclaim ends this swap",
             );
         }
-        await this.driveReceiveClaim(swap);
+        await this.driveReceiveClaim(swap, false);
         // After that arm, never before: it `unblock`s an empty lockup, which
         // would erase the refusal the L1 half just reported.
         if (l1.blocked && !isRfqSwapTerminal(swap.state)) this.block(swap, l1.blocked);

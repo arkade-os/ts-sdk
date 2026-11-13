@@ -131,9 +131,9 @@ style and have not been backfilled.
   the server's signatures carried over from the indexer's copy); a failed
   finalize ends the pass and is retried, so no deadline closes the swap first.
   The claim is recorded as the swap's `claimTxid` before the finalize is sent,
-  so a lost response or a restart cannot put the rest of the lockup back behind
-  the value gate. A pending spend that is not ours is left to its submitter and
-  never counts as `P` being public. `onchain_receive` is left as it was: its
+  so a lost response cannot put the rest of the lockup back behind
+  the value gate. A pending spend that is not ours is left to its submitter, and
+  counts as `P` being public only if it reveals `P`. `onchain_receive` is left as it was: its
   trader also holds the L1 refund, which finalizing could double.
   `RfqSwapManagerCallbacks` gains optional `pendingClaims` (keyless) and
   `finalizeClaim`; without both the manager settles as before.
@@ -141,6 +141,19 @@ style and have not been backfilled.
   two-step claim's checkpoint without the condition witness until finalize, so
   a funder saw `unknown` for a claim whose `P` was already public. No breaking
   change.
+
+- **`@arkade-os/swap`: a Lightning receive no longer forgets that `P` is public
+  after a crash.** The value gate was dropped only when the swap's `claimTxid`
+  was set, and that field reached storage only at the end of a pass. A crash
+  between a claim landing and that save (a `claimLockup`, or a finalize of a
+  pending claim), or a two-step claim whose finalize response was lost,
+  restarted with the rest of a partly claimed lockup behind the gate. The
+  trader then left that rest to the solver's reclaim and the swap still read
+  `settled`. `readLockupFate` now reports a hash-verified `P` on a lockup that
+  still has live outputs (`open` gains an optional `preimage`, read only for the
+  receiver), and a Lightning receive drops the gate on it. A spend that does not
+  reveal `P` still counts for nothing, and `onchain_receive` is unchanged. No
+  breaking change.
 
 ### Added
 

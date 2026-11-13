@@ -104,9 +104,8 @@ export async function pushClaim(
         /** What the lockup must carry: the quote's `to_amount`, captured at REQUEST time and
          * persisted. Required so the guard cannot be skipped. */
         expectedAmount: number;
-        /** Set when this lockup already carries a claim of ours: `P` is public
-         * by then, so the value gate protects nothing and would only strand
-         * the remainder. */
+        /** Set once `P` is public on this lockup: the value gate protects
+         * nothing by then and would only strand the remainder. */
         partiallyClaimed?: boolean;
         /** @see operatorUnrollScript */
         network?: Network;
