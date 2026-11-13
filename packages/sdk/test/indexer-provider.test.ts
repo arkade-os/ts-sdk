@@ -367,6 +367,25 @@ describe("RestIndexerProvider", () => {
         });
     });
 
+    describe("getVirtualTxs", () => {
+        it("sends txids and pagination as query params", async () => {
+            mockFetch.mockResolvedValueOnce(jsonResponse({ txs: ["deadbeef"] }));
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const res = await provider.getVirtualTxs(["aa".repeat(32), "bb".repeat(32)], {
+                pageIndex: 2,
+                pageSize: 10,
+            });
+
+            const url = new URL(mockFetch.mock.calls[0][0]);
+            expect(url.pathname).toBe("/v1/indexer/virtualTxs");
+            expect(url.searchParams.getAll("txids")).toEqual(["aa".repeat(32), "bb".repeat(32)]);
+            expect(url.searchParams.get("page.index")).toBe("2");
+            expect(url.searchParams.get("page.size")).toBe("10");
+            expect(res.txs).toEqual(["deadbeef"]);
+        });
+    });
+
     describe("getUtxos", () => {
         const spender = "cc".repeat(32);
         const wireUtxo = (spend: Record<string, unknown>) => ({

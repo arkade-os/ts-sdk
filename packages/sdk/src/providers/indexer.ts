@@ -705,7 +705,9 @@ export class RestIndexerProvider implements IndexerProvider {
         txids: string[],
         opts?: PaginationOptions,
     ): Promise<{ txs: string[]; page?: PageResponse }> {
-        const url = withPage(`${this.serverUrl}/v1/indexer/virtualTx/${txids.join(",")}`, opts);
+        const params = new URLSearchParams();
+        txids.forEach((txid) => params.append("txids", txid));
+        const url = withPage(`${this.serverUrl}/v1/indexer/virtualTxs?${params}`, opts);
         const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
@@ -994,7 +996,7 @@ function withPage(url: string, opts?: PaginationOptions): string {
     if (opts?.pageIndex !== undefined) params.append("page.index", opts.pageIndex.toString());
     if (opts?.pageSize !== undefined) params.append("page.size", opts.pageSize.toString());
     const query = params.toString();
-    return query ? `${url}?${query}` : url;
+    return query ? `${url}${url.includes("?") ? "&" : "?"}${query}` : url;
 }
 
 /** The wire keys `children` by output index as strings; callers index it by number. */
