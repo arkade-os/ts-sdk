@@ -155,28 +155,29 @@ export async function pushClaim(
     return { txid, amount: locked, left: live.length - vtxos.length, spent: vtxos };
 }
 
+/** A claim of ours the operator accepted but never finalized, with the checkpoints it spends the
+ * lockup through, rebuilt from the claim leaf. */
+export interface PendingClaim {
+    arkTxid: string;
+    checkpoints: Transaction[];
+}
+
 /**
- * Finalize every claim of ours the operator accepted but never finalized (a two-step submit whose
- * finalize was lost): it has published `P`, yet the claimed sats do not exist until finalized.
- * Ours = the claim leaf rebuilds its checkpoints under the current or a deprecated operator key.
- * Any other pending spend is left to its submitter: throwing would let whoever holds `P` keep the
- * swap unsettled. arkd replaces its stored checkpoint signatures with the ones sent, so the
- * server's are carried over from the indexer's copy.
- *
- * @returns The ark txids finalized; empty when nothing of ours was pending.
+ * Every claim of ours the operator accepted but never finalized (a two-step submit whose finalize
+ * was lost): it has published `P`, yet the claimed sats do not exist until finalized. Ours = the
+ * claim leaf rebuilds its checkpoints under the current or a deprecated operator key. Any other
+ * pending spend is left out: it proves neither that it is ours nor that `P` is public. Needs no
+ * keys, so a caller can tell whether anything is owed before resolving any.
  */
-export async function finalizePendingClaim(
+export async function findPendingClaims(
     operator: SwapOperator,
     indexer: LockupSpendIndexer,
     input: {
         contract: InstanceType<typeof VHTLC.ScriptV2>;
-        /** The trader's `receiver` signer, as for {@link pushClaim}. */
-        receiver: Identity;
-        preimage: Uint8Array;
         /** @see operatorUnrollScript */
         network?: Network;
     },
-): Promise<string[]> {
+): Promise<PendingClaim[]> {
     const { vtxos } = await indexer.getVtxos({
         scripts: [hex.encode(input.contract.pkScript)],
         pendingOnly: true,
@@ -188,7 +189,6 @@ export async function finalizePendingClaim(
     }
     if (byArkTx.size === 0) return [];
 
-    assertPreimageMatches(input.preimage, input.contract.options.preimageHash);
     const current = await operatorUnrollScript(operator, input.network);
     const { deprecatedSigners } = await operator.getInfo();
     const unrollScripts = [
@@ -204,9 +204,7 @@ export async function finalizePendingClaim(
                 : [],
         ),
     ];
-    const signer = claimWithPreimageIdentity(input.receiver, input.preimage);
-    const ours = hex.encode(await input.receiver.xOnlyPublicKey());
-    const finalized: string[] = [];
+    const claims: PendingClaim[] = [];
     for (const [arkTxid, spent] of byArkTx) {
         const live = spent.map(({ txid, vout, value }) => ({
             txid,
@@ -230,8 +228,38 @@ export async function finalizePendingClaim(
                     built.length === spent.length &&
                     built.every((checkpoint, i) => checkpoint.id === spent[i]!.spentBy),
             );
-        if (!checkpoints) continue;
+        if (checkpoints) claims.push({ arkTxid, checkpoints });
+    }
+    return claims;
+}
 
+/**
+ * Finalize every claim of ours the operator accepted but never finalized (see
+ * {@link findPendingClaims}). arkd replaces its stored checkpoint signatures with the ones sent, so
+ * the server's are carried over from the indexer's copy.
+ *
+ * @returns The ark txids finalized; empty when nothing of ours was pending.
+ */
+export async function finalizePendingClaim(
+    operator: SwapOperator,
+    indexer: LockupSpendIndexer,
+    input: {
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
+        /** The trader's `receiver` signer, as for {@link pushClaim}. */
+        receiver: Identity;
+        preimage: Uint8Array;
+        /** @see operatorUnrollScript */
+        network?: Network;
+    },
+): Promise<string[]> {
+    const claims = await findPendingClaims(operator, indexer, input);
+    if (claims.length === 0) return [];
+
+    assertPreimageMatches(input.preimage, input.contract.options.preimageHash);
+    const signer = claimWithPreimageIdentity(input.receiver, input.preimage);
+    const ours = hex.encode(await input.receiver.xOnlyPublicKey());
+    const finalized: string[] = [];
+    for (const { arkTxid, checkpoints } of claims) {
         const { txs } = await indexer.getVirtualTxs(checkpoints.map((checkpoint) => checkpoint.id));
         const stored = new Map(
             txs.map((raw) => {

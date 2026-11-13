@@ -384,13 +384,17 @@ export interface RfqSwapManagerCallbacks {
         },
     ) => Promise<{ txid: string; amount: number; spent?: readonly LockupVtxo[] }>;
     /**
-     * Finalize a claim of ours the operator accepted but never finalized (see
-     * `finalizePendingClaim`). Called on a Lightning receive leg whenever its lockup holds a
-     * pending spend: that claim has published `P`, yet its sats do not exist until finalized. A
-     * throw ends the pass and is retried on the next one. Omitted, a revealed `P` settles the swap
-     * as before.
+     * The ark txids of the claims of ours the operator accepted but never finalized (see
+     * `findPendingClaims`): each has published `P`, yet its sats do not exist until finalized.
+     * Needs no keys. Called on every Lightning receive pass; wired with `finalizeClaim`, and
+     * without both a revealed `P` settles the swap as before.
      */
-    finalizeClaim?: (swap: LightningReceiveSwap) => Promise<readonly string[]>;
+    pendingClaims?: (swap: LightningReceiveSwap) => Promise<readonly string[]>;
+    /**
+     * Finalize them (see `finalizePendingClaim`). Called only after `pendingClaims` named one; a
+     * throw ends the pass and is retried on the next one.
+     */
+    finalizeClaim?: (swap: LightningReceiveSwap) => Promise<void>;
     /**
      * Push `refundWithoutReceiver` for every output at the lockup (see
      * `pushRefundWithoutReceiver`); return `null` for an empty lockup. Never called for a
@@ -705,8 +709,6 @@ export class RfqSwapManager {
      * costs at most one rejected re-claim.
      */
     private readonly claimedOutpoints = new Map<string, Set<string>>();
-    /** Receive swaps whose lockup held a pending spend on the last pass: `P` is public. */
-    private readonly revealed = new Set<string>();
     /** Live `onContractEvent` subscription, held so `stop()` can drop it. */
     private unsubscribeContracts: (() => void) | null = null;
     /** Recent terminal swaps; older durable outcomes are read from the record store on demand. */
@@ -1163,7 +1165,6 @@ export class RfqSwapManager {
         this.monitored.delete(rfqId);
         this.refundRefused.delete(rfqId);
         this.claimedOutpoints.delete(rfqId);
-        this.revealed.delete(rfqId);
     }
 
     /**
@@ -1411,24 +1412,19 @@ export class RfqSwapManager {
     private async finalizeOwnClaim(
         swap: LightningReceiveSwap,
     ): Promise<"none" | "finalized" | "failed"> {
+        const pendingClaims = this.callbacks?.pendingClaims;
         const finalize = this.callbacks?.finalizeClaim;
-        if (!finalize || !this.config.enableAutoActions) return "none";
+        if (!pendingClaims || !finalize || !this.config.enableAutoActions) return "none";
         try {
-            // The callback resolves keys and `P`, possibly prompting a signer: only when owed.
-            const { vtxos } = await this.deps.indexer.getVtxos({
-                scripts: [hex.encode(swap.lockupPkScript)],
-                pendingOnly: true,
-            });
-            if (!vtxos?.length) return "none";
-            // Before its CLTV only a claim can spend a receive lockup, so `P` is public for good
-            // and the value gate on what is left protects nothing, whether or not this lands.
-            this.revealed.add(swap.rfqId);
-            const finalized = await finalize(swap);
-            if (finalized.length === 0) return "none";
+            const pending = await pendingClaims(swap);
+            if (pending.length === 0) return "none";
+            // `P` went out with the submit, whether or not the finalize lands: recorded first, so
+            // a lost response or a restart cannot forget it and re-apply the value gate.
             if (swap.claimTxid === undefined) {
-                swap.claimTxid = finalized[0];
+                swap.claimTxid = pending[0];
                 this.touch(swap);
             }
+            await finalize(swap);
             return "finalized";
         } catch (error) {
             this.emitFailed(swap, error);
@@ -1507,7 +1503,7 @@ export class RfqSwapManager {
         if (vtxos.length === 0) return this.unblock(swap);
 
         // `P` is already public, so the value gate has nothing left to protect.
-        const partiallyClaimed = swap.claimTxid !== undefined || this.revealed.has(swap.rfqId);
+        const partiallyClaimed = swap.claimTxid !== undefined;
         const toClaim = partiallyClaimed ? this.unclaimed(swap.rfqId, vtxos) : vtxos;
         if (toClaim.length === 0) {
             // Indexer lag; re-submitting would fail and report a working swap as broken.

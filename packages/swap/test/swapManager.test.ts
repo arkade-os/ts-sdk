@@ -957,9 +957,9 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
             chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME }),
             install: {
                 ...s.callbacks,
+                pendingClaims: async () => [CLAIM_TXID],
                 finalizeClaim: async () => {
                     finalized = true;
-                    return [CLAIM_TXID];
                 },
             },
         });
@@ -2501,27 +2501,38 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
             return fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] });
         };
-        const withFinalize = (s: Spies, finalizeClaim: () => Promise<readonly string[]>) => ({
-            ...s.callbacks,
-            finalizeClaim,
-        });
+        const withFinalize = (
+            s: Spies,
+            finalizeClaim: () => Promise<void>,
+            pendingClaims: () => Promise<readonly string[]> = async () => [CLAIM_TXID],
+        ) => ({ ...s.callbacks, pendingClaims, finalizeClaim });
+        /** Lockup outputs the first contract read fails on, so a pass leaves them unclaimed. */
+        const remainderAfterAFailedRead = () => {
+            let reads = 0;
+            return fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                vtxos: () => {
+                    if (reads++ === 0) throw new Error("contract read failed");
+                    return [{ ...LOCKUP_OUTPOINT, value: 1_000 }];
+                },
+            });
+        };
 
         it("is finalized, and the swap settles on the next read", async () => {
             const s = spies();
             let finalized = false;
             const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
-            const indexer = revealed();
-            const read = indexer.getVtxos.bind(indexer);
-            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
-                opts?.pendingOnly && finalized ? { vtxos: [] } : read();
             const m = manager({
-                indexer,
+                indexer: revealed(),
                 now: BEFORE_DEADLINE,
                 spies: s,
-                install: withFinalize(s, async () => {
-                    finalized = true;
-                    return [CLAIM_TXID];
-                }),
+                install: withFinalize(
+                    s,
+                    async () => {
+                        finalized = true;
+                    },
+                    async () => (finalized ? [] : [CLAIM_TXID]),
+                ),
             });
             await pass(m, swap);
             expect(finalized).toBe(true);
@@ -2535,10 +2546,8 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             const s = spies();
             let attempts = 0;
             const swap = receiveSwap();
-            const pending = fakeIndexer({ vtxos: spentBy(CLAIM_TXID) });
             const indexer = fakeIndexer();
-            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) => {
-                if (opts?.pendingOnly) return pending.getVtxos();
+            indexer.getVtxos = async () => {
                 throw new Error("indexer unreachable");
             };
             const m = manager({
@@ -2557,66 +2566,135 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             expect(isRfqSwapTerminal(swap.state)).toBe(false);
         });
 
-        it("does not end a finalized claim on a read that learned nothing past the deadline", async () => {
-            const s = spies();
-            let finalized = false;
-            const swap = receiveSwap();
-            const pending = fakeIndexer({ vtxos: spentBy(CLAIM_TXID) });
-            const indexer = fakeIndexer();
-            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) => {
-                if (!opts?.pendingOnly) throw new Error("indexer unreachable");
-                return finalized ? { vtxos: [] } : pending.getVtxos();
-            };
-            const m = manager({
-                indexer,
-                now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
-                spies: s,
-                install: withFinalize(s, async () => {
-                    finalized = true;
-                    return [CLAIM_TXID];
-                }),
-            });
-            await pass(m, swap);
-            await m.poll();
+        it("does not end a claim on a read that learned nothing past the deadline", async () => {
+            // Finalized, or finalized with the answer lost: either way the claim is recorded.
+            for (const answerLost of [false, true]) {
+                const s = spies();
+                let finalized = false;
+                const swap = receiveSwap();
+                const indexer = fakeIndexer();
+                indexer.getVtxos = async () => {
+                    throw new Error("indexer unreachable");
+                };
+                const m = manager({
+                    indexer,
+                    now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+                    spies: s,
+                    install: withFinalize(
+                        s,
+                        async () => {
+                            finalized = true;
+                            if (answerLost) throw new Error("response lost");
+                        },
+                        async () => (finalized ? [] : [CLAIM_TXID]),
+                    ),
+                });
+                await pass(m, swap);
+                await m.poll();
 
-            expect(swap.claimTxid).toBe(CLAIM_TXID);
-            expect(isRfqSwapTerminal(swap.state)).toBe(false);
+                expect(swap.claimTxid).toBe(CLAIM_TXID);
+                expect(isRfqSwapTerminal(swap.state)).toBe(false);
+            }
         });
 
         it("still treats P as public once the pending claim it saw is gone", async () => {
             const s = spies();
             let finalizedRemotely = false;
-            let contractReads = 0;
             const swap = receiveSwap();
-            const indexer = fundedIndexer();
-            const read = indexer.getVtxos.bind(indexer);
-            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) => {
-                if (!opts?.pendingOnly) return read();
-                if (finalizedRemotely) return { vtxos: [] };
-                return fakeIndexer({ vtxos: spentBy(CLAIM_TXID) }).getVtxos();
-            };
             const m = manager({
-                indexer,
-                contracts: fakeContracts({
-                    preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
-                    vtxos: () => {
-                        if (contractReads++ === 0) throw new Error("contract read failed");
-                        return [{ ...LOCKUP_OUTPOINT, value: 1_000 }];
-                    },
-                }),
+                indexer: fundedIndexer(),
+                contracts: remainderAfterAFailedRead(),
                 now: BEFORE_DEADLINE,
                 spies: s,
                 // It landed, but the answer was lost.
-                install: withFinalize(s, async () => {
-                    finalizedRemotely = true;
-                    throw new Error("response lost");
-                }),
+                install: withFinalize(
+                    s,
+                    async () => {
+                        finalizedRemotely = true;
+                        throw new Error("response lost");
+                    },
+                    async () => (finalizedRemotely ? [] : [CLAIM_TXID]),
+                ),
             });
             await pass(m, swap);
+            expect(swap.claimTxid).toBe(CLAIM_TXID);
             expect(s.lockupClaims).toEqual([]);
 
             await m.poll();
             expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+        });
+
+        it("still treats P as public after a restart that followed a lost finalize answer", async () => {
+            const s = spies();
+            let finalizedRemotely = false;
+            let saved: LightningReceiveSwap | undefined;
+            const install: AvailableRfqSwapManagerCallbacks = {
+                ...withFinalize(
+                    s,
+                    async () => {
+                        finalizedRemotely = true;
+                        throw new Error("response lost");
+                    },
+                    async () => (finalizedRemotely ? [] : [CLAIM_TXID]),
+                ),
+                saveSwap: async (swap) => {
+                    saved = { ...swap } as LightningReceiveSwap;
+                },
+            };
+            const contracts = remainderAfterAFailedRead();
+            await pass(
+                manager({
+                    indexer: fundedIndexer(),
+                    contracts,
+                    now: BEFORE_DEADLINE,
+                    spies: s,
+                    install,
+                }),
+                receiveSwap(),
+            );
+            expect(saved?.claimTxid).toBe(CLAIM_TXID);
+
+            // A fresh process, from the saved record alone.
+            const restarted = manager({
+                indexer: fundedIndexer(),
+                contracts,
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install,
+            });
+            await pass(restarted, saved!);
+            expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+        });
+
+        it("does not read a pending spend that is not ours as P being public", async () => {
+            const s = spies();
+            let called = false;
+            const swap = receiveSwap();
+            const indexer = fundedIndexer();
+            const read = indexer.getVtxos.bind(indexer);
+            // The indexer names a pending spend, but no claim of ours rebuilds from it.
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
+                opts?.pendingOnly
+                    ? fakeIndexer({ vtxos: spentBy("ee".repeat(32)) }).getVtxos()
+                    : read();
+            const m = manager({
+                indexer,
+                contracts: fundedContracts(1_000),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(
+                    s,
+                    async () => {
+                        called = true;
+                    },
+                    async () => [],
+                ),
+            });
+            await pass(m, swap);
+
+            expect(called).toBe(false);
+            expect(s.lockupClaims).toEqual([]);
+            expect(swap.blockedReason).toMatch(/below the agreed/);
         });
 
         it("keeps the swap unsettled while the finalize fails", async () => {
@@ -2642,16 +2720,12 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         it("finalizes a pending batch while the rest of the lockup is still open", async () => {
             const s = spies();
             const swap = receiveSwap();
-            const indexer = fundedIndexer();
-            const read = indexer.getVtxos.bind(indexer);
-            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
-                opts?.pendingOnly ? fakeIndexer({ vtxos: spentBy(CLAIM_TXID) }).getVtxos() : read();
             const m = manager({
-                indexer,
+                indexer: fundedIndexer(),
                 contracts: fundedContracts(1_000),
                 now: BEFORE_DEADLINE,
                 spies: s,
-                install: withFinalize(s, async () => [CLAIM_TXID]),
+                install: withFinalize(s, async () => {}),
             });
             await pass(m, swap);
 
@@ -2664,12 +2738,8 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             const s = spies();
             const failures: string[] = [];
             const swap = receiveSwap();
-            const indexer = fundedIndexer();
-            const read = indexer.getVtxos.bind(indexer);
-            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
-                opts?.pendingOnly ? fakeIndexer({ vtxos: spentBy(CLAIM_TXID) }).getVtxos() : read();
             const m = manager({
-                indexer,
+                indexer: fundedIndexer(),
                 contracts: fundedContracts(1_000),
                 now: BEFORE_DEADLINE,
                 spies: s,
@@ -2688,12 +2758,8 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             const s = spies();
             let attempts = 0;
             const swap = receiveSwap({ claimFailure: "connection reset" });
-            const indexer = fundedIndexer();
-            const read = indexer.getVtxos.bind(indexer);
-            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
-                opts?.pendingOnly ? fakeIndexer({ vtxos: spentBy(CLAIM_TXID) }).getVtxos() : read();
             const m = manager({
-                indexer,
+                indexer: fundedIndexer(),
                 contracts: fundedContracts(1_000),
                 now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
                 spies: s,
@@ -2714,18 +2780,17 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             const s = spies();
             let called = false;
             const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
-            const indexer = revealed();
-            const read = indexer.getVtxos.bind(indexer);
-            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
-                opts?.pendingOnly ? { vtxos: [] } : read();
             const m = manager({
-                indexer,
+                indexer: revealed(),
                 now: BEFORE_DEADLINE,
                 spies: s,
-                install: withFinalize(s, async () => {
-                    called = true;
-                    return [];
-                }),
+                install: withFinalize(
+                    s,
+                    async () => {
+                        called = true;
+                    },
+                    async () => [],
+                ),
             });
             await pass(m, swap);
 

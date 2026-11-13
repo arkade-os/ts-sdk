@@ -23,7 +23,12 @@ import {
 } from "@arkade-os/sdk";
 
 import { lightningReceiveContract } from "../src/rfq";
-import { LockupAmountMismatchError, finalizePendingClaim, pushClaim } from "../src/claim";
+import {
+    LockupAmountMismatchError,
+    finalizePendingClaim,
+    findPendingClaims,
+    pushClaim,
+} from "../src/claim";
 import {
     LockupNeedsRecoveryError,
     MAX_LOCKUP_SPEND_INPUTS,
@@ -725,6 +730,23 @@ describe("finalizePendingClaim", () => {
                 preimage: PREIMAGE,
             }),
         ).resolves.toEqual([arkTxid]);
+    });
+
+    it("finds a claim of ours without any key, and nothing else the indexer names", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
+        const operator = fakeOperator();
+        const found = await findPendingClaims(operator, indexerOf(pending, stored), { contract });
+        expect(found.map((claim) => claim.arkTxid)).toEqual([arkTxid]);
+
+        // Spent through checkpoints our claim leaf does not rebuild, or not spent at all (an
+        // indexer that ignores `pendingOnly`): neither proves the spend is ours, nor `P` public.
+        const foreign = pending.map((vtxo) => ({ ...vtxo, spentBy: "ee".repeat(32) }));
+        const unspent = pending.map((vtxo) => ({ ...vtxo, isSpent: false, spentBy: "" }));
+        for (const vtxos of [foreign, unspent]) {
+            await expect(
+                findPendingClaims(operator, indexerOf(vtxos, stored), { contract }),
+            ).resolves.toEqual([]);
+        }
     });
 
     it("leaves a pending spend whose checkpoints are not our claim's to its submitter", async () => {

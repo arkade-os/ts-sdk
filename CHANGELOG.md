@@ -130,10 +130,13 @@ style and have not been backfilled.
   rebuilt from the claim leaf under the operator's current or a deprecated key,
   the server's signatures carried over from the indexer's copy); a failed
   finalize ends the pass and is retried, so no deadline closes the swap first.
-  A pending spend that is not ours is left to its submitter. `onchain_receive`
-  is left as it was: its trader also holds the L1 refund, which finalizing
-  could double. `RfqSwapManagerCallbacks` gains an optional `finalizeClaim`;
-  without it the manager settles as before.
+  The claim is recorded as the swap's `claimTxid` before the finalize is sent,
+  so a lost response or a restart cannot put the rest of the lockup back behind
+  the value gate. A pending spend that is not ours is left to its submitter and
+  never counts as `P` being public. `onchain_receive` is left as it was: its
+  trader also holds the L1 refund, which finalizing could double.
+  `RfqSwapManagerCallbacks` gains optional `pendingClaims` (keyless) and
+  `finalizeClaim`; without both the manager settles as before.
   `readLockupFate` also reads `P` off the ark tx: arkd up to v0.9.23 stores a
   two-step claim's checkpoint without the condition witness until finalize, so
   a funder saw `unknown` for a claim whose `P` was already public. No breaking
