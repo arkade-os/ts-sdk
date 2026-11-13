@@ -46,6 +46,22 @@ export interface ExecutorDelegationDetails {
     coins: DelegatedOutput[];
 }
 
+/**
+ * An executor request that failed. `status` is the HTTP status when the service answered, and
+ * undefined when the request never reached it or got an answer that is not the service's. A
+ * 404 from `getDelegation` means the service does not know the watch: the wallet ends it, once
+ * it checked the service holds the watch's keys.
+ */
+export class ExecutorRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status?: number,
+    ) {
+        super(message);
+        this.name = "ExecutorRequestError";
+    }
+}
+
 export interface ExecutorProvider {
     getInfo(): Promise<ExecutorInfo>;
     listTemplates(): Promise<ExecutorTemplate[]>;
@@ -115,7 +131,15 @@ export class RestExecutorProvider implements ExecutorProvider {
         const url = this.endpoint(`/v1/delegation?address=${encodeURIComponent(address)}`);
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
-            throw await failure(response, "get delegation");
+            const body = await response.text();
+            // An unrouted path 404s with the same gRPC code as an unknown watch; only the
+            // message differs. Any other 404 is not the service saying the watch is over.
+            const status =
+                response.status === 404 && !isWatchNotFound(body) ? undefined : response.status;
+            throw new ExecutorRequestError(
+                `Failed to get Executor delegation (${response.status}): ${body}`,
+                status,
+            );
         }
         const data: unknown = await response.json();
         if (!isObject(data)) {
@@ -128,8 +152,20 @@ export class RestExecutorProvider implements ExecutorProvider {
     }
 }
 
-async function failure(response: Response, what: string): Promise<Error> {
-    return new Error(`Failed to ${what}: ${await response.text()}`);
+async function failure(response: Response, what: string): Promise<ExecutorRequestError> {
+    return new ExecutorRequestError(
+        `Failed to ${what} (${response.status}): ${await response.text()}`,
+        response.status,
+    );
+}
+
+function isWatchNotFound(body: string): boolean {
+    try {
+        const data: unknown = JSON.parse(body);
+        return isObject(data) && data.message === "delegation not found";
+    } catch {
+        return false;
+    }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
