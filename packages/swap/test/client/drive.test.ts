@@ -417,6 +417,19 @@ describe("the v1 read-through", () => {
         expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
         await h.drive.dispose();
     });
+
+    it("restores the other swaps past a live v1 onchain_receive row", async () => {
+        const removed = legacySend({ rfqId: "rfq-gone", kind: "onchain_receive" } as never);
+        const h = await build({
+            records: [signable({ fundingTxid: "aa".repeat(32) })],
+            legacy: [removed],
+            vtxos: unspent(),
+        });
+
+        expect(h.drive.swap("q1")?.outcome).toBe("funded");
+        expect(await h.repository.getSwapRecord("rfq-gone")).toBeUndefined();
+        await h.drive.dispose();
+    });
 });
 
 describe("v1 corridor adoption", () => {
@@ -653,6 +666,25 @@ describe("the lifecycle", () => {
         expect(drive.swap("junk")).toBeUndefined();
         expect(drive.swap("bad-terms")).toBeUndefined();
         await drive.dispose();
+    });
+
+    it.each([
+        ["live", "funded"],
+        ["terminal", "settled"],
+    ])("restores the other swaps past a stored %s onchain_receive record", async (_case, state) => {
+        const removed = {
+            ...signable({ id: "gone", rfqId: "rfq-gone", fundingTxid: "bb".repeat(32) }),
+            kind: "onchain_receive",
+            state,
+        } as unknown as SwapRecord;
+        const h = await build({
+            records: [removed, signable({ fundingTxid: "aa".repeat(32) })],
+            vtxos: unspent(),
+        });
+
+        expect(h.drive.swap("q1")?.outcome).toBe("funded");
+        expect(h.drive.swap("gone")).toBeUndefined();
+        await h.drive.dispose();
     });
 
     it("does not arm when the restore finds no live work", async () => {
@@ -909,12 +941,12 @@ describe("the stream", () => {
 
 describe("configuration, not recovery", () => {
     it("names exactly the sites that describe configuration rather than a swap", () => {
-        // Eight messages from four block sites: no claim callback, no L1 claim
-        // callback, no refund callback or auto-actions off, and the same pair
-        // for the L1 refund. Every other block site says something about the
-        // SWAP — an exited lockup, an underfunded one, a key this wallet does
-        // not hold — and stays `needs_recovery` in every mode.
-        expect(RFQ_CONFIGURATION_REFUSALS).toHaveLength(8);
+        // Five messages from three block sites: no claim callback, no L1 claim
+        // callback, and no refund callback or auto-actions off. Every other
+        // block site says something about the SWAP — an exited lockup, an
+        // underfunded one, a key this wallet does not hold — and stays
+        // `needs_recovery` in every mode.
+        expect(RFQ_CONFIGURATION_REFUSALS).toHaveLength(5);
         for (const reason of RFQ_CONFIGURATION_REFUSALS) {
             expect(reason).toMatch(/wired|disabled/);
         }

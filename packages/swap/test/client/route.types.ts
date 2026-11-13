@@ -27,11 +27,12 @@ export const onchainBtc: Ep<"onchain"> = {
     instrument: wallet,
 };
 
-// The five implemented routes are representable.
+// The four implemented routes are representable.
 export const assetSwap: Route = { give: arkadeBtc, take: arkadeBtc };
 export const lightningSend: Route = { give: arkadeBtc, take: lightningBtc };
 export const lightningReceive: Route = { give: lightningBtc, take: arkadeBtc };
 export const onchainSend: Route = { give: arkadeBtc, take: onchainBtc };
+// @ts-expect-error onchain -> arkade is not an implemented route
 export const onchainReceive: Route = { give: onchainBtc, take: arkadeBtc };
 
 const lightningToOnchain = { give: lightningBtc, take: onchainBtc };

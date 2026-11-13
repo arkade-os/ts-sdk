@@ -168,6 +168,37 @@ describe("the default chain source's adapter", () => {
             expect(await chain.getSpendingTx(FUNDING_TXID, 0, PK_SCRIPT)).toBe(null);
         });
 
+        it("answers null for a funding the backend no longer has, as after a fee bump", async () => {
+            const chain = chainSourceOver(
+                backendOver({
+                    getTxOutspends: async () => {
+                        throw new Error("Failed to get transaction outspends");
+                    },
+                    getTransactions: async () => [],
+                }),
+                NETWORK,
+            );
+            expect(await chain.getSpendingTx(FUNDING_TXID, 0, PK_SCRIPT)).toBe(null);
+        });
+
+        it("still fails the lookup for a funding the backend knows", async () => {
+            const chain = chainSourceOver(
+                backendOver({
+                    getTxOutspends: async () => {
+                        throw new Error("Failed to get transaction outspends");
+                    },
+                    getTransactions: async () =>
+                        [
+                            { txid: FUNDING_TXID, vin: [], vout: [] },
+                        ] as unknown as ExplorerTransaction[],
+                }),
+                NETWORK,
+            );
+            await expect(chain.getSpendingTx(FUNDING_TXID, 0, PK_SCRIPT)).rejects.toThrow(
+                "Failed to get transaction outspends",
+            );
+        });
+
         it("answers null for an unspent outpoint", async () => {
             const chain = chainSourceOver(
                 backendOver({ getTxOutspends: async () => [{ spent: false }] }),

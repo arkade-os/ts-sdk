@@ -25,13 +25,12 @@ import type { SwapPolicy } from "./policy";
 import type { PinnedAmount, QuoteInput, ResolvedEndpoint, RouteResolution } from "./quote";
 import type { Instrument, Route } from "./route";
 
-/** The five implemented corridor pairs, spelled as the route union spells them. */
+/** The four implemented corridor pairs, spelled as the route union spells them. */
 const SUPPORTED_PAIRS = [
     "arkade->arkade",
     "arkade->lightning",
     "lightning->arkade",
     "arkade->onchain",
-    "onchain->arkade",
 ] as const;
 
 type SupportedPair = (typeof SUPPORTED_PAIRS)[number];

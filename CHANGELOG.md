@@ -87,6 +87,20 @@ style and have not been backfilled.
   at the confirmation height minus one and at the tip, or seconds-locked
   coins never read as expired.
 
+- **`@arkade-os/swap` drops the `onchain -> arkade` corridor.** The solver no
+  longer quotes `onchain:BTC->arkade:BTC`; non-interactive boarding replaces
+  it. `client.receive({ via: "onchain" })` and `client.quote()` on that route
+  now throw `UnsupportedRoute`, and a stored `onchain_receive` record no longer
+  restores. `@arkade-os/swap/protocol` no longer exports `requestOnchainReceive`,
+  `deriveOnchainReceive`, `onchainReceiveRequest`, `ONCHAIN_RECEIVE_PAIR`,
+  `onchainReceiveProfile`, `OnchainReceiveProfile`, `OnchainReceiveSwap`,
+  `ReceiveLockupSwap` (use `LightningReceiveSwap`), `nextOnchainReceiveAction`,
+  `OnchainReceiveAction` or `OnchainReceiveNeedsChainSource`. The manager's
+  `refundOnchain` callback and action, the three L1-refund
+  `RFQ_CONFIGURATION_REFUSAL` reasons, and the `corridors.onchain.refund`
+  override are gone. `assertFundable`'s `onchain.direction` is removed: the
+  timelock-order gate always applies.
+
 - **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
   `scope`.** A custom `ContractRepository` must persist and round-trip
   `Contract.scope`, filter on it in `getContractsPage`, and read a row without
@@ -108,6 +122,15 @@ style and have not been backfilled.
   helper. Type-level only, non-breaking.
 
 ### Bug Fixes
+
+- **An onchain send keeps bumping its L1 claim past other outputs at the HTLC
+  address.** `classifyOnchainHtlc` judged the phase by the largest output at
+  the script, so an output paid there after the claim (even an unconfirmed
+  one) hid the spent fill: the claim was never fee-bumped or re-published, and
+  a claim stuck past `htlcLocktime` could be replaced by the solver's refund
+  after `P` was public. It now reads the recorded funding's spend first, and
+  `RfqSwapManager` pins `funding` to the outpoint its claim spent rather than
+  the first output it saw, which a replaced fill left stale.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's

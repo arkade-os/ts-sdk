@@ -95,7 +95,7 @@ const MARKET: CardMarketRef = {
 
 /** A v2 corridor record, as `accept()` writes one. */
 export const corridorRecord = (over: Partial<CorridorSwapRecord> = {}): CorridorSwapRecord => {
-    const receive = over.kind === "lightning_receive" || over.kind === "onchain_receive";
+    const receive = over.kind === "lightning_receive";
     const script = receive ? RECEIVE_LOCKUP : SEND_LOCKUP;
     return {
         id: "q1",
