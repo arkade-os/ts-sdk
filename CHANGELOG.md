@@ -1479,6 +1479,36 @@ style and have not been backfilled.
   round trips, plus a fetch of every other transaction at an address that
   received more than one deposit. Output is unchanged.
 
+### Internal
+
+- **Dev-tooling dependency overrides raised past every high and critical
+  advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
+  development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and
+  `async-storage` peer installs, never in the SDK's runtime `dependencies`.
+  The `pnpm-workspace.yaml` overrides for `@xmldom/xmldom`, `node-forge`,
+  `vite`, `brace-expansion`, `shell-quote`, `js-yaml` and `markdown-it` now
+  sit at the patched floors, and new ones cover `tinypool` (prototype-pollution
+  RCE gadget, pulled in by `vitest`), `image-size`, `browserslist`,
+  `compression`, `zod`, `nanoid` and `source-map-js`. `pnpm audit --audit-level high` now
+  reports none. Published packages are unchanged.
+- **`vitest` and `@vitest/coverage-v8` move to 4.1.12.** Two moderate
+  advisories on `vitest` and `@vitest/mocker` (path traversal and code injection
+  through an unauthenticated manual mock) are fixed only from 4.1.11 on. The
+  move also retires the `tinypool` override, since 4.x no longer depends on
+  `tinypool`. One `syncOnchain` test now searches the `console.warn` calls
+  instead of reading the first, because a background sync left over from the
+  previous test can warn into the same spy, and six test files have type
+  annotations adjusted for vitest 4's stricter mock typings. No source change.
+- **Overrides cleaned up and an audit gate added to CI.** `markdown-it` is
+  capped below 15, because the `>=14.3.3` floor resolved to 15, which
+  needs `linkify-it` 6 and crashed `typedoc`. `minimatch` moves to 11 for every
+  consumer except `typedoc`, which calls `matchOne`, removed in 11, so it keeps
+  10.x. That leaves one moderate advisory on `minimatch` with no fix reachable
+  through `typedoc`. `glob` 13 moves to 14. The `zod` override is scoped to
+  `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
+  audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
+  high` and fails on any new high or critical advisory.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes

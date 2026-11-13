@@ -403,7 +403,9 @@ describe("EsploraProvider.watchAddresses", () => {
 
             expect(callback).not.toHaveBeenCalled();
             expect(
-                warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
+                warn.mock.calls.some((c: unknown[]) =>
+                    /may not have been reported/i.test(String(c[0])),
+                ),
             ).toBe(true);
         });
 
@@ -699,7 +701,9 @@ describe("EsploraProvider.watchAddresses", () => {
 
             expect(callback).not.toHaveBeenCalled();
             expect(
-                warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
+                warn.mock.calls.some((c: unknown[]) =>
+                    /may not have been reported/i.test(String(c[0])),
+                ),
             ).toBe(true);
         });
 
