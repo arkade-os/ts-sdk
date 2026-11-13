@@ -70,7 +70,7 @@ import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
-import { offerGenerationFor } from "./program";
+import { ASSET_SWAP_COVENANT_VERSIONS, ASSET_SWAP_V2, offerGenerationFor } from "./program";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -148,6 +148,7 @@ export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded",
 
 export const RFQ_REFUSAL_ERROR_CODES = [
     "amount_side_unsupported",
+    "covenant_version_unsupported",
     "exact_out_unsupported",
     "invalid_amount",
     "invalid_payout_address",
@@ -738,6 +739,28 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
         );
     }
     return payload as RfqQuote;
+};
+
+/** A pre-negotiation solver's strict schema refuses `covenant_versions` with no error code;
+ * asked again without it, it quotes the baseline covenant. */
+export const requestCovenantQuote = async (
+    transport: RfqTransport,
+    request: Record<string, unknown>,
+): Promise<RfqQuote> => {
+    try {
+        return await transport.requestQuote(request);
+    } catch (error) {
+        if (
+            !(error instanceof SwapRefusal) ||
+            error.reason !== "unsupported_payload" ||
+            error.errorCode !== undefined ||
+            !("covenant_versions" in request)
+        ) {
+            throw error;
+        }
+        const { covenant_versions: _, ...baseline } = request;
+        return transport.requestQuote(baseline);
+    }
 };
 
 /** The pair of a request we built, when it named one. */
@@ -1407,6 +1430,8 @@ export async function requestArkadeSwap(
         emulatorPubkey?: string;
         /** Canonical Arkade payout destination; the maker signing key stays this wallet's. */
         receiveAddress?: string;
+        /** Covenants to advertise, most preferred first; the quote's choice must be one of them.
+         * Defaults to every covenant this build derives. */
         covenantVersions?: readonly string[];
         now?: number;
     },
@@ -1457,7 +1482,9 @@ export async function requestArkadeSwap(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
     );
-    const quote = await transport.requestQuote(
+    const covenantVersions = params.covenantVersions ?? ASSET_SWAP_COVENANT_VERSIONS;
+    const quote = await requestCovenantQuote(
+        transport,
         arkadeSwapRequest({
             rfqId,
             ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
@@ -1466,9 +1493,7 @@ export async function requestArkadeSwap(
             amountSide,
             makerPkScript,
             makerPublicKey,
-            ...(params.covenantVersions !== undefined
-                ? { covenantVersions: params.covenantVersions }
-                : {}),
+            covenantVersions,
         }),
     );
     if (quote.pair !== pair) {
@@ -1503,15 +1528,13 @@ export async function requestArkadeSwap(
             );
         }
     }
-    if (
-        quote.covenant_version !== undefined &&
-        params.covenantVersions !== undefined &&
-        !params.covenantVersions.includes(quote.covenant_version)
-    ) {
+    const covenant = quote.covenant_version ?? ASSET_SWAP_V2;
+    if (!covenantVersions.includes(covenant)) {
         throw new Error(
-            `solver chose covenant ${quote.covenant_version}, not one of ${params.covenantVersions.join(", ")}`,
+            `solver chose covenant ${covenant}, not one of ${covenantVersions.join(", ")}`,
         );
     }
+    const generation = offerGenerationFor(covenant);
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
         ...(info === undefined ? {} : { info }),
@@ -1520,11 +1543,7 @@ export async function requestArkadeSwap(
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
-        // Steers even a request that advertised nothing, so old solvers keep working;
-        // verifyOfferAddress below is what makes an unasked-for choice safe.
-        ...(quote.covenant_version !== undefined
-            ? { generation: offerGenerationFor(quote.covenant_version) }
-            : {}),
+        generation,
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);

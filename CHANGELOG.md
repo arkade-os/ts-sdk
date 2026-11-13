@@ -25,25 +25,18 @@ style and have not been backfilled.
   key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
   keep the old key on disk.
 
-- **`@arkade-os/swap`: a newly derived offer address changes.** `fulfill` now
-  pays `$makerWP` on the output at the spending input's index, so the same
-  leaf can sit in a batch where input i is paid at output i. A one-deposit
-  fill is unchanged: the deposit stays input 0 and the maker payout stays
-  output 0. An offer that already carries a `swapPkScript` from the previous
-  tree still compiles that tree, so cancel, fill, classify and restore keep
-  rebuilding the address it was funded at. v0 offer rows migrate onto that
-  same previous tree.
 - **`@arkade-os/swap`: a newly derived offer address changes.** The settlement
   leaf is now the compiler artifact `asset-swap` or `sats-swap`
   (`contracts/*.ark`). `fulfill` pays `receiver` on the output at the spending
   input's index, so the same leaf can sit in a batch where input i is paid at
-  output i. The contract does not describe how an intent and a solver meet;
-  the RFQ flow still does that and only supplies the constructor args. A
-  one-deposit fill is unchanged: the deposit stays input 0 and the payout
-  stays output 0. An offer that already carries a `swapPkScript` from the
-  previous tree still compiles that tree, so cancel, fill, classify and
+  output i. A one-deposit fill is unchanged: the deposit stays input 0 and the
+  payout stays output 0. An offer that already carries a `swapPkScript` from
+  the previous tree still compiles that tree, so cancel, fill, classify and
   restore keep rebuilding the address it was funded at. v0 offer rows migrate
-  onto that same previous tree.
+  onto that same previous tree. The deprecated `swapPrograms` export of
+  `@arkade-os/swap/protocol` now holds the new programs; the previous ones are
+  `legacySwapPrograms`. A solver that only fills the previous tree no longer
+  fills a fresh offer: derive with `generation: "previous"` for it.
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already
@@ -116,6 +109,15 @@ style and have not been backfilled.
   `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
 ### Features
+
+- **`@arkade-os/swap`: asset RFQ negotiates the covenant version.**
+  `requestArkadeSwap` and the `SwapClient` asset quote send `covenant_versions`
+  (by default `ASSET_SWAP_COVENANT_VERSIONS`, `asset-swap-v3` first); the
+  quote's `covenant_version` picks the tree the offer is derived on. A quote
+  naming none is the baseline `asset-swap-v2`. A solver that refuses the field
+  with a bare `unsupported_payload` is asked once more without it. A choice
+  outside the advertised list, or a version this build cannot derive, is
+  refused before funding.
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.

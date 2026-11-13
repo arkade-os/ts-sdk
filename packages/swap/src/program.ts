@@ -15,7 +15,7 @@ type ContractArtifact = Parameters<typeof arkade.programFromArtifact>[0];
  */
 export const swapPrograms: Record<
     "wantAsset" | "wantBtc",
-    ReturnType<typeof arkade.programFromArtifact>
+    ReturnType<typeof arkade.parseArtifact>
 > = {
     wantAsset: arkade.programFromArtifact(assetSwapArtifact as ContractArtifact),
     wantBtc: arkade.programFromArtifact(satsSwapArtifact as ContractArtifact),
@@ -27,7 +27,8 @@ export const legacySwapPrograms: typeof swapPrograms = {
     wantBtc: arkade.parseArtifact(wantBtcProgramV1 as Artifact),
 };
 
-/** Covenant version ids for the arkade↔arkade corridor; mirror the solver's RFQ vocabulary. */
+/** Covenant version ids for the arkade↔arkade corridor; mirror the solver's RFQ vocabulary.
+ * One id covers both trees: `asset-swap` and `sats-swap` move between versions together. */
 export const ASSET_SWAP_V3 = "asset-swap-v3";
 export const ASSET_SWAP_V2 = "asset-swap-v2";
 
@@ -35,6 +36,10 @@ export const ASSET_SWAP_V2 = "asset-swap-v2";
  * `covenantVersions` should carry. Keep in step with `offerGenerationFor`. */
 export const ASSET_SWAP_COVENANT_VERSIONS = [ASSET_SWAP_V3, ASSET_SWAP_V2] as const;
 
-// Unknown or absent maps to `previous`: the covenant every pre-negotiation solver serves.
-export const offerGenerationFor = (covenantVersion: string | undefined): "current" | "previous" =>
-    covenantVersion === ASSET_SWAP_V3 ? "current" : "previous";
+/** Absent is the baseline: a solver names no version unless the request advertised a list.
+ * An id this build cannot derive throws rather than fall back. */
+export const offerGenerationFor = (covenantVersion: string | undefined): "current" | "previous" => {
+    if (covenantVersion === ASSET_SWAP_V3) return "current";
+    if (covenantVersion === undefined || covenantVersion === ASSET_SWAP_V2) return "previous";
+    throw new Error(`unknown covenant ${covenantVersion}`);
+};

@@ -27,6 +27,7 @@ import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
+import { ASSET_SWAP_COVENANT_VERSIONS, ASSET_SWAP_V2, offerGenerationFor } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
@@ -49,6 +50,7 @@ import {
     offerTermsFromQuote,
     onchainReceiveRequest,
     onchainSendRequest,
+    requestCovenantQuote,
     unilateralClaimDelay,
     verifyOfferAddress,
     type LightningReceiveContractParams,
@@ -383,8 +385,9 @@ const quoteArkadeAsset = async (
         amountSide: toRfqAmountSide(pinned.on),
         makerPkScript: receivePkScript,
         makerPublicKey: maker.publicKey,
+        covenantVersions: ASSET_SWAP_COVENANT_VERSIONS,
     });
-    const wire = await input.transport.requestQuote({
+    const wire = await requestCovenantQuote(input.transport, {
         ...request,
         profile: {
             ...(request.profile as Record<string, unknown>),
@@ -465,6 +468,7 @@ const quoteArkadeAsset = async (
         maker,
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         info: input.info,
+        generation: offerGenerationFor(wire.covenant_version ?? ASSET_SWAP_V2),
     });
     // Compare-only, and never the other way round: the address the trader funds
     // is the one the trader derived, and a solver naming another one is refused
