@@ -9,6 +9,9 @@
  * is a stub that quotes back the trader's own derivation (as in `rfqVerbs.test.ts`); arkd's CLI
  * wallet funds the lockup in its place.
  *
+ * The second case is the crash that loses the claim's txid: a claim lands, the pass dies before
+ * its save, and the lockup is left with a spent output carrying `P` beside a live one.
+ *
  * `rfq` prefix: the seconds-typed `swap-rfq` stack (see `.env.regtest.rfq`).
  */
 import { beforeAll, describe, expect, it } from "vitest";
@@ -49,6 +52,8 @@ const arkdExec = "docker exec -t arkd";
 
 /** What the trader receives on Arkade, so what the lockup must carry. */
 const RECEIVE_SATS = 2_000;
+/** A second funding of the same lockup, well under `RECEIVE_SATS`. */
+const TOP_UP_SATS = 600;
 /** What the payer is invoiced; the stub's spread is the difference. */
 const INVOICE_SATS = 2_010;
 
@@ -262,5 +267,82 @@ describe("a claim arkd accepted but never finalized (regtest)", () => {
         });
 
         await client[Symbol.asyncDispose]();
+    }, 240_000);
+
+    it("claims the rest of a partly claimed lockup after the claim's txid was lost", async () => {
+        const base = walletOperator(wallet);
+        const repository = new InMemoryAssetSwapRepository();
+        let before: CorridorSwapRecord | undefined;
+        let id!: ReturnType<typeof quoteIdOfSwapId>;
+        const claimsOf = (list: string[]): SwapOperator => ({
+            getInfo: base.getInfo,
+            // The claim goes out mid-pass, before the pass saves anything: the record as it
+            // stands here is what a crash at this point leaves on disk.
+            submitTx: async (...args) => {
+                before ??= (await repository.getSwapRecord(id)) as CorridorSwapRecord;
+                const result = await base.submitTx(...args);
+                list.push(result.arkTxid);
+                return result;
+            },
+            finalizeTx: base.finalizeTx,
+        });
+        const open = (operator: SwapOperator) =>
+            createSwapClient({
+                wallet,
+                repository,
+                operator,
+                discovery: { snapshot: [CARD] },
+                transportFor: () => stubTransport(),
+            });
+        const outcomeOf = async (client: ReturnType<typeof open>) =>
+            (await client.swaps()).find((swap) => quoteIdOfSwapId(swap.id) === id)?.outcome;
+        const balanceBefore = (await wallet.getBalance()).available;
+
+        const firstClaims: string[] = [];
+        const first = open(claimsOf(firstClaims));
+        const request = await first.receive({ amount: BigInt(RECEIVE_SATS), via: "lightning" });
+        id = quoteIdOfSwapId(request.id);
+        const stored = (await repository.getSwapRecord(id)) as CorridorSwapRecord;
+        execCommand(
+            `${arkdExec} ark send --to ${stored.lockupAddress} --amount ${RECEIVE_SATS} --password secret`,
+        );
+        await waitFor(async () => (await outcomeOf(first)) === "claimed", {
+            what: "the first claim to land and settle",
+        });
+        expect(firstClaims).toHaveLength(1);
+        await first[Symbol.asyncDispose]();
+
+        // The crash: everything the pass wrote after the claim went out is gone.
+        expect(before).toBeDefined();
+        const lost = { ...before!, profile: { ...before!.profile } } as CorridorSwapRecord;
+        delete (lost.profile as Record<string, unknown>).claimTxid;
+        await repository.saveSwapRecord(lost);
+
+        // Another funding lands on the lockup the claim already spent from, and it is far below
+        // the agreed amount: behind the value gate it would never be claimed.
+        execCommand(
+            `${arkdExec} ark send --to ${stored.lockupAddress} --amount ${TOP_UP_SATS} --password secret`,
+        );
+        await waitFor(
+            async () =>
+                (await indexer.getVtxos({ scripts: [stored.lockupPkScript] })).vtxos.length === 2,
+            { what: "the top-up to reach the indexer" },
+        );
+
+        const secondClaims: string[] = [];
+        const second = open(claimsOf(secondClaims));
+        await second.ready;
+        await waitFor(async () => (await outcomeOf(second)) === "claimed", {
+            what: "the top-up to be claimed with the gate off",
+        });
+        expect(secondClaims).toHaveLength(1);
+        expect(secondClaims[0]).not.toBe(firstClaims[0]);
+        await waitFor(
+            async () =>
+                (await wallet.getBalance()).available >= balanceBefore + RECEIVE_SATS + TOP_UP_SATS,
+            { what: "both claims' sats to be spendable" },
+        );
+
+        await second[Symbol.asyncDispose]();
     }, 240_000);
 });
