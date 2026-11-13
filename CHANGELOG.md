@@ -102,6 +102,7 @@ style and have not been backfilled.
 
 ### Features
 
+- **Delegated receives can add an authenticated input predicate.** Set the corridor's `executor.predicate` to opt into the compatible predicate template, identified by `EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID`. The encrypted terms commit to the exact program carried in packet TLV 4, the record the predicate template reads. The engine enforces its restricted input-only profile in addition to receiver and minimum payout checks; fixed and preimage-only packet layouts remain unchanged.
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.

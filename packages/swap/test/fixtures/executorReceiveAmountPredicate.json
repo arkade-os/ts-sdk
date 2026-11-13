@@ -1,0 +1,13 @@
+{
+    "description": "Public test key material; sealed receive terms with an authenticated input predicate",
+    "templateId": "9175f4917d1c2e90c4a70d8036e49679a94cef048860ea2f4f337c12ab68609a",
+    "preimage": "0707070707070707070707070707070707070707070707070707070707070707",
+    "receiverProgram": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+    "minimumAmount": "10000",
+    "recipientSecretKey": "0909090909090909090909090909090909090909090909090909090909090909",
+    "ephemeralKey": "1111111111111111111111111111111111111111111111111111111111111111",
+    "nonce": "0a0a0a0a0a0a0a0a0a0a0a0a",
+    "packet": "AQCfA081W9y3zAr3KO88zrlhXZBoS7Wyyl+FmrDwtwQHWHGqCgoKCgoKCgoKCgoKDhw1eyh4YdG+p98k3DJLIhO+uyH9wNU+Tlg80yhjgMAtsTnjPBJykWEVoeA8egrLLED2jHUeQ8Q5ROcQ47kBqYoDWi9IRWC+XBoyzoQ896NYg4pHsvPAnH8YoiMcxu15OM8Q0Tgi0vlMnJHnGn8xPGSkAwAhAlazKLMMi/WDniQFh0eHlAi9s2JB3JwufGGfqhKykglnBAAGzckC4C6i",
+    "predicate": "cdc902e02ea2",
+    "predicateHash": "42797b971682973aafaf2e47f13218d94bbdbbcc500316e201c9114d1f0b4482"
+}

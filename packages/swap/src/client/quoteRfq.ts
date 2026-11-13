@@ -23,7 +23,11 @@ import {
 } from "@arkade-os/sdk";
 import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { deepFreeze } from "../jointGraph";
-import { EXECUTOR_RECEIVE_TEMPLATE_ID, sealClaimPacket } from "../claimPacket";
+import {
+    EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID,
+    EXECUTOR_RECEIVE_TEMPLATE_ID,
+    sealClaimPacket,
+} from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
 import { BTC_ASSET_ID } from "../store";
@@ -285,8 +289,16 @@ const receivePacket = async (
     if (pinned.on !== "take") {
         throw new Error('delegated receive requires amountOn: "take" to seal the minimum payout');
     }
-    const templateId = executor?.templateId ?? EXECUTOR_RECEIVE_TEMPLATE_ID;
-    if (templateId === EXECUTOR_RECEIVE_TEMPLATE_ID && pinned.value < 1_000n) {
+    const templateId =
+        executor?.templateId ??
+        (executor?.predicate === undefined
+            ? EXECUTOR_RECEIVE_TEMPLATE_ID
+            : EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID);
+    if (
+        (templateId === EXECUTOR_RECEIVE_TEMPLATE_ID ||
+            templateId === EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID) &&
+        pinned.value < 1_000n
+    ) {
         throw new Error("the default executor receive template requires at least 1,000 sats");
     }
     return sealClaimPacket({
@@ -296,6 +308,7 @@ const receivePacket = async (
         receive: {
             receiverProgram: ArkAddress.decode(payoutAddress).pkScript.subarray(2),
             minimumAmount: pinned.value,
+            predicate: executor?.predicate,
         },
     });
 };

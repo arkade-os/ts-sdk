@@ -32,6 +32,10 @@ on the daemon; its ID is `EXECUTOR_RECEIVE_TEMPLATE_ID`. See
 and trust requirements. The template checks the sealed receiver and minimum
 against actual funding before disclosing the preimage. A payment makes no
 registration call to the executor.
+For an additional condition, set `executor.predicate` and install the
+[predicate template](https://github.com/arkade-os/executor/blob/68a0a2627952ef879a565c148f6202972c58afbe/pkg/template/testdata/offline_receive_predicate.json).
+See the public type above for its restricted program profile. This gates the
+daemon's action; other authorized spending paths remain available.
 Onchain receive also requires a solver offering that corridor; current
 [intent-solver main removed it](https://github.com/arkade-os/intent-solver/pull/292).
 

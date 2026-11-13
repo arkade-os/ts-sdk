@@ -26,11 +26,16 @@ export const EXECUTOR_CLAIM_TEMPLATE_ID =
 export const EXECUTOR_RECEIVE_TEMPLATE_ID =
     "290b7a4364950677c1bab1ae25f9f757da864a71e54eb2ad74b3c43133e57e17";
 
+/** Executor's receive template with an authenticated additional input predicate. */
+export const EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID =
+    "9175f4917d1c2e90c4a70d8036e49679a94cef048860ea2f4f337c12ab68609a";
+
 export interface SealedClaimPacket {
     /**
-     * Base64 TLV body: `0x01` ciphertext, `0x03` encryption key and, when bound, `0x04` amount. **This is what
-     * `claim_packet` carries.** The solver stamps it as Arkade extension packet `0x04`;
-     * the Executor matches on `0x03`, so the client alone chooses which Executor.
+     * Base64 TLV body: `0x01` ciphertext, `0x03` encryption key and, when set, `0x04`: the amount,
+     * or the predicate for a receive. **This is what `claim_packet` carries.** The solver stamps it
+     * as Arkade extension packet `0x04`; the Executor matches on `0x03`, so the client alone
+     * chooses which Executor.
      *
      * `0x02` arkade_script is deliberately absent: the covenant commits to
      * `taggedHash("ArkScriptHash", script)`, so only the funder's copy is guaranteed to
@@ -41,10 +46,16 @@ export interface SealedClaimPacket {
 
 export interface ClaimPacketInput {
     preimage: Uint8Array;
-    receive?: { receiverProgram: Uint8Array; minimumAmount: bigint };
+    receive?: {
+        receiverProgram: Uint8Array;
+        minimumAmount: bigint;
+        /** Public TLV `0x04` condition bytecode; 1..520 bytes in the restricted input-only profile.
+         * Excludes {@link ClaimPacketInput.minAmount}, which uses the same TLV. */
+        predicate?: Uint8Array;
+    };
     /** The Executor's encryption public key, 33-byte compressed (from its `/v1/info`). */
     encryptionPubkey: Uint8Array;
-    /** Template to open the packet; defaults to the matching preimage-only or receive template. */
+    /** Defaults to the matching template; custom templates must support the selected terms layout. */
     templateId?: string;
     /** Sats the funded lockup must carry for the Executor to claim it, as TLV `0x04` and in the
      * AEAD's additional data so a courier cannot strip it. Unset: unbound. */
@@ -86,6 +97,13 @@ export async function sealWithEntropy(
     ) {
         throw new Error("minAmount must be a bigint in [1, 2^64-1]");
     }
+    const predicate = input.receive?.predicate;
+    if (predicate !== undefined && (predicate.length === 0 || predicate.length > 520)) {
+        throw new Error("receive predicate must contain 1..520 bytes");
+    }
+    if (predicate !== undefined && minAmount !== undefined) {
+        throw new Error("minAmount and a receive predicate both use TLV 0x04");
+    }
     let plaintext = input.preimage;
     if (input.receive) {
         const { receiverProgram, minimumAmount } = input.receive;
@@ -96,6 +114,7 @@ export async function sealWithEntropy(
         plaintext = concatBytes(
             input.preimage,
             receiverProgram,
+            ...(predicate === undefined ? [] : [sha256(predicate)]),
             arkade.BigNum.encode(minimumAmount),
         );
     }
@@ -111,7 +130,11 @@ export async function sealWithEntropy(
         ephemeralPub,
         new TextEncoder().encode(
             input.templateId ??
-                (input.receive ? EXECUTOR_RECEIVE_TEMPLATE_ID : EXECUTOR_CLAIM_TEMPLATE_ID),
+                (predicate !== undefined
+                    ? EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID
+                    : input.receive
+                      ? EXECUTOR_RECEIVE_TEMPLATE_ID
+                      : EXECUTOR_CLAIM_TEMPLATE_ID),
         ),
         minAmount === undefined ? new Uint8Array() : amount,
     );
@@ -123,6 +146,7 @@ export async function sealWithEntropy(
                 tlv(TLV_CIPHERTEXT, concatBytes(ephemeralPub, nonce, sealed)),
                 tlv(TLV_ENCRYPTION_PUBKEY, input.encryptionPubkey),
                 minAmount === undefined ? new Uint8Array() : tlv(TLV_MIN_AMOUNT, amount),
+                ...(predicate === undefined ? [] : [tlv(TLV_PREDICATE, predicate)]),
             ),
         ),
     };
@@ -132,6 +156,8 @@ const TLV_CIPHERTEXT = 0x01;
 const TLV_ARKADE_SCRIPT = 0x02;
 const TLV_ENCRYPTION_PUBKEY = 0x03;
 const TLV_MIN_AMOUNT = 0x04;
+/** Same tag as {@link TLV_MIN_AMOUNT}: the predicate template reads TLV 4 as program bytes. */
+const TLV_PREDICATE = 0x04;
 
 const COMPRESSED_PUBKEY_LENGTH = 33;
 
