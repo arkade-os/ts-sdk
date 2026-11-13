@@ -255,6 +255,7 @@ describe("concurrentSpending", () => {
             },
             getBoardingUtxos: () => (Wallet.prototype as any).getBoardingUtxos.call(thisArg),
             lockedOutpoints: () => (Wallet.prototype as any).lockedOutpoints.call(thisArg),
+            liveDelegatedBoardingTrees: async () => new Set<string>(),
         };
         // The getter feeds the worker's cache and balances, so a settle's inputs stay listed.
         expect(await (Wallet.prototype as any).getBoardingUtxos.call(thisArg)).toEqual([

@@ -98,6 +98,40 @@ style and have not been backfilled.
 
 ### Features
 
+- **Non-interactive boarding through the Executor.** `executorProvider` on
+  `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
+  worker and its `INIT_WALLET`, or a `RestExecutorProvider`) gives the wallet a
+  `getExecutorManager()`. `registerBoarding({ renewalWindow, maxFee })` registers
+  the wallet's key under the Executor's `boarding` template, exit delays
+  defaulting to the operator's; the manager refuses an Executor on another
+  network or operator, or one that derives a different address. While the watch
+  is active, `getBoardingAddress()` answers the delegated boarding address: the
+  Executor boards every deposit there into the wallet's renewal contract while
+  the wallet is offline. A boarded coin is the wallet's own: it counts, spends
+  and renews like any other, incoming-funds subscribers hear of it, and the
+  wallet finds it from the key alone by registering again, which returns the
+  existing watch. `getAddress()` does not change. A watch registered without
+  `expiresAt` does not expire, and registering again does not change its expiry.
+
+- **Deposits waiting for the Executor are the wallet's boarding coins.** A
+  deposit at a delegated boarding address shows in `getBoardingUtxos`,
+  `getBoardingAddresses` and the boarding balance before the Executor boards it.
+  While its watch is active and unexpired, `settle()` and the periodic settle
+  leave it to the Executor; once the watch ends, the wallet boards it itself
+  through the owner's forfeit leaf. The boarding sweep exits it after its CSV
+  either way, and both boarding sweeps send to the wallet's own boarding
+  address, never back to the delegated one.
+
+- **The Executor's delegated contracts are a built-in contract type.**
+  `ExecutorContractHandler` (`type: "executor"`) derives the renewal and boarding
+  contracts of the Executor's default templates from the owner key, the
+  `DelegationParams` and the Executor's keys, so a restored wallet finds its
+  delegated coins without the service. It offers the owner's forfeit and exit
+  paths, never the emulator-enforced leaf the Executor spends with, and counts as
+  generic spending: coins the Executor boards are the wallet's own. The bundled
+  templates and their artifacts live under `script/executor/`;
+  `DefaultVtxo.Script` takes extra leaves after forfeit and exit.
+
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.

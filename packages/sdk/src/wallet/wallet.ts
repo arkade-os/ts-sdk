@@ -159,6 +159,7 @@ import {
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
+import type { ExecutorProvider } from "../providers/executor";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
@@ -177,6 +178,13 @@ import type {
 import { contractHandlers } from "../contracts/handlers";
 import { migrateLegacyUtxos, offchainSnapshot, onchainRows } from "../contracts/onchainCoins";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
+import { ExecutorContractHandler } from "../contracts/handlers/executor";
+import {
+    DELEGATION_EXPIRES_KEY,
+    DELEGATION_STATUS_KEY,
+    ExecutorManagerImpl,
+    type IExecutorManager,
+} from "./executor";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
@@ -247,6 +255,9 @@ import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./signingErrors";
+
+/** Contract types whose virtual outputs are the wallet's own. */
+const WALLET_CONTRACT_TYPES: readonly string[] = ["default", "delegate", "executor"];
 
 // Build per-input jobs for a proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
@@ -621,6 +632,8 @@ export interface BoardingUtxoGroup {
     /** CSV exit timelock decoded from THIS tapscript's exit leaf. */
     csvTimelock: RelativeTimelock;
     coins: ExtendedCoin[];
+    /** A live Executor boarding watch: the Executor boards these, settle leaves them alone. */
+    delegated?: true;
 }
 
 /**
@@ -894,6 +907,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly delegateProvider?: DelegateProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"],
         walletContractTimelocks?: RelativeTimelock[],
+        readonly executorProvider?: ExecutorProvider,
     ) {
         // Duplicates setupWalletConfig()'s network-mismatch check for callers bypassing create().
         if ("descriptor" in identity) {
@@ -1238,6 +1252,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             serverInfoSource,
             serverInfoLastOnlineAt,
             delegateProvider: config.delegateProvider,
+            executorProvider: config.executorProvider,
             walletContractTimelocks,
         };
     }
@@ -1277,6 +1292,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.delegateProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
+            setup.executorProvider,
         );
         wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
@@ -1314,8 +1330,84 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return this.arkAddress.encode();
     }
 
-    /** Returns the onchain boarding address used to move funds into Arkade. */
+    /**
+     * Returns the onchain boarding address used to move funds into Arkade: with an Executor
+     * configured and a boarding watch registered, the delegated boarding address, whose deposits
+     * the Executor boards into the wallet's renewal contract while the wallet is offline.
+     */
     async getBoardingAddress(): Promise<string> {
+        return (
+            (await this.delegatedBoardingAddress()) ??
+            this.boardingTapscript.onchainAddress(this.network)
+        );
+    }
+
+    /**
+     * The newest boarding watch for this wallet's key and current operator that is live, see
+     * {@link delegatedBoardingContracts}.
+     */
+    private async delegatedBoardingAddress(): Promise<string | undefined> {
+        if (!this.executorProvider) return undefined;
+        const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
+        const live = (await this.delegatedBoardingContracts()).find(
+            (c) => c.live && c.signer === server,
+        );
+        return live?.script.onchainAddress(this.network);
+    }
+
+    /**
+     * The Executor boarding contracts of this wallet's key, newest first. A watch is live while
+     * the Executor registered it as active and it has not expired: the Executor boards its
+     * deposits, so the wallet's own boarding leaves them alone. Read from the contract repository,
+     * so it follows registrations made through any wallet front-end.
+     */
+    private async delegatedBoardingContracts(): Promise<
+        { script: DefaultVtxo.Script; signer: string; live: boolean }[]
+    > {
+        const owner = hex.encode(await this.identity.xOnlyPublicKey());
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const rows = (await collectContracts(this.contractRepository, { type: ["executor"] }))
+            .filter((c) => c.params.template === "boarding")
+            .sort((a, b) => b.createdAt - a.createdAt);
+        const contracts: { script: DefaultVtxo.Script; signer: string; live: boolean }[] = [];
+        for (const c of rows) {
+            if (c.params.owner?.slice(2).toLowerCase() !== owner) continue;
+            try {
+                const script = ExecutorContractHandler.createScript(c.params);
+                if (hex.encode(script.pkScript) !== c.script) continue;
+                const expiresAt = c.metadata?.[DELEGATION_EXPIRES_KEY];
+                contracts.push({
+                    script,
+                    signer: toXOnlySignerHex(c.params.serverPubKey),
+                    live:
+                        c.metadata?.[DELEGATION_STATUS_KEY] === "active" &&
+                        !(
+                            typeof expiresAt === "number" &&
+                            expiresAt > 0 &&
+                            expiresAt <= nowSeconds
+                        ),
+                });
+            } catch (e) {
+                console.warn("Skipping malformed delegated contract", c.script, e);
+            }
+        }
+        return contracts;
+    }
+
+    /** Encoded tap trees of the live boarding watches, whose deposits the Executor boards. */
+    private async liveDelegatedBoardingTrees(): Promise<Set<string>> {
+        return new Set(
+            (await this.delegatedBoardingContracts())
+                .filter((c) => c.live)
+                .map((c) => hex.encode(c.script.encode())),
+        );
+    }
+
+    /**
+     * @internal The wallet's own boarding address, never the delegated one: where the boarding
+     * sweeps send coins, so a deposit swept off a delegated address does not land on it again.
+     */
+    ownBoardingAddress(): string {
         return this.boardingTapscript.onchainAddress(this.network);
     }
 
@@ -1922,6 +2014,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 console.warn("Skipping malformed boarding contract", c.script, e);
             }
         }
+        // Deposits at the Executor's boarding addresses are the wallet's until boarded: shown, and
+        // exited through the owner's leaf if the Executor never boards them.
+        for (const c of await this.delegatedBoardingContracts()) {
+            if (allowed.has(c.signer)) add(c.script);
+        }
         return [...byScript.values()];
     }
 
@@ -2045,39 +2142,51 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending or an
-     * unresolved intent locks, for SDK picks. The getter itself lists them: callers that mirror it
+     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, an
+     * unresolved intent locks or a live Executor watch leaves to the Executor, for SDK picks. The getter itself lists them: callers that mirror it
      * (the worker's cache and broadcasts, balances) must not see a settle's inputs vanish, and then
      * stay gone if it fails.
      */
     async getSelectableBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const [utxos, locked] = await Promise.all([
+        const [utxos, locked, delegated] = await Promise.all([
             this.getBoardingUtxos(),
             this.lockedOutpoints(),
+            this.liveDelegatedBoardingTrees(),
         ]);
-        return excludeUnselectable(utxos, this._pendingSpendOutpoints, locked);
+        return excludeUnselectable(
+            delegated.size === 0
+                ? utxos
+                : utxos.filter((u) => !delegated.has(hex.encode(u.tapTree))),
+            this._pendingSpendOutpoints,
+            locked,
+        );
     }
 
     /**
      * @internal {@link getSelectableBoardingUtxos} for every boarding address history shows,
-     * current and deprecated signers, grouped by signer. Only the boarding sweep reads it: a
-     * unilateral exit needs no operator, so it recovers coins that `settle` must not take.
+     * current and deprecated signers, grouped by signer. The periodic settle takes the current
+     * signer's groups except `delegated` ones; the boarding sweep takes them all: a unilateral
+     * exit needs no operator, so it recovers coins that `settle` must not take.
      */
     async getSelectableBoardingUtxoGroups(): Promise<BoardingUtxoGroup[]> {
         // A deprecated signer's address is recovery-only, so a failed lookup waits for the next
         // poll rather than aborting the settle and renewal that share it.
-        const [groups, locked] = await Promise.all([
+        const [groups, locked, delegated] = await Promise.all([
             this.getBoardingUtxosForSigners(
                 this.watchedBoardingSigners(),
                 new Set(this._deprecatedSigners.keys()),
             ),
             this.lockedOutpoints(),
+            this.liveDelegatedBoardingTrees(),
         ]);
         // A superset of what `getBoardingUtxos` fetches, so the balance flag stays accurate.
         this.boardingLoaded = true;
         return groups.map((group) => ({
             ...group,
             coins: excludeUnselectable(group.coins, this._pendingSpendOutpoints, locked),
+            ...(delegated.size > 0 && delegated.has(hex.encode(group.tapscript.encode()))
+                ? { delegated: true as const }
+                : {}),
         }));
     }
 
@@ -2209,7 +2318,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 if (!isContractVtxoEvent(event)) {
                     return;
                 }
-                if (event.contract.type !== "default" && event.contract.type !== "delegate") {
+                if (!WALLET_CONTRACT_TYPES.includes(event.contract.type)) {
                     return;
                 }
 
@@ -2266,12 +2375,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Get all pkScript hex strings for the wallet's own addresses
-     * (both delegate and non-delegate, current and historical).
+     * (default, delegate and executor, current and historical).
      */
     async getWalletScripts(): Promise<string[]> {
         const manager = await this.getContractManager();
         const contracts = await manager.getContracts({
-            type: ["default", "delegate"],
+            type: [...WALLET_CONTRACT_TYPES],
         });
         return contracts.map((c) => c.script);
     }
@@ -2285,15 +2394,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const manager = await this.getContractManager();
         const contracts = await manager.getContracts({
-            type: ["default", "delegate"],
+            type: [...WALLET_CONTRACT_TYPES],
         });
         for (const contract of contracts) {
             if (map.has(contract.script)) continue;
+            // boarding deposits are onchain, not virtual outputs
+            if (contract.type === "executor" && contract.params.template !== "renewal") continue;
             const handler = contractHandlers.get(contract.type);
             if (handler) {
                 const script = handler.createScript(contract.params) as
                     | DefaultVtxo.Script
                     | DelegateVtxo.Script;
+                if (
+                    contract.type === "executor" &&
+                    hex.encode(script.pkScript) !== contract.script
+                ) {
+                    console.warn(
+                        "Skipping delegated contract that no longer derives from its params",
+                        contract.script,
+                    );
+                    continue;
+                }
                 map.set(contract.script, script);
             }
         }
@@ -2613,6 +2734,7 @@ export class Wallet
 
     override readonly identity: Identity;
     private readonly _delegateManager?: IDelegateManager;
+    private readonly _executorManager?: IExecutorManager;
     private _vtxoManager?: VtxoManager;
     private _vtxoManagerInitializing?: Promise<VtxoManager>;
 
@@ -3554,6 +3676,7 @@ export class Wallet
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
+        executorProvider?: ExecutorProvider,
         /** @see WalletConfig.oneShotSubmit */
         readonly oneShotSubmit: boolean = true,
     ) {
@@ -3572,6 +3695,7 @@ export class Wallet
             delegateProvider,
             watcherConfig,
             walletContractTimelocks,
+            executorProvider,
         );
         this.identity = identity;
 
@@ -3579,6 +3703,9 @@ export class Wallet
             settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
         this._delegateManager = delegateProvider
             ? new DelegateManagerImpl(delegateProvider, arkProvider, identity)
+            : undefined;
+        this._executorManager = executorProvider
+            ? new ExecutorManagerImpl(executorProvider, this)
             : undefined;
         this._serverUnrollScript = serverUnrollScript;
         this._receiveRotator = receiveRotator;
@@ -3792,6 +3919,7 @@ export class Wallet
                     ? { minSeconds: config.minBatchExpirySeconds }
                     : {}),
             },
+            setup.executorProvider,
             config.oneShotSubmit,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
@@ -3891,6 +4019,7 @@ export class Wallet
             this.delegateProvider,
             this.watcherConfig,
             this.walletContractTimelocks,
+            this.executorProvider,
         );
         this.copySyncOverlapTo(readonly);
         // Carry the cached deprecated-signer set (with cutoffs) so the clone's
@@ -3903,6 +4032,11 @@ export class Wallet
     /** Returns the delegate manager when delegation support is configured. */
     async getDelegateManager(): Promise<IDelegateManager | undefined> {
         return this._delegateManager;
+    }
+
+    /** Returns the Executor manager when an Executor is configured. */
+    async getExecutorManager(): Promise<IExecutorManager | undefined> {
+        return this._executorManager;
     }
 
     /**
