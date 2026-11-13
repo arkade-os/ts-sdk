@@ -249,6 +249,8 @@ describe("watchExecutorContracts", () => {
             vectors.boarding.pkScript,
         ]);
         expect(contracts[0].address).toBe(vectors.renewal.address);
+        // a restore cannot tell a companion from a registered watch: it claims neither
+        expect(contracts.map((c) => c.metadata?.delegationStatus)).toEqual([undefined, undefined]);
         await expect(watchExecutorContracts(wallet, keys, delegation)).resolves.toHaveLength(2);
         const { boardingExitDelay: _, ...renewalOnly } = delegation;
         await expect(watchExecutorContracts(wallet, keys, renewalOnly)).resolves.toHaveLength(1);

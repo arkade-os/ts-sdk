@@ -376,6 +376,36 @@ style and have not been backfilled.
   path, is refused before anything is signed. The renewal's asset packet is
   built by `createAssetPacket`, as a wallet send's is.
 
+- **`IExecutorManager.refreshStatus` re-reads the delegated watches from the
+  service.** The service alone knows whether a watch is still live, so the
+  wallet asks it and persists the answer on the contract rows: a watch the
+  service ended stops being the wallet's default address, and a watch the
+  service does not know anymore is over, whatever it was. A watch the service
+  cannot be reached for keeps the status it had — a network failure never
+  moves the wallet's addresses, and the watch's expiry is the hard bound. The
+  registration now also persists the address the service knows the watch by
+  (`delegationAddress`), so a row written before it can be refreshed too. The
+  companion rows of a registration (watched, never registered) are marked
+  `local`, not a delegation until the service says it watches them: a refresh
+  asks about them too and adopts the answer, as another device may have
+  registered them. The rows a restore re-derives carry no status, so a refresh
+  asks the service about them. A watch whose address the service
+  derived differently is refused before anything is persisted, ended or not,
+  and a refresh refuses an answer about another address than it asked.
+  A 404 ends a watch only when it is the service's own `delegation not found`:
+  a wrong base URL, a proxy, or a service that does not route
+  `GET /v1/delegation` 404s too, with the same gRPC code, so `getDelegation`
+  reports any other 404 without a status and the row keeps the status it had.
+  A 404 also ends a watch only when the service holds the keys the watch was
+  registered under: the same storage opened against another executor keeps its
+  watches, and the refresh reports why.
+  Status writes are serialized and the answer to the latest question wins,
+  whatever order the answers arrive in: a refresh's 404 asked before a
+  `register` re-created the watch, even with the same values, no longer ends
+  it, and a `register` whose row was refreshed while it hydrated no longer
+  restores its older answer. Every write re-reads the row and keeps its other
+  metadata.
+
 ### Changed
 
 - **The pre-signed delegator API is deprecated.** `DelegateProvider`,
@@ -544,6 +574,13 @@ style and have not been backfilled.
   adapter now match that contract; Bitcoin's full satoshi supply fits exactly
   in a JavaScript number. Custom providers must return numbers rather than
   strings, and Electrum consumers no longer receive string amounts.
+
+- **A delegation status without an expiry no longer keeps the previous one.**
+  `updateContract` replaces `metadata`, but the status writes spread the row's
+  old metadata and only wrote `delegationExpiresAt` when the new one was
+  defined. A service renewing a watch without a deadline left the old expiry
+  on the row, and once it passed `syncDelegatedDefaults` silently dropped a
+  live delegation. The expiry is now cleared before each status write.
 
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
@@ -1489,6 +1526,16 @@ style and have not been backfilled.
   it benefits too: a settled output cost three or four sequential Electrum
   round trips, plus a fetch of every other transaction at an address that
   received more than one deposit. Output is unchanged.
+
+### Bug Fixes
+
+- **A delegated contract the SDK cannot read a delegation status from is
+  reported, not skipped in silence.** A row written before the status was
+  persisted, or one a restore re-derived, left the wallet on its own
+  addresses with nothing said: the delegated coins kept counting, but the
+  wallet looked as if it had never delegated. Such a row is now reported once
+  per contract, pointing at `refreshStatus` and the re-registration that make
+  it a delegation again.
 
 ## [0.4.77] - 2026-09-30
 
