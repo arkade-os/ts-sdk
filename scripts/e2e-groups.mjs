@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const E2E_DIR = join(ROOT, "packages", "sdk", "test", "e2e");
 
-/** Group name -> test files, for matrix entries whose `package` is sdk. */
+/** Group name -> test files, for matrix entries whose `package` is sdk or an sdk-* stack. */
 export function readGroups() {
     const ci = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
     const groups = [];
@@ -24,13 +24,13 @@ export function readGroups() {
     // inline path or a `>-` folded scalar holding one path per line.
     for (const entry of ci.split(/^\s*- package:/m).slice(1)) {
         const [, pkg] = entry.match(/^\s*(\S+)/) ?? [];
-        if (pkg !== "sdk") continue;
+        if (pkg !== "sdk" && !pkg?.startsWith("sdk-")) continue;
         const [, name] = entry.match(/^\s*group:\s*(\S+)/m) ?? [];
         const files = entry.match(/test\/e2e\/\S+\.test\.ts/g) ?? [];
         if (!name || files.length === 0) {
             throw new Error(`e2e-groups: unparsable sdk matrix entry near "${name ?? "?"}"`);
         }
-        groups.push({ name, files });
+        groups.push({ pkg, name, files });
     }
     if (groups.length === 0) {
         throw new Error("e2e-groups: found no sdk groups in .github/workflows/ci.yml");
@@ -63,5 +63,6 @@ if (process.argv.includes("--check")) {
     }
     console.log(`e2e group guard: ${onDisk.length} files across ${groups.length} groups.`);
 } else {
-    for (const g of groups) console.log(`${g.name}\t${g.files.join(" ")}`);
+    // sdk-* groups need their own stack: `scripts/regtest.sh <pkg> cycle` runs them
+    for (const g of groups.filter((g) => g.pkg === "sdk")) console.log(`${g.name}\t${g.files.join(" ")}`);
 }

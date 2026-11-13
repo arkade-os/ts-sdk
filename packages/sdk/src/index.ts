@@ -292,6 +292,16 @@ import {
     RestDelegateProvider,
 } from "./providers/delegate";
 import {
+    DelegatedOutput,
+    ExecutorDelegation,
+    ExecutorDelegationDetails,
+    ExecutorInfo,
+    ExecutorProvider,
+    ExecutorRequestError,
+    ExecutorTemplate,
+    RestExecutorProvider,
+} from "./providers/executor";
+import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
     ConditionMultisigTapscript,
@@ -517,6 +527,19 @@ import type {
 } from "./repositories/walletRepository";
 import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
 import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
+import {
+    DELEGATION_ADDRESS_KEY,
+    DELEGATION_EXPIRES_KEY,
+    DELEGATION_LOCAL_STATUS,
+    DELEGATION_STATUS_KEY,
+    DelegatedWallet,
+    DelegationOptions,
+    ExecutorManagerImpl,
+    ExecutorWatchMetadata,
+    ExecutorWatchRegistration,
+    IExecutorManager,
+    watchExecutorContracts,
+} from "./wallet/executor";
 
 export * from "./arkfee";
 export {
@@ -713,6 +736,14 @@ export {
     KeyringDescriptorProvider,
     DelegateManagerImpl,
     RestDelegateProvider,
+    ExecutorManagerImpl,
+    watchExecutorContracts,
+    DELEGATION_ADDRESS_KEY,
+    DELEGATION_EXPIRES_KEY,
+    DELEGATION_LOCAL_STATUS,
+    DELEGATION_STATUS_KEY,
+    ExecutorRequestError,
+    RestExecutorProvider,
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -1209,6 +1240,17 @@ export type {
     DelegateProvider,
     DelegateInfo,
     DelegateOptions,
+    IExecutorManager,
+    ExecutorProvider,
+    ExecutorInfo,
+    ExecutorDelegation,
+    ExecutorDelegationDetails,
+    ExecutorTemplate,
+    DelegatedOutput,
+    DelegatedWallet,
+    DelegationOptions,
+    ExecutorWatchMetadata,
+    ExecutorWatchRegistration,
     // Repositories
     ManagedConnection,
     WalletRepository,

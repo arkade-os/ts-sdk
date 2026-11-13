@@ -35,6 +35,7 @@ export {
     type ActivityResolver,
 } from "./activity";
 import { DelegateProvider } from "../providers/delegate";
+import type { ExecutorProvider } from "../providers/executor";
 import type { ArkadeService } from "../arkade/service";
 
 /**
@@ -135,6 +136,8 @@ export interface BaseWalletConfig {
     onchainProvider?: OnchainProvider | ((network: NetworkName) => OnchainProvider);
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
+    /** Optional Executor, the service that boards the wallet's deposits while it is offline. */
+    executorProvider?: ExecutorProvider;
 }
 
 /**

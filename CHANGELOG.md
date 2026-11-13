@@ -98,6 +98,21 @@ style and have not been backfilled.
 
 ### Features
 
+- **Non-interactive boarding through the Executor.** `executorProvider` on
+  `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
+  worker and its `INIT_WALLET`, or a `RestExecutorProvider`) gives the wallet a
+  `getExecutorManager()`. `registerBoarding({ renewalWindow, maxFee })` registers
+  the wallet's key under the Executor's `boarding` template, exit delays
+  defaulting to the operator's; the manager refuses an Executor on another
+  network or operator, or one that derives a different address. While the watch
+  is active, `getBoardingAddress()` answers the delegated boarding address: the
+  Executor boards every deposit there into the wallet's renewal contract while
+  the wallet is offline. A boarded coin is the wallet's own: it counts, spends
+  and renews like any other, incoming-funds subscribers hear of it, and the
+  wallet finds it from the key alone by registering again, which returns the
+  existing watch. `getAddress()` does not change. A watch registered without
+  `expiresAt` does not expire, and registering again does not change its expiry.
+
 - **The Executor's delegated contracts are a built-in contract type.**
   `ExecutorContractHandler` (`type: "executor"`) derives the renewal and boarding
   contracts of the Executor's default templates from the owner key, the
