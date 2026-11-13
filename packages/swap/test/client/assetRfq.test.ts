@@ -27,6 +27,8 @@ import {
     UnsupportedRoute,
 } from "../../src/client/errors";
 import { deriveOffer, OFFER_PACKET_TYPE } from "../../src/offer";
+import { ASSET_SWAP_V2, ASSET_SWAP_V3 } from "../../src/program";
+import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
 import { quoteIdOfSwapId, type OfferSwapRecord } from "../../src/client/record";
 import {
@@ -151,6 +153,7 @@ describe("quote() on a negotiated asset market", () => {
             // one.
             amount_side: "from",
             amount: "10000",
+            covenant_versions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
             profile: {
                 maker_pk_script: expect.stringMatching(/^5120[0-9a-f]{64}$/),
                 maker_public_key: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -223,6 +226,27 @@ describe("quote() on a negotiated asset market", () => {
         expect(transport.sent[0]).toMatchObject({ amount: "9007199254740993" });
         expect(quote.give.amount).toBe(huge);
         expect(quote.take.amount).toBe(898_017_765_697_677n);
+    });
+
+    it("derives the covenant the solver chose from the advertised list", async () => {
+        const { client } = await setup({
+            answer: (payload) =>
+                arkadeAssetAnswer({ ...payload, covenant_versions: [ASSET_SWAP_V2] }, CLOCK),
+        });
+        const quote = await client.quote(buy());
+        expect(quote.market.backend).toBe("rfq");
+    });
+
+    it("asks a solver that refuses the covenant list once more without it", async () => {
+        const { client, transport } = await setup({
+            answer: (payload) => {
+                if ("covenant_versions" in payload) throw new SwapRefusal("unsupported_payload");
+                return arkadeAssetAnswer(payload, CLOCK);
+            },
+        });
+        await client.quote(buy());
+        expect(transport.sent).toHaveLength(2);
+        expect(transport.sent[1]).not.toHaveProperty("covenant_versions");
     });
 
     it("hands the accept path the covenant it verified, and writes nothing", async () => {

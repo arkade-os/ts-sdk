@@ -114,6 +114,7 @@ describe("RFQ offer receive payout", () => {
             to_amount: "50000",
             solver_pubkey: "22".repeat(32),
             valid_until: 1_800_000_060,
+            covenant_version: "asset-swap-v3",
             profile: {
                 offer_address: expected.address,
                 offer_pk_script: hex.encode(expected.swapPkScript),

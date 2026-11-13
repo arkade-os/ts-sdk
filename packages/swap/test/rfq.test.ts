@@ -544,7 +544,9 @@ describe("requests", () => {
         expect(offerGenerationFor(ASSET_SWAP_V3)).toBe("current");
         expect(offerGenerationFor(ASSET_SWAP_V2)).toBe("previous");
         expect(offerGenerationFor(undefined)).toBe("previous");
-        expect(offerGenerationFor("asset-swap-v999")).toBe("previous");
+        expect(() => offerGenerationFor("asset-swap-v999")).toThrow(
+            "unknown covenant asset-swap-v999",
+        );
     });
 
     it("mirrors the wire's pair-length cap for asset-to-asset", () => {
