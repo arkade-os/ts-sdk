@@ -55,7 +55,12 @@ import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
-import { getDustAmount, getSelectableBoardingUtxoGroups, markSdkPicked } from "./utils";
+import {
+    getDustAmount,
+    getOwnBoardingAddress,
+    getSelectableBoardingUtxoGroups,
+    markSdkPicked,
+} from "./utils";
 import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
@@ -1889,7 +1894,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         if (!isSweepCapable(this.wallet) || !this.wallet.sendOnchain) return undefined;
         const inputs = await this.wallet.getOnchainSweepInputs?.();
         if (!inputs?.length) return undefined;
-        const boarding = await this.wallet.getBoardingAddress();
+        const boarding = await getOwnBoardingAddress(this.wallet);
         try {
             const txid = await this.wallet.sendOnchain({ outputs: [], inputs, sweepTo: boarding });
             // Its one output renews boarding coins; like the CSV sweep's, the poll must not settle it.
@@ -1953,7 +1958,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             throw new Error("No expired boarding UTXOs to sweep");
         }
 
-        const boardingAddress = await this.wallet.getBoardingAddress();
+        const boardingAddress = await getOwnBoardingAddress(this.wallet);
 
         const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
 
@@ -2876,7 +2881,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // The server rejects an input under a deprecated signer, so only the sweep takes
                 // those: a unilateral exit works for any signer.
                 const settleable = signerStable
-                    ? groups.filter((g) => g.serverPubKey === currentSigner).flatMap((g) => g.coins)
+                    ? groups
+                          .filter((g) => g.serverPubKey === currentSigner && !g.delegated)
+                          .flatMap((g) => g.coins)
                     : [];
                 const boardingUtxos = groups.flatMap((g) => g.coins);
 

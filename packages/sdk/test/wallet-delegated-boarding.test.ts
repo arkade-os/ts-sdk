@@ -11,6 +11,7 @@ import {
     type ExecutorProvider,
 } from "../src";
 import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
+import { getOwnBoardingAddress } from "../src/wallet/utils";
 import vectors from "./fixtures/executor/vectors.json";
 import { jsonResponse } from "./helpers/response";
 
@@ -213,5 +214,68 @@ describe("delegated boarding address", () => {
         await vi.waitFor(() => expect(funds).toHaveBeenCalledTimes(1));
         expect(funds).toHaveBeenCalledWith({ type: "vtxo", newVtxos: [vtxo], spentVtxos: [] });
         stop();
+    });
+
+    describe("deposits at the delegated boarding address", () => {
+        // one confirmed deposit at the delegated address, one at the wallet's own
+        async function walletWithDeposits() {
+            const ctx = await walletWith({ executor: true, rows: true });
+            const delegated = ctx.boarding.script.onchainAddress(networks.mutinynet);
+            const own = ctx.wallet.ownBoardingAddress();
+            const coin = (txid: string, value: number) => ({
+                txid,
+                vout: 0,
+                value,
+                status: { confirmed: true, block_time: 1 },
+            });
+            vi.spyOn(ctx.wallet.onchainProvider, "getCoins").mockImplementation(
+                async (address: string) =>
+                    address === delegated
+                        ? [coin("d".repeat(64), 7_000)]
+                        : address === own
+                          ? [coin("0".repeat(64), 3_000)]
+                          : [],
+            );
+            vi.spyOn(ctx.wallet, "getContractManager").mockResolvedValue({
+                syncOnchain: async () => {},
+                getContracts: async (filter: ContractFilter) =>
+                    collectContracts(ctx.wallet.contractRepository, filter),
+            } as never);
+            return { ...ctx, delegated, own };
+        }
+        const txids = (coins: { txid: string }[]) => coins.map((c) => c.txid[0]).sort();
+
+        it("shows them among the wallet's boarding coins", async () => {
+            const { wallet, delegated } = await walletWithDeposits();
+            expect(await wallet.getBoardingAddresses()).toContain(delegated);
+            expect(txids(await wallet.getBoardingUtxos())).toEqual(["0", "d"]);
+        });
+
+        it("leaves them to the Executor while the watch is live", async () => {
+            const { wallet } = await walletWithDeposits();
+            expect(txids(await wallet.getSelectableBoardingUtxos())).toEqual(["0"]);
+            const groups = await wallet.getSelectableBoardingUtxoGroups();
+            const held = groups.filter((g) => g.delegated);
+            expect(held.map((g) => txids(g.coins))).toEqual([["d"]]);
+            // the sweep still sees them, to exit them once their CSV elapses
+            expect(txids(groups.flatMap((g) => g.coins))).toEqual(["0", "d"]);
+        });
+
+        it("boards them itself once the watch ends", async () => {
+            const { wallet, boarding } = await walletWithDeposits();
+            await wallet.contractRepository.saveContract({
+                ...boarding.contract,
+                metadata: { delegationStatus: "cancelled" },
+            });
+            expect(txids(await wallet.getSelectableBoardingUtxos())).toEqual(["0", "d"]);
+            const groups = await wallet.getSelectableBoardingUtxoGroups();
+            expect(groups.some((g) => g.delegated)).toBe(false);
+        });
+
+        it("sweeps to the wallet's own boarding address, not the delegated one", async () => {
+            const { wallet, delegated, own } = await walletWithDeposits();
+            expect(await wallet.getBoardingAddress()).toBe(delegated);
+            expect(await getOwnBoardingAddress(wallet)).toBe(own);
+        });
     });
 });

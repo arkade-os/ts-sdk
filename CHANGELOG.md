@@ -113,6 +113,15 @@ style and have not been backfilled.
   existing watch. `getAddress()` does not change. A watch registered without
   `expiresAt` does not expire, and registering again does not change its expiry.
 
+- **Deposits waiting for the Executor are the wallet's boarding coins.** A
+  deposit at a delegated boarding address shows in `getBoardingUtxos`,
+  `getBoardingAddresses` and the boarding balance before the Executor boards it.
+  While its watch is active and unexpired, `settle()` and the periodic settle
+  leave it to the Executor; once the watch ends, the wallet boards it itself
+  through the owner's forfeit leaf. The boarding sweep exits it after its CSV
+  either way, and both boarding sweeps send to the wallet's own boarding
+  address, never back to the delegated one.
+
 - **The Executor's delegated contracts are a built-in contract type.**
   `ExecutorContractHandler` (`type: "executor"`) derives the renewal and boarding
   contracts of the Executor's default templates from the owner key, the

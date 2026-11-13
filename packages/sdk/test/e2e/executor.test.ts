@@ -8,6 +8,8 @@ import {
     RestExecutorProvider,
     SingleKey,
     Wallet,
+    timelockToSequence,
+    watchExecutorContracts,
     type ExecutorWatchRegistration,
 } from "../../src";
 import { ArkAddress } from "../../src/script/address";
@@ -128,6 +130,70 @@ describe.skipIf(!reachable).sequential("Executor non-interactive boarding", () =
         expect(again.address).toBe(watch.address);
         await waitFor(async () => (await restored.getBalance()).available === 19_000, {
             timeout: 30_000,
+        });
+    });
+});
+
+// A watch no Executor serves: made-up cosigner and emulator keys, so no daemon boards its deposits
+// and the wallet's own hold-back and fallback can be seen.
+describe.skipIf(!reachable).sequential("Executor boarding fallback", () => {
+    let alice: Wallet;
+    let address = "";
+    let script = "";
+
+    beforeAll(async () => {
+        alice = await createWallet();
+        const info = await alice.getOperatorInfo({ requireLive: true });
+        const seq = (delay: bigint) =>
+            Number(timelockToSequence({ value: delay, type: delay < 512n ? "blocks" : "seconds" }));
+        const keys = {
+            cosignerPubkey: hex.encode(await SingleKey.fromRandomBytes().compressedPublicKey()),
+            serverPubkey: info.signerPubkey,
+            emulatorPubkey: hex.encode(await SingleKey.fromRandomBytes().compressedPublicKey()),
+        };
+        const contracts = await watchExecutorContracts(
+            alice,
+            keys,
+            {
+                ...options,
+                exitDelay: seq(info.unilateralExitDelay),
+                boardingExitDelay: seq(info.boardingExitDelay),
+            },
+            { template: "boarding", status: "active", expiresAt: 0 },
+        );
+        const boarding = contracts.find((c) => c.params.template === "boarding")!;
+        script = boarding.script;
+        address = await alice.getBoardingAddress();
+    }, 60_000);
+
+    it("shows a deposit at a live watch and leaves it to the Executor", {
+        timeout: 60_000,
+    }, async () => {
+        // the live watch is the wallet's boarding address
+        expect(address).not.toBe(alice.ownBoardingAddress());
+        faucetOnchain(address, 6_000);
+        await waitFor(async () => (await alice.getBalance()).boarding.confirmed === 6_000, {
+            timeout: 50_000,
+            interval: 2_000,
+        });
+        await expect(alice.settle()).rejects.toThrow("No inputs found");
+    });
+
+    it("boards the deposit itself once the watch ends", { timeout: 120_000 }, async () => {
+        const cm = await alice.getContractManager();
+        const [row] = await cm.getContracts({ script });
+        await cm.updateContract(script, {
+            metadata: { ...row.metadata, delegationStatus: "cancelled" },
+        });
+        expect(await alice.getBoardingAddress()).toBe(alice.ownBoardingAddress());
+        await alice.settle();
+        await waitFor(async () => (await alice.getBalance()).available === 6_000, {
+            timeout: 60_000,
+        });
+        // the boarding getter lists a settle's inputs until the chain shows them spent
+        await waitFor(async () => (await alice.getBalance()).boarding.total === 0, {
+            timeout: 50_000,
+            interval: 2_000,
         });
     });
 });

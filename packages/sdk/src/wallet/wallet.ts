@@ -632,6 +632,8 @@ export interface BoardingUtxoGroup {
     /** CSV exit timelock decoded from THIS tapscript's exit leaf. */
     csvTimelock: RelativeTimelock;
     coins: ExtendedCoin[];
+    /** A live Executor boarding watch: the Executor boards these, settle leaves them alone. */
+    delegated?: true;
 }
 
 /**
@@ -1341,36 +1343,72 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * The newest boarding watch for this wallet's key and current operator that the Executor
-     * registered as active and that has not expired. Read from the contract repository, so it
-     * follows registrations made through any wallet front-end.
+     * The newest boarding watch for this wallet's key and current operator that is live, see
+     * {@link delegatedBoardingContracts}.
      */
     private async delegatedBoardingAddress(): Promise<string | undefined> {
         if (!this.executorProvider) return undefined;
-        const owner = hex.encode(await this.identity.xOnlyPublicKey());
         const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
+        const live = (await this.delegatedBoardingContracts()).find(
+            (c) => c.live && c.signer === server,
+        );
+        return live?.script.onchainAddress(this.network);
+    }
+
+    /**
+     * The Executor boarding contracts of this wallet's key, newest first. A watch is live while
+     * the Executor registered it as active and it has not expired: the Executor boards its
+     * deposits, so the wallet's own boarding leaves them alone. Read from the contract repository,
+     * so it follows registrations made through any wallet front-end.
+     */
+    private async delegatedBoardingContracts(): Promise<
+        { script: DefaultVtxo.Script; signer: string; live: boolean }[]
+    > {
+        const owner = hex.encode(await this.identity.xOnlyPublicKey());
         const nowSeconds = Math.floor(Date.now() / 1000);
         const rows = (await collectContracts(this.contractRepository, { type: ["executor"] }))
             .filter((c) => c.params.template === "boarding")
             .sort((a, b) => b.createdAt - a.createdAt);
+        const contracts: { script: DefaultVtxo.Script; signer: string; live: boolean }[] = [];
         for (const c of rows) {
-            if (c.metadata?.[DELEGATION_STATUS_KEY] !== "active") continue;
-            const expiresAt = c.metadata?.[DELEGATION_EXPIRES_KEY];
-            if (typeof expiresAt === "number" && expiresAt > 0 && expiresAt <= nowSeconds) continue;
-            if (
-                c.params.owner?.slice(2).toLowerCase() !== owner ||
-                toXOnlySignerHex(c.params.serverPubKey) !== server
-            )
-                continue;
+            if (c.params.owner?.slice(2).toLowerCase() !== owner) continue;
             try {
                 const script = ExecutorContractHandler.createScript(c.params);
                 if (hex.encode(script.pkScript) !== c.script) continue;
-                return script.onchainAddress(this.network);
+                const expiresAt = c.metadata?.[DELEGATION_EXPIRES_KEY];
+                contracts.push({
+                    script,
+                    signer: toXOnlySignerHex(c.params.serverPubKey),
+                    live:
+                        c.metadata?.[DELEGATION_STATUS_KEY] === "active" &&
+                        !(
+                            typeof expiresAt === "number" &&
+                            expiresAt > 0 &&
+                            expiresAt <= nowSeconds
+                        ),
+                });
             } catch (e) {
                 console.warn("Skipping malformed delegated contract", c.script, e);
             }
         }
-        return undefined;
+        return contracts;
+    }
+
+    /** Encoded tap trees of the live boarding watches, whose deposits the Executor boards. */
+    private async liveDelegatedBoardingTrees(): Promise<Set<string>> {
+        return new Set(
+            (await this.delegatedBoardingContracts())
+                .filter((c) => c.live)
+                .map((c) => hex.encode(c.script.encode())),
+        );
+    }
+
+    /**
+     * @internal The wallet's own boarding address, never the delegated one: where the boarding
+     * sweeps send coins, so a deposit swept off a delegated address does not land on it again.
+     */
+    ownBoardingAddress(): string {
+        return this.boardingTapscript.onchainAddress(this.network);
     }
 
     /**
@@ -1976,6 +2014,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 console.warn("Skipping malformed boarding contract", c.script, e);
             }
         }
+        // Deposits at the Executor's boarding addresses are the wallet's until boarded: shown, and
+        // exited through the owner's leaf if the Executor never boards them.
+        for (const c of await this.delegatedBoardingContracts()) {
+            if (allowed.has(c.signer)) add(c.script);
+        }
         return [...byScript.values()];
     }
 
@@ -2099,39 +2142,51 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending or an
-     * unresolved intent locks, for SDK picks. The getter itself lists them: callers that mirror it
+     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, an
+     * unresolved intent locks or a live Executor watch leaves to the Executor, for SDK picks. The getter itself lists them: callers that mirror it
      * (the worker's cache and broadcasts, balances) must not see a settle's inputs vanish, and then
      * stay gone if it fails.
      */
     async getSelectableBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const [utxos, locked] = await Promise.all([
+        const [utxos, locked, delegated] = await Promise.all([
             this.getBoardingUtxos(),
             this.lockedOutpoints(),
+            this.liveDelegatedBoardingTrees(),
         ]);
-        return excludeUnselectable(utxos, this._pendingSpendOutpoints, locked);
+        return excludeUnselectable(
+            delegated.size === 0
+                ? utxos
+                : utxos.filter((u) => !delegated.has(hex.encode(u.tapTree))),
+            this._pendingSpendOutpoints,
+            locked,
+        );
     }
 
     /**
      * @internal {@link getSelectableBoardingUtxos} for every boarding address history shows,
-     * current and deprecated signers, grouped by signer. Only the boarding sweep reads it: a
-     * unilateral exit needs no operator, so it recovers coins that `settle` must not take.
+     * current and deprecated signers, grouped by signer. The periodic settle takes the current
+     * signer's groups except `delegated` ones; the boarding sweep takes them all: a unilateral
+     * exit needs no operator, so it recovers coins that `settle` must not take.
      */
     async getSelectableBoardingUtxoGroups(): Promise<BoardingUtxoGroup[]> {
         // A deprecated signer's address is recovery-only, so a failed lookup waits for the next
         // poll rather than aborting the settle and renewal that share it.
-        const [groups, locked] = await Promise.all([
+        const [groups, locked, delegated] = await Promise.all([
             this.getBoardingUtxosForSigners(
                 this.watchedBoardingSigners(),
                 new Set(this._deprecatedSigners.keys()),
             ),
             this.lockedOutpoints(),
+            this.liveDelegatedBoardingTrees(),
         ]);
         // A superset of what `getBoardingUtxos` fetches, so the balance flag stays accurate.
         this.boardingLoaded = true;
         return groups.map((group) => ({
             ...group,
             coins: excludeUnselectable(group.coins, this._pendingSpendOutpoints, locked),
+            ...(delegated.size > 0 && delegated.has(hex.encode(group.tapscript.encode()))
+                ? { delegated: true as const }
+                : {}),
         }));
     }
 
