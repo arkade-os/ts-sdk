@@ -162,19 +162,20 @@ style and have not been backfilled.
   packet only carries the script of the leaf being spent. A leaf that names the
   operator key only tweaked, such as a non-interactive covenant leaf, therefore
   needs its hash revealed whenever the coin is spent through another function.
-  When a program contract's tree has such a leaf, the offchain builder,
-  `buildOnchain` and `renewProgramContractOutputs` now set the new
+  When a program contract's tree has such a leaf, every spend now sets the new
   `ArkadeTweak` PSBT input field (`0xde || "arkadetweak"`, 1 to 16 32-byte
   hashes) on the ark tx input, the onchain input or the intent proof input,
   listing the hashes of the covenant scripts whose leaves lack the plain
   server key, the spent one aside: arkd accepts a leaf on its plain server key
-  alone. More than 16 is refused, already by `Arkade.contract()` when any
-  collaborative function's spend would need more, rather than at that spend.
-  Trees without such a leaf, swap offers included, build the same
+  alone. That covers `ArkadeContract`'s own builders, `renewProgramContractOutputs`,
+  and the wallet-level spends of a generically spendable program contract
+  (`send`, `settle`, `cosignOnchainTx`), which read the hashes off the coin
+  and the selected path. The coin's hashes are derived from its contract on
+  every read and never persisted. More than 16 is refused, already by `Arkade.contract()`
+  when any collaborative function's spend would need more, rather than at that
+  spend. Trees without such a leaf, swap offers included, build the same
   PSBTs as before, and an arkd that predates the field ignores it.
   `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
-  Wallet-level spends of a generically spendable program contract (`send`,
-  `settle`, `cosignOnchainTx`) do not set it yet.
 
 ### Bug Fixes
 

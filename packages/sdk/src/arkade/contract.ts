@@ -83,7 +83,6 @@ import {
     type OffchainTxSubmitProvider,
 } from "../utils/arkTransaction";
 import {
-    ArkadeTweak,
     ConditionWitness,
     MAX_ARKADE_TWEAKS,
     PrevArkTxField,
@@ -1100,17 +1099,13 @@ export class ArkadeTransactionBuilder {
                     value: coin.value,
                     tapLeafScript: unlocker.fn.tapLeafScript,
                     tapTree: unlocker.contract.tapTree,
+                    arkadeTweaks: unlocker.contract.vtxoScript.arkadeTweaks(unlocker.fn),
                 })),
                 ...this.fundingCoins,
             ],
             outputs,
             this.client.checkpoint,
         );
-
-        inputs.forEach(({ unlocker: { contract, fn } }, i) => {
-            const tweaks = contract.vtxoScript.arkadeTweaks(fn);
-            if (tweaks.length > 0) setArkPsbtField(arkTx, i, ArkadeTweak, tweaks);
-        });
 
         // Set first: the resolver below skips inputs already carrying the field (the emulator
         // refuses an input bearing two).
@@ -1217,11 +1212,13 @@ export class ArkadeTransactionBuilder {
         prepareOwnedInput(tx, {
             index: 0,
             coin: { value: coin.value, script: hex.encode(contract.pkScript) },
-            path: { leaf: fn.tapLeafScript, extraWitness: condition },
+            path: {
+                leaf: fn.tapLeafScript,
+                extraWitness: condition,
+                arkadeTweaks: contract.vtxoScript.arkadeTweaks(fn),
+            },
             tapTree: contract.tapTree,
         });
-        const tweaks = contract.vtxoScript.arkadeTweaks(fn);
-        if (tweaks.length > 0) setArkPsbtField(tx, 0, ArkadeTweak, tweaks);
         if (fn.arkadeScript) {
             const stack = (fn.def.arkadeScript?.witness ?? []).map((w) =>
                 witnessBytes(unlocker, w),

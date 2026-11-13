@@ -60,6 +60,15 @@ describe("canonical facts survive save to load", () => {
         expectCanonical(deserializeVtxo(wire));
     });
 
+    it("never persists arkade tweaks", () => {
+        const vtxo = { ...makeVtxo(), arkadeTweaks: [new Uint8Array(32).fill(3)] };
+
+        expect(serializeVtxo(vtxo)).not.toHaveProperty("arkadeTweaks");
+        expect(deserializeVtxo(JSON.parse(JSON.stringify(serializeVtxo(vtxo))))).not.toHaveProperty(
+            "arkadeTweaks",
+        );
+    });
+
     it("InMemory stores by reference and preserves canonical fields", async () => {
         await using repo = new InMemoryWalletRepository();
         await repo.saveVtxos(ADDRESS, [makeVtxo()]);

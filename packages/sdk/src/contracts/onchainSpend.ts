@@ -17,6 +17,7 @@ import type { OnchainProvider } from "../providers/onchain";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import {
+    ArkadeTweak,
     ConditionWitness,
     VtxoTaprootTree,
     getArkPsbtFields,
@@ -76,7 +77,10 @@ export function prepareOwnedInput(
         tx.updateInput(index, { tapLeafScript: undefined, tapScriptSig: undefined }, true);
     }
     const kept = unknown?.filter(
-        (u) => VtxoTaprootTree.decode(u) === null && ConditionWitness.decode(u) === null,
+        (u) =>
+            VtxoTaprootTree.decode(u) === null &&
+            ConditionWitness.decode(u) === null &&
+            ArkadeTweak.decode(u) === null,
     );
     if (kept && kept.length !== unknown!.length) {
         tx.updateInput(index, { unknown: undefined }, true);
@@ -90,6 +94,9 @@ export function prepareOwnedInput(
     setArkPsbtField(tx, index, VtxoTaprootTree, tapTree);
     if (path.extraWitness?.length) {
         setArkPsbtField(tx, index, ConditionWitness, path.extraWitness);
+    }
+    if (path.arkadeTweaks?.length) {
+        setArkPsbtField(tx, index, ArkadeTweak, path.arkadeTweaks);
     }
 }
 
