@@ -38,16 +38,25 @@ import {
  *   - rebuild the contract and check it matches the address the client funded,
  *   - build the intent, have the emulator run the covenant and sign it,
  *   - join the batch: tree signing with a throwaway session key, commitment co-signed by the
- *     emulator. The covenant forces output 0 to pay the receiver the full amount, so the worst a
- *     malicious server can do is not board the coin; the user keeps the CSV exit.
+ *     emulator. The covenant forces each coin's output to pay the receiver (less at
+ *     most `maxFee`), so the worst a malicious server can do is not board the coin; the user keeps the CSV exit.
  */
 const OPERATOR_URL = "http://localhost:7070";
 const EMULATOR_URL = "http://localhost:7073";
 const ESPLORA_URL = "http://localhost:3000/api";
 const AMOUNT = 10_000;
 
-// `board`: server key only (no user key), plus the covenant: output 0 pays `$receiver` the whole
-// input value. `exit`: the user's unilateral way out if the server never boards the coin.
+const utf8 = (s: string) => new TextEncoder().encode(s);
+const MAX_FEE = 500;
+
+// Same covenant as the executor's DelegatedBoarding `board`. Proof input k+1 (input 0 is the
+// message) may only be spent by:
+//   - a "register" intent with no onchain outputs, so the server can neither withdraw the
+//     intent's coins onchain nor use the proof for anything but boarding,
+//   - output k: segwit v1 paying `$receiver`, worth at least the input minus `$maxFee`.
+// Indexing by the current input, not output 0, keeps two coins from sharing one output.
+// `board` names only the server (the emulator key is added for the covenant); `exit` is the
+// user's way out if the server never boards the coin.
 const boardingProgram = (exitDelay: bigint) =>
     ({
         version: 1,
@@ -55,23 +64,38 @@ const boardingProgram = (exitDelay: bigint) =>
             { name: "server", type: "pubkey" },
             { name: "user", type: "pubkey" },
             { name: "receiver", type: "pubkey" },
+            { name: "maxFee", type: "int" },
         ],
         functions: {
             board: {
                 tapscript: { signers: ["$server"] },
                 arkadeScript: {
                     asm: [
-                        0,
+                        utf8("type"),
+                        "INSPECTINTENTMESSAGE",
+                        "VERIFY",
+                        utf8("register"),
+                        "EQUALVERIFY",
+                        utf8("onchain_output_indexes"),
+                        "INSPECTINTENTMESSAGE",
+                        "VERIFY",
+                        utf8("[]"),
+                        "EQUALVERIFY",
+                        "PUSHCURRENTINPUTINDEX",
+                        "1SUB",
                         "INSPECTOUTPUTSCRIPTPUBKEY",
                         1,
                         "EQUALVERIFY",
                         "$receiver",
                         "EQUALVERIFY",
-                        0,
+                        "PUSHCURRENTINPUTINDEX",
+                        "1SUB",
                         "INSPECTOUTPUTVALUE",
+                        "$maxFee",
+                        "ADD",
                         "PUSHCURRENTINPUTINDEX",
                         "INSPECTINPUTVALUE",
-                        "EQUAL",
+                        "GREATERTHANOREQUAL",
                     ],
                 },
             },
@@ -108,13 +132,14 @@ describe("arkade non-interactive boarding", () => {
             emulator,
             network: networks.regtest,
         });
-        const clientContract = client.contract(program, { receiver });
+        const clientContract = client.contract(program, { receiver, maxFee: BigInt(MAX_FEE) });
         const boardingAddress = clientContract.vtxoScript.onchainAddress(networks.regtest);
         // Public data the client hands to the server; nothing here can spend.
         const handoff = {
             boardingAddress,
             user: await userIdentity.xOnlyPublicKey(),
             receiver,
+            maxFee: BigInt(MAX_FEE),
         };
 
         faucetOnchain(boardingAddress, AMOUNT);
@@ -129,6 +154,7 @@ describe("arkade non-interactive boarding", () => {
         const contract = server.contract(program, {
             user: handoff.user,
             receiver: handoff.receiver,
+            maxFee: handoff.maxFee,
         });
         expect(contract.vtxoScript.onchainAddress(networks.regtest)).toBe(handoff.boardingAddress);
 
