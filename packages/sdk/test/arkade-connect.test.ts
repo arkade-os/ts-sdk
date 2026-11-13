@@ -5,7 +5,6 @@ import {
     Arkade,
     ContractManager,
     CSVMultisigTapscript,
-    DEFAULT_ARKADE_EMULATOR_URL,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ReadonlyWallet,
@@ -119,8 +118,7 @@ describe("resolveArkadeService", () => {
             "https://arkade.computer",
         );
         expect(r.onchainProvider).toBeInstanceOf(EsploraProvider);
-        expect(r.emulator).toBeInstanceOf(RestEmulatorProvider);
-        expect((r.emulator as RestEmulatorProvider).serverUrl).toBe(DEFAULT_ARKADE_EMULATOR_URL);
+        expect(r.emulator).toBeUndefined();
         expect(r.info.network).toBe("bitcoin");
     });
 
@@ -163,10 +161,10 @@ describe("Arkade.connect with service", () => {
         expect(Arkade).toBe(arkade.Arkade);
     });
 
-    it("network arm resolves the emulator, and covenants commit to arkd's key", async () => {
+    it("network arm resolves no emulator, and covenants commit to arkd's key", async () => {
         vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue(info());
         const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
-        expect((ark.emulator as RestEmulatorProvider).serverUrl).toBe(DEFAULT_ARKADE_EMULATOR_URL);
+        expect(ark.emulator).toBeUndefined();
         expect(hex.encode(ark.emulatorKey)).toBe(info().signerPubkey);
         expect(ark.contractManager).toBeUndefined();
     });

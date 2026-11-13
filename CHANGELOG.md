@@ -111,7 +111,11 @@ style and have not been backfilled.
   co-signed. `BITCOIN_EMULATOR_PUBKEY`, `MUTINYNET_EMULATOR_PUBKEY`,
   `REGTEST_EMULATOR_PUBKEY`, `defaultEmulatorPubkey` and
   `resolveEmulatorPubkey` are removed; validate an override with
-  `arkade.validateEmulatorPubkey`. `connect` also no longer throws for a
+  `arkade.validateEmulatorPubkey`. `DEFAULT_ARKADE_EMULATOR_URL` is removed
+  too, and the `{ network: "bitcoin" }` service no longer wires an emulator:
+  arkd co-signs Arkade Script itself, covenants on the old emulator key
+  included while arkd lists that key. To spend covenants on a key arkd does
+  not hold, pass `{ operatorUrl, emulatorUrl }`. `connect` also no longer throws for a
   provider whose info lacks `deprecatedSigners`. `@arkade-os/swap` derives on
   the same key (an explicit `emulatorPubkey`, else arkd's `signerPubkey`), so
   `testnet` and `signet` no longer need an override.

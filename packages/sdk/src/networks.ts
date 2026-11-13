@@ -64,11 +64,5 @@ function withArkPrefix(
 }
 
 export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
-/**
- * The operator's cosigner that emulates Arkade Script on mainnet, resolved by the
- * `{ network: "bitcoin" }` service. No trailing slash: `RestEmulatorProvider` appends its paths
- * verbatim. The URL only selects where to ask for a signature, never the key covenants commit to.
- */
-export const DEFAULT_ARKADE_EMULATOR_URL = "https://emulator.arkade.computer" as const;
 export const DEFAULT_NETWORK = networks.bitcoin;
 export const DEFAULT_NETWORK_NAME = "bitcoin" as const satisfies NetworkName;
