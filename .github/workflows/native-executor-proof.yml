@@ -6,7 +6,10 @@ on:
     paths:
       - "packages/sdk/src/arkade/executor.ts"
       - "packages/sdk/src/providers/delegatee.ts"
+      - "packages/sdk/src/arkade/executionJournal.ts"
+      - "packages/sdk/src/providers/indexer.ts"
       - "packages/sdk/test/proof/native-executor/**"
+      - "packages/sdk/test/proof/native-execution-journal/**"
       - "regtest"
       - ".github/workflows/native-executor-proof.yml"
 
