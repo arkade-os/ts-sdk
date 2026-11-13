@@ -1,0 +1,53 @@
+name: Native executor funded proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packages/sdk/src/arkade/executor.ts"
+      - "packages/sdk/src/providers/delegatee.ts"
+      - "packages/sdk/test/proof/native-executor/**"
+      - "regtest"
+      - ".github/workflows/native-executor-proof.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  native-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.25.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.22.1"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @arkade-os/sdk build
+      - name: Fresh funded native and offline delegatee proof
+        run: node packages/sdk/test/proof/native-executor/prove.mjs
+      - name: Upload public evidence only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-executor-proof-${{ github.sha }}
+          path: |
+            .tmp/native-executor/*/public/*.json
+            !**/private/**
+            !**/*key*
+            !**/*.sqlite*
+            !**/*.db*
+            !**/*-wal
+            !**/*-shm
+            !**/compose.*
+            !**/*.env
+            !**/*.log
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

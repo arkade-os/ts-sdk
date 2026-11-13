@@ -17,6 +17,7 @@
 // Re-export standard Bitcoin Script and opcodes from @scure/btc-signer
 import { OP, Script, type ScriptType } from "@scure/btc-signer";
 export { OP, Script, type ScriptType };
+export type { EmulatorSubmitProposal, EmulatorSubmitOptions } from "../utils/arkTransaction";
 
 export {
     ARKADE_OP,
@@ -48,6 +49,7 @@ export {
     type ContractArtifact,
     type ContractDebugInfo,
 } from "./artifact";
+export { NativeExecutor, type NativeExecution } from "./executor";
 export {
     ArkadeProgramScript,
     stringifyArtifact,

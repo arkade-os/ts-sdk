@@ -314,6 +314,8 @@ import {
     submitViaEmulator,
     ArkTxInput,
     OffchainTx,
+    EmulatorSubmitProposal,
+    EmulatorSubmitOptions,
     VerifyServerSignatures,
     combineTapscriptSigs,
     isValidArkAddress,
@@ -538,6 +540,14 @@ export { collectBatchRegistrations, collectIntents } from "./repositories/intent
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
+export {
+    RestDelegateeProvider,
+    type DelegateeProvider,
+    type DelegateeInfo,
+    type DelegateeStatus,
+    type DelegateeDelegation,
+    type DelegateeDocument,
+} from "./providers/delegatee";
 // Also at the root, so `import { Arkade }` works without the namespace.
 export { Arkade } from "./arkade";
 export * from "./extension/emulator";
@@ -1000,6 +1010,8 @@ export type {
     TapscriptType,
     ArkTxInput,
     OffchainTx,
+    EmulatorSubmitProposal,
+    EmulatorSubmitOptions,
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
