@@ -10,7 +10,7 @@
  *   key is lost, via the `nonInteractiveRefund` leaf the emulator co-signs under a covenant paying
  *   only the user's pre-committed address.
  * - receive (`lightning|onchain:BTC -> arkade:BTC`): the user generates `P`, pays the hold invoice
- *   or funds the L1 HTLC, and may go offline once a request has sealed `P` to executor; the
+ *   or funds the L1 HTLC, and may go offline once a request has sealed `P` to the Executor; the
  *   solver funds a lockup pinned to the user's payout ({@link lightningReceiveContract}), and the
  *   claim reveals `P`, settling the user's side.
  * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; any
@@ -1574,8 +1574,8 @@ export const onchainSendRequest = (input: {
 });
 
 /** The rfq_request for `lightning:BTC->arkade:BTC`. The trader sends only `H` plus `P` sealed to
- * executor, so the solver never sees `P` before a claim witness. `payoutPubkey` is the covenant's
- * `receiver`, so the trader can claim without executor. */
+ * the Executor, so the solver never sees `P` before a claim witness. `payoutPubkey` is the covenant's
+ * `receiver`, so the trader can claim without the Executor. */
 export const lightningReceiveRequest = (input: {
     rfqId: string;
     /** `H = sha256(P)`, hex — trader-chosen; see {@link paymentHashOf}. */
@@ -1584,8 +1584,8 @@ export const lightningReceiveRequest = (input: {
     payoutAddress: string;
     /** Trader's x-only arkade key — the covenant's `receiver` role. */
     payoutPubkey: Uint8Array;
-    /** `P` sealed to executor, base64: `sealClaimPacket(...).packet`. Omitted from the wire
-     * when there is no executor: the solver refuses an empty packet. */
+    /** `P` sealed to the Executor, base64: `sealClaimPacket(...).packet`. Omitted from the wire
+     * when there is no Executor: the solver refuses an empty packet. */
     claimPacket?: string;
     amount: number;
     amountSide: "from" | "to";
@@ -1605,7 +1605,7 @@ export const lightningReceiveRequest = (input: {
 });
 
 /** The rfq_request for `onchain:BTC->arkade:BTC`. The user funds the L1 HTLC (holding its refund
- * role); when P travels sealed to executor, the user can go offline. */
+ * role); when P travels sealed to the Executor, the user can go offline. */
 export const onchainReceiveRequest = (input: {
     rfqId: string;
     paymentHash: string;
@@ -1615,7 +1615,7 @@ export const onchainReceiveRequest = (input: {
     payoutPubkey: Uint8Array;
     /** Trader's x-only L1 key for the HTLC's refund leaf. */
     refundPubkey: Uint8Array;
-    /** `P` sealed to executor, base64. Omitted when there is none to seal to,
+    /** `P` sealed to the Executor, base64. Omitted when there is none to seal to,
      * see {@link lightningReceiveRequest}. */
     claimPacket?: string;
     amount: number;
@@ -2045,7 +2045,7 @@ export function lightningReceiveContract(params: {
      * else on the wire determines. */
     solverRefundPkScript: Uint8Array;
     /** The trader's own x-only Arkade key — VHTLC's `receiver` role on these
-     * legs, so the trader can claim without executor. */
+     * legs, so the trader can claim without the Executor. */
     payoutPubkey: Uint8Array;
     /** The trader's own Arkade payout pkScript (decoded from its payout
      * address) — `nonInteractiveClaim`'s pinned destination. */
@@ -2176,7 +2176,7 @@ const provisionReceive = async (
     const preimage = secrets.preimage;
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
-    // Exact-in leaves the lockup's amount to the quote, and an unbound packet lets executor
+    // Exact-in leaves the lockup's amount to the quote, and an unbound packet lets the Executor
     // claim dust and hand the solver `P`.
     const binds = bindsClaimAmount();
     const claimPacket =
@@ -2223,7 +2223,7 @@ const quoteReceive = async (
  *
  * 1. Persist `secrets` and `expectedAmount`; without the latter the claim cannot check the funded
  *    value.
- * 2. Stay online unless a executor key is given: an unclaimed lockup is reclaimed by the
+ * 2. Stay online unless an Executor key is given: an unclaimed lockup is reclaimed by the
  *    solver at `refund_locktime` and the payer refunded.
  * 3. On {@link LockupRegistrationFailed}, call this again once the store works. The failed attempt
  *    is inert (no invoice was returned); re-registering `error.script` does NOT resume it.
@@ -2237,7 +2237,7 @@ export async function requestLightningReceive(
         /** Co-signer key override (33-byte compressed hex); see
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
-        /** executor's 33-byte compressed encryption pubkey; the claim packet seals `P` to it.
+        /** The Executor's 33-byte compressed encryption pubkey; the claim packet seals `P` to it.
          * Without one, claiming before `refund_locktime` is the caller's job.
          * Never substitute a throwaway key: nobody could open it. */
         encryptionPubkey?: Uint8Array;
@@ -2433,7 +2433,7 @@ export async function requestOnchainReceive(
         emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
-        /** executor's 33-byte compressed encryption pubkey; see {@link requestLightningReceive}. */
+        /** The Executor's 33-byte compressed encryption pubkey; see {@link requestLightningReceive}. */
         encryptionPubkey?: Uint8Array;
         rfqId?: string;
     },

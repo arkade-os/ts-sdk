@@ -35,7 +35,7 @@ const arkInfo = {
 const identity = SingleKey.fromHex(
     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
 );
-// a executor is configured; the wallet never calls it for its addresses
+// an Executor is configured; the wallet never calls it for its addresses
 const executorProvider = {} as ExecutorProvider;
 
 async function executorRow(template: "renewal" | "boarding") {
@@ -83,7 +83,7 @@ async function walletWith(options: { executor: boolean; rows: boolean }) {
     return { wallet, renewal, boarding };
 }
 
-// a send to the server's address that leaves change, with the submission stubbed
+// a send to the operator's address that leaves change, with the submission stubbed
 async function changeOf(wallet: Wallet) {
     const submit = vi
         .spyOn(wallet as never, "_submitOffchainSpend")
@@ -111,7 +111,7 @@ describe("delegated default addresses", () => {
         mockFetch.mockImplementation(async () => jsonResponse(arkInfo));
     });
 
-    it("receives, takes change and boards at the executor contracts when delegating", async () => {
+    it("receives, takes change and boards at the delegated contracts when delegating", async () => {
         const { wallet, renewal, boarding } = await walletWith({ executor: true, rows: true });
 
         expect(await wallet.getAddress()).toBe(renewal.contract.address);
@@ -121,11 +121,11 @@ describe("delegated default addresses", () => {
         const { change, tapscript } = await changeOf(wallet);
         expect(change.amount).toBe(8000n);
         expect(hex.encode(change.script)).toBe(renewal.contract.script);
-        // the change VTXO is recorded under the same script it is paid to
+        // the change output is recorded under the same script it is paid to
         expect(hex.encode(tapscript.pkScript)).toBe(renewal.contract.script);
     });
 
-    it("keeps the wallet's own addresses without a executor, the rows staying watched", async () => {
+    it("keeps the wallet's own addresses without an Executor, the rows staying watched", async () => {
         const { wallet, renewal } = await walletWith({ executor: false, rows: true });
         const own = wallet.arkAddress.encode();
 
@@ -209,7 +209,7 @@ describe("delegated default addresses", () => {
         warn.mockRestore();
     });
 
-    it("skips a newer malformed executor row for the older valid one", async () => {
+    it("skips a newer malformed delegated row for the older valid one", async () => {
         const { wallet, renewal } = await walletWith({ executor: true, rows: true });
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         await wallet.contractRepository.saveContract({
@@ -224,7 +224,7 @@ describe("delegated default addresses", () => {
         warn.mockRestore();
     });
 
-    it("reports the funds of its executor contracts to incoming-funds subscribers", async () => {
+    it("reports the funds of its delegated contracts to incoming-funds subscribers", async () => {
         const { wallet, renewal } = await walletWith({ executor: true, rows: true });
         let emit: (event: unknown) => void = () => {};
         vi.spyOn(wallet, "getContractManager").mockResolvedValue({

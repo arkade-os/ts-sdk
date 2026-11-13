@@ -7,7 +7,7 @@ import { Contract, ContractHandler, PathContext, PathSelection } from "../types"
 import { isCsvSpendable } from "./helpers";
 
 /**
- * Typed parameters for executor contracts: a default template's variables and the service's
+ * Typed parameters for delegated contracts: a default template's variables and the Executor's
  * keys. Keys are compressed, delays are BIP 68 sequences.
  */
 export interface ExecutorContractParams {
@@ -39,7 +39,7 @@ function integer(value: string | undefined, name: string): number {
     return n;
 }
 
-/** The covenant leaf is the service's and the server's to sign; it is never offered. */
+/** The emulator-enforced leaf is the Executor's to use; it is never offered. */
 function paths(
     script: DefaultVtxo.Script,
     context: PathContext,
@@ -54,21 +54,21 @@ function paths(
 }
 
 /**
- * Handler for the coins a wallet delegated to a executor service under its default templates:
- * VTXOs at the renewal contract, which the service renews in place, and on-chain deposits at the
- * boarding contract, which it boards to the renewal contract. The scripts derive from the bundled
- * templates, the owner key, the params and the service's keys, so a restored wallet needs no
- * round-trip to the service.
+ * Handler for the coins a wallet delegated to the Executor under its default templates:
+ * virtual outputs at the renewal contract, which the Executor renews in place, and onchain
+ * deposits at the boarding contract, which it boards to the renewal contract. The scripts derive
+ * from the bundled templates, the owner key, the params and the Executor's keys, so a restored
+ * wallet needs no round-trip to the Executor.
  *
- * - forfeit: (Owner + Server) multisig, the wallet's collaborative path
+ * - forfeit: (Owner + Operator) multisig, the wallet's collaborative path
  * - exit: (Owner) + CSV, the wallet's unilateral path
- * - renew/board: (Server + Emulator) covenant, the service's; never offered
+ * - renew/board: (Operator + Emulator), emulator-enforced, the Executor's; never offered
  */
 export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, DefaultVtxo.Script> =
     {
         type: "executor",
 
-        /** The default script of the owner with the covenant leaf after forfeit and exit. */
+        /** The default script of the owner with the emulator-enforced leaf after forfeit and exit. */
         createScript(params: Record<string, string>): DefaultVtxo.Script {
             const p = this.deserializeParams(params);
             const derived = defaultContract(
@@ -91,7 +91,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
             );
             if (!equalBytes(script.pkScript, derived.pkScript)) {
                 throw new Error(
-                    `executor ${p.template} contract is not forfeit, exit and covenant`,
+                    `delegated ${p.template} contract is not forfeit, exit and an emulator-enforced leaf`,
                 );
             }
             return script;
@@ -115,7 +115,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
 
         deserializeParams(params: Record<string, string>): ExecutorContractParams {
             if (!TEMPLATES.includes(params.template)) {
-                throw new Error(`unknown executor template ${params.template}`);
+                throw new Error(`unknown Executor template ${params.template}`);
             }
             return {
                 template: params.template as ExecutorDefault,

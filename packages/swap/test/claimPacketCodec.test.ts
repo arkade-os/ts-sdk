@@ -1,5 +1,5 @@
 /**
- * Conformance for the `ClaimPacket` TLV body that executor's `noninteractiveclaim`
+ * Conformance for the `ClaimPacket` TLV body that the Executor's `noninteractiveclaim`
  * template decodes: `0x01` ciphertext, `0x02` arkade script, `0x03` encryption key.
  * The vectors are fixed bytes, not reassembled here, so a framing change fails loudly.
  */

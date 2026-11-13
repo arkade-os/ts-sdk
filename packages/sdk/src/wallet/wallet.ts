@@ -992,20 +992,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return this._delegatedTapscript ?? this._offchainTapscript;
     }
 
-    /** The wallet's own receive tapscript, never the executor contract standing in for it. */
+    /** The wallet's own receive tapscript, never the delegated contract standing in for it. */
     get receiveTapscript(): DefaultVtxo.Script | DelegateVtxo.Script {
         return this._offchainTapscript;
     }
 
-    /** The executor renewal contract standing in for the receive tapscript, see syncDelegatedDefaults. */
+    /** The delegated renewal contract standing in for the receive tapscript, see syncDelegatedDefaults. */
     private _delegatedTapscript?: DefaultVtxo.Script;
     private _delegatedBoardingAddress?: string;
 
     /**
-     * With a executor configured, the wallet's own executor contracts (newest renewal and
-     * boarding rows for its key and current server, registered active and not expired) are its default addresses: receiving, change
+     * With an Executor configured, the wallet's own delegated contracts (newest renewal and
+     * boarding rows for its key and current operator, registered active and not expired) are its default addresses: receiving, change
      * and settlement land in delegated coins. Without one, the defaults are the wallet's own and
-     * the executor rows stay watched, so their coins still count and spend. Read from the
+     * the delegated rows stay watched, so their coins still count and spend. Read from the
      * contract repository, so it follows registrations made through any wallet front-end.
      */
     protected async syncDelegatedDefaults(): Promise<void> {
@@ -1043,13 +1043,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     const script = ExecutorContractHandler.createScript(c.params);
                     if (hex.encode(script.pkScript) !== c.script) {
                         throw new Error(
-                            `executor contract ${c.script} no longer derives from its params`,
+                            `delegated contract ${c.script} no longer derives from its params`,
                         );
                     }
                     if (template === "renewal") renewal = script;
                     else boarding = script.onchainAddress(this.network);
                 } catch (e) {
-                    console.warn("Skipping malformed executor contract", c.script, e);
+                    console.warn("Skipping malformed delegated contract", c.script, e);
                 }
             }
         }
@@ -1411,9 +1411,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Returns the onchain boarding address used to move funds into Arkade: the executor's
-     * boarding address when the wallet delegates, which the service boards into the renewal
-     * address. Deposits there are not boarding UTXOs of the wallet until the service boards them.
+     * Returns the onchain boarding address used to move funds into Arkade: the delegated
+     * boarding address when the wallet delegates, which the Executor boards into the renewal
+     * address. Deposits there are not the wallet's boarding outputs until the Executor boards them.
      */
     async getBoardingAddress(): Promise<string> {
         await this.syncDelegatedDefaults();
@@ -2392,7 +2392,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         });
         for (const contract of contracts) {
             if (map.has(contract.script)) continue;
-            // boarding deposits are on-chain, not VTXOs
+            // boarding deposits are onchain, not virtual outputs
             if (contract.type === "executor" && contract.params.template !== "renewal") continue;
             const handler = contractHandlers.get(contract.type);
             if (handler) {
@@ -2404,7 +2404,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     hex.encode(script.pkScript) !== contract.script
                 ) {
                     console.warn(
-                        "Skipping executor contract that no longer derives from its params",
+                        "Skipping delegated contract that no longer derives from its params",
                         contract.script,
                     );
                     continue;
@@ -3321,8 +3321,8 @@ export class Wallet
         const [currentBoardingRow] = boardingRows;
 
         // Build the new tapscripts locally from the wallet's own receive script, never from a
-        // executor contract standing in for it, preserving every option but the server key
-        // (mirrors `rebuildTapscript`, swapping serverPubKey). Executor rows stay under the old
+        // delegated contract standing in for it, preserving every option but the operator key
+        // (mirrors `rebuildTapscript`, swapping serverPubKey). Delegated rows stay under the old
         // signer: their coins follow the deprecated-signer migration back to the wallet's own
         // contracts, and delegation turns off until re-registered under the new signer.
         const newOffchain =
@@ -3337,7 +3337,7 @@ export class Wallet
                   });
         if (this.defaultContractScript !== hex.encode(this._offchainTapscript.pkScript)) {
             console.warn(
-                "Server signer rotated: executor registrations stay under the old signer and will be migrated; re-register to keep delegating",
+                "Operator signer rotated: delegations stay under the old signer and will be migrated; re-register to keep delegating",
             );
         }
         const newBoarding = new DefaultVtxo.Script({
@@ -4037,7 +4037,7 @@ export class Wallet
         return this._delegateManager;
     }
 
-    /** Returns the covenant-based executor manager when configured. */
+    /** Returns the Executor manager when configured. */
     async getExecutorManager(): Promise<IExecutorManager | undefined> {
         return this._executorManager;
     }

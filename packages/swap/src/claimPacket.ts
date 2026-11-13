@@ -1,9 +1,9 @@
 /**
- * ClaimPacket sealing: P encrypted to executor so the user can go offline
+ * ClaimPacket sealing: P encrypted to the Executor so the user can go offline
  * after funding. The solver carries the packet blindly and cannot decrypt it.
  *
- * Scheme (executor `pkg/template/ecies`):
- * - ephemeral secp256k1 key; ECDH with executor's encryption key (x coordinate);
+ * Scheme (the Executor's `pkg/template/ecies`):
+ * - ephemeral secp256k1 key; ECDH with the Executor's encryption key (x coordinate);
  * - HKDF-SHA256, info `covclaimd/preimage/v1`, salt = the ephemeral pubkey;
  * - AES-256-GCM, additional data `ephPub(33) ‖ utf8(templateId)`, `‖ u64be(minAmount)` when bound;
  * - value layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, TLV `0x01`.
@@ -17,7 +17,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 
-/** Id of executor's `noninteractiveclaim` template. */
+/** Id of the Executor's `noninteractiveclaim` template. */
 export const EXECUTOR_CLAIM_TEMPLATE_ID =
     "d321b3d9ff490a32c028842d57dd7974f271598f266847b29ffe01231ffaeb00";
 
@@ -25,7 +25,7 @@ export interface SealedClaimPacket {
     /**
      * Base64 TLV body: `0x01` ciphertext, `0x03` encryption key and, when bound, `0x04` amount. **This is what
      * `claim_packet` carries.** The solver stamps it as Arkade extension packet `0x04`;
-     * executor matches on `0x03`, so the client alone chooses which executor.
+     * the Executor matches on `0x03`, so the client alone chooses which Executor.
      *
      * `0x02` arkade_script is deliberately absent: the covenant commits to
      * `taggedHash("ArkScriptHash", script)`, so only the funder's copy is guaranteed to
@@ -36,17 +36,17 @@ export interface SealedClaimPacket {
 
 export interface ClaimPacketInput {
     preimage: Uint8Array;
-    /** executor's encryption public key, 33-byte compressed (from its `/v1/info`). */
+    /** The Executor's encryption public key, 33-byte compressed (from its `/v1/info`). */
     encryptionPubkey: Uint8Array;
     /** Template the packet is sealed for. Default: {@link EXECUTOR_CLAIM_TEMPLATE_ID}. */
     templateId?: string;
-    /** Sats the funded lockup must carry for executor to claim it, as TLV `0x04` and in the
+    /** Sats the funded lockup must carry for the Executor to claim it, as TLV `0x04` and in the
      * AEAD's additional data so a courier cannot strip it. Unset: unbound. */
     minAmount?: bigint;
 }
 
 /**
- * Seal a preimage to executor.
+ * Seal a preimage to the Executor.
  *
  * The ephemeral key and nonce CANNOT be caller-supplied: AES-GCM under a repeated
  * (key, nonce) pair is a total break (forgery and plaintext recovery).
@@ -116,7 +116,7 @@ const COMPRESSED_PUBKEY_LENGTH = 33;
 /** `ephPub(33) ‖ nonce(12) ‖ preimage(32) ‖ GCM tag(16)`. */
 const SEALED_CIPHERTEXT_LENGTH = 93;
 
-/** The Arkade extension packet type executor scans the arkd tx stream for. */
+/** The Arkade extension packet type the Executor scans the operator's transaction stream for. */
 export const CLAIM_PACKET_TYPE = 0x04;
 
 /** `type(1) ‖ length(2, big-endian) ‖ value`. The length is two bytes even for a

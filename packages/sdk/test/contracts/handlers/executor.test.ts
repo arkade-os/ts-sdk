@@ -78,20 +78,20 @@ describe("ExecutorContractHandler", () => {
         );
     });
 
-    it("derives the renewal leaves and Ark address of the Go engine", () => {
+    it("derives the renewal leaves and address of the Go engine", () => {
         const s = ExecutorContractHandler.createScript(params("renewal"));
         expect(s.scripts.map((l) => hex.encode(l))).toEqual(vectors.renewal.tapscripts);
         expect(hex.encode(s.pkScript)).toBe(vectors.renewal.pkScript);
         expect(s.address("tark", serverXOnly).encode()).toBe(vectors.renewal.address);
     });
 
-    it("derives the boarding leaves and on-chain address of the Go engine", () => {
+    it("derives the boarding leaves and onchain address of the Go engine", () => {
         const s = ExecutorContractHandler.createScript(params("boarding"));
         expect(s.scripts.map((l) => hex.encode(l))).toEqual(vectors.boarding.tapscripts);
         expect(s.onchainAddress(networks.regtest)).toBe(vectors.boarding.address);
     });
 
-    it("pushes a pubkey into a covenant x-only", () => {
+    it("pushes a pubkey into an Arkade script x-only", () => {
         const owner = hex.decode(vectors.owner);
         const doc = {
             inputs: [
@@ -151,7 +151,7 @@ describe("ExecutorContractHandler", () => {
         const p = params("renewal");
         expect(() =>
             ExecutorContractHandler.deserializeParams({ ...p, template: "renewal_watch" }),
-        ).toThrow(/unknown executor template/);
+        ).toThrow(/unknown Executor template/);
         expect(() =>
             ExecutorContractHandler.deserializeParams({ ...p, owner: vectors.owner.slice(2) }),
         ).toThrow(/compressed/);
@@ -167,7 +167,7 @@ describe("ExecutorContractHandler", () => {
     });
 
     it.each(["renewal", "boarding"] as const)(
-        "spends %s through forfeit with the server and exit alone, never the covenant",
+        "spends %s through forfeit with the operator and exit alone, never the emulator-enforced leaf",
         (template) => {
             const contract = contractOf(template);
             const s = ExecutorContractHandler.createScript(contract.params);
@@ -223,7 +223,7 @@ describe("ExecutorContractHandler", () => {
 });
 
 describe("watchExecutorContracts", () => {
-    it("registers the wallet's renewal and boarding contracts, which then hold its VTXOs", async () => {
+    it("registers the wallet's renewal and boarding contracts, which then hold its virtual outputs", async () => {
         const indexerProvider = createMockIndexerProvider();
         const delegated = createMockVtxo({ script: vectors.renewal.pkScript, value: 4321 });
         indexerProvider.getVtxos = vi

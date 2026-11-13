@@ -70,7 +70,7 @@ export interface CorridorOverrides {
         decode?: ((bolt11: string) => InvoiceFacts) | null;
         /** Default: none. Nothing is sealed and no packet is sent, so the
          * trader must claim its own lockup before `refund_locktime`. Set, `P` is
-         * sealed to executor's encryption key so it can claim while the trader is offline. */
+         * sealed to the Executor's encryption key so it can claim while the trader is offline. */
         executor?: { encryptionPubkey: Pubkey } | null;
     };
     onchain?: {
@@ -135,7 +135,7 @@ export interface ArkadeCorridorDeps {
 export interface LightningCorridorDeps {
     readonly networkName: NetworkName;
     readonly decode: (bolt11: string) => InvoiceFacts;
-    /** `undefined` means no executor is configured: nothing is sealed and no
+    /** `undefined` means no Executor is configured: nothing is sealed and no
      * packet is sent. Not a missing dep. */
     readonly executor: { encryptionPubkey: Pubkey } | undefined;
 }
@@ -255,7 +255,7 @@ export function resolveCorridorDeps(
                 executor: refusedIfNull(
                     overrides?.lightning?.executor,
                     "lightning",
-                    "executor encryption key",
+                    "Executor encryption key",
                 ),
             };
         }

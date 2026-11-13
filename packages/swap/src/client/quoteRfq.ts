@@ -152,7 +152,7 @@ export type CorridorRfqPreparation =
           readonly contractParams: LightningReceiveContractParams;
           readonly secrets: ProvisionedClaimSecret;
           readonly payoutAddress: string;
-          /** `P` was sealed to executor. */
+          /** `P` was sealed to the Executor. */
           readonly executorClaims?: true;
           /** What the solver's lockup must carry — the claim refuses less. */
           readonly expectedAmount: bigint;
@@ -262,11 +262,11 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
 };
 
 /**
- * Who the claim packet is sealed to, or `undefined` where no executor is configured (then no
+ * Who the claim packet is sealed to, or `undefined` where no Executor is configured (then no
  * packet is sent and claiming before `refund_locktime` is the trader's job).
  *
  * Never seal to a throwaway key: an undecryptable packet looks like a working one on the wire,
- * and executor would silently claim nothing.
+ * and the Executor would silently claim nothing.
  */
 const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
     const configured = deps.executor?.encryptionPubkey;
@@ -274,7 +274,7 @@ const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
     const key = hex.decode(configured);
     if (key.length !== 33) {
         throw new Error(
-            `the executor encryption key must be 33-byte compressed hex, got ${key.length} bytes`,
+            `the Executor encryption key must be 33-byte compressed hex, got ${key.length} bytes`,
         );
     }
     return key;
@@ -668,7 +668,7 @@ const quoteLightningReceive = async (
     const lightning = input.corridors.get("lightning").deps;
     const sealTo = sealingKey(lightning);
     // Only an exact-out BTC take names, in sats, what the lockup must carry. Anything else
-    // would go unbound, and executor would claim dust and hand the solver `P`.
+    // would go unbound, and the Executor would claim dust and hand the solver `P`.
     const sealsAmount = pinned.on === "take" && input.legs.take.assetId === BTC_ASSET_ID;
     const binds = bindsClaimAmount();
     const claimPacket =
@@ -939,7 +939,7 @@ const quoteOnchainSend = async (
  * boarding address, so refunded coins can board again (NArk's
  * `GetOrDeriveBtcRefundDestinationAsync` makes the same choice). No claim packet is sealed: an
  * unclaimed lockup only means the solver reclaims it and the trader refunds L1, so nothing is lost
- * without executor.
+ * without the Executor.
  */
 const quoteOnchainReceive = async (
     input: RfqQuoteInput,

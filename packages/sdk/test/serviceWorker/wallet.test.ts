@@ -982,7 +982,7 @@ describe("ServiceWorkerWallet", () => {
         );
     });
 
-    it("getExecutorManager runs on the page, only with a executor URL", async () => {
+    it("getExecutorManager runs on the page, only with an Executor URL", async () => {
         const { serviceWorker } = createServiceWorkerHarness(() => null);
         await expect(
             createSWWallet(serviceWorker as any, messageTag).getExecutorManager(),

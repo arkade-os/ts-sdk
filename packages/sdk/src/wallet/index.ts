@@ -135,7 +135,7 @@ export interface BaseWalletConfig {
     onchainProvider?: OnchainProvider | ((network: NetworkName) => OnchainProvider);
     /** @deprecated Legacy pre-signed delegator provider. Use executorProvider for new wallets. */
     delegateProvider?: DelegateProvider;
-    /** Optional executor renewal service instance. */
+    /** Optional Executor provider, for the service that renews and boards the wallet's coins. */
     executorProvider?: import("../providers/executor").ExecutorProvider;
 }
 

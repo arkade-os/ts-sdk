@@ -75,18 +75,18 @@ export interface ExecutorStatusRefresh {
 
 /** A watch both sides derived: the address to fund and what restores it. */
 export interface ExecutorWatchRegistration {
-    /** An Ark address for renewal, a bitcoin address for boarding. */
+    /** An address for renewal, an onchain address for boarding. */
     address: string;
     templateId: string;
     /** The template's variables, canonical hex. */
     variables: Record<string, string>;
-    /** The service's keys the wallet's executor contracts are derived from. */
+    /** The Executor's keys the wallet's delegated contracts are derived from. */
     keys: ExecutorContractKeys;
     delegation: ExecutorDelegation;
 }
 
-/** What the manager needs of a wallet: its key, its server, its coins and a way to send. */
-export type ExecutorWallet = Pick<
+/** What the manager needs of a wallet: its key, its operator, its coins and a way to send. */
+export type DelegatedWallet = Pick<
     IWallet,
     "identity" | "getAddress" | "getSpendableVtxos" | "send" | "getContractManager"
 >;
@@ -126,7 +126,7 @@ export async function watchExecutorContracts(
                 params: serialized,
                 script: hex.encode(script.pkScript),
                 address: script.address(hrp, serverPubKey).encode(),
-                label: template === "renewal" ? "Executor renewal" : "Executor boarding",
+                label: template === "renewal" ? "Delegated renewal" : "Delegated boarding",
                 metadata: metadataFor(template, registered),
             }),
         );
@@ -196,12 +196,12 @@ export interface IExecutorManager {
         options?: { expiresAt?: number },
     ): Promise<ExecutorWatchRegistration>;
     /**
-     * Migrate the wallet to the executor: register the renewal watch, send its generically
-     * spendable VTXOs, with their assets, to the renewal address and retire its own receive
+     * Migrate the wallet to the Executor: register the renewal watch, send its generically
+     * spendable virtual outputs, with their assets, to the renewal address and retire its own receive
      * contracts (inactive, still watched). txid is absent when there was nothing to send.
      * Idempotent: run it again to move coins that reach a retired address later.
      */
-    delegateVtxos(
+    delegateWalletOutputs(
         params: DelegationParams,
         options?: { expiresAt?: number },
     ): Promise<ExecutorWatchRegistration & { txid?: string }>;
@@ -218,11 +218,11 @@ export interface IExecutorManager {
     refreshStatus(): Promise<ExecutorStatusRefresh[]>;
 }
 
-/** Client-side watch registration with the executor service. */
+/** Client-side watch registration with the Executor. */
 export class ExecutorManagerImpl implements IExecutorManager {
     constructor(
         readonly executorProvider: ExecutorProvider,
-        readonly wallet: ExecutorWallet,
+        readonly wallet: DelegatedWallet,
     ) {}
 
     getInfo(): Promise<ExecutorInfo> {
@@ -236,7 +236,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const missing = Object.entries(ids).filter(([, id]) => !active.has(id));
         if (missing.length > 0) {
             throw new Error(
-                `executor does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
+                `Executor does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
             );
         }
         return ids;
@@ -256,7 +256,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         return this.register("boarding", params, options);
     }
 
-    async delegateVtxos(
+    async delegateWalletOutputs(
         params: DelegationParams,
         options: { expiresAt?: number } = {},
     ): Promise<ExecutorWatchRegistration & { txid?: string }> {
@@ -316,12 +316,12 @@ export class ExecutorManagerImpl implements IExecutorManager {
             this.wallet.getAddress(),
             this.wallet.identity.compressedPublicKey(),
         ]);
-        // the watch address commits to the service's server key, so it must be the wallet's
+        // the watch address commits to the service's operator key, so it must be the wallet's
         const { hrp, serverPubKey } = ArkAddress.decode(address);
         const server = hex.encode(serverPubKey);
         if (info.serverPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
-                `executor server key ${info.serverPubkey} is not the wallet's server ${server}`,
+                `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${server}`,
             );
         }
         const keys = {
@@ -350,7 +350,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // carries an address that does not derive from its script.
         if (delegation.address !== watchAddress) {
             throw new Error(
-                `executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
+                `Executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
             );
         }
         if (delegation.status !== "active") {
@@ -370,7 +370,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 delegation.expiresAt,
                 delegation.address,
             );
-            throw new Error(`executor watch ${delegation.address} is ${delegation.status}`);
+            throw new Error(`Executor watch ${delegation.address} is ${delegation.status}`);
         }
         const contracts = await watchExecutorContracts(this.wallet, keys, params, {
             template: kind,

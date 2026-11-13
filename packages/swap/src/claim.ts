@@ -4,7 +4,7 @@
  *
  * On `lightning:BTC->arkade:BTC` and `onchain:BTC->arkade:BTC` the trader is the covenant's
  * `receiver` and generated `P`, so the collaborative claim leaf (preimage + receiver + server) is
- * spendable the moment the lockup lands, with no executor. Mirror of `pushRefundWithoutReceiver`,
+ * spendable the moment the lockup lands, with no Executor. Mirror of `pushRefundWithoutReceiver`,
  * except:
  *
  * - The preimage rides the PSBT's `ConditionWitness`, attached AFTER signing on the ark tx and

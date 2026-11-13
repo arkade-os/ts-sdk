@@ -1,5 +1,5 @@
 /**
- * ClaimPacket sealing to executor. The scheme matches executor's
+ * ClaimPacket sealing to the Executor. The scheme matches the Executor's
  * `pkg/template/ecies`; TLV framing is covered in `claimPacketCodec.test.ts`.
  */
 import { describe, expect, it, vi } from "vitest";

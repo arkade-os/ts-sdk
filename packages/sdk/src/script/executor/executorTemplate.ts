@@ -13,13 +13,13 @@ import renewDocument from "./renew.json";
 
 /** The parameters of a delegation under the default templates. */
 export interface DelegationParams {
-    /** BIP 68 sequence of the owner's exit from a delegated VTXO, at least the Ark server's. */
+    /** BIP 68 sequence of the owner's exit from a delegated virtual output, at least the operator's. */
     exitDelay: number;
-    /** Seconds before expiry the service renews a VTXO. */
+    /** Seconds before expiry the Executor renews a virtual output. */
     renewalWindow: number;
     /** Satoshis a renewal may cost. */
     maxFee: number;
-    /** BIP 68 sequence of the owner's exit from a boarding deposit, at least the Ark server's. */
+    /** BIP 68 sequence of the owner's exit from a boarding deposit, at least the operator's. */
     boardingExitDelay?: number;
 }
 
@@ -96,7 +96,7 @@ export function defaultVariables(
 
 /**
  * The contract of a default template for owner, from the keys and params alone. Leaves are in
- * function order: forfeit (owner + server), exit (owner after CSV), then the covenant leaf.
+ * function order: forfeit (owner + operator), exit (owner after CSV), then the emulator-enforced leaf.
  */
 export function defaultContract(
     kind: ExecutorDefault,
@@ -110,8 +110,8 @@ export function defaultContract(
 
 /**
  * Build a bundled contract: arguments bind `<variable>`s or `{"program": output}`, the witness
- * program of an output locked to another contract. A pubkey is x-only in a leaf and in a covenant
- * alike; `COSIGNER_KEY` in a covenant is the hex the intent message spells it in.
+ * program of an output locked to another contract. A pubkey is x-only in a leaf and in an Arkade
+ * script alike; `COSIGNER_KEY` in an Arkade script is the hex the proof message spells it in.
  */
 export function instantiate(
     doc: Template,

@@ -2257,7 +2257,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(await m.hasSwap(RFQ_ID)).toBe(true);
     });
 
-    it("leaves a executor-sealed receive claimable without claiming it", async () => {
+    it("leaves an Executor-sealed receive claimable without claiming it", async () => {
         const s = spies();
         const swap = receiveSwap({ executorClaims: true });
         const m = manager({
@@ -2272,7 +2272,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(s.lockupClaims).toHaveLength(0);
     });
 
-    it("claim() pushes the claim of a executor-sealed receive", async () => {
+    it("claim() pushes the claim of an Executor-sealed receive", async () => {
         const s = spies();
         const swap = receiveSwap({ executorClaims: true });
         const m = manager({
@@ -2502,7 +2502,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     it("settles on a hash-verified spend made by a txid that is not ours", async () => {
         // `nonInteractiveClaim` is pinned to the trader's own payout script, so
         // a claim that lands without us still pays us. Matching on the txid we
-        // submitted would turn that success into an anomaly the day executor
+        // submitted would turn that success into an anomaly the day the Executor
         // starts working.
         const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
         expect(spend.txid).not.toBe(CLAIM_TXID);

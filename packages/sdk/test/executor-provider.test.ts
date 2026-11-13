@@ -196,7 +196,7 @@ describe("ExecutorManagerImpl.register", () => {
         contractManager.updateContract.mockClear();
         const manager = new ExecutorManagerImpl(makeProvider({ status: "expired" }), wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            `executor watch ${vectors.boarding.address} is expired`,
+            `Executor watch ${vectors.boarding.address} is expired`,
         );
         // the row carries what the service said, so the wallet stops advertising the address
         expect(contractManager.createContract.mock.calls.map(([c]) => c.script)).toEqual([
@@ -214,7 +214,7 @@ describe("ExecutorManagerImpl.register", () => {
     it("refuses an address the service derived differently, e.g. under another delegate key", async () => {
         const manager = new ExecutorManagerImpl(makeProvider({ address: "bcrt1pother" }), wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            `executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
+            `Executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
         );
     });
 
@@ -226,7 +226,7 @@ describe("ExecutorManagerImpl.register", () => {
             wallet,
         );
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            "executor derived a different address",
+            "Executor derived a different address",
         );
         // a row must never carry an address that does not derive from its script
         expect(contractManager.createContract).not.toHaveBeenCalled();
@@ -237,7 +237,7 @@ describe("ExecutorManagerImpl.register", () => {
         const provider = makeProvider();
         provider.getInfo.mockResolvedValue({ ...makeInfo(), serverPubkey: vectors.owner });
         const manager = new ExecutorManagerImpl(provider, wallet);
-        await expect(manager.registerBoarding(params)).rejects.toThrow("wallet's server");
+        await expect(manager.registerBoarding(params)).rejects.toThrow("wallet's operator");
         expect(provider.registerDelegation).not.toHaveBeenCalled();
     });
 
@@ -271,7 +271,7 @@ describe("ExecutorManagerImpl.defaultTemplates", () => {
     });
 });
 
-describe("ExecutorManagerImpl.delegateVtxos", () => {
+describe("ExecutorManagerImpl.delegateWalletOutputs", () => {
     const RENEWAL_ID = ids.renewal;
     const renewalProvider = () =>
         makeProvider({
@@ -280,7 +280,7 @@ describe("ExecutorManagerImpl.delegateVtxos", () => {
             variables: vectors.renewal.variables,
         });
 
-    it("registers the renewal watch and sends every spendable VTXO to it", async () => {
+    it("registers the renewal watch and sends every spendable virtual output to it", async () => {
         const provider = renewalProvider();
         contractManager.createContract.mockClear();
         const vtxos = [
@@ -294,7 +294,7 @@ describe("ExecutorManagerImpl.delegateVtxos", () => {
             getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
             send: vi.fn().mockResolvedValue("txid"),
         };
-        const got = await new ExecutorManagerImpl(provider, w).delegateVtxos(params);
+        const got = await new ExecutorManagerImpl(provider, w).delegateWalletOutputs(params);
         expect(w.getSpendableVtxos).toHaveBeenCalledWith({
             withRecoverable: false,
             genericallySpendableOnly: true,
@@ -327,7 +327,9 @@ describe("ExecutorManagerImpl.delegateVtxos", () => {
 
     it("only registers when there is nothing to send", async () => {
         const w = { ...wallet, getSpendableVtxos: vi.fn().mockResolvedValue([]), send: vi.fn() };
-        const got = await new ExecutorManagerImpl(renewalProvider(), w).delegateVtxos(params);
+        const got = await new ExecutorManagerImpl(renewalProvider(), w).delegateWalletOutputs(
+            params,
+        );
         expect(got.txid).toBeUndefined();
         expect(w.send).not.toHaveBeenCalled();
     });
@@ -335,7 +337,7 @@ describe("ExecutorManagerImpl.delegateVtxos", () => {
     it("retires the wallet's own receive contracts, which stay watched", async () => {
         contractManager.setContractState.mockClear();
         const w = { ...wallet, getSpendableVtxos: vi.fn().mockResolvedValue([]), send: vi.fn() };
-        await new ExecutorManagerImpl(renewalProvider(), w).delegateVtxos(params);
+        await new ExecutorManagerImpl(renewalProvider(), w).delegateWalletOutputs(params);
         expect(contractManager.getContracts).toHaveBeenCalledWith({
             type: ["default", "delegate"],
             state: "active",
@@ -384,7 +386,7 @@ const BOARDING_ID = ids.boarding;
 const identity = { compressedPublicKey: async () => hex.decode(vectors.owner) };
 const wallet = {
     identity,
-    // any Ark address of the vectors' server
+    // any Arkade address of the vectors' operator
     getAddress: async () => vectors.renewal.address,
     getSpendableVtxos: vi.fn(),
     send: vi.fn(),

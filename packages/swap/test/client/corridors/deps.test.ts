@@ -69,7 +69,7 @@ describe("resolveCorridorDeps", () => {
         });
     });
 
-    describe("the executor encryption key", () => {
+    describe("the Executor encryption key", () => {
         it("defaults to absent, which is the internal ephemeral seal", () => {
             expect(
                 resolveCorridorDeps("lightning", undefined, corridorBaseFor("regtest")).executor,
@@ -94,7 +94,7 @@ describe("resolveCorridorDeps", () => {
                     { lightning: { executor: null } },
                     corridorBaseFor("regtest"),
                 ),
-            ).toThrow(/the lightning corridor has no executor encryption key/);
+            ).toThrow(/the lightning corridor has no Executor encryption key/);
         });
     });
 
