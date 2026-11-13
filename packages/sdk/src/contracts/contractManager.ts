@@ -2559,7 +2559,9 @@ export class ContractManager implements IContractManager {
                             (vtxo): ExtendedContractVtxo => ({
                                 ...vtxo,
                                 contractScript: contract.script,
-                                ...(arkadeTweaks ? { arkadeTweaks } : {}),
+                                ...(arkadeTweaks
+                                    ? { arkadeTweaks: arkadeTweaks.map((hash) => hash.slice()) }
+                                    : {}),
                             }),
                         ),
                 );

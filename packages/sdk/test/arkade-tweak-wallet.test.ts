@@ -297,4 +297,50 @@ describe("arkadetweak on wallet-level spends", () => {
         });
         expect(getArkPsbtFields(tx, 0, ArkadeTweak)).toEqual([]);
     });
+
+    it("hands each read its own copy of the hashes", async () => {
+        const contract = contractFor(tweakOnly);
+        const walletRepository = new InMemoryWalletRepository();
+        const contractRepository = new InMemoryContractRepository();
+        await contractRepository.saveContract(contract);
+        await walletRepository.saveVtxos(contract.address, [
+            createMockExtendedVtxo({
+                txid: "ab".repeat(32),
+                vout: 0,
+                value: VALUE,
+                script: contract.script,
+                ...deriveContractTapscripts(contract),
+            }),
+        ]);
+        const manager = await ContractManager.create({
+            indexerProvider: offlineIndexer(),
+            contractRepository,
+            walletRepository,
+        });
+
+        const [{ vtxos: first }] = await manager.getStoredContractsWithVtxos();
+        first[0].arkadeTweaks![0].fill(0);
+        const [{ vtxos: second }] = await manager.getStoredContractsWithVtxos();
+        expect(second[0].arkadeTweaks).toEqual([PAY_HASH]);
+        await manager.dispose();
+    });
+
+    it("adds no tweaks to a path arkd does not co-sign", () => {
+        const withExit = {
+            ...tweakOnly,
+            functions: {
+                ...(tweakOnly as unknown as { functions: object }).functions,
+                exit: { tapscript: { signers: ["$user"], csv: { type: "blocks", value: 10n } } },
+            },
+        } as unknown as arkade.Program;
+        const contract = contractFor(withExit);
+        const script = ArkadeContractHandler.createScript(contract.params);
+
+        const paths = ArkadeContractHandler.getAllSpendingPaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+        });
+        expect(paths).toHaveLength(1);
+        expect(paths[0].arkadeTweaks).toBeUndefined();
+    });
 });
