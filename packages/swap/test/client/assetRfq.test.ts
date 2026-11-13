@@ -154,6 +154,7 @@ describe("quote() on a negotiated asset market", () => {
             profile: {
                 maker_pk_script: expect.stringMatching(/^5120[0-9a-f]{64}$/),
                 maker_public_key: expect.stringMatching(/^[0-9a-f]{64}$/),
+                emulator_pubkey: EMULATOR_PUBKEY_HEX.slice(2),
             },
         });
     });

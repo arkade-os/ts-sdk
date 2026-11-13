@@ -272,8 +272,7 @@ export class OperatorUnreachable extends Error {
 
 /**
  * A corridor's dependency was explicitly overridden to nothing (`null`; `undefined` takes the
- * default), or is required on this network and absent — e.g. the arkade co-signer key on
- * `testnet`/`signet`, which `EMULATOR_PUBKEYS` does not pin.
+ * default), or is required and absent — e.g. the arkade repository at `accept()`.
  *
  * Boundary: dep resolution, when a route first touches that corridor. Never construction: a
  * missing dep for a corridor nobody uses is not an error.

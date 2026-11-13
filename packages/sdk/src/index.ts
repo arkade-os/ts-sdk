@@ -325,6 +325,7 @@ import {
     ConditionWitness,
     PrevArkTxField,
     PrevoutTxField,
+    ArkadeTweak,
     getArkPsbtFields,
     setArkPsbtField,
     ArkPsbtFieldCoder,
@@ -354,12 +355,6 @@ import {
     networks,
     Network,
     NetworkName,
-    defaultEmulatorPubkey,
-    resolveEmulatorPubkey,
-    DEFAULT_ARKADE_EMULATOR_URL,
-    BITCOIN_EMULATOR_PUBKEY,
-    MUTINYNET_EMULATOR_PUBKEY,
-    REGTEST_EMULATOR_PUBKEY,
 } from "./networks";
 import {
     RestIndexerProvider,
@@ -781,6 +776,7 @@ export {
     ConditionWitness,
     PrevArkTxField,
     PrevoutTxField,
+    ArkadeTweak,
     // Prevout tx resolution (emulator v0.0.7+)
     resolvePrevTxs,
     attachPrevArkTxs,
@@ -829,12 +825,6 @@ export {
     networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
-    defaultEmulatorPubkey,
-    resolveEmulatorPubkey,
-    DEFAULT_ARKADE_EMULATOR_URL,
-    BITCOIN_EMULATOR_PUBKEY,
-    MUTINYNET_EMULATOR_PUBKEY,
-    REGTEST_EMULATOR_PUBKEY,
     // DB
     closeDatabase,
     openDatabase,

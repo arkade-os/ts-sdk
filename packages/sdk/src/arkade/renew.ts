@@ -1,6 +1,5 @@
 import { base64, hex } from "@scure/base";
 import { RawWitness } from "@scure/btc-signer";
-import { equalBytes } from "@scure/btc-signer/utils.js";
 import { Estimator } from "../arkfee";
 import { Extension } from "../extension";
 import { EmulatorPacket } from "../extension/emulator";
@@ -16,7 +15,7 @@ import { Batch } from "../wallet/batch";
 import { isNoMatchingIntentsError } from "../wallet/intentReconciliation";
 import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
-import { staticWitness } from "./program";
+import { serverSignsKey, staticWitness } from "./program";
 
 const ABORTED = "renewProgramContractOutputs: aborted before the batch completed";
 /** What the renewal and its batch handler call on the server. */
@@ -58,9 +57,20 @@ export async function renewProgramContractOutputs(
     targets: ProgramContractRenewTarget[],
     opts: { session?: SignerSession; signal?: AbortSignal } = {},
 ): Promise<{ commitmentTxid: string; intentId: string }> {
-    const { emulator, indexer, network } = client;
+    const { indexer, network } = client;
     const arkProvider = client.arkProvider as OperatorProvider;
-    if (!emulator || !indexer) {
+    // arkd signs the intent and the forfeits itself when it holds every leg's co-signer.
+    const operated = targets.filter(({ contract }) =>
+        client.operatorCosigns(contract.keys.emulatorKey),
+    ).length;
+    const viaOperator = operated === targets.length;
+    if (operated > 0 && !viaOperator) {
+        throw new Error(
+            "renewProgramContractOutputs: covenants co-signed by arkd and by the emulator cannot renew in one batch; renew them separately",
+        );
+    }
+    const emulator = viaOperator ? undefined : client.emulator;
+    if ((!viaOperator && !emulator) || !indexer) {
         throw new Error(
             "renewProgramContractOutputs: the Arkade client needs an emulator and an indexer",
         );
@@ -89,7 +99,11 @@ export async function renewProgramContractOutputs(
             throw new Error(`renewProgramContractOutputs: ${fn} is not a covenant function`);
         }
         // No owner signs a renewal: a leaf naming any key but the server's could never complete.
-        if (compiled.signerKeys.some((key) => !equalBytes(key, contract.keys.serverKey))) {
+        if (
+            compiled.signerKeys.some(
+                (key) => !serverSignsKey(compiled, contract.keys.serverKey, key),
+            )
+        ) {
             throw new Error(
                 `renewProgramContractOutputs: ${fn} needs a signature besides the server's`,
             );
@@ -106,7 +120,14 @@ export async function renewProgramContractOutputs(
                 `renewProgramContractOutputs: ${fn} needs call arguments, which a renewal cannot supply`,
             );
         }
-        return { contract, coin, compiled, condition, witness: RawWitness.encode(stack) };
+        return {
+            contract,
+            coin,
+            compiled,
+            condition,
+            witness: RawWitness.encode(stack),
+            tweaks: contract.vtxoScript.arkadeTweaks(compiled),
+        };
     });
 
     // Outputs must equal inputs for the covenant to pass, so a renewal cannot pay a fee. Evaluated
@@ -128,13 +149,15 @@ export async function renewProgramContractOutputs(
     }
 
     const coins = await withPrevTxs(
-        legs.map(({ contract, coin, compiled, condition }) => ({
+        legs.map(({ contract, coin, compiled, condition, tweaks }) => ({
             ...coin,
             tapTree: contract.tapTree,
             forfeitTapLeafScript: compiled.tapLeafScript,
             proofTapLeafScript: compiled.tapLeafScript,
             // Written as ConditionWitness on the proof and the forfeits, where arkd evaluates it.
             ...(condition.length > 0 ? { extraWitness: condition } : {}),
+            // Proof input k+1 only; arkd reads no arkadetweak on a forfeit.
+            ...(tweaks.length > 0 ? { arkadeTweaks: tweaks } : {}),
         })),
         indexer,
     );
@@ -180,12 +203,12 @@ export async function renewProgramContractOutputs(
     // The delete proof is signed up front, as Wallet.settle does, so a failure can always withdraw
     // the intent. It carries the same outputs, so the emulator runs the covenant on it and signs.
     const [signedProof, deleteProof] = await Promise.all(
-        [message, deleteMessage].map((m) =>
-            emulator.submitIntent({
-                proof: base64.encode(Proof.create(m, coins, outputs).toPSBT()),
-                message: m,
-            }),
-        ),
+        [message, deleteMessage].map((m) => {
+            const proof = Proof.create(m, coins, outputs);
+            const psbt = base64.encode(proof.toPSBT());
+            // With no emulator the proof goes unsigned: arkd signs Arkade proofs on receipt.
+            return emulator ? emulator.submitIntent({ proof: psbt, message: m }) : psbt;
+        }),
     );
     // Checked last thing before registering, which an abort would otherwise have to undo.
     if (opts.signal?.aborted) throw new Error(ABORTED);

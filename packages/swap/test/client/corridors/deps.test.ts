@@ -1,18 +1,14 @@
 /**
  * The override matrix: default, replaced and `null` for every
- * `CorridorOverrides` key, plus the two deps that reach `MissingCorridorDep` by
- * another door — the arkade repository, which has no default to fall back to,
- * and the co-signer key, which is required on the networks nobody pinned.
+ * `CorridorOverrides` key, plus the arkade repository, which has no default.
  *
  * Called through `resolveCorridorDeps` rather than through a quote: "at quote
  * time" names an entry point a later milestone owns, and this milestone's
  * promise is that the refusal lands at dep resolution, before funding.
  */
 import {
-    BITCOIN_EMULATOR_PUBKEY,
     ESPLORA_URL,
     ProviderUnavailableError,
-    REGTEST_EMULATOR_PUBKEY,
     type OperatorInfo,
     type IWallet,
     type OnchainProvider,
@@ -247,31 +243,16 @@ describe("resolveCorridorDeps", () => {
     });
 
     describe("the operator's cosigner that emulates Arkade Script", () => {
-        it("resolves from the network name, never from the operator's self-report", () => {
-            expect(
-                resolveCorridorDeps("arkade", undefined, corridorBaseFor("regtest")).emulatorPubkey,
-            ).toBe(REGTEST_EMULATOR_PUBKEY);
-            expect(
-                resolveCorridorDeps("arkade", undefined, corridorBaseFor("bitcoin")).emulatorPubkey,
-            ).toBe(BITCOIN_EMULATOR_PUBKEY);
-        });
-
-        it("is required on the networks nobody pinned, and its absence is typed", () => {
-            // `EMULATOR_PUBKEYS` pins bitcoin, mutinynet and regtest only. The
-            // v2 id vocabulary admits testnet and signet, where the override is
-            // the only source — and a bare `Error` escaping the module is what
-            // this converts.
-            for (const network of ["testnet", "signet"] as const) {
-                expect(() =>
-                    resolveCorridorDeps("arkade", undefined, corridorBaseFor(network)),
-                ).toThrow(MissingCorridorDep);
-                expect(() =>
-                    resolveCorridorDeps("arkade", undefined, corridorBaseFor(network)),
-                ).toThrow(new RegExp(`emulates Arkade Script \\(none is pinned for ${network}`));
+        it("leaves the key to each quote's live operator info unless overridden", () => {
+            for (const network of ["regtest", "bitcoin", "signet"] as const) {
+                expect(
+                    resolveCorridorDeps("arkade", undefined, corridorBaseFor(network))
+                        .emulatorPubkey,
+                ).toBeUndefined();
             }
         });
 
-        it("takes the override on an unpinned network", () => {
+        it("takes the override", () => {
             const emulatorPubkey = `03${"ab".repeat(32)}`;
             expect(
                 resolveCorridorDeps(

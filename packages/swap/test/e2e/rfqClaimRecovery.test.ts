@@ -20,7 +20,6 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    REGTEST_EMULATOR_PUBKEY,
     RestIndexerProvider,
     RestOperatorProvider,
     SingleKey,
@@ -103,7 +102,6 @@ const CARD: DiscoveredMarket = {
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;
-let emulatorPubkey: Uint8Array;
 let operatorPubkey: Uint8Array;
 let claimDelay: number;
 let hrp: string;
@@ -121,7 +119,7 @@ const stubTransport = (): AttestingRfqTransport => ({
             operatorPubkey,
             paymentHash,
             claimDelay,
-            emulatorPubkey,
+            emulatorPubkey: hex.decode(profile.emulator_pubkey as string),
             solverRefundPkScript: SOLVER_PK_SCRIPT,
             payoutPubkey: hex.decode(profile.payout_pubkey as string),
             payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
@@ -181,7 +179,6 @@ beforeAll(async () => {
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(await wallet.getAddress()).hrp;
-    emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
 }, 180_000);
 
 describe("a claim arkd accepted but never finalized (regtest)", () => {

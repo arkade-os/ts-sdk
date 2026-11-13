@@ -49,7 +49,8 @@ export const deserializeAssets = (
     assets: Array<{ assetId: string; amount: string | number | bigint }> | undefined,
 ): Asset[] | undefined => assets?.map(deserializeAsset);
 
-export const serializeVtxo = ({ proofTapLeafScript, ...v }: ExtendedVirtualCoin) => ({
+// `arkadeTweaks` is dropped: the contract manager re-derives it on every read.
+export const serializeVtxo = ({ proofTapLeafScript, arkadeTweaks, ...v }: ExtendedVirtualCoin) => ({
     ...v,
     tapTree: hex.encode(v.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
@@ -67,7 +68,7 @@ export const createdAtToIso = (createdAt: Date | string | number): string =>
           ? createdAt.toISOString()
           : new Date(createdAt).toISOString();
 
-export const serializeUtxo = ({ proofTapLeafScript, ...u }: ExtendedCoin) => ({
+export const serializeUtxo = ({ proofTapLeafScript, arkadeTweaks, ...u }: ExtendedCoin) => ({
     ...u,
     tapTree: hex.encode(u.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),

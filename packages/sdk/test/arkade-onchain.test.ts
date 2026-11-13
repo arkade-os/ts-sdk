@@ -15,7 +15,7 @@ import {
     type EmulatorProvider,
 } from "../src";
 import { scriptFromTapLeafScript } from "../src/script/base";
-import { getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
+import { ArkadeTweak, getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
 
 const xOnly = () => schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 const COIN = { txid: "ab".repeat(32), vout: 1, value: 10_000 };
@@ -62,7 +62,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
     const receiver = xOnly();
     const out = new Uint8Array([0x51, 0x20, ...receiver]);
 
-    async function setup() {
+    async function setup(operatorHoldsEmulatorKey = false) {
         const checkpointTapscript = hex.encode(
             CSVMultisigTapscript.encode({
                 timelock: { type: "blocks", value: 10n },
@@ -100,7 +100,13 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         const ark = await arkade.Arkade.connect({
             arkade: {
                 getInfo: async () =>
-                    ({ signerPubkey: "02" + hex.encode(server), checkpointTapscript }) as any,
+                    ({
+                        signerPubkey: "02" + hex.encode(server),
+                        checkpointTapscript,
+                        deprecatedSigners: operatorHoldsEmulatorKey
+                            ? [{ pubkey: "02" + hex.encode(emulatorKey), cutoffDate: 0n }]
+                            : [],
+                    }) as any,
                 submitTx: async () => {
                     throw new Error("not used");
                 },
@@ -115,6 +121,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         });
         const contract = ark.contract(program, { receiver, amount: AMOUNT });
         return {
+            ark,
             contract,
             submitOnchainTx,
             cosignOnchainTx,
@@ -145,6 +152,35 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(Extension.fromBytes(ext).getEmulatorPacket()!.entries[0].vin).toBe(0);
     });
 
+    it("reveals the hash of the tweak-only leaf on the input", async () => {
+        const { ark } = await setup();
+        const sweep = ["INSPECTVERSION", 2, "NUMEQUAL"] as arkade.AsmToken[];
+        const contract = ark.contract(
+            {
+                ...program,
+                functions: {
+                    ...program.functions,
+                    sweep: {
+                        tapscript: { signers: [{ tweak: "$server", fn: "sweep" }], emulator: null },
+                        arkadeScript: { asm: sweep },
+                    },
+                },
+            },
+            { receiver, amount: AMOUNT },
+        );
+        const tx = await contract.functions
+            .collab()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .buildOnchain();
+
+        // `covenantServer` keeps the plain server key and `covenant` the emulator's: only `sweep`.
+        const hash = (asm: arkade.AsmToken[]) =>
+            arkade.arkadeScriptHash(arkade.resolveAsm(asm, { receiver, amount: AMOUNT }));
+        expect(getArkPsbtFields(tx, 0, ArkadeTweak)).toEqual([[hash(sweep)]]);
+    });
+
     it("covenant non-server leaf: emulator cosigns, then finalize and broadcast", async () => {
         const { contract, submitOnchainTx, cosignOnchainTx, broadcastTransaction } = await setup();
         const txid = await contract.functions
@@ -158,6 +194,19 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(cosignOnchainTx).not.toHaveBeenCalled();
         const raw = Transaction.fromRaw(hex.decode(broadcastTransaction.mock.calls[0][0]));
         expect(raw.inputsLength).toBe(1);
+    });
+
+    it("covenant leaf goes to arkd's cosign once arkd holds the co-signer key", async () => {
+        const { contract, submitOnchainTx, cosignOnchainTx } = await setup(true);
+        const txid = await contract.functions
+            .covenant()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .sendOnchain();
+        expect(txid).toBe("arkd-txid");
+        expect(submitOnchainTx).not.toHaveBeenCalled();
+        expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
     });
 
     it("rejects a covenant leaf containing the server key", async () => {
