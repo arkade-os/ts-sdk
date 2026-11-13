@@ -344,8 +344,7 @@ export async function readLockupFate(
             continue;
         }
         // Truthiness, not presence: an unnamed `spentBy` is "". When set it names the
-        // CHECKPOINT tx, which carries the lockup leaf's witness (the ark tx spends the
-        // checkpoint, so it is the wrong place to look).
+        // CHECKPOINT tx, which carries the lockup leaf's witness.
         if (vtxo.spentBy)
             spentBy.set(vtxo.spentBy, {
                 checkpointTxid: vtxo.spentBy,
@@ -356,7 +355,10 @@ export async function readLockupFate(
     }
 
     const spends = [...spentBy.values()];
-    const { txs } = await indexer.getVirtualTxs([...spentBy.keys()]);
+    // The ark tx carries `P` from submit; arkd before v0.9.24 stores a two-step claim's
+    // checkpoint without it until a finalize the claimer may never send.
+    const arkTxids = new Set(spends.flatMap((spend) => (spend.txid ? [spend.txid] : [])));
+    const { txs } = await indexer.getVirtualTxs([...new Set([...spentBy.keys(), ...arkTxids])]);
     const refunded = new Set<string>();
     const leafScripts = new Set<string>();
     for (const raw of txs) {
@@ -367,12 +369,22 @@ export async function readLockupFate(
             continue; // undecodable blob: nothing learned from it
         }
         // Bound by the PSBT's own id (witness cannot change a taproot txid), not by position.
-        if (!spentBy.has(tx.id)) continue;
+        const checkpoint = spentBy.has(tx.id);
+        if (!checkpoint && !arkTxids.has(tx.id)) continue;
         for (let i = 0; i < tx.inputsLength; i++) {
             const spent = tx.getInput(i);
             if (!spent.txid) continue;
             // Same txid convention as the indexer (cf. `assertCheckpointsMatchInputs`).
             const txid = hex.encode(spent.txid);
+            if (!checkpoint) {
+                // An ark tx spends each checkpoint at vout 0; it proves a claim, never a refund.
+                if (spent.index !== 0 || !spentBy.has(txid)) continue;
+                const preimage = candidateWitnessItems(tx, i).find((candidate) =>
+                    hashesTo(candidate, input.paymentHash),
+                );
+                if (preimage) return { fate: "claimed", preimage, spends };
+                continue;
+            }
             const vtxo = all.find(
                 (vtxo) => vtxo.txid === txid && vtxo.vout === spent.index && vtxo.spentBy === tx.id,
             );

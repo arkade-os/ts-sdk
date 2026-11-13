@@ -28,7 +28,7 @@ import { fundingWasNotSubmitted } from "./record";
 import { assetPaymentOf } from "./assetPayment";
 import { retireUnsubmittedFunding } from "./fundingNotSubmitted";
 import { hex } from "@scure/base";
-import { pushClaim } from "../claim";
+import { finalizePendingClaim, findPendingClaims, pushClaim } from "../claim";
 import { buildHtlcRefund, claimOnchainFill, nextClaimFeeRate } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
 import { migrateV0OfferRows } from "../migrateOfferRows";
@@ -54,6 +54,7 @@ import {
     RfqSwapManager,
     isRfqConfigurationRefusal,
     type AvailableRfqSwapManagerCallbacks,
+    type ReceiveLockupSwap,
     type RfqSwap,
     type RfqSwapManagerCallbacks,
     type RfqSwapManagerDeps,
@@ -652,17 +653,45 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * response it is checking. @see operatorUnrollScript */
     const pinnedNetwork = async (): Promise<Network> => getNetwork(await config.network());
 
-    const claimLockup: RfqSwapManagerCallbacks["claimLockup"] = async (
-        swap,
-        vtxos,
-        { partiallyClaimed },
-    ) => {
+    const claimSecretOf = async (swap: ReceiveLockupSwap) => {
         const record = await corridorStore().getRfqSwap(swap.rfqId);
         if (!record) throw new Error(`rfq swap ${swap.rfqId} has no stored record to claim from`);
         const secret = rfqClaimSecretOf(record);
         if (!secret) throw new Error(`rfq swap ${swap.rfqId} carries no claim secret`);
         const script = swap.lockup?.script;
         if (!script) throw new Error(`rfq swap ${swap.rfqId} carries no lockup covenant`);
+        return { record, secret, script };
+    };
+
+    // Keyless: a record whose key this wallet cannot produce still reads what is pending.
+    const pendingClaims: NonNullable<RfqSwapManagerCallbacks["pendingClaims"]> = async (swap) => {
+        const script = swap.lockup?.script;
+        if (!script) throw new Error(`rfq swap ${swap.rfqId} carries no lockup covenant`);
+        const claims = await findPendingClaims(operator, indexer, {
+            contract: script,
+            network: await pinnedNetwork(),
+        });
+        return claims.map(({ arkTxid }) => arkTxid);
+    };
+
+    const finalizeClaim: NonNullable<RfqSwapManagerCallbacks["finalizeClaim"]> = async (swap) => {
+        const { secret, script } = await claimSecretOf(swap);
+        await track(
+            finalizePendingClaim(operator, indexer, {
+                contract: script,
+                receiver: await contractSigner(wallet, secret.signingDescriptor),
+                preimage: await preimageForSwapRecord(wallet, secret),
+                network: await pinnedNetwork(),
+            }),
+        );
+    };
+
+    const claimLockup: RfqSwapManagerCallbacks["claimLockup"] = async (
+        swap,
+        vtxos,
+        { partiallyClaimed },
+    ) => {
+        const { record, secret, script } = await claimSecretOf(swap);
         const payoutAddress = rfqClaimDestinationOf(record);
         if (!payoutAddress) {
             throw new Error(`rfq swap ${swap.rfqId} carries no claim destination`);
@@ -740,6 +769,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             },
             canRefundArkade,
             claimLockup,
+            pendingClaims,
+            finalizeClaim,
             ...(onchainSeams?.claim ? { claimOnchain: onchainSeams.claim } : {}),
             ...(onchainSeams?.refund ? { refundOnchain: onchainSeams.refund } : {}),
         });

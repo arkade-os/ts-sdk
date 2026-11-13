@@ -384,6 +384,18 @@ export interface RfqSwapManagerCallbacks {
         },
     ) => Promise<{ txid: string; amount: number; spent?: readonly LockupVtxo[] }>;
     /**
+     * The ark txids of the claims of ours the operator accepted but never finalized (see
+     * `findPendingClaims`): each has published `P`, yet its sats do not exist until finalized.
+     * Needs no keys. Called on every Lightning receive pass; wired with `finalizeClaim`, and
+     * without both a revealed `P` settles the swap as before.
+     */
+    pendingClaims?: (swap: LightningReceiveSwap) => Promise<readonly string[]>;
+    /**
+     * Finalize them (see `finalizePendingClaim`). Called only after `pendingClaims` named one; a
+     * throw ends the pass and is retried on the next one.
+     */
+    finalizeClaim?: (swap: LightningReceiveSwap) => Promise<void>;
+    /**
      * Push `refundWithoutReceiver` for every output at the lockup (see
      * `pushRefundWithoutReceiver`); return `null` for an empty lockup. Never called for a
      * {@link LightningReceiveSwap}.
@@ -1336,6 +1348,19 @@ export class RfqSwapManager {
         ) {
             fate = { fate: "unknown" };
         }
+        // Not `onchain_receive`: its trader also holds the L1 refund, and a refund that broadcast
+        // and then threw leaves no record, so finalizing there could take both legs.
+        if (
+            swap.kind === "lightning_receive" &&
+            fate.fate !== "exited" &&
+            fate.fate !== "returned"
+        ) {
+            const pending = await this.finalizeOwnClaim(swap);
+            // While a claim of ours is or was pending, only an open window goes on (to claim what
+            // is left); otherwise the next pass reads the fate again before anything can end.
+            const windowOpen = fate.fate === "open" && this.config.now() < swap.refundLocktime;
+            if (pending !== "none" && !windowOpen) return;
+        }
         // Before the terminal shortcut, and that order is the whole safety
         // argument: `returned` means the SOLVER took the lockup back, which is
         // when the trader's L1 funding must come home. Ending there would
@@ -1361,6 +1386,8 @@ export class RfqSwapManager {
         if (swap.kind === "lightning_receive") {
             if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
             if (fate.fate === "open") return this.driveReceiveClaim(swap);
+            // A recorded claim of ours ends on chain evidence, never on a read that learned nothing.
+            if (fate.fate === "unknown" && swap.claimTxid !== undefined) return;
             if (this.config.now() >= swap.refundLocktime) return this.driveReceiveClaim(swap);
             return;
         }
@@ -1379,6 +1406,30 @@ export class RfqSwapManager {
             return this.blockExitedLockup(swap, fate);
         }
         await this.driveArkadeRefund(swap);
+    }
+
+    /** `none` when no claim of ours is pending; `failed` covers a pending read that failed too. */
+    private async finalizeOwnClaim(
+        swap: LightningReceiveSwap,
+    ): Promise<"none" | "finalized" | "failed"> {
+        const pendingClaims = this.callbacks?.pendingClaims;
+        const finalize = this.callbacks?.finalizeClaim;
+        if (!pendingClaims || !finalize || !this.config.enableAutoActions) return "none";
+        try {
+            const pending = await pendingClaims(swap);
+            if (pending.length === 0) return "none";
+            // `P` went out with the submit, whether or not the finalize lands: recorded first, so
+            // a lost response or a restart cannot forget it and re-apply the value gate.
+            if (swap.claimTxid === undefined) {
+                swap.claimTxid = pending[0];
+                this.touch(swap);
+            }
+            await finalize(swap);
+            return "finalized";
+        } catch (error) {
+            this.emitFailed(swap, error);
+            return "failed";
+        }
     }
 
     /**
