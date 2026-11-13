@@ -28,6 +28,7 @@ const rendezvousOf = (market: DiscoveredMarket, pinned?: string): SolverRendezvo
     if (!market.discovery_pubkey || !transports.nostr.relays.length) return undefined;
 
     const advertised = (market as { emulator_pubkey?: unknown }).emulator_pubkey;
+    // A card's key is just its solver's default: requests name their own key.
     const bare = advertised === undefined || advertised === null || advertised === "";
     if (!bare && (typeof advertised !== "string" || !XONLY_HEX.test(advertised))) return undefined;
     if (pinned && !bare && advertised !== pinned) return undefined;
