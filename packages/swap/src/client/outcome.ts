@@ -96,6 +96,10 @@ export const LOCKUP_OWNER = {
     onchain_send: CORRIDOR_PASS.onchain_send.lockups[0].owner,
 } as const satisfies Record<CorridorKind, LockupOwner>;
 
+/** A kind this client still drives; a stored row of a removed corridor is not one. */
+export const isCorridorKind = (kind: unknown): kind is CorridorKind =>
+    typeof kind === "string" && Object.hasOwn(CORRIDOR_PASS, kind);
+
 /** Whether this kind's drive pass reads L1, i.e. needs the onchain corridor's deps. */
 export const readsChain = (kind: CorridorKind): boolean =>
     (CORRIDOR_PASS[kind].seams as readonly string[]).includes("chain");
