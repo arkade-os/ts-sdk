@@ -56,9 +56,15 @@ export const chainSourceFrom = (
             vout: number,
             pkScript: Uint8Array,
         ): Promise<{ txHex: string } | null> {
-            const outspend = provider.getTxOutspend
-                ? await provider.getTxOutspend(txid, vout)
-                : (await provider.getTxOutspends(txid))[vout];
+            const outspend = await (provider.getTxOutspend
+                ? provider.getTxOutspend(txid, vout)
+                : provider.getTxOutspends(txid).then((all) => all[vout])
+            ).catch(async (error: unknown) => {
+                // A fee-bumped funding is gone, and backends refuse its outspends with an error.
+                const history = await provider.getTransactions(addressOf(pkScript, network));
+                if (history.some((tx) => tx.txid === txid)) throw error;
+                return undefined;
+            });
             if (!outspend?.spent) return null;
             // `||`: some deployments omit the txid, electrum sends `""` when
             // unspent. Null here would read a CLAIMED htlc as unfunded.
