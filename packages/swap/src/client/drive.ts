@@ -113,7 +113,7 @@ export type DriveRefusal =
     /** Nothing at this swap has been swept, so there is nothing to recover
      * (includes the `needs_counterparty` sources of `needs_recovery`). */
     | "nothing-swept"
-    /** A claim was asked of a swap that is not a claimable lightning receive. */
+    /** A claim was asked of a swap that is not a claimable receive. */
     | "not-claimable"
     /** This wallet exposes no VTXO manager, so no recovery round can be run. */
     | "no-recovery-support";
@@ -1118,11 +1118,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             throw new SwapDriveRefusedError("unknown-swap", `no swap record for ${id}`, id);
         }
         if (record.family !== "rfq") {
-            throw new SwapDriveRefusedError(
-                "not-claimable",
-                `swap ${id} is not a lightning receive`,
-                id,
-            );
+            throw new SwapDriveRefusedError("not-claimable", `swap ${id} is not a receive`, id);
         }
         try {
             await manager.claim(record.rfqId);

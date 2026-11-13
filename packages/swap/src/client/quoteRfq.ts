@@ -23,8 +23,7 @@ import {
 } from "@arkade-os/sdk";
 import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { deepFreeze } from "../jointGraph";
-import { bindsClaimAmount } from "../claimAmountGate";
-import { sealClaimPacket } from "../claimPacket";
+import { EXECUTOR_RECEIVE_TEMPLATE_ID, sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
 import { BTC_ASSET_ID } from "../store";
@@ -63,7 +62,7 @@ import {
     type AssetPaymentTerms,
 } from "./assetPayment";
 import type { DiscoveryLeg } from "./aliases";
-import type { LightningCorridorDeps } from "./corridors/deps";
+import type { ExecutorReceive } from "./corridors/deps";
 import type { CorridorSet } from "./corridors/registry";
 import { UnsupportedRoute } from "./errors";
 import { feedSpread, verifyPlanLegs, type FeedFetch } from "./quoteOffer";
@@ -178,6 +177,7 @@ export type CorridorRfqPreparation =
       })
     | (CommonPreparation & {
           readonly route: "onchain->arkade";
+          readonly executorClaims?: true;
           /** The Arkade claim: the key the solver's lockup pays, and the P that unlocks it. */
           readonly secrets: ProvisionedClaimSecret;
           readonly payoutAddress: string;
@@ -268,8 +268,13 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
  * Never seal to a throwaway key: an undecryptable packet looks like a working one on the wire,
  * and the Executor would silently claim nothing.
  */
-const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
-    const configured = deps.executor?.encryptionPubkey;
+const receivePacket = async (
+    executor: ExecutorReceive | undefined,
+    pinned: PinnedAmount,
+    preimage: Uint8Array,
+    payoutAddress: string,
+) => {
+    const configured = executor?.encryptionPubkey;
     if (configured === undefined) return undefined;
     const key = hex.decode(configured);
     if (key.length !== 33) {
@@ -277,7 +282,22 @@ const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
             `the Executor encryption key must be 33-byte compressed hex, got ${key.length} bytes`,
         );
     }
-    return key;
+    if (pinned.on !== "take") {
+        throw new Error('delegated receive requires amountOn: "take" to seal the minimum payout');
+    }
+    const templateId = executor?.templateId ?? EXECUTOR_RECEIVE_TEMPLATE_ID;
+    if (templateId === EXECUTOR_RECEIVE_TEMPLATE_ID && pinned.value < 1_000n) {
+        throw new Error("the default executor receive template requires at least 1,000 sats");
+    }
+    return sealClaimPacket({
+        preimage,
+        encryptionPubkey: key,
+        templateId,
+        receive: {
+            receiverProgram: ArkAddress.decode(payoutAddress).pkScript.subarray(2),
+            minimumAmount: pinned.value,
+        },
+    });
 };
 
 /** The pinned amount, or a refusal for a route that needs one. */
@@ -666,19 +686,12 @@ const quoteLightningReceive = async (
     ]);
     const paymentHash = hex.encode(secrets.paymentHash);
     const lightning = input.corridors.get("lightning").deps;
-    const sealTo = sealingKey(lightning);
-    // Only an exact-out BTC take names, in sats, what the lockup must carry. Anything else
-    // would go unbound, and the Executor would claim dust and hand the solver `P`.
-    const sealsAmount = pinned.on === "take" && input.legs.take.assetId === BTC_ASSET_ID;
-    const binds = bindsClaimAmount();
-    const claimPacket =
-        sealTo !== undefined && (!binds || sealsAmount)
-            ? await sealClaimPacket({
-                  preimage: secrets.preimage,
-                  encryptionPubkey: sealTo,
-                  minAmount: binds ? pinned.value : undefined,
-              })
-            : undefined;
+    const claimPacket = await receivePacket(
+        lightning.executor,
+        pinned,
+        secrets.preimage,
+        payoutAddress,
+    );
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(
@@ -937,9 +950,7 @@ const quoteOnchainSend = async (
  *
  * Both destinations are this wallet's own: the claim pays its Arkade address, and the refund a
  * boarding address, so refunded coins can board again (NArk's
- * `GetOrDeriveBtcRefundDestinationAsync` makes the same choice). No claim packet is sealed: an
- * unclaimed lockup only means the solver reclaims it and the trader refunds L1, so nothing is lost
- * without the Executor.
+ * `GetOrDeriveBtcRefundDestinationAsync` makes the same choice).
  */
 const quoteOnchainReceive = async (
     input: RfqQuoteInput,
@@ -963,6 +974,12 @@ const quoteOnchainReceive = async (
     // Fixed at quote time: the manager refuses a record without it, and a refund must never be
     // built against a destination chosen after the money moved.
     const refundPkScript = l1ScriptForAddress(boardingAddress, l1Network);
+    const claimPacket = await receivePacket(
+        input.corridors.get("onchain").deps.executor,
+        pinned,
+        secrets.preimage,
+        payoutAddress,
+    );
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(
@@ -972,6 +989,7 @@ const quoteOnchainReceive = async (
                 payoutAddress,
                 payoutPubkey: secrets.pubkey,
                 refundPubkey: refundKey.pubkey,
+                claimPacket: claimPacket?.packet,
                 // Placeholder: `withCanonicalAmount` writes the canonical decimal string.
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
@@ -1061,6 +1079,7 @@ const quoteOnchainReceive = async (
             lockup: lockupOf(derived),
             secrets,
             payoutAddress,
+            ...(claimPacket ? { executorClaims: true as const } : {}),
             expectedAmount: parsed.take,
             refundKey,
             refundPkScript,

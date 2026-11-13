@@ -9,6 +9,7 @@
  * - value layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, TLV `0x01`.
  */
 import { base64 } from "@scure/base";
+import { arkade } from "@arkade-os/sdk";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import { gcm } from "@noble/ciphers/aes.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -20,6 +21,10 @@ const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 /** Id of the Executor's `noninteractiveclaim` template. */
 export const EXECUTOR_CLAIM_TEMPLATE_ID =
     "d321b3d9ff490a32c028842d57dd7974f271598f266847b29ffe01231ffaeb00";
+
+/** The executor's template for a preimage, receiver program and minimum payout. */
+export const EXECUTOR_RECEIVE_TEMPLATE_ID =
+    "290b7a4364950677c1bab1ae25f9f757da864a71e54eb2ad74b3c43133e57e17";
 
 export interface SealedClaimPacket {
     /**
@@ -36,9 +41,10 @@ export interface SealedClaimPacket {
 
 export interface ClaimPacketInput {
     preimage: Uint8Array;
+    receive?: { receiverProgram: Uint8Array; minimumAmount: bigint };
     /** The Executor's encryption public key, 33-byte compressed (from its `/v1/info`). */
     encryptionPubkey: Uint8Array;
-    /** Template the packet is sealed for. Default: {@link EXECUTOR_CLAIM_TEMPLATE_ID}. */
+    /** Template to open the packet; defaults to the matching preimage-only or receive template. */
     templateId?: string;
     /** Sats the funded lockup must carry for the Executor to claim it, as TLV `0x04` and in the
      * AEAD's additional data so a courier cannot strip it. Unset: unbound. */
@@ -46,7 +52,7 @@ export interface ClaimPacketInput {
 }
 
 /**
- * Seal a preimage to the Executor.
+ * Seal a preimage and optional receive terms to the Executor.
  *
  * The ephemeral key and nonce CANNOT be caller-supplied: AES-GCM under a repeated
  * (key, nonce) pair is a total break (forgery and plaintext recovery).
@@ -80,6 +86,19 @@ export async function sealWithEntropy(
     ) {
         throw new Error("minAmount must be a bigint in [1, 2^64-1]");
     }
+    let plaintext = input.preimage;
+    if (input.receive) {
+        const { receiverProgram, minimumAmount } = input.receive;
+        if (receiverProgram.length !== 32) throw new Error("receiver program must be 32 bytes");
+        if (minimumAmount <= 0n || minimumAmount > 2_100_000_000_000_000n) {
+            throw new Error("minimum amount must be positive and within the Bitcoin supply");
+        }
+        plaintext = concatBytes(
+            input.preimage,
+            receiverProgram,
+            arkade.BigNum.encode(minimumAmount),
+        );
+    }
     const ephemeralPub = secp256k1.getPublicKey(ephemeralKey, true);
     // shared secret = x coordinate of the ECDH point
     const sharedX = secp256k1
@@ -90,10 +109,13 @@ export async function sealWithEntropy(
     if (minAmount !== undefined) new DataView(amount.buffer).setBigUint64(0, minAmount, false);
     const additionalData = concatBytes(
         ephemeralPub,
-        new TextEncoder().encode(input.templateId ?? EXECUTOR_CLAIM_TEMPLATE_ID),
+        new TextEncoder().encode(
+            input.templateId ??
+                (input.receive ? EXECUTOR_RECEIVE_TEMPLATE_ID : EXECUTOR_CLAIM_TEMPLATE_ID),
+        ),
         minAmount === undefined ? new Uint8Array() : amount,
     );
-    const sealed = gcm(key, nonce, additionalData).encrypt(input.preimage);
+    const sealed = gcm(key, nonce, additionalData).encrypt(plaintext);
 
     return {
         packet: base64.encode(
@@ -114,7 +136,7 @@ const TLV_MIN_AMOUNT = 0x04;
 const COMPRESSED_PUBKEY_LENGTH = 33;
 
 /** `ephPub(33) ‖ nonce(12) ‖ preimage(32) ‖ GCM tag(16)`. */
-const SEALED_CIPHERTEXT_LENGTH = 93;
+const MIN_SEALED_CIPHERTEXT_LENGTH = 93;
 
 /** The Arkade extension packet type the Executor scans the operator's transaction stream for. */
 export const CLAIM_PACKET_TYPE = 0x04;
@@ -184,7 +206,11 @@ export const claimPacketShape = (b64: string): ClaimPacketShape => {
     try {
         const raw = base64.decode(b64);
         const { ciphertextLength, hasArkadeScript, pubkey } = parseTlv(raw);
-        if (ciphertextLength !== SEALED_CIPHERTEXT_LENGTH || pubkey === undefined) {
+        if (
+            ciphertextLength === undefined ||
+            ciphertextLength < MIN_SEALED_CIPHERTEXT_LENGTH ||
+            pubkey === undefined
+        ) {
             return { kind: "none" };
         }
         return {

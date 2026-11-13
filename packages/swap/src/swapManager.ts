@@ -234,6 +234,7 @@ export type RfqSwap =
 export interface OnchainReceiveSwap extends RfqSwapCommon {
     kind: "onchain_receive";
     expectedAmount: number;
+    executorClaims?: true;
     /** Its `refundLocktime` is the trader's own, NOT {@link RfqSwapCommon}'s. */
     htlc: OnchainHtlc;
     minConfirmations: number;
@@ -722,7 +723,7 @@ export class RfqSwapManager {
      * through `saveSwap`. */
     private readonly dirty = new Set<string>();
     /** Race guard: one action at a time per swap. */
-    private readonly inProgress = new Set<string>();
+    private readonly inProgress = new Map<string, Promise<void>>();
     private readonly forcedClaims = new Set<string>();
     private activePolls = 0;
     private readonly pollWaiters = new Set<() => void>();
@@ -1086,22 +1087,20 @@ export class RfqSwapManager {
     }
 
     /**
-     * Claim a `claimable` lightning receive now, even when the Executor is the one meant to.
+     * Claim a `claimable` receive now, even when the Executor is the one meant to.
      *
-     * @throws if the swap is not monitored, or is not a claimable lightning receive.
+     * @throws if the swap is not monitored, or is not a claimable receive.
      */
     async claim(rfqId: string): Promise<void> {
         const swap = this.monitored.get(rfqId);
         if (!swap) throw new Error(`swap ${rfqId} is not monitored`);
-        if (swap.kind !== "lightning_receive" || swap.state !== "claimable") {
+        if (
+            (swap.kind !== "lightning_receive" && swap.kind !== "onchain_receive") ||
+            swap.state !== "claimable"
+        ) {
             throw new Error(`swap ${rfqId} is not claimable`);
         }
-        this.forcedClaims.add(rfqId);
-        try {
-            await this.pollSwap(swap);
-        } finally {
-            this.forcedClaims.delete(rfqId);
-        }
+        await this.pollSwap(swap, true);
     }
 
     private async pollMany(swaps: readonly RfqSwap[]): Promise<void> {
@@ -1295,29 +1294,43 @@ export class RfqSwapManager {
      * Safety property: terminal state is not finalized until its record is persisted to
      * every configured sink. A failed save leaves the swap dirty and monitored for retry.
      */
-    private async pollSwap(swap: RfqSwap): Promise<void> {
-        if (this.inProgress.has(swap.rfqId)) return;
-        if (!this.monitored.has(swap.rfqId)) return;
+    private async pollSwap(swap: RfqSwap, forceClaim = false): Promise<void> {
+        while (this.inProgress.has(swap.rfqId)) {
+            if (!forceClaim) return;
+            await this.inProgress.get(swap.rfqId);
+        }
+        if (this.monitored.get(swap.rfqId) !== swap) return;
         // Before the slot wait: overlapping sweeps must skip queued swaps too.
-        this.inProgress.add(swap.rfqId);
+        let complete!: () => void;
+        this.inProgress.set(
+            swap.rfqId,
+            new Promise<void>((resolve) => {
+                complete = resolve;
+            }),
+        );
+        if (forceClaim) this.forcedClaims.add(swap.rfqId);
         const release = await this.acquirePollSlot();
         try {
-            if (this.monitored.has(swap.rfqId)) await this.runPass(swap);
+            if (this.monitored.get(swap.rfqId) === swap) await this.runPass(swap);
         } finally {
             // Waiters settle AFTER the write, and only if every sink took it: otherwise a
             // caller sees a completion its storage never recorded, and a restart replays
             // action callbacks for it.
             try {
-                const persisted = this.dirty.has(swap.rfqId) ? await this.save(swap) : true;
-                if (persisted) {
-                    this.dirty.delete(swap.rfqId);
-                    this.settleWaiters(swap);
-                    if (isRfqSwapTerminal(swap.state)) this.finalize(swap);
+                if (this.monitored.get(swap.rfqId) === swap) {
+                    const persisted = this.dirty.has(swap.rfqId) ? await this.save(swap) : true;
+                    if (persisted && this.monitored.get(swap.rfqId) === swap) {
+                        this.dirty.delete(swap.rfqId);
+                        this.settleWaiters(swap);
+                        if (isRfqSwapTerminal(swap.state)) this.finalize(swap);
+                    }
                 }
             } finally {
                 // Release after every write and callback, even when a save fails.
+                this.forcedClaims.delete(swap.rfqId);
                 this.inProgress.delete(swap.rfqId);
                 release();
+                complete();
             }
         }
     }
@@ -1516,7 +1529,7 @@ export class RfqSwapManager {
 
         this.setState(swap, "claimable");
         if (!this.config.enableAutoActions) return;
-        if (swap.kind === "lightning_receive" && swap.executorClaims && !force) return;
+        if (swap.executorClaims && !force) return;
 
         try {
             const { txid, spent } = await this.callbacks.claimLockup(swap, toClaim, {
