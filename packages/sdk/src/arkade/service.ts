@@ -5,11 +5,7 @@
  * @module arkade/service
  */
 
-import {
-    DEFAULT_ARKADE_EMULATOR_URL,
-    DEFAULT_ARKADE_SERVER_URL,
-    type NetworkName,
-} from "../networks";
+import { DEFAULT_ARKADE_SERVER_URL, type NetworkName } from "../networks";
 import { type OperatorInfo, type OperatorProvider, RestOperatorProvider } from "../providers/ark";
 import { type EmulatorProvider, RestEmulatorProvider } from "../providers/emulator";
 import { type IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -18,11 +14,10 @@ import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers
 /**
  * The Arkade deployment to talk to.
  *
- * - `{ network: "bitcoin" }`: the hosted mainnet deployment, including the operator's cosigner
- *   that emulates Arkade Script ({@link DEFAULT_ARKADE_EMULATOR_URL}). Mainnet is the only network
- *   with a one-liner.
- * - `{ operatorUrl, emulatorUrl? }`: a specific operator. A custom operator does not imply the default
- *   emulator: without `emulatorUrl`, only covenants on a key arkd holds can be spent.
+ * - `{ network: "bitcoin" }`: the hosted mainnet deployment, whose arkd co-signs Arkade Script
+ *   itself. Mainnet is the only network with a one-liner.
+ * - `{ operatorUrl, emulatorUrl? }`: a specific operator. `emulatorUrl` is needed only to spend
+ *   covenants on a co-signer key arkd does not hold.
  */
 export type ArkadeService = { network: "bitcoin" } | { operatorUrl: string; emulatorUrl?: string };
 
@@ -31,8 +26,7 @@ export interface ResolvedArkadeService {
     arkProvider: OperatorProvider;
     indexerProvider: IndexerProvider;
     onchainProvider: OnchainProvider;
-    /** The operator's cosigner that emulates Arkade Script; absent for an `operatorUrl` service
-     * without `emulatorUrl`. */
+    /** A cosigner that emulates Arkade Script; present only when the service names `emulatorUrl`. */
     emulator?: EmulatorProvider;
     info: OperatorInfo;
 }
@@ -68,12 +62,10 @@ export async function resolveArkadeService(
         throw new Error(`Arkade service: no default esplora URL for network '${info.network}'`);
     }
 
-    let emulator: EmulatorProvider | undefined;
-    if ("network" in service) {
-        emulator = new RestEmulatorProvider(DEFAULT_ARKADE_EMULATOR_URL);
-    } else if (service.emulatorUrl) {
-        emulator = new RestEmulatorProvider(service.emulatorUrl);
-    }
+    const emulator =
+        "emulatorUrl" in service && service.emulatorUrl
+            ? new RestEmulatorProvider(service.emulatorUrl)
+            : undefined;
 
     return {
         arkProvider,

@@ -370,7 +370,6 @@ import {
     networks,
     Network,
     NetworkName,
-    DEFAULT_ARKADE_EMULATOR_URL,
 } from "./networks";
 import {
     RestIndexerProvider,
@@ -852,7 +851,6 @@ export {
     networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
-    DEFAULT_ARKADE_EMULATOR_URL,
     // DB
     closeDatabase,
     openDatabase,
