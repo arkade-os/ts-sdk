@@ -392,6 +392,18 @@ style and have not been backfilled.
   failure returns to the caller without contacting another solver. Automatic
   routing preferences still apply to subsequent quotes.
 
+- **Arkade covenants move to the operator's key once arkd co-signs Arkade
+  Script.** When arkd lists the network's pinned co-signer key among its
+  signer keys (`signerPubkey` or `deprecatedSigners`), `Arkade.connect` builds
+  new covenants on arkd's current `signerPubkey`. Spends of any covenant whose
+  co-signer key arkd holds then go to arkd instead of the emulator:
+  `submitTx`/`finalizeTx` (two-step), `cosignOnchainTx`, and
+  `registerIntent`/`submitSignedForfeitTxs`. Stored contracts keep their key.
+  An explicit `emulatorPubkey` still wins, and now applies without an
+  `emulator` provider too. Against an operator that has not switched, nothing
+  changes. `connect` also no longer throws for a provider whose info lacks
+  `deprecatedSigners`. `@arkade-os/swap` still derives with the pin.
+
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,
   completed usage (`completedSolverUsage`) or amount-aware advertised cost, after
