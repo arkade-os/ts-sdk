@@ -32,10 +32,10 @@ export const EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID =
 
 export interface SealedClaimPacket {
     /**
-     * Base64 TLV body: `0x01` ciphertext, `0x03` encryption key and, when set, `0x04` amount and
-     * `0x05` predicate. **This is what `claim_packet` carries.** The solver stamps it as Arkade
-     * extension packet `0x04`; the Executor matches on `0x03`, so the client alone chooses which
-     * Executor.
+     * Base64 TLV body: `0x01` ciphertext, `0x03` encryption key and, when set, `0x04`: the amount,
+     * or the predicate for a receive. **This is what `claim_packet` carries.** The solver stamps it
+     * as Arkade extension packet `0x04`; the Executor matches on `0x03`, so the client alone
+     * chooses which Executor.
      *
      * `0x02` arkade_script is deliberately absent: the covenant commits to
      * `taggedHash("ArkScriptHash", script)`, so only the funder's copy is guaranteed to
@@ -49,7 +49,8 @@ export interface ClaimPacketInput {
     receive?: {
         receiverProgram: Uint8Array;
         minimumAmount: bigint;
-        /** Public TLV `0x05` condition bytecode; 1..520 bytes in the restricted input-only profile. */
+        /** Public TLV `0x04` condition bytecode; 1..520 bytes in the restricted input-only profile.
+         * Excludes {@link ClaimPacketInput.minAmount}, which uses the same TLV. */
         predicate?: Uint8Array;
     };
     /** The Executor's encryption public key, 33-byte compressed (from its `/v1/info`). */
@@ -99,6 +100,9 @@ export async function sealWithEntropy(
     const predicate = input.receive?.predicate;
     if (predicate !== undefined && (predicate.length === 0 || predicate.length > 520)) {
         throw new Error("receive predicate must contain 1..520 bytes");
+    }
+    if (predicate !== undefined && minAmount !== undefined) {
+        throw new Error("minAmount and a receive predicate both use TLV 0x04");
     }
     let plaintext = input.preimage;
     if (input.receive) {
@@ -152,7 +156,8 @@ const TLV_CIPHERTEXT = 0x01;
 const TLV_ARKADE_SCRIPT = 0x02;
 const TLV_ENCRYPTION_PUBKEY = 0x03;
 const TLV_MIN_AMOUNT = 0x04;
-const TLV_PREDICATE = 0x05;
+/** Same tag as {@link TLV_MIN_AMOUNT}: the predicate template reads TLV 4 as program bytes. */
+const TLV_PREDICATE = 0x04;
 
 const COMPRESSED_PUBKEY_LENGTH = 33;
 

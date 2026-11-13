@@ -133,7 +133,7 @@ describe.each(["lightning", "onchain"] as const)("%s receive predicates", (via) 
         );
         expect(plaintext.subarray(64, 96)).toEqual(sha256(predicate));
         expect(ScriptNum(8, true).decode(plaintext.subarray(96))).toBe(4_950n);
-        expect(base64.decode(packet).slice(-4)).toEqual(Uint8Array.of(5, 0, 1, 0x51));
+        expect(base64.decode(packet).slice(-4)).toEqual(Uint8Array.of(4, 0, 1, 0x51));
         expect(client.preparationOf(quote.id)).toMatchObject({ executorClaims: true });
         expect(transport.sent).toHaveLength(1);
     });

@@ -60,7 +60,7 @@ describe("sealed receive predicates", () => {
         await expect(openClaimPacket(sealed.packet, SECRET_KEY)).rejects.toThrow();
     });
 
-    it("carries the exact program in TLV5 and preserves it when the solver stamps TLV2", async () => {
+    it("carries the exact program in TLV4 and preserves it when the solver stamps TLV2", async () => {
         const predicate = Uint8Array.of(0x51, 0x51, 0x87);
         const sealed = await sealClaimPacket(input(predicate));
         const raw = base64.decode(sealed.packet);
@@ -70,7 +70,7 @@ describe("sealed receive predicates", () => {
             Uint8Array.from([3, 0, 33, ...PUBLIC_KEY]),
         );
         expect(raw.subarray(afterCiphertext + 36)).toEqual(
-            Uint8Array.from([5, 0, 3, ...predicate]),
+            Uint8Array.from([4, 0, 3, ...predicate]),
         );
         const stamped = appendArkadeScript(raw, Uint8Array.of(0x51));
         expect(stamped.subarray(0, raw.length)).toEqual(raw);
@@ -93,16 +93,22 @@ describe("sealed receive predicates", () => {
         }
     });
 
+    it("refuses a minAmount alongside a predicate, since both would be TLV4", async () => {
+        await expect(
+            sealClaimPacket({ ...input(Uint8Array.of(0x51)), minAmount: 1_234n }),
+        ).rejects.toThrow(/minAmount.*predicate.*0x04/);
+    });
+
     it("accepts the maximum transport size and leaves opcode validation to the engine", async () => {
         const predicate = new Uint8Array(520).fill(0x51);
         const sealed = await sealClaimPacket(input(predicate));
         const raw = base64.decode(sealed.packet);
-        expect(raw.subarray(raw.length - 523)).toEqual(Uint8Array.from([5, 2, 8, ...predicate]));
+        expect(raw.subarray(raw.length - 523)).toEqual(Uint8Array.from([4, 2, 8, ...predicate]));
     });
 
     it("never replaces an explicitly false condition with OP_TRUE", async () => {
         const sealed = await sealClaimPacket(input(Uint8Array.of(0)));
-        expect(base64.decode(sealed.packet).slice(-4)).toEqual(Uint8Array.of(5, 0, 1, 0));
+        expect(base64.decode(sealed.packet).slice(-4)).toEqual(Uint8Array.of(4, 0, 1, 0));
         const plaintext = await openClaimPacket(
             sealed.packet,
             SECRET_KEY,

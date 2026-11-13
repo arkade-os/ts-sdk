@@ -67,7 +67,7 @@ export interface ExecutorReceive {
     encryptionPubkey: Pubkey;
     /** Installed compatible template; defaults to the fixed or predicate receive template. */
     templateId?: string;
-    /** Public TLV 0x05 bytecode, 1..520 bytes and <=201 nonpush operations in the engine's
+    /** Public TLV 0x04 bytecode, 1..520 bytes and <=201 nonpush operations in the engine's
      * restricted profile. Must leave one canonical true; cannot mutate the transaction or relax
      * receiver/minimum guards. Selects EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID by default;
      * a custom template must authenticate the same program hash and sealed terms layout. */
