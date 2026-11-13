@@ -167,107 +167,123 @@ const settles = async (s: Awaited<ReturnType<typeof send>>): Promise<void> => {
     );
 };
 
-beforeAll(async () => {
-    wallet = await Wallet.create({
-        identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestOperatorProvider(OPERATOR_URL),
-        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
-            forcePolling: true,
-            pollingInterval: 2000,
-        }),
-        storage: {
-            walletRepository: new InMemoryWalletRepository(),
-            contractRepository: new InMemoryContractRepository(),
-        },
-        settlementConfig: false,
-    });
-    const note = sh("docker exec arkd arkd note --amount 300000");
-    sh(`docker exec arkd ark redeem-notes -n ${note} --password secret`);
-    sh(
-        `docker exec arkd ark send --to ${await wallet.getAddress()} --amount 250000 --password secret`,
-    );
-    await waitFor("the faucet", async () => (await wallet.getBalance()).available >= 250_000);
+// Needs a solver release with arkade-os/intent-solver#351 and #352 and the regtest stack from
+// ArkLabsHQ/arkade-regtest#83; the pinned CI stack has neither.
+describe.skipIf(process.env.RFQ_ONCHAIN_SEND_E2E !== "1")(
+    "arkade -> onchain against the real solver (regtest)",
+    () => {
+        beforeAll(async () => {
+            wallet = await Wallet.create({
+                identity: SingleKey.fromRandomBytes(),
+                arkProvider: new RestOperatorProvider(OPERATOR_URL),
+                onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                settlementConfig: false,
+            });
+            const note = sh("docker exec arkd arkd note --amount 300000");
+            sh(`docker exec arkd ark redeem-notes -n ${note} --password secret`);
+            sh(
+                `docker exec arkd ark send --to ${await wallet.getAddress()} --amount 250000 --password secret`,
+            );
+            await waitFor(
+                "the faucet",
+                async () => (await wallet.getBalance()).available >= 250_000,
+            );
 
-    // The solver pays each HTLC from LND's confirmed onchain balance: one UTXO per swap.
-    const lndConfirmed = () => Number(JSON.parse(sh(`${lncli} walletbalance`)).confirmed_balance);
-    if (lndConfirmed() < 4_000_000) {
-        const outputs = Object.fromEntries(
-            Array.from({ length: 5 }, () => [
-                JSON.parse(sh(`${lncli} newaddress p2tr`)).address,
-                0.01,
-            ]),
-        );
-        sh(`${bccli} sendmany "" '${JSON.stringify(outputs)}'`);
-        await waitFor("LND to see its float confirmed", async () => lndConfirmed() >= 4_000_000, {
-            mining: true,
+            // The solver pays each HTLC from LND's confirmed onchain balance: one UTXO per swap.
+            const lndConfirmed = () =>
+                Number(JSON.parse(sh(`${lncli} walletbalance`)).confirmed_balance);
+            if (lndConfirmed() < 4_000_000) {
+                const outputs = Object.fromEntries(
+                    Array.from({ length: 5 }, () => [
+                        JSON.parse(sh(`${lncli} newaddress p2tr`)).address,
+                        0.01,
+                    ]),
+                );
+                sh(`${bccli} sendmany "" '${JSON.stringify(outputs)}'`);
+                await waitFor(
+                    "LND to see its float confirmed",
+                    async () => lndConfirmed() >= 4_000_000,
+                    {
+                        mining: true,
+                    },
+                );
+            }
+
+            const out = sh(
+                `docker exec ${SOLVER} node --enable-source-maps --experimental-eventsource packages/solver-app/dist/cli.js card e2e`,
+            );
+            const card = JSON.parse(out.slice(out.indexOf("{"), out.lastIndexOf("}") + 1));
+            responder = card.discovery_pubkey;
+            const onchain = card.markets.find((m: { quote_asset: { id: string } }) =>
+                m.quote_asset.id.startsWith("bitcoin:"),
+            );
+            expect(onchain, `no onchain market on the solver's card: ${out}`).toBeDefined();
+            const indexed = indexMarketFromCard(card, onchain);
+            if (!indexed.ok) throw new Error(`onchain market excluded: ${indexed.excluded}`);
+            market = { ...indexed.market, source: "local", sourceType: "local" };
+        }, 300_000);
+
+        afterAll(async () => {
+            await Promise.all(clients.map((c) => c[Symbol.asyncDispose]()));
         });
-    }
 
-    const out = sh(
-        `docker exec ${SOLVER} node --enable-source-maps --experimental-eventsource packages/solver-app/dist/cli.js card e2e`,
-    );
-    const card = JSON.parse(out.slice(out.indexOf("{"), out.lastIndexOf("}") + 1));
-    responder = card.discovery_pubkey;
-    const onchain = card.markets.find((m: { quote_asset: { id: string } }) =>
-        m.quote_asset.id.startsWith("bitcoin:"),
-    );
-    expect(onchain, `no onchain market on the solver's card: ${out}`).toBeDefined();
-    const indexed = indexMarketFromCard(card, onchain);
-    if (!indexed.ok) throw new Error(`onchain market excluded: ${indexed.excluded}`);
-    market = { ...indexed.market, source: "local", sourceType: "local" };
-}, 300_000);
+        it("pays once, and a second accept of the same quote funds nothing", async () => {
+            const client = clientOn();
+            const s = await send(client);
+            expect(s.swap.fundingTxid).toEqual(expect.any(String));
 
-afterAll(async () => {
-    await Promise.all(clients.map((c) => c[Symbol.asyncDispose]()));
-});
+            const again = await client.accept(s.quote);
+            expect(again.id).toBe(s.swap.id);
 
-describe("arkade -> onchain against the real solver (regtest)", () => {
-    it("pays once, and a second accept of the same quote funds nothing", async () => {
-        const client = clientOn();
-        const s = await send(client);
-        expect(s.swap.fundingTxid).toEqual(expect.any(String));
+            await settles(s);
+        }, 600_000);
 
-        const again = await client.accept(s.quote);
-        expect(again.id).toBe(s.swap.id);
+        it("returns a second funding of the lockup to the client at once", async () => {
+            const s = await send(clientOn());
+            await waitFor(
+                "the solver's HTLC funding",
+                async () => (await htlcOutputs(s.record)).length > 0,
+            );
 
-        await settles(s);
-    }, 600_000);
+            await wallet.send({
+                address: s.record.lockupAddress,
+                amount: Number(s.quote.give.amount),
+            });
 
-    it("returns a second funding of the lockup to the client at once", async () => {
-        const s = await send(clientOn());
-        await waitFor(
-            "the solver's HTLC funding",
-            async () => (await htlcOutputs(s.record)).length > 0,
-        );
+            await settles(s);
+        }, 600_000);
 
-        await wallet.send({ address: s.record.lockupAddress, amount: Number(s.quote.give.amount) });
+        it("funds the HTLC once across solver restarts before and after funding", async () => {
+            const s = await send(clientOn());
+            await restartSolver();
+            await waitFor(
+                "the solver's HTLC funding",
+                async () => (await htlcOutputs(s.record)).length > 0,
+            );
+            await restartSolver();
 
-        await settles(s);
-    }, 600_000);
+            await settles(s);
+        }, 900_000);
 
-    it("funds the HTLC once across solver restarts before and after funding", async () => {
-        const s = await send(clientOn());
-        await restartSolver();
-        await waitFor(
-            "the solver's HTLC funding",
-            async () => (await htlcOutputs(s.record)).length > 0,
-        );
-        await restartSolver();
+        it("claims once from a second client restored after the first is disposed", async () => {
+            const first = clientOn();
+            const s = await send(first);
+            await waitFor(
+                "the solver's HTLC funding",
+                async () => (await htlcOutputs(s.record)).length > 0,
+            );
+            await first[Symbol.asyncDispose]();
 
-        await settles(s);
-    }, 900_000);
-
-    it("claims once from a second client restored after the first is disposed", async () => {
-        const first = clientOn();
-        const s = await send(first);
-        await waitFor(
-            "the solver's HTLC funding",
-            async () => (await htlcOutputs(s.record)).length > 0,
-        );
-        await first[Symbol.asyncDispose]();
-
-        const second = clientOn();
-        await second.ready;
-        await settles(s);
-    }, 600_000);
-});
+            const second = clientOn();
+            await second.ready;
+            await settles(s);
+        }, 600_000);
+    },
+);
