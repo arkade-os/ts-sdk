@@ -72,7 +72,7 @@ const outputsPaying = async (address: string): Promise<number[]> => {
 };
 
 const receivedBy = (address: string): bigint =>
-    BigInt(Math.round(Number(sh(`${bccli} getreceivedbyaddress ${address} 0`)) * 1e8));
+    BigInt(Math.round(Number(sh(`${bccli} getreceivedbyaddress ${address} 1`)) * 1e8));
 
 const solverHealthy = async (): Promise<boolean> => {
     try {
@@ -150,8 +150,14 @@ const settles = async (s: Awaited<ReturnType<typeof send>>): Promise<void> => {
         (await lockupVtxos(s.record)).every((v) => v.isSpent),
     );
 
+    await waitFor(
+        "the L1 payout to confirm",
+        async () => receivedBy(s.destination) >= PAYOUT_SATS,
+        {
+            mining: true,
+        },
+    );
     expect(await htlcOutputs(s.record)).toHaveLength(1);
-    expect(receivedBy(s.destination)).toBeGreaterThanOrEqual(PAYOUT_SATS);
     expect(await outputsPaying(s.destination)).toHaveLength(1);
 
     const paid = s.balanceBefore - s.quote.give.amount;
@@ -221,8 +227,8 @@ describe("arkade -> onchain against the real solver (regtest)", () => {
         const s = await send(client);
         expect(s.swap.fundingTxid).toEqual(expect.any(String));
 
-        const again = await client.accept(s.quote).catch((e: unknown) => e);
-        if (!(again instanceof Error)) expect((again as Swap).id).toBe(s.swap.id);
+        const again = await client.accept(s.quote);
+        expect(again.id).toBe(s.swap.id);
 
         await settles(s);
     }, 600_000);
