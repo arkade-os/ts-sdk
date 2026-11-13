@@ -14,6 +14,10 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **The delegatee is now the Executor.** The service, its repo and its image were renamed; the SDK follows: `ExecutorProvider`, `RestExecutorProvider`, `executorUrl`, `getExecutorManager()`, `ExecutorContractHandler` (`type: "executor"`), `watchExecutorContracts`, `ExecutorInfo` and the rest of the `Delegatee*` names drop the old word. What the wallet owns and delegates says `Delegated` instead: `DelegatedOutput` (was `DelegateeCoin`) and `DelegatedWallet`. `delegateVtxos` is now `delegateWalletOutputs`. The REST API and its `delegation` vocabulary are unchanged. Contracts stored as `type: "delegatee"` by an unreleased build are not migrated.
+
+- **The bundled Executor templates no longer pin the service's cosigner key.** The `renew` and `board` covenants (the service's `templates/renew.json` and `board.json`, the boarding contract now its own `delegated_boarding` artifact) drop the `cosigners_public_keys` checks, so they are shorter and the default addresses no longer depend on `ExecutorInfo.cosignerPubkey`. `DEFAULT_TEMPLATE_IDS` and every default address move: a wallet re-registers under the new ids and migrates its coins, as it does for any other change of the defaults.
+- **Delegated receives seal the payout before requesting a quote.** Configure the daemon with the sealed-terms template identified by `EXECUTOR_RECEIVE_TEMPLATE_ID` (or the configured `templateId`) before enabling the corridor's `executor`. Delegated quotes require `amountOn: "take"`; the `receive()` verb already fixes that side. Lightning and onchain receive now seal the receiver and minimum amount with the preimage. Existing low-level preimage-only sealing and its template ID remain unchanged.
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
 - **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
   `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
@@ -396,7 +400,43 @@ style and have not been backfilled.
   path, is refused before anything is signed. The renewal's asset packet is
   built by `createAssetPacket`, as a wallet send's is.
 
+- **`IExecutorManager.refreshStatus` re-reads the delegated watches from the
+  service.** The service alone knows whether a watch is still live, so the
+  wallet asks it and persists the answer on the contract rows: a watch the
+  service ended stops being the wallet's default address, and a watch the
+  service does not know anymore is over, whatever it was. A watch the service
+  cannot be reached for keeps the status it had — a network failure never
+  moves the wallet's addresses, and the watch's expiry is the hard bound. The
+  registration now also persists the address the service knows the watch by
+  (`delegationAddress`), so a row written before it can be refreshed too. The
+  companion rows of a registration (watched, never registered) are marked
+  `local`, not a delegation until the service says it watches them: a refresh
+  asks about them too and adopts the answer, as another device may have
+  registered them. The rows a restore re-derives carry no status, so a refresh
+  asks the service about them. A watch whose address the service
+  derived differently is refused before anything is persisted, ended or not,
+  and a refresh refuses an answer about another address than it asked.
+  A 404 ends a watch only when it is the service's own `delegation not found`:
+  a wrong base URL, a proxy, or a service that does not route
+  `GET /v1/delegation` 404s too, with the same gRPC code, so `getDelegation`
+  reports any other 404 without a status and the row keeps the status it had.
+  A 404 also ends a watch only when the service holds the keys the watch was
+  registered under: the same storage opened against another executor keeps its
+  watches, and the refresh reports why.
+  Status writes are serialized and the answer to the latest question wins,
+  whatever order the answers arrive in: a refresh's 404 asked before a
+  `register` re-created the watch, even with the same values, no longer ends
+  it, and a `register` whose row was refreshed while it hydrated no longer
+  restores its older answer. Every write re-reads the row and keeps its other
+  metadata.
+
 ### Changed
+
+- **The pre-signed delegator API is deprecated.** `DelegateProvider`,
+  `RestDelegateProvider`, `DelegateInfo`, `DelegateOptions`,
+  `IDelegateManager` and the worker's `delegateUrl` keep working for
+  existing integrations; new ones should delegate to the Executor through
+  `ExecutorProvider` and `executorUrl`.
 
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
@@ -559,6 +599,14 @@ style and have not been backfilled.
   in a JavaScript number. Custom providers must return numbers rather than
   strings, and Electrum consumers no longer receive string amounts.
 
+- **A delegation status without an expiry no longer keeps the previous one.**
+  `updateContract` replaces `metadata`, but the status writes spread the row's
+  old metadata and only wrote `delegationExpiresAt` when the new one was
+  defined. A service renewing a watch without a deadline left the old expiry
+  on the row, and once it passed `syncDelegatedDefaults` silently dropped a
+  live delegation. The expiry is now cleared before each status write.
+
+- **Explicit delegated receive claims survive an active poll.** A manual claim could return without acting while the background pass still held the swap lock during persistence. Explicit claims now wait for that pass and retain their request through a serialized claim attempt.
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status
@@ -961,6 +1009,31 @@ style and have not been backfilled.
 
 ### Features
 
+- **Delegation to the Executor.** `executorUrl` on
+  `Wallet.create`, `ReadonlyWallet.create` and the worker's `INIT_WALLET`
+  (or an `ExecutorProvider`, `RestExecutorProvider` over REST) gives the
+  wallet a `getExecutorManager()`. The manager registers the wallet's key
+  under the service's bundled `renewal` and `boarding` templates
+  (`registerRenewal`, `registerBoarding`) and `delegateWalletOutputs` moves the
+  wallet's generically spendable coins, assets included, to the renewal
+  address and retires its own receive contracts. Both contracts derive
+  locally from the owner key, the `DelegationParams` and the service's keys
+  (`watchExecutorContracts`), so a restored wallet finds its delegated coins
+  without asking the service; the manager refuses a registration whose
+  address the service derives differently, or whose operator key is not the
+  wallet's. While an active, unexpired delegation is registered,
+  `getAddress()` answers the renewal address and `getBoardingAddress()` the
+  delegated boarding address; `receiveTapscript` still names the wallet's
+  own script. The new `ExecutorContractHandler` (`type: "executor"`)
+  offers only the owner's forfeit and CSV exit leaves, never the
+  emulator-enforced leaf, and `VtxoManager`'s expiry renewal skips delegated
+  coins the service is responsible for. An operator signer rotation logs
+  that delegations stay under the old signer. Covered by a new regtest
+  profile, `sdk-executor`, running the Executor daemon with seconds-typed
+  arkd timelocks. A `pubkey` constructor value reaches an Arkade script as
+  its x-only key, as the service derives it since Executor 7f3adff; the
+  bundled templates' addresses are unchanged.
+
 - **`@arkade-os/swap`: `client.markets()` reports each market's limits per leg.**
   A UI had no way to show a market's min and max, or explain an out-of-range
   amount, without an RFQ that discloses it. `Market` now carries `legs`, each with
@@ -1342,7 +1415,7 @@ style and have not been backfilled.
 
 - **`programFromArtifact` binds a `$param` CSV operand as a BIP68
   sequence, not a block count.** The compiler emits a bare `<param>`
-  placeholder for a CSV operand and both it and the delegatee push the
+  placeholder for a CSV operand and both it and the Executor push the
   parameter's raw value, which is the sequence. The reader tagged such
   an operand `blocks`, so a seconds-domain exit delay could not be
   built at all (`exitDelay = 4194472` threw `Expected Number blocks <=
@@ -1478,6 +1551,16 @@ style and have not been backfilled.
   it benefits too: a settled output cost three or four sequential Electrum
   round trips, plus a fetch of every other transaction at an address that
   received more than one deposit. Output is unchanged.
+
+### Bug Fixes
+
+- **A delegated contract the SDK cannot read a delegation status from is
+  reported, not skipped in silence.** A row written before the status was
+  persisted, or one a restore re-derived, left the wallet on its own
+  addresses with nothing said: the delegated coins kept counting, but the
+  wallet looked as if it had never delegated. Such a row is now reported once
+  per contract, pointing at `refreshStatus` and the re-registration that make
+  it a delegation again.
 
 ## [0.4.77] - 2026-09-30
 

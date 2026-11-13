@@ -190,7 +190,7 @@ export interface OnchainSendSwap extends RfqSwapCommon {
  * - **No trader-side refund.** Every non-claim leaf is the solver's; an unclaimed swap is
  *   lost when the solver reclaims at {@link RfqSwapCommon.refundLocktime}.
  * - **The claim is the whole swap, on a deadline**, and the trader must be online:
- *   covclaimd cannot claim this covenant today.
+ *   unless `P` was sealed to the Executor.
  */
 export interface LightningReceiveSwap extends RfqSwapCommon {
     kind: "lightning_receive";
@@ -203,6 +203,9 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
      * false, which would delete the value gate rather than fail it.
      */
     expectedAmount: number;
+    /** `P` was sealed to the Executor, which claims the lockup: this manager only claims on
+     * {@link RfqSwapManager.claim}. */
+    executorClaims?: true;
     /** Our Arkade claim's txid, once submitted. Set from the callback's return
      * and never from a chain read — the chain's answer is `settled`. */
     claimTxid?: string;
@@ -231,6 +234,7 @@ export type RfqSwap =
 export interface OnchainReceiveSwap extends RfqSwapCommon {
     kind: "onchain_receive";
     expectedAmount: number;
+    executorClaims?: true;
     /** Its `refundLocktime` is the trader's own, NOT {@link RfqSwapCommon}'s. */
     htlc: OnchainHtlc;
     minConfirmations: number;
@@ -670,7 +674,7 @@ const notify = <T extends (...args: never[]) => void>(
  * `refunded` the solver reclaiming an unclaimed lockup. And on the receive arm:
  *
  * - **A claim is matched by its preimage, never by our txid**, so a claim that lands
- *   without us (e.g. covclaimd) is still `settled`.
+ *   without us (e.g. by the Executor) is still `settled`.
  * - **`LockupFate.fate === "claimed"` maps to state `settled`, never `claimed`**: the
  *   state `claimed` only means we submitted something.
  *
@@ -731,7 +735,8 @@ export class RfqSwapManager {
      * through `saveSwap`. */
     private readonly dirty = new Set<string>();
     /** Race guard: one action at a time per swap. */
-    private readonly inProgress = new Set<string>();
+    private readonly inProgress = new Map<string, Promise<void>>();
+    private readonly forcedClaims = new Set<string>();
     private activePolls = 0;
     private readonly pollWaiters = new Set<() => void>();
 
@@ -1093,6 +1098,23 @@ export class RfqSwapManager {
         await this.pollMany([...this.monitored.values()]);
     }
 
+    /**
+     * Claim a `claimable` receive now, even when the Executor is the one meant to.
+     *
+     * @throws if the swap is not monitored, or is not a claimable receive.
+     */
+    async claim(rfqId: string): Promise<void> {
+        const swap = this.monitored.get(rfqId);
+        if (!swap) throw new Error(`swap ${rfqId} is not monitored`);
+        if (
+            (swap.kind !== "lightning_receive" && swap.kind !== "onchain_receive") ||
+            swap.state !== "claimable"
+        ) {
+            throw new Error(`swap ${rfqId} is not claimable`);
+        }
+        await this.pollSwap(swap, true);
+    }
+
     private async pollMany(swaps: readonly RfqSwap[]): Promise<void> {
         for (let i = 0; i < swaps.length; i += RfqSwapManager.POLL_CONCURRENCY) {
             await Promise.allSettled(
@@ -1284,29 +1306,43 @@ export class RfqSwapManager {
      * Safety property: terminal state is not finalized until its record is persisted to
      * every configured sink. A failed save leaves the swap dirty and monitored for retry.
      */
-    private async pollSwap(swap: RfqSwap): Promise<void> {
-        if (this.inProgress.has(swap.rfqId)) return;
-        if (!this.monitored.has(swap.rfqId)) return;
+    private async pollSwap(swap: RfqSwap, forceClaim = false): Promise<void> {
+        while (this.inProgress.has(swap.rfqId)) {
+            if (!forceClaim) return;
+            await this.inProgress.get(swap.rfqId);
+        }
+        if (this.monitored.get(swap.rfqId) !== swap) return;
         // Before the slot wait: overlapping sweeps must skip queued swaps too.
-        this.inProgress.add(swap.rfqId);
+        let complete!: () => void;
+        this.inProgress.set(
+            swap.rfqId,
+            new Promise<void>((resolve) => {
+                complete = resolve;
+            }),
+        );
+        if (forceClaim) this.forcedClaims.add(swap.rfqId);
         const release = await this.acquirePollSlot();
         try {
-            if (this.monitored.has(swap.rfqId)) await this.runPass(swap);
+            if (this.monitored.get(swap.rfqId) === swap) await this.runPass(swap);
         } finally {
             // Waiters settle AFTER the write, and only if every sink took it: otherwise a
             // caller sees a completion its storage never recorded, and a restart replays
             // action callbacks for it.
             try {
-                const persisted = this.dirty.has(swap.rfqId) ? await this.save(swap) : true;
-                if (persisted) {
-                    this.dirty.delete(swap.rfqId);
-                    this.settleWaiters(swap);
-                    if (isRfqSwapTerminal(swap.state)) this.finalize(swap);
+                if (this.monitored.get(swap.rfqId) === swap) {
+                    const persisted = this.dirty.has(swap.rfqId) ? await this.save(swap) : true;
+                    if (persisted && this.monitored.get(swap.rfqId) === swap) {
+                        this.dirty.delete(swap.rfqId);
+                        this.settleWaiters(swap);
+                        if (isRfqSwapTerminal(swap.state)) this.finalize(swap);
+                    }
                 }
             } finally {
                 // Release after every write and callback, even when a save fails.
+                this.forcedClaims.delete(swap.rfqId);
                 this.inProgress.delete(swap.rfqId);
                 release();
+                complete();
             }
         }
     }
@@ -1469,7 +1505,7 @@ export class RfqSwapManager {
                 this.emitFailed(swap, error);
                 return;
             }
-            return this.claimIfFunded(swap, vtxos);
+            return this.claimIfFunded(swap, vtxos, this.forcedClaims.has(swap.rfqId));
         }
 
         // Past the window: keep watching so step 1 can end the swap on chain evidence (the
@@ -1499,6 +1535,7 @@ export class RfqSwapManager {
     private async claimIfFunded(
         swap: ReceiveLockupSwap,
         vtxos: readonly LockupVtxo[],
+        force = false,
     ): Promise<void> {
         if (vtxos.length === 0) return this.unblock(swap);
 
@@ -1543,6 +1580,7 @@ export class RfqSwapManager {
 
         this.setState(swap, "claimable");
         if (!this.config.enableAutoActions) return;
+        if (swap.executorClaims && !force) return;
 
         try {
             const { txid, spent } = await this.callbacks.claimLockup(swap, toClaim, {
@@ -1558,7 +1596,7 @@ export class RfqSwapManager {
             this.setState(swap, "claimed");
             this.emitAction(swap, "claimLockup");
         } catch (error) {
-            // Lost the race to another holder of P (covclaimd): step 1 of the next pass reads that claim and settles.
+            // Lost the race to another holder of P (the Executor): step 1 of the next pass reads that claim and settles.
             const ark = isArkError(error) ? error : maybeArkError(error);
             if (isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) {
                 if (swap.claimFailure !== undefined) {

@@ -57,6 +57,18 @@ export interface CorridorBase {
     readonly repository?: AssetSwapRepository;
 }
 
+/**
+ * Requires `amountOn: "take"`; the default template requires at least 1,000 sats.
+ * Custom templates must support sealed receive terms and the quoted amount.
+ * Deploy a solver supporting extended ciphertext before enabling this option.
+ * The daemon operator can decrypt the preimage and must be trusted.
+ */
+export interface ExecutorReceive {
+    encryptionPubkey: Pubkey;
+    /** Installed sealed-terms template; defaults to EXECUTOR_RECEIVE_TEMPLATE_ID. */
+    templateId?: string;
+}
+
 /** The override matrix. An override replaces a dependency inside an implemented corridor; it never
  * enables a route, selects a solver or transport, or alters settlement. */
 export interface CorridorOverrides {
@@ -68,12 +80,13 @@ export interface CorridorOverrides {
     lightning?: {
         /** Default: the package's own {@link decodeBolt11}. */
         decode?: ((bolt11: string) => InvoiceFacts) | null;
-        /** Default: none — nothing is sealed and no packet is sent, so the
-         * trader must claim its own lockup before `refund_locktime`. Set, only a
-         * take-pinned (exact-out) BTC receive is guaranteed one. */
-        covclaimd?: { pubkey: Pubkey } | null;
+        /** Default: none. Nothing is sealed and no packet is sent, so the
+         * trader must claim its own lockup before `refund_locktime`. Set, `P` is
+         * sealed to the Executor's encryption key so it can claim while the trader is offline. */
+        executor?: ExecutorReceive | null;
     };
     onchain?: {
+        executor?: ExecutorReceive | null;
         /** Default: Esplora at `ESPLORA_URL[network]`. `{ provider }` reads L1 through the caller's
          * own `OnchainProvider` instead, e.g. Electrum: `IWallet` carries none to borrow. */
         chain?: { esploraUrl: string } | { provider: OnchainProvider } | null;
@@ -135,14 +148,15 @@ export interface ArkadeCorridorDeps {
 export interface LightningCorridorDeps {
     readonly networkName: NetworkName;
     readonly decode: (bolt11: string) => InvoiceFacts;
-    /** `undefined` means no covclaimd is deployed — nothing is sealed and no
+    /** `undefined` means no Executor is configured: nothing is sealed and no
      * packet is sent. Not a missing dep. */
-    readonly covclaimd: { pubkey: Pubkey } | undefined;
+    readonly executor: ExecutorReceive | undefined;
 }
 
 /** The onchain corridor's deps. */
 export interface OnchainCorridorDeps {
     readonly networkName: NetworkName;
+    readonly executor?: ExecutorReceive;
     readonly chain: ChainSource;
     /** The caller's L1 claim callback, verbatim. The default claim is built in the drive from
      * {@link claimFeeRateSatVb}; with neither, the L1 half reports blocked while the Arkade lockup is
@@ -252,10 +266,10 @@ export function resolveCorridorDeps(
                 decode:
                     refusedIfNull(overrides?.lightning?.decode, "lightning", "bolt11 decoder") ??
                     decodeBolt11,
-                covclaimd: refusedIfNull(
-                    overrides?.lightning?.covclaimd,
+                executor: refusedIfNull(
+                    overrides?.lightning?.executor,
                     "lightning",
-                    "covclaimd deployment key",
+                    "Executor encryption key",
                 ),
             };
         }
@@ -296,6 +310,11 @@ export function resolveCorridorDeps(
                 ...(refund === undefined ? {} : { refund }),
                 ...(claimFeeRateSatVb === undefined ? {} : { claimFeeRateSatVb }),
                 claimVsize,
+                executor: refusedIfNull(
+                    overrides?.onchain?.executor,
+                    "onchain",
+                    "executor encryption key",
+                ),
             };
         }
     }

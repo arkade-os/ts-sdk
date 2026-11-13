@@ -1097,6 +1097,153 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(s.lockupClaims[0]!.partiallyClaimed).toBe(true);
     });
 
+    it("leaves a delegated onchain receive for the daemon until an explicit claim", async () => {
+        const { swap, s, m } = await drive({
+            swap: onchainReceiveSwap({ executorClaims: true }),
+            contracts: receiveFunded(LOCKUP_VALUE),
+            chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+        });
+        expect(swap.state).toBe("claimable");
+        expect(s.lockupClaims).toHaveLength(0);
+        await m.claim(RFQ_ID);
+        expect(s.lockupClaims).toHaveLength(1);
+    });
+
+    it.each([1, 2])(
+        "waits for persistence before running %i explicit claim requests",
+        async (count) => {
+            const s = spies();
+            let enteredSave!: () => void;
+            let releaseSave!: () => void;
+            const saving = new Promise<void>((resolve) => {
+                enteredSave = resolve;
+            });
+            const released = new Promise<void>((resolve) => {
+                releaseSave = resolve;
+            });
+            s.callbacks.saveSwap = async (swap) => {
+                if (swap.state === "claimable") {
+                    enteredSave();
+                    await released;
+                }
+            };
+            const swap = onchainReceiveSwap({ executorClaims: true });
+            const m = manager({
+                spies: s,
+                now: SAFE_NOW,
+                contracts: receiveFunded(LOCKUP_VALUE),
+                chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+            });
+            await m.addSwap(swap);
+            const polling = m.poll();
+            await saving;
+            let resolved = 0;
+            const claims = Array.from({ length: count }, () =>
+                m.claim(RFQ_ID).then(() => {
+                    resolved++;
+                }),
+            );
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            const resolvedBeforeSave = resolved;
+            releaseSave();
+            await Promise.all([polling, ...claims]);
+
+            expect(resolvedBeforeSave).toBe(0);
+            expect(resolved).toBe(count);
+            expect(s.lockupClaims).toHaveLength(1);
+            expect(swap.state).toBe("claimed");
+            expect(await m.isProcessing(RFQ_ID)).toBe(false);
+            expect(m["forcedClaims"].size).toBe(0);
+            await m.poll();
+            expect(s.lockupClaims).toHaveLength(1);
+        },
+    );
+
+    it.each([false, true])(
+        "does not claim a removed swap after waiting (replaced: %s)",
+        async (replaced) => {
+            const s = spies();
+            let enteredSave!: () => void;
+            let releaseSave!: () => void;
+            const saving = new Promise<void>((resolve) => {
+                enteredSave = resolve;
+            });
+            const released = new Promise<void>((resolve) => {
+                releaseSave = resolve;
+            });
+            s.callbacks.saveSwap = async () => {
+                enteredSave();
+                await released;
+            };
+            const swap = onchainReceiveSwap({ executorClaims: true });
+            const m = manager({
+                spies: s,
+                now: SAFE_NOW,
+                contracts: receiveFunded(LOCKUP_VALUE),
+                chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+            });
+            await m.addSwap(swap);
+            const polling = m.poll();
+            await saving;
+            const claiming = m.claim(RFQ_ID);
+            await m.removeSwap(RFQ_ID);
+            if (replaced) {
+                const replacement = onchainReceiveSwap({ executorClaims: true });
+                await m.addSwap(replacement);
+                m["touch"](replacement);
+            }
+            releaseSave();
+            await Promise.all([polling, claiming]);
+
+            expect(s.lockupClaims).toHaveLength(0);
+            expect(await m.hasSwap(RFQ_ID)).toBe(replaced);
+            expect(m["dirty"].has(RFQ_ID)).toBe(replaced);
+            expect(await m.isProcessing(RFQ_ID)).toBe(false);
+            expect(m["forcedClaims"].size).toBe(0);
+        },
+    );
+
+    it("discards a stale explicit claim after waiting for a global poll slot", async () => {
+        const s = spies();
+        const saved: RfqSwap[] = [];
+        s.callbacks.saveSwap = async (swap) => {
+            saved.push(swap);
+        };
+        const m = manager({
+            spies: s,
+            now: SAFE_NOW,
+            contracts: receiveFunded(LOCKUP_VALUE),
+            chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+        });
+        const releases = await Promise.all(
+            Array.from({ length: RfqSwapManager["POLL_CONCURRENCY"] }, () =>
+                m["acquirePollSlot"](),
+            ),
+        );
+        const old = onchainReceiveSwap({ executorClaims: true, state: "claimable" });
+        await m.addSwap(old);
+        const claiming = m.claim(RFQ_ID);
+        expect(m["pollWaiters"].size).toBe(1);
+        await m.removeSwap(RFQ_ID);
+        const replacement = onchainReceiveSwap({ executorClaims: true });
+        await m.addSwap(replacement);
+        m["touch"](replacement);
+        for (const release of releases) release();
+        await claiming;
+
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(saved).toHaveLength(0);
+        expect(m["monitored"].get(RFQ_ID)).toBe(replacement);
+        expect(m["dirty"].has(RFQ_ID)).toBe(true);
+        expect(await m.isProcessing(RFQ_ID)).toBe(false);
+        expect(m["forcedClaims"].size).toBe(0);
+        expect(m["activePolls"]).toBe(0);
+        await m.poll();
+        expect(saved).toEqual([replacement]);
+        expect(replacement.state).toBe("claimable");
+        expect(s.lockupClaims).toHaveLength(0);
+    });
+
     it("still claims the Arkade lockup while the L1 half is being driven", async () => {
         const s = spies();
         await drive({
@@ -2276,6 +2423,51 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(await m.hasSwap(RFQ_ID)).toBe(true);
     });
 
+    it("leaves an Executor-sealed receive claimable without claiming it", async () => {
+        const s = spies();
+        const swap = receiveSwap({ executorClaims: true });
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("claimable");
+        expect(s.lockupClaims).toHaveLength(0);
+    });
+
+    it("claim() pushes the claim of an Executor-sealed receive", async () => {
+        const s = spies();
+        const swap = receiveSwap({ executorClaims: true });
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+        await m.claim(RFQ_ID);
+
+        expect(s.lockupClaims).toHaveLength(1);
+        expect(swap.state).toBe("claimed");
+        expect(swap.claimTxid).toBe(CLAIM_TXID);
+    });
+
+    it("claim() refuses a swap that is not a claimable receive", async () => {
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: BEFORE_DEADLINE,
+            spies: spies(),
+        });
+        await expect(m.claim("unknown")).rejects.toThrow(/not monitored/);
+        const swap = receiveSwap({ executorClaims: true });
+        await m.addSwap(swap);
+        await expect(m.claim(RFQ_ID)).rejects.toThrow(/not claimable/);
+    });
+
     it("overfunding is fine; the gate is a floor", async () => {
         const s = spies();
         const swap = receiveSwap();
@@ -2476,7 +2668,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     it("settles on a hash-verified spend made by a txid that is not ours", async () => {
         // `nonInteractiveClaim` is pinned to the trader's own payout script, so
         // a claim that lands without us still pays us. Matching on the txid we
-        // submitted would turn that success into an anomaly the day covclaimd
+        // submitted would turn that success into an anomaly the day the Executor
         // starts working.
         const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
         expect(spend.txid).not.toBe(CLAIM_TXID);

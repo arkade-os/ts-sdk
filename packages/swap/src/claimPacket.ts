@@ -1,17 +1,15 @@
 /**
- * ClaimPacket sealing: P encrypted to covclaimd so the user can go offline
- * after funding — the solver carries the packet blindly and cannot decrypt it.
+ * ClaimPacket sealing: P encrypted to the Executor so the user can go offline
+ * after funding. The solver carries the packet blindly and cannot decrypt it.
  *
- * Scheme (per the covclaimd wire protocol):
- * - ephemeral secp256k1 key; ECDH with covclaimd's public key (x coordinate);
+ * Scheme (the Executor's `pkg/template/ecies`):
+ * - ephemeral secp256k1 key; ECDH with the Executor's encryption key (x coordinate);
  * - HKDF-SHA256, info `covclaimd/preimage/v1`, salt = the ephemeral pubkey;
- * - AES-256-GCM with the ephemeral pubkey as additional data, `‖ u64be(min_amount)` when bound;
- * - wire layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64.
- *
- * Byte-exactness is confirmed against covclaimd@56cfd78's `preimage.Decrypt` and
- * `DeserializeClaim` via the vectors in `test/claimPacket*.test.ts`.
+ * - AES-256-GCM, additional data `ephPub(33) ‖ utf8(templateId)`, `‖ u64be(minAmount)` when bound;
+ * - value layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, TLV `0x01`.
  */
 import { base64 } from "@scure/base";
+import { arkade } from "@arkade-os/sdk";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import { gcm } from "@noble/ciphers/aes.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -20,17 +18,19 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 
+/** Id of the Executor's `noninteractiveclaim` template. */
+export const EXECUTOR_CLAIM_TEMPLATE_ID =
+    "d321b3d9ff490a32c028842d57dd7974f271598f266847b29ffe01231ffaeb00";
+
+/** The executor's template for a preimage, receiver program and minimum payout. */
+export const EXECUTOR_RECEIVE_TEMPLATE_ID =
+    "290b7a4364950677c1bab1ae25f9f757da864a71e54eb2ad74b3c43133e57e17";
+
 export interface SealedClaimPacket {
-    /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 (93 bytes decoded). The legacy
-     * `claim_packet` shape: usable only via covclaimd's Reveal API, which silently
-     * needs both sides on the SAME covclaimd, and opens only beside the same `min_amount`
-     * when sealed with one. Prefer {@link SealedClaimPacket.packet}. */
-    ciphertext: string;
     /**
-     * covclaimd's serialised `ClaimPacket` body, base64: TLV `0x01` ciphertext and `0x03`
-     * covclaimd_pub_key. **This is what `claim_packet` should carry** (§ 7.1.2). The
-     * solver stamps it as Arkade extension packet `0x04`; covclaimd filters on `0x03`, so
-     * the client alone chooses which covclaimd.
+     * Base64 TLV body: `0x01` ciphertext, `0x03` encryption key and, when bound, `0x04` amount. **This is what
+     * `claim_packet` carries.** The solver stamps it as Arkade extension packet `0x04`;
+     * the Executor matches on `0x03`, so the client alone chooses which Executor.
      *
      * `0x02` arkade_script is deliberately absent: the covenant commits to
      * `taggedHash("ArkScriptHash", script)`, so only the funder's copy is guaranteed to
@@ -41,15 +41,18 @@ export interface SealedClaimPacket {
 
 export interface ClaimPacketInput {
     preimage: Uint8Array;
-    /** covclaimd's public key, 33-byte compressed (from its /v1 info). */
-    covclaimdPubkey: Uint8Array;
-    /** Sats the funded lockup must carry for covclaimd to claim it, as TLV `0x04` and in the
-     * AEAD's additional data so a courier cannot strip it. Unset: the unbound legacy bytes. */
+    receive?: { receiverProgram: Uint8Array; minimumAmount: bigint };
+    /** The Executor's encryption public key, 33-byte compressed (from its `/v1/info`). */
+    encryptionPubkey: Uint8Array;
+    /** Template to open the packet; defaults to the matching preimage-only or receive template. */
+    templateId?: string;
+    /** Sats the funded lockup must carry for the Executor to claim it, as TLV `0x04` and in the
+     * AEAD's additional data so a courier cannot strip it. Unset: unbound. */
     minAmount?: bigint;
 }
 
 /**
- * Seal a preimage to covclaimd.
+ * Seal a preimage and optional receive terms to the Executor.
  *
  * The ephemeral key and nonce CANNOT be caller-supplied: AES-GCM under a repeated
  * (key, nonce) pair is a total break (forgery and plaintext recovery).
@@ -64,7 +67,7 @@ export async function sealClaimPacket(input: ClaimPacketInput): Promise<SealedCl
 
 /**
  * @internal The sealing with entropy passed in; not re-exported. Reusing
- * `ephemeralKey`/`nonce` breaks the AEAD outright — see {@link sealClaimPacket}.
+ * `ephemeralKey`/`nonce` breaks the AEAD outright, see {@link sealClaimPacket}.
  */
 export async function sealWithEntropy(
     input: ClaimPacketInput,
@@ -72,9 +75,10 @@ export async function sealWithEntropy(
     nonce: Uint8Array,
 ): Promise<SealedClaimPacket> {
     if (input.preimage.length !== 32) throw new Error("preimage must be 32 bytes");
-    if (input.covclaimdPubkey.length !== 33) {
-        throw new Error("covclaimd pubkey must be 33-byte compressed");
+    if (input.encryptionPubkey.length !== 33) {
+        throw new Error("encryption pubkey must be 33-byte compressed");
     }
+    if (nonce.length !== 12) throw new Error("nonce must be 12 bytes");
     const { minAmount } = input;
     if (
         minAmount !== undefined &&
@@ -82,27 +86,42 @@ export async function sealWithEntropy(
     ) {
         throw new Error("minAmount must be a bigint in [1, 2^64-1]");
     }
+    let plaintext = input.preimage;
+    if (input.receive) {
+        const { receiverProgram, minimumAmount } = input.receive;
+        if (receiverProgram.length !== 32) throw new Error("receiver program must be 32 bytes");
+        if (minimumAmount <= 0n || minimumAmount > 2_100_000_000_000_000n) {
+            throw new Error("minimum amount must be positive and within the Bitcoin supply");
+        }
+        plaintext = concatBytes(
+            input.preimage,
+            receiverProgram,
+            arkade.BigNum.encode(minimumAmount),
+        );
+    }
     const ephemeralPub = secp256k1.getPublicKey(ephemeralKey, true);
     // shared secret = x coordinate of the ECDH point
     const sharedX = secp256k1
-        .getSharedSecret(ephemeralKey, input.covclaimdPubkey, true)
+        .getSharedSecret(ephemeralKey, input.encryptionPubkey, true)
         .subarray(1);
     const key = hkdf(sha256, sharedX, ephemeralPub, HKDF_INFO, 32);
-
-    if (nonce.length !== 12) throw new Error("nonce must be 12 bytes");
     const amount = new Uint8Array(8);
     if (minAmount !== undefined) new DataView(amount.buffer).setBigUint64(0, minAmount, false);
-    const additionalData =
-        minAmount === undefined ? ephemeralPub : concatBytes(ephemeralPub, amount);
-    const sealed = gcm(key, nonce, additionalData).encrypt(input.preimage);
+    const additionalData = concatBytes(
+        ephemeralPub,
+        new TextEncoder().encode(
+            input.templateId ??
+                (input.receive ? EXECUTOR_RECEIVE_TEMPLATE_ID : EXECUTOR_CLAIM_TEMPLATE_ID),
+        ),
+        minAmount === undefined ? new Uint8Array() : amount,
+    );
+    const sealed = gcm(key, nonce, additionalData).encrypt(plaintext);
 
-    const ciphertext = concatBytes(ephemeralPub, nonce, sealed);
     return {
-        ciphertext: base64.encode(ciphertext),
         packet: base64.encode(
             concatBytes(
-                tlv(TLV_CIPHERTEXT, ciphertext),
-                tlv(TLV_COVCLAIMD_PUBKEY, input.covclaimdPubkey),
+                tlv(TLV_CIPHERTEXT, concatBytes(ephemeralPub, nonce, sealed)),
+                tlv(TLV_ENCRYPTION_PUBKEY, input.encryptionPubkey),
                 minAmount === undefined ? new Uint8Array() : tlv(TLV_MIN_AMOUNT, amount),
             ),
         ),
@@ -111,44 +130,43 @@ export async function sealWithEntropy(
 
 const TLV_CIPHERTEXT = 0x01;
 const TLV_ARKADE_SCRIPT = 0x02;
-const TLV_COVCLAIMD_PUBKEY = 0x03;
+const TLV_ENCRYPTION_PUBKEY = 0x03;
 const TLV_MIN_AMOUNT = 0x04;
 
 const COMPRESSED_PUBKEY_LENGTH = 33;
 
-/** `ephPub(33) ‖ nonce(12) ‖ preimage(32) ‖ GCM tag(16)`. Distinguishes the two
- * `claim_packet` shapes: a TLV body carrying it is ≥96 bytes, so lengths cannot collide. */
-export const SEALED_CIPHERTEXT_LENGTH = 93;
+/** `ephPub(33) ‖ nonce(12) ‖ preimage(32) ‖ GCM tag(16)`. */
+const MIN_SEALED_CIPHERTEXT_LENGTH = 93;
 
-/** The Arkade extension packet type covclaimd scans the arkd tx stream for. */
+/** The Arkade extension packet type the Executor scans the operator's transaction stream for. */
 export const CLAIM_PACKET_TYPE = 0x04;
 
-/** `type(1) ‖ length(2, big-endian) ‖ value`, covclaimd's own framing. The
- * length is two bytes even for a 33-byte key: the format is fixed, not minimal. */
+/** `type(1) ‖ length(2, big-endian) ‖ value`. The length is two bytes even for a
+ * 33-byte key: the format is fixed, not minimal. */
 const tlv = (type: number, value: Uint8Array): Uint8Array =>
     Uint8Array.from([type, (value.length >> 8) & 0xff, value.length & 0xff, ...value]);
 
 /**
- * Stamp the covenant script into a client's packet — the solver's half.
+ * Stamp the covenant script into a client's packet: the solver's half.
  *
- * Appending rather than rebuilding is safe: covclaimd's `DeserializeClaim` is
- * order-agnostic, so `0x01, 0x03, 0x02` reads back like its own `0x01, 0x02, 0x03`.
+ * Appending rather than rebuilding is safe: the TLV decode is order-agnostic,
+ * so `0x01, 0x03, 0x02` reads back like `0x01, 0x02, 0x03`.
  */
 export const appendArkadeScript = (body: Uint8Array, arkadeScript: Uint8Array): Uint8Array =>
     Uint8Array.from([...body, ...tlv(TLV_ARKADE_SCRIPT, arkadeScript)]);
 
 export type ClaimPacketShape =
-    | { kind: "ciphertext" }
     | {
           kind: "packet";
           body: Uint8Array;
-          covclaimdPubkey?: Uint8Array;
+          encryptionPubkey: Uint8Array;
           needsArkadeScript: boolean;
-      };
+      }
+    /** A bare ciphertext, a body without `0x03`, or a malformed one. */
+    | { kind: "none" };
 
-/** Transcribed from covclaimd's `DeserializeClaim` (tolerates unknown and repeated types),
- * minus its requirement that `0x01` and `0x02` both be present: {@link claimPacketShape}
- * decides what a partial body means. */
+/** Tolerates unknown and repeated types. {@link claimPacketShape} decides what a
+ * partial body means. */
 const parseTlv = (
     data: Uint8Array,
 ): { ciphertextLength?: number; hasArkadeScript: boolean; pubkey?: Uint8Array } => {
@@ -168,10 +186,10 @@ const parseTlv = (
         offset += length;
         if (type === TLV_CIPHERTEXT) ciphertextLength = value.length;
         else if (type === TLV_ARKADE_SCRIPT) hasArkadeScript = true;
-        else if (type === TLV_COVCLAIMD_PUBKEY) {
+        else if (type === TLV_ENCRYPTION_PUBKEY) {
             if (value.length !== COMPRESSED_PUBKEY_LENGTH) {
                 throw new Error(
-                    `covclaimd_pub_key TLV is ${value.length} bytes, want ${COMPRESSED_PUBKEY_LENGTH}`,
+                    `encryption key TLV is ${value.length} bytes, want ${COMPRESSED_PUBKEY_LENGTH}`,
                 );
             }
             pubkey = value;
@@ -181,27 +199,27 @@ const parseTlv = (
 };
 
 /**
- * Which of the two `claim_packet` shapes a base64 field carries.
- *
- * Never throws: anything not unambiguously a packet reads as the legacy ciphertext,
- * keeping the Reveal-API path rather than failing a swap over an unfamiliar field.
+ * What a base64 `claim_packet` field carries. Never throws: anything not
+ * unambiguously a sealed packet with an encryption key reads as `none`.
  */
 export const claimPacketShape = (b64: string): ClaimPacketShape => {
     try {
         const raw = base64.decode(b64);
-        if (raw.length === SEALED_CIPHERTEXT_LENGTH) return { kind: "ciphertext" };
         const { ciphertextLength, hasArkadeScript, pubkey } = parseTlv(raw);
-        // A wrong length fails to decrypt either way, so take the loud path.
-        if (ciphertextLength !== SEALED_CIPHERTEXT_LENGTH || pubkey === undefined) {
-            return { kind: "ciphertext" };
+        if (
+            ciphertextLength === undefined ||
+            ciphertextLength < MIN_SEALED_CIPHERTEXT_LENGTH ||
+            pubkey === undefined
+        ) {
+            return { kind: "none" };
         }
         return {
             kind: "packet",
             body: raw,
             needsArkadeScript: !hasArkadeScript,
-            covclaimdPubkey: pubkey,
+            encryptionPubkey: pubkey,
         };
     } catch {
-        return { kind: "ciphertext" };
+        return { kind: "none" };
     }
 };

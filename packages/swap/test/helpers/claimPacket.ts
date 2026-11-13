@@ -2,8 +2,8 @@
  * Test-side ClaimPacket helpers.
  *
  * These live here rather than in `src/claimPacket.ts` for two reasons. A full
- * ECIES *decrypt* next to production code is an invitation to misuse — nothing
- * in this package ever decrypts a packet, covclaimd does. And deterministic
+ * ECIES *decrypt* next to production code is an invitation to misuse: nothing
+ * in this package ever decrypts a packet, the Executor does. And deterministic
  * sealing must not be reachable from a production import path at all: AES-GCM
  * under a repeated (key, nonce) pair is a total break, so the only safe place
  * for a fixed nonce is a file that ships with the tests.
@@ -18,12 +18,13 @@ import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
 import {
+    EXECUTOR_CLAIM_TEMPLATE_ID,
     sealWithEntropy,
     type ClaimPacketInput,
     type SealedClaimPacket,
 } from "../../src/claimPacket";
 
-/** Independently spelled from the wire spec — see the file header. */
+/** Independently spelled from the wire spec: see the file header. */
 const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 
 /**
@@ -39,31 +40,51 @@ export const sealClaimPacketDeterministic = (
     nonce: Uint8Array,
 ): Promise<SealedClaimPacket> => sealWithEntropy(input, ephemeralKey, nonce);
 
-/** covclaimd's side of the scheme: recover P from a sealed packet. */
+/** The `0x01` value of a packet body: `ephPub ‖ nonce ‖ ciphertext`. */
+export const ciphertextOf = (packetBase64: string): Uint8Array => {
+    const raw = base64.decode(packetBase64);
+    let offset = 0;
+    while (offset < raw.length) {
+        const type = raw[offset]!;
+        const length = (raw[offset + 1]! << 8) | raw[offset + 2]!;
+        if (type === 0x01) return raw.subarray(offset + 3, offset + 3 + length);
+        offset += 3 + length;
+    }
+    throw new Error("no 0x01 TLV");
+};
+
+const amountBytes = (amount: bigint): Uint8Array => {
+    const bytes = new Uint8Array(8);
+    new DataView(bytes.buffer).setBigUint64(0, amount, false);
+    return bytes;
+};
+
+/** The Executor's side of the scheme: recover P from a sealed packet. */
 export async function openClaimPacket(
     packetBase64: string,
-    covclaimdSecretKey: Uint8Array,
+    recipientSecretKey: Uint8Array,
+    templateId: string = EXECUTOR_CLAIM_TEMPLATE_ID,
     minAmount?: bigint,
 ): Promise<Uint8Array> {
-    const packet = base64.decode(packetBase64);
-    const ephemeralPub = packet.subarray(0, 33);
-    const nonce = packet.subarray(33, 45);
-    const sealed = packet.subarray(45);
-    const sharedX = secp256k1.getSharedSecret(covclaimdSecretKey, ephemeralPub, true).subarray(1);
+    const sealedPacket = ciphertextOf(packetBase64);
+    const ephemeralPub = sealedPacket.subarray(0, 33);
+    const nonce = sealedPacket.subarray(33, 45);
+    const sealed = sealedPacket.subarray(45);
+    const sharedX = secp256k1.getSharedSecret(recipientSecretKey, ephemeralPub, true).subarray(1);
     const key = hkdf(sha256, sharedX, ephemeralPub, HKDF_INFO, 32);
     const aesKey = await crypto.subtle.importKey("raw", key as BufferSource, "AES-GCM", false, [
         "decrypt",
     ]);
-    const amount = new Uint8Array(8);
-    if (minAmount !== undefined) new DataView(amount.buffer).setBigUint64(0, minAmount, false);
     return new Uint8Array(
         await crypto.subtle.decrypt(
             {
                 name: "AES-GCM",
                 iv: nonce as BufferSource,
-                additionalData: (minAmount === undefined
-                    ? ephemeralPub
-                    : Uint8Array.from([...ephemeralPub, ...amount])) as BufferSource,
+                additionalData: Uint8Array.from([
+                    ...ephemeralPub,
+                    ...new TextEncoder().encode(templateId),
+                    ...(minAmount === undefined ? [] : amountBytes(minAmount)),
+                ]) as BufferSource,
             },
             aesKey,
             sealed as BufferSource,

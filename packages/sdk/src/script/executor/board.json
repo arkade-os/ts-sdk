@@ -1,0 +1,66 @@
+{
+    "format": "template/v1",
+    "type": "intent",
+    "variables": {
+        "owner": "pubkey",
+        "boarding_exit_delay": "int",
+        "exit_delay": "int",
+        "renewal_window": "int",
+        "max_fee": "int"
+    },
+    "inputs": [
+        {
+            "name": "deposit",
+            "type": "onchain",
+            "schedule": {
+                "min_confirmations": 1
+            },
+            "contract": {
+                "definition": {
+                    "artifact": "e3c0fa053fbb529a252a1025e3453a41f01949f4e49d50de7dfe5d3510470ed3"
+                },
+                "arguments": {
+                    "owner": "<owner>",
+                    "boardingExitDelay": "<boarding_exit_delay>",
+                    "renewalProgram": {
+                        "program": "funds"
+                    },
+                    "maxFee": "<max_fee>"
+                }
+            },
+            "spend": {
+                "function": "board",
+                "leaf": "board"
+            }
+        }
+    ],
+    "outputs": [
+        {
+            "name": "funds",
+            "index": 0,
+            "value": {
+                "from": "deposit"
+            },
+            "locking": {
+                "contract": {
+                    "definition": {
+                        "artifact": "faa3249b8a28e999963994e4020e832285351eb7ce3b4821bcb3b4498f5b8ef3"
+                    },
+                    "arguments": {
+                        "owner": "<owner>",
+                        "exitDelay": "<exit_delay>",
+                        "renewalWindow": "<renewal_window>",
+                        "maxFee": "<max_fee>"
+                    }
+                }
+            }
+        }
+    ],
+    "fees": {
+        "from": "deposit",
+        "max": "<max_fee>"
+    },
+    "packets": {
+        "output_index": 1
+    }
+}

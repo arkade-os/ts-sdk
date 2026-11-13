@@ -114,6 +114,8 @@ export type DriveRefusal =
     /** Nothing at this swap has been swept, so there is nothing to recover
      * (includes the `needs_counterparty` sources of `needs_recovery`). */
     | "nothing-swept"
+    /** A claim was asked of a swap that is not a claimable receive. */
+    | "not-claimable"
     /** This wallet exposes no VTXO manager, so no recovery round can be run. */
     | "no-recovery-support";
 
@@ -206,6 +208,7 @@ export interface SwapDrive {
      */
     ingest(record: SwapRecord): void;
     recover(id: QuoteId): Promise<RecoveryResult>;
+    claim(id: QuoteId): Promise<void>;
     /** Everything this drive has in flight — registrations and money pushes.
      * Exposed so a test can be deterministic and so dispose can drain. */
     idle(): Promise<void>;
@@ -1131,6 +1134,35 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         return probe.call(wallet);
     };
 
+    const claim = async (id: QuoteId): Promise<void> => {
+        if (disposed) throw new ClientDisposed("claim");
+        if (mode === "readonly") {
+            throw new SwapDriveRefusedError(
+                "readonly",
+                'this client is configured drive: "readonly" and actuates nothing',
+                id,
+            );
+        }
+        await ready();
+        const record = records.get(id) ?? (await repository?.getSwapRecord(id));
+        if (record === undefined) {
+            throw new SwapDriveRefusedError("unknown-swap", `no swap record for ${id}`, id);
+        }
+        if (record.family !== "rfq") {
+            throw new SwapDriveRefusedError("not-claimable", `swap ${id} is not a receive`, id);
+        }
+        try {
+            await manager.claim(record.rfqId);
+        } catch (error) {
+            throw new SwapDriveRefusedError(
+                "not-claimable",
+                error instanceof Error ? error.message : String(error),
+                id,
+            );
+        }
+        await markPassed();
+    };
+
     const recoverableAt = async (script: Uint8Array): Promise<LockupVtxo[]> =>
         (await findLockupVtxos(lockupSource, script)).filter((vtxo) => vtxo.recoverable);
 
@@ -1308,6 +1340,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         ingest: (record) => remember(record),
 
         recover,
+
+        claim,
 
         idle,
     };

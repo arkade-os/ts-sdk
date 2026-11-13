@@ -12,6 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
+import { claimPacketShape } from "../src/claimPacket";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
@@ -74,7 +75,7 @@ const TRADER_PAYOUT_PUBKEY = key(13);
 const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 const L1_REFUND_PUBKEY = key(7);
 const HTLC_CLAIM_PUBKEY = key(11);
-const COVCLAIMD_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x22), true);
+const ENCRYPTION_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x22), true);
 const PAYOUT_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
 /** What every wallet below answers `getArkadeInfo()` with: the server info the
@@ -828,7 +829,7 @@ const lightningReceiveFlow = async (
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 5_000,
                 amountSide: "from",
-                covclaimdPubkey: COVCLAIMD_PK,
+                encryptionPubkey: ENCRYPTION_PK,
                 decodeInvoice: decode,
                 maxPayAmount: over.maxPayAmount,
             }),
@@ -836,7 +837,7 @@ const lightningReceiveFlow = async (
 };
 
 describe("requestLightningReceive on an HD wallet", () => {
-    it("commits to the derived preimage, seals the packet to covclaimd, and returns the hold invoice to pay", async () => {
+    it("commits to the derived preimage, seals the packet to the Executor, and returns the hold invoice to pay", async () => {
         const flow = await lightningReceiveFlow();
         const result = await flow.run();
 
@@ -1230,7 +1231,7 @@ describe("requestOnchainReceive on an HD wallet", () => {
             amount: 100_000,
             amountSide: "from",
             refundPubkey: L1_REFUND_PUBKEY,
-            covclaimdPubkey: COVCLAIMD_PK,
+            encryptionPubkey: ENCRYPTION_PK,
         });
 
         expect(result.fundAmount).toBe(100_000);
@@ -1270,7 +1271,7 @@ const decodeStub = (raw: string): InvoiceFacts => ({
     expiresAt: INVOICE_EXPIRES_AT,
 });
 
-describe("a receive with no covclaimd to seal to", () => {
+describe("a receive with no Executor key to seal to", () => {
     it("sends no claim_packet on the lightning leg", async () => {
         const wallet = await hdWallet();
         const profile = await capturedProfile((transport) =>
@@ -1297,10 +1298,7 @@ describe("a receive with no covclaimd to seal to", () => {
         expect(Object.keys(profile)).not.toContain("claim_packet");
     });
 
-    const minAmountTlv = (packet: unknown): string =>
-        hex.encode(base64.decode(packet as string).subarray(-11));
-
-    it("seals unbound on both legs and both sides while claim packets bind no amount", async () => {
+    it("seals on both legs and both sides", async () => {
         const wallet = await hdWallet();
         for (const amountSide of ["from", "to"] as const) {
             const lightning = await capturedProfile((transport) =>
@@ -1308,22 +1306,29 @@ describe("a receive with no covclaimd to seal to", () => {
                     emulatorPubkey: EMULATOR_PUBKEY_HEX,
                     amount: 5_000,
                     amountSide,
-                    covclaimdPubkey: COVCLAIMD_PK,
+                    encryptionPubkey: ENCRYPTION_PK,
                     decodeInvoice: decodeStub,
                 }),
             );
-            expect(minAmountTlv(lightning.claim_packet), amountSide).not.toMatch(/^040008/);
-
             const onchain = await capturedProfile((transport) =>
                 requestOnchainReceive(wallet, transport, {
                     emulatorPubkey: EMULATOR_PUBKEY_HEX,
                     amount: 100_000,
                     amountSide,
                     refundPubkey: L1_REFUND_PUBKEY,
-                    covclaimdPubkey: COVCLAIMD_PK,
+                    encryptionPubkey: ENCRYPTION_PK,
                 }),
             );
-            expect(minAmountTlv(onchain.claim_packet), amountSide).not.toMatch(/^040008/);
+            for (const profile of [lightning, onchain]) {
+                expect(
+                    hex.encode(base64.decode(profile.claim_packet as string).subarray(-11)),
+                    amountSide,
+                ).not.toMatch(/^040008/);
+                const shape = claimPacketShape(profile.claim_packet as string);
+                expect(shape.kind, amountSide).toBe("packet");
+                if (shape.kind !== "packet") return;
+                expect(shape.encryptionPubkey).toEqual(ENCRYPTION_PK);
+            }
         }
     });
 });
@@ -1346,7 +1351,7 @@ describe("a receive once claim packets bind the amount", () => {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 5_000,
                 amountSide: "to",
-                covclaimdPubkey: COVCLAIMD_PK,
+                encryptionPubkey: ENCRYPTION_PK,
                 decodeInvoice: decodeStub,
             }),
         );
@@ -1358,20 +1363,20 @@ describe("a receive once claim packets bind the amount", () => {
                 amount: 100_000,
                 amountSide: "to",
                 refundPubkey: L1_REFUND_PUBKEY,
-                covclaimdPubkey: COVCLAIMD_PK,
+                encryptionPubkey: ENCRYPTION_PK,
             }),
         );
         expect(minAmountTlv(onchain.claim_packet)).toBe("040008" + "00000000000186a0");
     });
 
-    it("sends no claim_packet for an exact-in request, even with covclaimd configured", async () => {
+    it("sends no claim_packet for an exact-in request, even with a key configured", async () => {
         const wallet = await hdWallet();
         const lightning = await capturedProfile((transport) =>
             requestLightningReceive(wallet, transport, {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 5_000,
                 amountSide: "from",
-                covclaimdPubkey: COVCLAIMD_PK,
+                encryptionPubkey: ENCRYPTION_PK,
                 decodeInvoice: decodeStub,
             }),
         );
@@ -1383,7 +1388,7 @@ describe("a receive once claim packets bind the amount", () => {
                 amount: 100_000,
                 amountSide: "from",
                 refundPubkey: L1_REFUND_PUBKEY,
-                covclaimdPubkey: COVCLAIMD_PK,
+                encryptionPubkey: ENCRYPTION_PK,
             }),
         );
         expect(Object.keys(onchain)).not.toContain("claim_packet");

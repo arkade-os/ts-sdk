@@ -69,32 +69,32 @@ describe("resolveCorridorDeps", () => {
         });
     });
 
-    describe("the covclaimd deployment key", () => {
+    describe("the Executor encryption key", () => {
         it("defaults to absent, which is the internal ephemeral seal", () => {
             expect(
-                resolveCorridorDeps("lightning", undefined, corridorBaseFor("regtest")).covclaimd,
+                resolveCorridorDeps("lightning", undefined, corridorBaseFor("regtest")).executor,
             ).toBe(undefined);
         });
 
         it("takes a deployment key", () => {
-            const covclaimd = { pubkey: `02${"11".repeat(32)}` };
+            const executor = { encryptionPubkey: `02${"11".repeat(32)}` };
             expect(
                 resolveCorridorDeps(
                     "lightning",
-                    { lightning: { covclaimd } },
+                    { lightning: { executor } },
                     corridorBaseFor("regtest"),
-                ).covclaimd,
-            ).toEqual(covclaimd);
+                ).executor,
+            ).toEqual(executor);
         });
 
         it("refuses `null`", () => {
             expect(() =>
                 resolveCorridorDeps(
                     "lightning",
-                    { lightning: { covclaimd: null } },
+                    { lightning: { executor: null } },
                     corridorBaseFor("regtest"),
                 ),
-            ).toThrow(/the lightning corridor has no covclaimd deployment key/);
+            ).toThrow(/the lightning corridor has no Executor encryption key/);
         });
     });
 

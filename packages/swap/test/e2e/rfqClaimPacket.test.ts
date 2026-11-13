@@ -1,5 +1,5 @@
 /**
- * The claim packet against a REAL solver and a REAL covclaimd — the only place
+ * The claim packet against a REAL solver and a REAL Executor — the only place
  * its bug could live, since one wire format has three implementations and unit
  * tests reach only the two in TypeScript. The property: the client never calls
  * `pushClaim`, yet the money arrives. Unstamped, the lockup sits until expiry.
@@ -18,14 +18,18 @@ import {
     Transaction,
     Wallet,
 } from "@arkade-os/sdk";
-import { CLAIM_PACKET_TYPE, claimPacketShape, type InvoiceFacts } from "../../src";
-import { covclaimdClient } from "../../src/advanced";
+import {
+    CLAIM_PACKET_TYPE,
+    EXECUTOR_CLAIM_TEMPLATE_ID,
+    claimPacketShape,
+    type InvoiceFacts,
+} from "../../src";
 import { httpTransport, requestLightningReceive } from "../../src/protocol";
 
 const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const SOLVER_URL = "http://localhost:8787";
-const COVCLAIMD_URL = "http://localhost:7271";
+const EXECUTOR_URL = "http://localhost:7280";
 
 /** Interior to the solver's regtest limits (1_000..1_000_000) and to lnd-peer's outbound. */
 const RECEIVE_SATS = 25_000;
@@ -43,7 +47,7 @@ const lncli = (node: string, args: string): string =>
 
 // vi.waitFor over expect.poll: the timeout error gets to name what never
 // happened. vi.waitFor retries ANY throw until the deadline, so a real error
-// from `fn` (LND down, covclaimd unreachable) would burn the whole timeout:
+// from `fn` (LND down, Executor unreachable) would burn the whole timeout:
 // capture it, stop polling, rethrow at once — only a `false` (not ready yet)
 // may spin. The 2s cadence keeps Docker/LND round-trip pressure as before.
 const waitFor = (
@@ -83,7 +87,7 @@ const decodeInvoice = (raw: string): InvoiceFacts => {
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;
-let covclaimdPubkey: Uint8Array;
+let encryptionPubkey: Uint8Array;
 
 beforeAll(async () => {
     wallet = await Wallet.create({
@@ -100,19 +104,25 @@ beforeAll(async () => {
         settlementConfig: false,
     });
 
-    ({ covclaimdPubkey } = await covclaimdClient(COVCLAIMD_URL).info());
-    expect(covclaimdPubkey).toHaveLength(33);
+    const info = (await (await fetch(`${EXECUTOR_URL}/v1/info`)).json()) as {
+        encryptionPubkey: string;
+    };
+    encryptionPubkey = hex.decode(info.encryptionPubkey);
+    expect(encryptionPubkey).toHaveLength(33);
+    // a template id this package pins but the daemon does not run is never claimed
+    const template = await fetch(`${EXECUTOR_URL}/v1/template/${EXECUTOR_CLAIM_TEMPLATE_ID}`);
+    expect(template.status).toBe(200);
 }, 300_000);
 
 describe("claim packet, end to end (regtest)", () => {
-    it("lets covclaimd claim a lockup the client never touches", async () => {
+    it("lets the Executor claim a lockup the client never touches", async () => {
         // Nothing spendable to start: the closing assertion has one possible cause.
         expect((await wallet.getBalance()).available).toBe(0);
 
         const receive = await requestLightningReceive(wallet, httpTransport(SOLVER_URL), {
             amount: RECEIVE_SATS,
             amountSide: "to",
-            covclaimdPubkey,
+            encryptionPubkey,
             decodeInvoice,
         });
         expect(receive.expectedAmount).toBe(RECEIVE_SATS);
@@ -161,17 +171,17 @@ describe("claim packet, end to end (regtest)", () => {
         const shape = claimPacketShape(base64.encode(stamped!.serialize()));
         expect(shape.kind).toBe("packet");
         if (shape.kind !== "packet") return;
-        // `0x02` present is the solver's stamp; covclaimd rejects a body without
-        // it. `0x03` is what tells covclaimd the packet is addressed to it.
+        // `0x02` present is the solver's stamp; the Executor ignores a body without
+        // it. `0x03` is what tells the Executor the packet is addressed to it.
         expect(shape.needsArkadeScript).toBe(false);
-        expect(hex.encode(shape.covclaimdPubkey!)).toBe(hex.encode(covclaimdPubkey));
+        expect(hex.encode(shape.encryptionPubkey)).toBe(hex.encode(encryptionPubkey));
 
         // `available`, NOT `total`: this wallet watches the lockup contract, so
         // the lockup counts toward total the moment the solver funds it and this
-        // would pass with covclaimd switched off. Only a claim is spendable.
+        // would pass with the Executor switched off. Only a claim is spendable.
         await waitFor(async () => (await wallet.getBalance()).available >= RECEIVE_SATS, {
             timeout: 300_000,
-            what: "covclaimd to claim the lockup into spendable funds",
+            what: "the Executor to claim the lockup into spendable funds",
         });
 
         // `some`, not `every`: every() is vacuously true on an empty vtxo list.

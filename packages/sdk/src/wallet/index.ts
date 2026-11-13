@@ -133,8 +133,10 @@ export interface BaseWalletConfig {
     indexerProvider?: IndexerProvider;
     /** Optional onchain provider, or a factory given the operator's network once it is known. */
     onchainProvider?: OnchainProvider | ((network: NetworkName) => OnchainProvider);
-    /** Optional delegation service instance. */
+    /** @deprecated Legacy pre-signed delegator provider. Use executorProvider for new wallets. */
     delegateProvider?: DelegateProvider;
+    /** Optional Executor provider, for the service that renews and boards the wallet's coins. */
+    executorProvider?: import("../providers/executor").ExecutorProvider;
 }
 
 /**
@@ -1083,7 +1085,7 @@ export interface IWallet extends IReadonlyWallet {
     /** Asset manager bound to this wallet instance. */
     assetManager: IAssetManager;
 
-    /** @returns Delegation manager, when configured. */
+    /** @deprecated Legacy pre-signed delegator manager; use getExecutorManager. */
     getDelegateManager(): Promise<IDelegateManager | undefined>;
 }
 

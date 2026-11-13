@@ -23,6 +23,18 @@ list without touching the network.
 
 ## The four routes
 
+Offline receive can use an operator-trusted executor for either receive route.
+Configure `corridors.lightning.executor` or `corridors.onchain.executor` with
+its `encryptionPubkey` and optional `templateId`. First register and activate the
+[sealed-terms template](https://github.com/arkade-os/executor/blob/3be27dd4293ee4532a21e22e9af5a67af6030cdf/pkg/template/testdata/offline_receive.json)
+on the daemon; its ID is `EXECUTOR_RECEIVE_TEMPLATE_ID`. See
+[`ExecutorReceive`](src/client/corridors/deps.ts) for amount, template, backend
+and trust requirements. The template checks the sealed receiver and minimum
+against actual funding before disclosing the preimage. A payment makes no
+registration call to the executor.
+Onchain receive also requires a solver offering that corridor; current
+[intent-solver main removed it](https://github.com/arkade-os/intent-solver/pull/292).
+
 Each is one `quote` → `accept` chain. `quote` returns binding, verified terms and touches nothing
 durable; `accept` writes the record, then funds.
 

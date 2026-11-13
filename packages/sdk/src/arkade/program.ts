@@ -249,7 +249,7 @@ export function resolveTimelockValue(
 
 /**
  * Resolve a CSV segment to a {@link RelativeTimelock}. A `"sequence"` kind holds
- * the raw BIP68 sequence that `arkadec` and the delegatee push for a CSV
+ * the raw BIP68 sequence that `arkadec` and the Executor push for a CSV
  * operand, so it is decoded here instead of being read as a count.
  */
 export function resolveCsvTimelock(

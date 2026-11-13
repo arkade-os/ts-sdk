@@ -50,6 +50,8 @@ export interface LightningReceiveProfile extends Record<string, unknown> {
     expectedAmount: number;
     /** Where the claim pays. */
     payoutAddress: string;
+    /** `P` was sealed to the Executor. */
+    executorClaims?: true;
     /**
      * Our Arkade claim's txid, once submitted.
      *
@@ -67,6 +69,7 @@ const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
         const receive = swap as LightningReceiveSwap;
         return {
             expectedAmount: receive.expectedAmount,
+            ...(receive.executorClaims ? { executorClaims: true } : {}),
             ...(receive.claimTxid ? { claimTxid: receive.claimTxid } : {}),
         };
     },
@@ -83,6 +86,7 @@ const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
         return {
             ...hydrateHashlock(profile),
             expectedAmount: profile.expectedAmount,
+            ...(profile.executorClaims ? { executorClaims: true } : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
         };
     },
@@ -263,6 +267,7 @@ export interface OnchainReceiveProfile extends Record<string, unknown> {
     /** The quote's `to_amount`, captured at REQUEST time. */
     expectedAmount: number;
     payoutAddress: string;
+    executorClaims?: true;
     claimTxid?: string;
     /** The SOLVER's L1 key; `refundKey` is the TRADER's own. */
     claimKey: string;
@@ -315,6 +320,7 @@ export const OnchainReceiveCorridor: RfqCorridorHandler<OnchainReceiveProfile> =
         const receive = swap as OnchainReceiveSwap;
         return {
             expectedAmount: receive.expectedAmount,
+            ...(receive.executorClaims ? { executorClaims: true } : {}),
             ...(receive.claimTxid ? { claimTxid: receive.claimTxid } : {}),
             ...(receive.funding ? { funding: receive.funding } : {}),
         };
@@ -369,6 +375,7 @@ export const OnchainReceiveCorridor: RfqCorridorHandler<OnchainReceiveProfile> =
             expectedAmount: profile.expectedAmount,
             minConfirmations: profile.minConfirmations,
             refundPkScript: hex.decode(profile.refundPkScript),
+            ...(profile.executorClaims ? { executorClaims: true } : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
             ...(profile.funding ? { funding: profile.funding } : {}),
         };

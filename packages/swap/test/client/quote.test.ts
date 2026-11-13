@@ -8,9 +8,11 @@
  * is a tamper on that agreement.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { base64, hex } from "@scure/base";
-import { contractSigner } from "@arkade-os/sdk";
-import { claimPacketShape } from "../../src/claimPacket";
+import { hex } from "@scure/base";
+import { ArkAddress, contractSigner } from "@arkade-os/sdk";
+import { ScriptNum } from "@scure/btc-signer";
+import { claimPacketShape, EXECUTOR_RECEIVE_TEMPLATE_ID } from "../../src/claimPacket";
+import { openClaimPacket } from "../helpers/claimPacket";
 import { createSwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
 import { AmountMismatch, QuoteExpired, QuoteVerificationFailed } from "../../src/client/errors";
@@ -26,7 +28,6 @@ import {
     PAYMENT_HASH,
     SOLVER_DISCOVERY_KEY,
     SOLVER_PUBKEY,
-    USD_ASSET_ID,
     clockAt,
     compressed,
     feedServing,
@@ -44,9 +45,6 @@ import {
     type SolverAnswer,
     type SolverTransport,
 } from "./fixtures";
-
-const gate = vi.hoisted(() => ({ binds: false }));
-vi.mock("../../src/claimAmountGate", () => ({ bindsClaimAmount: () => gate.binds }));
 
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
@@ -85,6 +83,24 @@ const sendInput = (): QuoteInput => ({ to: invoiceFor(PAYMENT_HASH, CLOCK) });
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW * 1000);
+});
+
+it("refuses payouts below the default template admission minimum before sending an RFQ", async () => {
+    const executor = { encryptionPubkey: compressed(7) };
+    for (const via of ["lightning", "onchain"] as const) {
+        const corridors =
+            via === "lightning" ? { lightning: { executor } } : { onchain: { executor } };
+        const snapshot = [lightningCard, onchainCard].map((card) => ({
+            ...card,
+            min_base_amount: "1",
+            min_quote_amount: "1",
+        }));
+        const { client, transport } = await setup({ corridors, snapshot });
+        await expect(client.quote({ via, amount: 999n, amountOn: "take" })).rejects.toThrow(
+            /1,000/,
+        );
+        expect(transport.sent).toHaveLength(0);
+    }
 });
 
 afterEach(() => {
@@ -186,7 +202,7 @@ describe("quote() on lightning -> arkade", () => {
     });
 
     describe("the claim packet", () => {
-        it("is omitted when no covclaimd deployment key is configured", async () => {
+        it("is omitted when no Executor key is configured", async () => {
             const { client, transport } = await setup();
             await client.quote(receive());
 
@@ -194,84 +210,42 @@ describe("quote() on lightning -> arkade", () => {
             expect(Object.keys(profile)).not.toContain("claim_packet");
         });
 
-        const withCovclaimd = { lightning: { covclaimd: { pubkey: compressed(7) } } };
-        const packetOf = (transport: SolverTransport): Uint8Array =>
-            base64.decode(
-                (transport.sent[0] as { profile: Record<string, unknown> }).profile
-                    .claim_packet as string,
-            );
+        const withExecutor = { lightning: { executor: { encryptionPubkey: compressed(7) } } };
+        const packetOf = (transport: SolverTransport): string =>
+            (transport.sent[0] as { profile: Record<string, unknown> }).profile
+                .claim_packet as string;
 
-        it("sends a stampable, unbound packet on either side while packets bind no amount", async () => {
-            for (const [amountOn, amount] of [
-                ["give", 5_000n],
-                ["take", 4_950n],
-            ] as const) {
-                const { client, transport } = await setup({ corridors: withCovclaimd });
-                await client.quote({ via: "lightning", amount, amountOn });
-
-                const packet = packetOf(transport);
-                const shape = claimPacketShape(base64.encode(packet));
-                expect(shape.kind, amountOn).toBe("packet");
-                if (shape.kind !== "packet") return;
-                expect(shape.needsArkadeScript).toBe(true);
-                expect(shape.covclaimdPubkey).toEqual(hex.decode(compressed(7)));
-                expect(hex.encode(packet.subarray(-11)), amountOn).not.toMatch(/^040008/);
-            }
-        });
-    });
-
-    describe("the claim packet, once it binds the amount", () => {
-        beforeEach(() => {
-            gate.binds = true;
-        });
-        afterEach(() => {
-            gate.binds = false;
-        });
-
-        const withCovclaimd = { lightning: { covclaimd: { pubkey: compressed(7) } } };
-        const packetOf = (transport: SolverTransport): Uint8Array =>
-            base64.decode(
-                (transport.sent[0] as { profile: Record<string, unknown> }).profile
-                    .claim_packet as string,
-            );
-
-        it("sends a stampable packet bound to an exact-out take", async () => {
-            const { client, transport } = await setup({ corridors: withCovclaimd });
+        it("seals the caller's fixed payout and receiver before the quote", async () => {
+            const { client, transport, wallet } = await setup({ corridors: withExecutor });
             await client.quote({ via: "lightning", amount: 4_950n, amountOn: "take" });
-
-            const packet = packetOf(transport);
-            const shape = claimPacketShape(base64.encode(packet));
-            expect(shape.kind).toBe("packet");
-            if (shape.kind !== "packet") return;
-            expect(shape.needsArkadeScript).toBe(true);
-            expect(shape.covclaimdPubkey).toEqual(hex.decode(compressed(7)));
-            expect(hex.encode(packet.subarray(-11))).toBe("040008" + "0000000000001356");
+            const plaintext = await openClaimPacket(
+                packetOf(transport),
+                new Uint8Array(32).fill(7),
+                EXECUTOR_RECEIVE_TEMPLATE_ID,
+            );
+            expect(plaintext.subarray(32, 64)).toEqual(
+                ArkAddress.decode(await wallet.getAddress()).pkScript.subarray(2),
+            );
+            expect(ScriptNum(8, true).decode(plaintext.subarray(64))).toBe(4_950n);
+            expect(claimPacketShape(packetOf(transport))).toMatchObject({
+                kind: "packet",
+                needsArkadeScript: true,
+                encryptionPubkey: hex.decode(compressed(7)),
+            });
         });
 
-        it("is omitted for an exact-in receive, even with covclaimd configured", async () => {
-            const { client, transport } = await setup({ corridors: withCovclaimd });
-            await client.quote(receive());
-
-            const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
-            expect(Object.keys(profile)).not.toContain("claim_packet");
+        it("refuses a delegated quote without a caller-fixed received amount", async () => {
+            const { client, transport } = await setup({ corridors: withExecutor });
+            await expect(client.quote(receive())).rejects.toThrow(/amountOn.*take/);
+            expect(transport.sent).toHaveLength(0);
         });
 
-        it("is omitted for a non-BTC take, whose pin is not in sats", async () => {
-            const usdCard = {
-                ...lightningCard,
-                pair: "USD/lightning:BTC",
-                base_asset: { id: USD_ASSET_ID, name: "US Dollar", ticker: "USD", decimals: 2 },
-            };
-            for (const amountOn of ["give", "take"] as const) {
-                const { client, transport } = await setup({
-                    snapshot: [usdCard],
-                    corridors: withCovclaimd,
+        it("refuses a key that is not 33-byte compressed hex", async () => {
+            for (const key of ["11".repeat(32), "not hex"]) {
+                const { client } = await setup({
+                    corridors: { lightning: { executor: { encryptionPubkey: key as never } } },
                 });
-                await expect(
-                    client.quote({ via: "lightning", take: "USD", amount: 1_234n, amountOn }),
-                ).rejects.toBeInstanceOf(QuoteVerificationFailed);
-                const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
-                expect(Object.keys(profile)).not.toContain("claim_packet");
+                await expect(client.quote(receive())).rejects.toThrow();
             }
         });
     });
@@ -422,6 +396,33 @@ describe("the boundary quote() stops at", () => {
 
 describe("quote() on onchain -> arkade", () => {
     const receive = (): QuoteInput => ({ via: "onchain", amount: 100_000n, amountOn: "give" });
+
+    it("seals the onchain receive terms and marks the executor claim", async () => {
+        const { client, transport, wallet } = await setup({
+            corridors: { onchain: { executor: { encryptionPubkey: compressed(7) } } },
+        });
+        const quote = await client.quote({ via: "onchain", amount: 99_000n, amountOn: "take" });
+        const packet = (transport.sent[0] as { profile: { claim_packet: string } }).profile
+            .claim_packet;
+        const plaintext = await openClaimPacket(
+            packet,
+            new Uint8Array(32).fill(7),
+            EXECUTOR_RECEIVE_TEMPLATE_ID,
+        );
+        expect(plaintext.subarray(32, 64)).toEqual(
+            ArkAddress.decode(await wallet.getAddress()).pkScript.subarray(2),
+        );
+        expect(ScriptNum(8, true).decode(plaintext.subarray(64))).toBe(99_000n);
+        expect(client.preparationOf(quote.id)).toMatchObject({ executorClaims: true });
+    });
+
+    it("refuses an onchain delegated receive that only fixes the amount given", async () => {
+        const { client, transport } = await setup({
+            corridors: { onchain: { executor: { encryptionPubkey: compressed(7) } } },
+        });
+        await expect(client.quote(receive())).rejects.toThrow(/amountOn.*take/);
+        expect(transport.sent).toHaveLength(0);
+    });
 
     it("hands back the L1 HTLC to fund as the give leg's instrument and artifact", async () => {
         const { client } = await setup();

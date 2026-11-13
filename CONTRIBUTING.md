@@ -17,6 +17,7 @@ want a quick one.
 ```bash
 pnpm run test:integration              # Every package, end-to-end
 pnpm run test:integration:sdk          # sdk only
+pnpm run test:integration:sdk-executor  # sdk executor e2e, on its own stack
 pnpm run test:integration:swap         # swap only
 pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
 ```
@@ -45,6 +46,21 @@ CI fans the sdk e2e suite out across parallel groups by passing each group's fil
 `regtest:test` (see the `integration` matrix in `.github/workflows/ci.yml`). That matrix is the only
 definition of the groups: `scripts/e2e-groups.mjs` reads it so the local `groups` run matches CI, and
 `--check` (wired into `pnpm lint`) fails when an e2e file belongs to no group or to two.
+
+### Executor e2e
+
+`packages/sdk/test/e2e/executor.test.ts` runs on its own stack, `sdk-executor`: arkade-regtest's
+`executor` profile (the executor daemon on :7280) with seconds-typed arkd timelocks, set in
+`packages/sdk/.env.regtest.executor`. It skips with a message when no executor answers.
+
+```bash
+pnpm run regtest:up:sdk-executor
+pnpm run regtest:test:sdk-executor test/e2e/executor.test.ts
+```
+
+`EXECUTOR_URL` (default `http://localhost:7280`), `ESPLORA_URL` and `EXECUTOR_RENEWAL_WINDOW`
+(seconds, default 256: below the stack's VTXO lifetime, so a coin comes due during the test) adjust
+it. The renewal step waits for the daemon's next renewal, up to 14 minutes.
 
 ### The stack itself
 

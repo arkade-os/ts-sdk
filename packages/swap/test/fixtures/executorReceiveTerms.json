@@ -1,0 +1,11 @@
+{
+    "description": "Public test key material; binary sealed terms for the executor's Go template",
+    "templateId": "290b7a4364950677c1bab1ae25f9f757da864a71e54eb2ad74b3c43133e57e17",
+    "preimage": "0707070707070707070707070707070707070707070707070707070707070707",
+    "receiverProgram": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+    "minimumAmount": "10000",
+    "recipientSecretKey": "0909090909090909090909090909090909090909090909090909090909090909",
+    "ephemeralKey": "1111111111111111111111111111111111111111111111111111111111111111",
+    "nonce": "0a0a0a0a0a0a0a0a0a0a0a0a",
+    "packet": "AQB/A081W9y3zAr3KO88zrlhXZBoS7Wyyl+FmrDwtwQHWHGqCgoKCgoKCgoKCgoKDhw1eyh4YdG+p98k3DJLIhO+uyH9wNU+Tlg80yhjgMAtsTnjPBJykWEVoeA8egrLLED2jHUeQ8Q5ROcQ47kBqdhd8lNyvoo0/YzBgxMr0EtyNAMAIQJWsyizDIv1g54kBYdHh5QIvbNiQdycLnxhn6oSspIJZw=="
+}
