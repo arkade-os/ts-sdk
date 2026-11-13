@@ -94,14 +94,24 @@ export const chainSourceOver = (
             vout: number,
             pkScript: Uint8Array,
         ): Promise<{ txHex: string } | null> {
-            const outspend = backend.provider.getTxOutspend
-                ? await backend.provider.getTxOutspend(txid, vout)
-                : (await backend.provider.getTxOutspends(txid))[vout];
+            const outspend = await (backend.provider.getTxOutspend
+                ? backend.provider.getTxOutspend(txid, vout)
+                : backend.provider.getTxOutspends(txid).then((all) => all[vout])
+            ).catch(async (error: unknown) => {
+                // A fee-bumped funding is gone, and backends refuse its outspends with an error.
+                const history = await backend.provider.getTransactions(
+                    addressOfScript(pkScript, network),
+                );
+                if (history.some((tx) => tx.txid === txid)) throw error;
+                return undefined;
+            });
             if (!outspend?.spent) return null;
             // `||`, not `??`: the electrum provider uses `txid: ""` as its unspent sentinel.
             const spender = outspend.txid || (await spenderFromVins(txid, vout, pkScript));
             if (!spender) return null;
-            return { txHex: hex.encode(await backend.provider.getRawTransaction(spender)) };
+            return {
+                txHex: hex.encode(await backend.provider.getRawTransaction(spender)),
+            };
         },
 
         broadcast(txHex: string): Promise<string> {
