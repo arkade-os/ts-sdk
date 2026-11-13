@@ -381,6 +381,7 @@ import {
     Tx,
     Vtxo,
     PaginationOptions,
+    IndexerReadOptions,
     DEFAULT_VTXO_PAGE_SIZE,
     SubscriptionResponse,
     SubscriptionHeartbeat,
@@ -967,6 +968,13 @@ export {
     AssetManager,
 };
 
+export {
+    NativeExecutionJournal,
+    type NativeExecutionRecord,
+    type NativeExecutionObservation,
+    type NativeExecutionReceipt,
+} from "./arkade/executionJournal";
+
 export type {
     // Types and Interfaces
     RecipientArkadeAddressContext,
@@ -1080,6 +1088,7 @@ export type {
     TreeSignatureEvent,
     ScheduledSession,
     PaginationOptions,
+    IndexerReadOptions,
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,

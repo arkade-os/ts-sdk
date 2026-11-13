@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { IndexerUtxosUnsupportedError, RestIndexerProvider, configureEventSource } from "../src";
+import {
+    IndexerUtxosUnsupportedError,
+    ProviderUnavailableError,
+    RestIndexerProvider,
+    configureEventSource,
+} from "../src";
+import { rateGate } from "../src/providers/rateGate";
 import { isEventSourceError } from "../src/providers/utils";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
@@ -21,6 +27,289 @@ describe("RestIndexerProvider", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
         configureEventSource(undefined);
+    });
+
+    describe("bounded observation reads", () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
+            vi.useRealTimers();
+            rateGate.reset();
+        });
+        const options = { pageIndex: 0, pageSize: 2, maxResponseBytes: 64 };
+        const read = (provider: RestIndexerProvider, field: "vtxos" | "txs", limit = options) =>
+            field === "vtxos"
+                ? provider.getVtxos({ outpoints: [{ txid: "aa", vout: 0 }], ...limit })
+                : provider.getVirtualTxs(["aa"], limit);
+        const streamed = (field: string, headers: HeadersInit = {}, status = 200) => {
+            const cancel = vi.fn();
+            const chunks = [`{"${field}":[],"padding":"`, "€".repeat(16), '"}'];
+            let next = 0;
+            const response = new Response(
+                new ReadableStream({
+                    pull(controller) {
+                        if (next < chunks.length)
+                            controller.enqueue(new TextEncoder().encode(chunks[next++]));
+                        else controller.close();
+                    },
+                    cancel,
+                }),
+                { headers, status },
+            );
+            return { response, cancel };
+        };
+
+        const failedBody = (
+            field: string,
+            status: number,
+            failure: "stream" | "oversized" | "unsupported",
+        ) => {
+            const error = new Error("response stream failed");
+            const headers = { "retry-after": "1" };
+            const value =
+                failure === "oversized"
+                    ? streamed(field, headers, status)
+                    : {
+                          response: new Response(
+                              new ReadableStream({
+                                  start(controller) {
+                                      controller.error(error);
+                                  },
+                              }),
+                              { status, headers },
+                          ),
+                          cancel: vi.fn(),
+                      };
+            if (failure === "unsupported")
+                Object.defineProperty(value.response, "body", { value: undefined });
+            const unbounded = ["json", "text", "clone"] as const;
+            return {
+                ...value,
+                error,
+                spies: unbounded.map((method) => vi.spyOn(value.response, method)),
+            };
+        };
+
+        it.each(
+            (["vtxos", "txs"] as const).flatMap((field) =>
+                [429, 503].flatMap((status) =>
+                    (["stream", "oversized", "unsupported"] as const).map((failure) => ({
+                        field,
+                        status,
+                        failure,
+                    })),
+                ),
+            ),
+        )(
+            "retains $status availability retries for bounded $field $failure errors",
+            async ({ field, status, failure }) => {
+                vi.useFakeTimers();
+                rateGate.reset();
+                const replies: ReturnType<typeof failedBody>[] = [];
+                mockFetch.mockImplementation(async () => {
+                    const reply = failedBody(field, status, failure);
+                    replies.push(reply);
+                    return reply.response;
+                });
+                const outcome = read(new RestIndexerProvider("http://localhost:7070"), field).catch(
+                    (error) => error,
+                );
+                await vi.advanceTimersByTimeAsync(0);
+                expect(mockFetch).toHaveBeenCalledOnce();
+                if (status === 429) {
+                    await vi.advanceTimersByTimeAsync(999);
+                    expect(mockFetch).toHaveBeenCalledOnce();
+                }
+                await vi.runAllTimersAsync();
+                const error = await outcome;
+                expect(error).toBeInstanceOf(ProviderUnavailableError);
+                expect(error.message).toContain(`indexer unavailable: ${status}`);
+                expect(mockFetch).toHaveBeenCalledTimes(3);
+                for (const reply of replies) {
+                    for (const spy of reply.spies) expect(spy).not.toHaveBeenCalled();
+                    if (failure === "oversized") expect(reply.cancel).toHaveBeenCalledOnce();
+                }
+            },
+        );
+
+        it.each(
+            (["vtxos", "txs"] as const).flatMap((field) =>
+                (["stream", "unsupported"] as const).map((failure) => ({ field, failure })),
+            ),
+        )(
+            "keeps bounded $field $failure errors terminal on HTTP400",
+            async ({ field, failure }) => {
+                const reply = failedBody(field, 400, failure);
+                mockFetch.mockResolvedValueOnce(reply.response);
+                const error = await read(
+                    new RestIndexerProvider("http://localhost:7070"),
+                    field,
+                ).catch((caught) => caught);
+                expect(error).not.toBeInstanceOf(ProviderUnavailableError);
+                if (failure === "stream") expect(error).toBe(reply.error);
+                else expect(error.message).toContain("streaming response body");
+                expect(mockFetch).toHaveBeenCalledOnce();
+                for (const spy of reply.spies) expect(spy).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(["vtxos", "txs"] as const)(
+            "keeps a bounded structured HTTP500 terminal for %s",
+            async (field) => {
+                const body = JSON.stringify({
+                    message: "INTERNAL_ERROR (0): input already registered",
+                });
+                mockFetch.mockResolvedValueOnce(new Response(body, { status: 500 }));
+                const error = await read(new RestIndexerProvider("http://localhost:7070"), field, {
+                    ...options,
+                    maxResponseBytes: 1024,
+                }).catch((caught) => caught);
+                expect(error).not.toBeInstanceOf(ProviderUnavailableError);
+                expect(error.message).toMatch(/Failed to fetch/);
+                expect(mockFetch).toHaveBeenCalledOnce();
+            },
+        );
+
+        it.each(["vtxos", "txs"] as const)(
+            "rejects invalid caps before fetching %s",
+            async (field) => {
+                const provider = new RestIndexerProvider("http://localhost:7070");
+                for (const maxResponseBytes of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.5])
+                    await expect(
+                        read(provider, field, { ...options, maxResponseBytes }),
+                    ).rejects.toThrow("positive safe integer");
+                expect(mockFetch).not.toHaveBeenCalled();
+            },
+        );
+
+        it("captures the virtual-transaction cap before waiting for HTTP", async () => {
+            let release: (response: Response) => void = () => {};
+            mockFetch.mockReturnValueOnce(
+                new Promise<Response>((resolve) => {
+                    release = resolve;
+                }),
+            );
+            const mutable: { pageIndex: number; pageSize: number; maxResponseBytes?: number } = {
+                ...options,
+            };
+            const pending = new RestIndexerProvider("http://localhost:7070").getVirtualTxs(
+                ["aa"],
+                mutable,
+            );
+            mutable.maxResponseBytes = undefined;
+            const { response, cancel } = streamed("txs");
+            const json = vi.spyOn(response, "json");
+            release(response);
+            await expect(pending).rejects.toThrow("exceeds maxResponseBytes");
+            expect(json).not.toHaveBeenCalled();
+            expect(cancel).toHaveBeenCalledOnce();
+        });
+
+        it.each(
+            (["vtxos", "txs"] as const).flatMap((field) =>
+                [undefined, "1", "10000"].map((length) => ({ field, length })),
+            ),
+        )(
+            "cancels oversized $field bytes before JSON parsing with length $length",
+            async ({ field, length }) => {
+                const { response, cancel } = streamed(
+                    field,
+                    length === undefined ? {} : { "content-length": length },
+                );
+                const json = vi.spyOn(response, "json");
+                mockFetch.mockResolvedValueOnce(response);
+                await expect(
+                    read(new RestIndexerProvider("http://localhost:7070"), field),
+                ).rejects.toThrow("exceeds maxResponseBytes");
+                expect(json).not.toHaveBeenCalled();
+                expect(cancel).toHaveBeenCalledOnce();
+                expect(mockFetch).toHaveBeenCalledOnce();
+            },
+        );
+
+        it.each(["vtxos", "txs"] as const)(
+            "bounds error bodies for %s without cloning or retry",
+            async (field) => {
+                const { response, cancel } = streamed(field, {}, 400);
+                const clone = vi.spyOn(response, "clone");
+                mockFetch.mockResolvedValueOnce(response);
+                await expect(
+                    read(new RestIndexerProvider("http://localhost:7070"), field),
+                ).rejects.toThrow("exceeds maxResponseBytes");
+                expect(cancel).toHaveBeenCalledOnce();
+                expect(clone).not.toHaveBeenCalled();
+                expect(mockFetch).toHaveBeenCalledOnce();
+            },
+        );
+
+        it.each(["vtxos", "txs"] as const)(
+            "fails closed without streaming support for %s",
+            async (field) => {
+                const response = new Response(`{"${field}":[]}`);
+                Object.defineProperty(response, "body", { value: undefined });
+                const json = vi.spyOn(response, "json");
+                mockFetch.mockResolvedValueOnce(response);
+                await expect(
+                    read(new RestIndexerProvider("http://localhost:7070"), field),
+                ).rejects.toThrow("streaming response body");
+                expect(json).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(["vtxos", "txs"] as const)(
+            "accepts an exact-limit split UTF-8 %s response",
+            async (field) => {
+                const body = `{"${field}":[],"padding":"€"}`;
+                const bytes = new TextEncoder().encode(body);
+                const response = new Response(
+                    new ReadableStream({
+                        start(controller) {
+                            const split = bytes.indexOf(0xe2) + 1;
+                            controller.enqueue(bytes.slice(0, split));
+                            controller.enqueue(bytes.slice(split));
+                            controller.close();
+                        },
+                    }),
+                );
+                const json = vi.spyOn(response, "json");
+                mockFetch.mockResolvedValueOnce(response);
+                expect(
+                    await read(new RestIndexerProvider("http://localhost:7070"), field, {
+                        ...options,
+                        maxResponseBytes: bytes.length,
+                    }),
+                ).toMatchObject({ [field]: [] });
+                expect(json).not.toHaveBeenCalled();
+                expect(
+                    new URL(mockFetch.mock.calls[0][0]).searchParams.has("maxResponseBytes"),
+                ).toBe(false);
+            },
+        );
+
+        it.each([undefined, 128])(
+            "separates a capped VTXO read from limit %s while coalescing identical caps",
+            async (maxResponseBytes) => {
+                let release: (response: Response) => void = () => {};
+                mockFetch.mockReturnValueOnce(
+                    new Promise<Response>((resolve) => {
+                        release = resolve;
+                    }),
+                );
+                mockFetch.mockResolvedValueOnce(new Response('{"vtxos":[]}'));
+                const provider = new RestIndexerProvider("http://localhost:7070");
+                const bounded = read(provider, "vtxos");
+                const joined = read(provider, "vtxos");
+                const other = provider.getVtxos({
+                    outpoints: [{ txid: "aa", vout: 0 }],
+                    pageIndex: 0,
+                    pageSize: 2,
+                    ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }),
+                });
+                release(new Response('{"vtxos":[]}'));
+                const values = await Promise.all([bounded, joined, other]);
+                expect(values).toMatchObject([{ vtxos: [] }, { vtxos: [] }, { vtxos: [] }]);
+                expect(mockFetch).toHaveBeenCalledTimes(2);
+            },
+        );
     });
 
     describe("getVtxos", () => {
@@ -219,6 +508,59 @@ describe("RestIndexerProvider", () => {
 
             expect(mockFetch).not.toHaveBeenCalled();
         });
+
+        it.each(["remove", "raise"])(
+            "retains the entry cap and coalescing across automatic pages when callers %s the cap",
+            async (mutation) => {
+                const firstPage = JSON.stringify({
+                    vtxos: Array.from({ length: 500 }, (_, i) => wireVtxo(`page0-${i}`)),
+                    page: { current: 1, next: 2, total: 2 },
+                });
+                const limit = new TextEncoder().encode(firstPage).length;
+                let release!: (response: Response) => void;
+                const firstReply = new Promise<Response>((resolve) => {
+                    release = resolve;
+                });
+                const cancel = vi.fn();
+                mockFetch.mockImplementation(async (url: string) => {
+                    if (new URL(url).searchParams.get("page.index") === "0") return firstReply;
+                    const chunks = ['{"vtxos":[],"padding":"', "x".repeat(limit), '"}'];
+                    let next = 0;
+                    return new Response(
+                        new ReadableStream({
+                            pull(controller) {
+                                if (next < chunks.length)
+                                    controller.enqueue(new TextEncoder().encode(chunks[next++]));
+                                else controller.close();
+                            },
+                            cancel,
+                        }),
+                    );
+                });
+                const provider = new RestIndexerProvider("http://localhost:7070");
+                const mutable: { scripts: string[]; maxResponseBytes?: number } = {
+                    scripts: ["script-a"],
+                    maxResponseBytes: limit,
+                };
+                const pending = provider.getVtxos(mutable);
+                const joined = provider.getVtxos({ ...mutable });
+                await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledOnce());
+                if (mutation === "remove") delete mutable.maxResponseBytes;
+                else mutable.maxResponseBytes = limit * 2;
+                release(new Response(firstPage));
+                const results = await Promise.allSettled([pending, joined]);
+                expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+                for (const result of results) {
+                    if (result.status === "rejected")
+                        expect(result.reason.message).toContain("exceeds maxResponseBytes");
+                }
+                expect(mockFetch).toHaveBeenCalledTimes(2);
+                expect(cancel).toHaveBeenCalledOnce();
+                expect(new URL(mockFetch.mock.calls[1][0]).searchParams.get("page.index")).toBe(
+                    "2",
+                );
+            },
+        );
 
         it("pages an unpaged query to exhaustion", async () => {
             // The server answers with a page of its own choosing, so returning
