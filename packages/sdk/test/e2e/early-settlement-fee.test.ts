@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import {
     Wallet,
     EsploraProvider,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
@@ -41,7 +41,7 @@ const esploraUrl = "http://localhost:3000/api";
 function testWallet(): Promise<Wallet> {
     return Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(arkdUrl),
+        arkProvider: new RestOperatorProvider(arkdUrl),
         onchainProvider: new EsploraProvider(esploraUrl, {
             forcePolling: true,
             pollingInterval: 2000,

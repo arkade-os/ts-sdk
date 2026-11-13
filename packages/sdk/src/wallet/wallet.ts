@@ -1,4 +1,4 @@
-import { collectIntents } from "../repositories/intentRepository";
+import { collectBatchRegistrations } from "../repositories/intentRepository";
 import { collectContracts } from "../repositories/contractRepository";
 import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
@@ -11,11 +11,11 @@ import {
     DEFAULT_ARKADE_SERVER_URL,
     Network,
     NetworkName,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
 } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
-    ArkadeInfo,
+    OperatorInfo,
     OperatorProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
@@ -124,7 +124,11 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
+import type {
+    BatchRegistrationRepository,
+    BatchRegistration,
+    BatchRegistrationState,
+} from "../repositories/intentRepository";
 import { isTerminalBatchRegistrationState } from "../repositories/intentRepository";
 import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
@@ -579,7 +583,7 @@ export function excludeLockedOutpoints<T extends { txid: string; vout: number }>
  */
 export async function spendableVtxosExcludingLocked<T extends { txid: string; vout: number }>(
     vtxos: T[],
-    intentRepository?: Pick<IntentRepository, "getLockedVtxoOutpoints">,
+    intentRepository?: Pick<BatchRegistrationRepository, "getLockedVtxoOutpoints">,
 ): Promise<T[]> {
     if (!intentRepository) return vtxos;
     let locked: Outpoint[];
@@ -768,7 +772,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** Opt-in intent-lifecycle repository; `undefined` ⇒ intent persistence is a no-op. */
-    public intentRepository?: IntentRepository;
+    public intentRepository?: BatchRegistrationRepository;
     /**
      * **Experimental / inert.** Opt-in virtual-tx repository, exposed so callers can pass it to
      * {@link Unroll.Session.create} as a best-effort raw-tx cache. Normal sync never writes it.
@@ -994,9 +998,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * before binding the answer into a covenant to fail closed instead of getting the snapshot.
      *
      * @returns The operator's info
-     * @see ArkadeInfo
+     * @see OperatorInfo
      */
-    async getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+    async getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
         const { info, source, lastOnlineAt } = await resolveArkInfo(
             this.arkProvider,
             this.walletRepository,
@@ -1013,7 +1017,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** @deprecated Use {@link getOperatorInfo}. */
-    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
         return this.getOperatorInfo(opts);
     }
 
@@ -1068,6 +1072,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
     protected static async setupWalletConfig(config: ReadonlyWalletConfig, pubKey: Uint8Array) {
         if (config.operatorProvider && config.arkProvider) {
             throw new Error("Pass either `operatorProvider` or `arkProvider`, not both");
+        }
+        // Repository writes are best-effort and only log, so an old JavaScript repository would
+        // lose every batch registration in silence.
+        const intentRepository = config.storage?.intentRepository;
+        if (
+            intentRepository &&
+            (!intentRepository.saveBatchRegistration || !intentRepository.getBatchRegistrationsPage)
+        ) {
+            throw new Error(
+                "`storage.intentRepository` must have `saveBatchRegistration` and `getBatchRegistrationsPage`",
+            );
         }
         const callerProvider = config.operatorProvider ?? config.arkProvider;
         if (
@@ -1127,7 +1142,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider = resolvedService.indexerProvider;
         }
 
-        const network = networkFromArkadeInfo(info);
+        const network = networkFromOperatorInfo(info);
 
         // Identity/operator network mismatch means wrong derivation path → wrong keys → fund loss.
         if ("descriptor" in config.identity) {
@@ -2417,7 +2432,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // contracts are single-timelock at the current delay and tagged WALLET_RECEIVE_SOURCE;
             // the matrix is deliberately NOT re-registered at rotated keys (it would expand per boot).
             const baselinePubkey = await baselinePubkeyPromise;
-            // The matrix also fans the SERVER-signer axis (current + every deprecated signer), so funds
+            // The matrix also fans the OPERATOR-signer axis (current + every deprecated signer), so funds
             // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
             // by scriptHex.
             const delegatePubKey =
@@ -2489,7 +2504,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // Baseline boarding rows, anchored at INDEX 0 (`baselinePubkey`, NOT the possibly-rotated
             // `boardingTapscript`) so baseline deposits stay visible regardless of rotation; the CSV
             // is index-independent. Same signer axis as above; only the signer fans, since the
-            // boarding CSV is server-wide. Idempotent (keyed by script); a script colliding with a
+            // boarding CSV is operator-wide. Idempotent (keyed by script); a script colliding with a
             // default one (degenerate equal delays) keeps that type and the manager widens its scope.
             const boardingCsvTimelock =
                 this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
@@ -2786,7 +2801,7 @@ export class Wallet
 
     /**
      * @internal Sole write path for `serverUnrollScript`; called by
-     * {@link Wallet._doRotateServerSigner} with the rotating `ArkadeInfo`'s checkpoint script.
+     * {@link Wallet._doRotateServerSigner} with the rotating `OperatorInfo`'s checkpoint script.
      */
     setServerUnrollScriptForRotation(script: CSVMultisigTapscript.Type): void {
         this._serverUnrollScript = script;
@@ -4217,20 +4232,8 @@ export class Wallet
 
         try {
             stream = this.arkProvider.getEventStream(abortController.signal, topics);
-
-            // Prime the iterator so the provider opens the SSE subscription
-            // before safeRegisterIntent can trigger operator-side batch events.
-            const firstNext = stream.next();
-            // If settle exits before Batch.join consumes the primed result,
-            // keep the orphaned promise from surfacing as an unhandled rejection.
-            void firstNext.catch(() => {});
-            const primedStream = (async function* () {
-                const first = await firstNext;
-                if (!first.done) {
-                    yield first.value;
-                }
-                yield* stream;
-            })();
+            // Subscribe before safeRegisterIntent can trigger operator-side batch events.
+            const primedStream = Batch.prime(stream);
 
             onRegistrationAttempt?.();
             registering = true;
@@ -4692,23 +4695,25 @@ export class Wallet
      */
     private async persistIntentSnapshot(
         intentTxId: string,
-        state: ArkIntentState,
+        state: BatchRegistrationState,
         intent: SignedProof<Proof.RegisterMessage>,
         deleteIntent: SignedProof<Proof.DeleteMessage>,
         inputs: ExtendedCoin[],
-        patch?: Partial<ArkIntent>,
+        patch?: Partial<BatchRegistration>,
     ): Promise<void> {
         const repo = this.intentRepository;
         if (!repo) return;
         try {
             const now = Date.now();
-            const existing = (await collectIntents(repo, { proofTxIds: [intentTxId] }))[0];
+            const existing = (
+                await collectBatchRegistrations(repo, { proofTxIds: [intentTxId] })
+            )[0];
             // Terminal is sticky: a later step throwing into settle()'s catch passes "cancelled",
             // which must not clobber a `batch_succeeded` whose money already moved.
             if (existing && isTerminalBatchRegistrationState(existing.state)) {
                 return;
             }
-            await repo.saveIntent({
+            await repo.saveBatchRegistration({
                 ...(existing ?? {}),
                 proofTxId: intentTxId,
                 registerProof: intent.proof,
@@ -5246,7 +5251,7 @@ export class Wallet
      * Operator unroll scripts a pending checkpoint may have been built under: configured, current,
      * and one per deprecated signer — else a pre-rotation tx would stay pending forever.
      */
-    private checkpointUnrollCandidates(info: ArkadeInfo): CSVMultisigTapscript.Type[] {
+    private checkpointUnrollCandidates(info: OperatorInfo): CSVMultisigTapscript.Type[] {
         const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         const candidates = [this._serverUnrollScript, current];
         for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {
@@ -6961,6 +6966,16 @@ export async function waitForIncomingFunds(
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
 
+    // The stop handle comes from the caller's implementation, so it may throw. A broken
+    // stop() must not keep the promise from settling, and it must not be silent.
+    const stopSafely = (stop: () => void) => {
+        try {
+            stop();
+        } catch (e) {
+            console.warn("waitForIncomingFunds teardown failed", e);
+        }
+    };
+
     return new Promise<IncomingFunds>((resolve, reject) => {
         // One teardown path for every exit, so nothing outlives the promise.
         const settle = (deliver: () => void) => {
@@ -6969,8 +6984,7 @@ export async function waitForIncomingFunds(
 
             if (timeoutId !== undefined) clearTimeout(timeoutId);
             if (onAbort) signal?.removeEventListener("abort", onAbort);
-            stopFunc?.();
-
+            if (stopFunc) stopSafely(stopFunc);
             deliver();
         };
 
@@ -6989,24 +7003,30 @@ export async function waitForIncomingFunds(
             );
         }
 
-        wallet
-            .notifyIncomingFunds((funds: IncomingFunds) => {
-                // Skip purely outgoing events (empty `newVtxos` / `coins`), or a self-send's spent
-                // half could resolve this before its `vtxo_received` arrives.
-                const hasFunds =
-                    funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
-                if (settled || !hasFunds) return;
+        try {
+            wallet
+                .notifyIncomingFunds((funds: IncomingFunds) => {
+                    // Skip purely outgoing events (empty `newVtxos` / `coins`), or a self-send's spent
+                    // half could resolve this before its `vtxo_received` arrives.
+                    const hasFunds =
+                        funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
+                    if (settled || !hasFunds) return;
 
-                settle(() => resolve(funds));
-            })
-            .then((stop) => {
-                stopFunc = stop;
-                // May have settled before the handle arrived; don't leak it.
-                if (settled) stop();
-            })
-            .catch((error) => {
-                // Else a caller whose providers are down hangs forever on an unhandled rejection.
-                cancel(error);
-            });
+                    settle(() => resolve(funds));
+                })
+                .then((stop) => {
+                    stopFunc = stop;
+                    // May have settled before the handle arrived; don't leak it.
+                    if (settled) stopSafely(stop);
+                })
+                .catch((error) => {
+                    // Else a caller whose providers are down hangs forever on an unhandled rejection.
+                    cancel(error);
+                });
+        } catch (error) {
+            // notifyIncomingFunds threw synchronously, before returning its promise.
+            // Route it through cancel so the timeout and abort listener are cleaned up too.
+            cancel(error);
+        }
     });
 }

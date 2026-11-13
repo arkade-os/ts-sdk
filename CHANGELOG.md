@@ -107,7 +107,21 @@ style and have not been backfilled.
   `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
   helper. Type-level only, non-breaking.
 
+### Bug Fixes
+
+- **`waitForIncomingFunds` no longer hangs when the subscription
+  breaks.** The helper calls the unsubscribe function that the caller's
+  `notifyIncomingFunds` returns. When that function threw after the funds
+  arrived, the promise was left pending forever, past its timeout and with its
+  abort listener already removed. Teardown now runs inside a guard, so the
+  promise still settles with the funds. A `notifyIncomingFunds` that throws
+  synchronously, before it returns its promise, is routed through the same
+  cancel path, so the timeout timer and the abort listener are cleared instead
+  of leaking. No breaking change.
+
 ### Added
+
+- **`@arkade-os/sdk/compiler` compiles Arkade source into a `Program`.** Contracts written in Arkade had to be compiled separately and their artifact JSON read with `programFromArtifact`. `compile({ entry, files }, { optimize?, debug? })` runs the installed `@arkade-os/compiler` over an in-memory project with relative imports and resolves to `{ program, artifact, debug, diagnostics }`: the `program` goes straight to `client.contract(program, args)`, the raw `artifact` keeps the source bundle, compiler version and fingerprint, `debug` is the compiler's debug file, and `diagnostics` carries the warnings. Each covenant segment of `program` carries its `sourceMap`, so a failing opcode can be traced back to its statement and `require()` message; `{ debug: false }` leaves the file and the maps out. `programFromArtifact(artifact, debug?)` attaches an `arkadec --debug` file the same way and refuses one whose fingerprint does not match the artifact's. Source errors reject with `CompileError`, whose `diagnostics` list every located error. The compiler is an optional peer (`^0.1.0-rc.1`) loaded on the first call, so the root SDK and every other subpath load without it; calling `compile` without it rejects with the install command, while initialization and compilation errors pass through unchanged. The subpath ships ESM and CJS builds; the CJS build loads the ESM-only compiler through `import()`.
 
 - **Identities from a passkey.** `MnemonicIdentity.createPasskey({ rp, userName })`
   creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
@@ -341,6 +355,39 @@ style and have not been backfilled.
   `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
   longer reports a txid it did not submit.
 
+- **`renewProgramContractOutputs` renews covenant VTXOs without an owner
+  key.** A covenant coin whose owner is offline was swept at batch expiry unless the
+  app hand-rolled the intent, the emulator packet and a batch handler that
+  still demanded a signer. The helper registers one intent for any number of
+  coins, each through a covenant function that lets proof input k+1 through
+  to output k (`renew` by default) with its assets, has the emulator sign the
+  proof, and joins the batch. `createArkadeBatchHandler` takes `undefined` as
+  its signer for this: forfeits go to the emulator unsigned, and boarding
+  inputs and inputs without an Arkade script, whose forfeits need a key, are
+  refused when the handler is built. A function whose leaf names any key but
+  the server's is refused before anything is registered, since no owner signs
+  a renewal, and so are a coin its contract does not lock and a server
+  provider lacking a method the renewal or its batch calls. The caller's `signal` ends the wait for a batch; one aborted
+  before registration registers nothing. A renewal that fails or is aborted
+  after registering deletes its intent with a delete proof the emulator signs
+  up front alongside the registration, as `Wallet.settle` does; a left intent
+  held the coins until arkd dropped it, failing retries with "duplicated
+  input". `EmulatorProvider.submitIntent` accepts a delete message for this.
+  Once the forfeits are being sent the signal is ignored and the intent kept,
+  and the renewal waits for the batch's outcome: arkd can commit it by then,
+  and an abort would report spent coins as unrenewed and lose the commitment
+  txid. It subscribes to batch events before
+  registering, as `Wallet.settle` does, so a batch that starts while the
+  intent is being registered is not missed; the new `Batch.prime` does the
+  subscribing for both. A renewal the server would charge an intent fee for
+  is refused before anything is signed: the covenant keeps each output equal
+  to its input, so no fee can be paid and arkd would reject the intent. A
+  renew leaf's condition witness goes on the proof and on the forfeits, where
+  arkd evaluates it. A leaf whose witness names a call input, which a renewal
+  cannot supply, or that has a CSV timelock, which arkd refuses as a forfeit
+  path, is refused before anything is signed. The renewal's asset packet is
+  built by `createAssetPacket`, as a wallet send's is.
+
 ### Changed
 
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
@@ -362,6 +409,11 @@ style and have not been backfilled.
   `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
   `ark-intent-proof-message` tag does not change, because the operator verifies it.
 
+- **The provider source uses `Proof` and `SignedProof`.** `OperatorProvider`,
+  `CachingOperatorProvider` and the batch registration reconciliation no
+  longer name the deprecated `Intent` and `SignedIntent`. The types are the
+  same, so nothing changes for callers.
+
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
   at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
@@ -379,6 +431,21 @@ style and have not been backfilled.
   stored data does not change.
 
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
+
+- **`IntentRepository` methods are named after batch registrations.**
+  `saveIntent` becomes `saveBatchRegistration`, and `getIntentsPage` becomes
+  `getBatchRegistrationsPage`. The SDK calls the new names, so a custom
+  repository must add them, and creating a wallet with a repository that lacks
+  them now throws. The old names stay on the interface and on the InMemory,
+  IndexedDB, SQLite and Realm classes as deprecated methods.
+  `collectIntents` now reads through `getBatchRegistrationsPage`, so a plain
+  object passed to it must have that method.
+
+- **The SDK uses the batch registration names in its own code.** Internal code
+  no longer refers to `ArkIntent`, `IntentRepository`, `collectIntents` or the
+  other deprecated batch registration names. `collectBatchRegistrations` now
+  holds the implementation, and `collectIntents` is its alias. Every deprecated
+  name stays exported and behaves as before.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
@@ -400,6 +467,11 @@ style and have not been backfilled.
   `CachingArkProvider` and `ExpoArkProvider` take the matching names, and
   `Wallet.create` takes `operatorProvider`. Every old name stays as a deprecated
   alias. Passing both `operatorProvider` and `arkProvider` throws.
+
+- **The SDK uses `OperatorInfo` in its own code.** Internal code and the
+  published `.d.ts` name `OperatorInfo`, `GetOperatorInfoOptions` and
+  `networkFromOperatorInfo` instead of their deprecated aliases. The types are
+  the same, so nothing changes for callers.
 
 - **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
   `[]` with no wallet, which a caller could not tell from a wallet with no
@@ -425,6 +497,13 @@ style and have not been backfilled.
   `--experimental-eventsource`.
 
 ### Bug Fixes
+
+- **`createArkadeBatchHandler` writes an input's condition witness on its
+  forfeit.** arkd evaluates a condition leaf against the forfeit's
+  ConditionWitness field when it verifies the forfeit's signatures. The proof
+  carried it but the forfeit never did, so a batch spending a coin through a
+  condition leaf failed with `INVALID_FORFEIT_TXS`. An input's `extraWitness`
+  now goes on its forfeit too.
 
 - **Expired boarding UTXOs held under a deprecated signer are now swept.**
   After the operator rotated its signer, deposits made to a boarding address on

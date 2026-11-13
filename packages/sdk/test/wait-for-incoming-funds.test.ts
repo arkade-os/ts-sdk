@@ -143,6 +143,25 @@ describe("waitForIncomingFunds", () => {
         await expect(waitForIncomingFunds(wallet)).rejects.toThrow("indexer unreachable");
     });
 
+    it("settles instead of hanging when the subscription teardown throws", async () => {
+        // A caller's notifyIncomingFunds may hand back an unsubscribe that throws.
+        // The funds still arrived, so the promise must resolve, not hang on teardown.
+        const throwingStop = vi.fn(() => {
+            throw new Error("teardown failed");
+        });
+        const { wallet } = fakeWallet(async (cb) => {
+            captured = cb;
+            return throwingStop;
+        });
+
+        const pending = waitForIncomingFunds(wallet);
+        await flush();
+        emit({ type: "utxo", coins: [coin] } as IncomingFunds);
+
+        await expect(pending).resolves.toMatchObject({ type: "utxo" });
+        expect(throwingStop).toHaveBeenCalledTimes(1);
+    });
+
     it("ignores an abort that arrives after the funds already resolved", async () => {
         const controller = new AbortController();
         const { wallet } = fakeWallet();
@@ -169,5 +188,24 @@ describe("waitForIncomingFunds", () => {
         await pending;
 
         expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("cleans up when the subscription throws synchronously", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const controller = new AbortController();
+        const addListener = vi.spyOn(controller.signal, "addEventListener");
+        const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+        const { wallet } = fakeWallet(() => {
+            throw new Error("subscribe exploded");
+        });
+
+        await expect(
+            waitForIncomingFunds(wallet, { signal: controller.signal, timeoutMs: 30_000 }),
+        ).rejects.toThrow("subscribe exploded");
+
+        // cancel() ran, so the timer and the abort listener are both gone.
+        expect(vi.getTimerCount()).toBe(0);
+        expect(addListener).toHaveBeenCalledWith("abort", expect.any(Function));
+        expect(removeListener).toHaveBeenCalledWith("abort", addListener.mock.calls[0]?.[1]);
     });
 });

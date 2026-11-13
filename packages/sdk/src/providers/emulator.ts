@@ -27,7 +27,11 @@ export interface EmulatorProvider {
         signedArkTx: string;
         signedCheckpointTxs: string[];
     }>;
-    submitIntent(intent: { proof: string; message: Intent.RegisterMessage }): Promise<string>;
+    /** Signs an intent proof whose covenants pass: a registration, or the delete withdrawing it. */
+    submitIntent(intent: {
+        proof: string;
+        message: Intent.RegisterMessage | Intent.DeleteMessage;
+    }): Promise<string>;
     submitFinalization(
         intent: {
             proof: string;
@@ -121,7 +125,7 @@ export class RestEmulatorProvider implements EmulatorProvider {
 
     async submitIntent(intent: {
         proof: string;
-        message: Intent.RegisterMessage;
+        message: Intent.RegisterMessage | Intent.DeleteMessage;
     }): Promise<string> {
         const url = `${this.serverUrl}/v1/intent`;
         const response = await fetch(url, {

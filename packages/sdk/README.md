@@ -1292,7 +1292,7 @@ SDK uses IndexedDB repositories with the default database name.
 #### Paged repository reads
 
 Collection repositories expose `getVtxosPage`, `getVtxosForScriptPage`, `getUtxosPage`,
-`getTransactionHistoryPage`, `getContractsPage`, and `getIntentsPage`.
+`getTransactionHistoryPage`, `getContractsPage`, and `getBatchRegistrationsPage`.
 Each accepts `{ limit, after? }` and returns
 `{ items, nextCursor? }`; pass `nextCursor` as `after` until it is absent.
 Limits must be 1–500. History pages are ordered by `(createdAt, transaction key)`;
@@ -1593,6 +1593,30 @@ await wallet.send({ address: contract.address, amount: 10_000 })
 The connected operator supplies `<SERVER_KEY>` (the reserved `server` parameter in normalized Programs) and `<SERVER_EXIT_DELAY>`; conflicting overrides fail, and time-based delays that are not multiples of 512 seconds fail rather than changing the advertised delay. Resolved bindings are persisted, so restoring the contract keeps its script through server key or policy changes. A declared constructor named `user` defaults to the connected identity; other constructor keys remain caller-provided. Pass a struct or array param whole by its source name, such as `{ owners: [{ key }, { key }] }`; the flattened names it binds, such as `owners.0.key`, are also accepted, and a missing, extra or duplicated field fails with its full name. Child-output placeholders remain explicit `bytes32` constructor bindings. Leaf call inputs used as script operands cannot produce a fixed address and are rejected; raw CSV operands must be canonical BIP68 encodings.
 
 For compiler-derived programs, call arguments are covenant inputs in declaration order, followed by non-signature leaf inputs in declaration order, one argument per source parameter: a struct or array input is passed whole, as in `contract.functions.spend(request, oracles)`. Same-named inputs in the two scopes remain separate positional arguments. Leaf signatures are PSBT signatures, not condition arguments: `send()` supports the connected identity and infrastructure signers; additional identities and covenant-tweaked leaf keys require explicit PSBT signing via `build()`. Covenant signature arguments remain caller-provided; transaction-bound Arkade `checkSig` signatures require an Arkade-specific digest helper, which is deferred. CSV leaves require aged onchain outputs and cannot use this offchain builder. Typed call validation and these spending limits apply to every normalized Program. The public `SignerRef` union is unchanged; version 1 programs store emulator signer placement in optional `emulatorIndex` metadata.
+
+#### Compiling Arkade source
+
+`@arkade-os/sdk/compiler` compiles Arkade source into the same Program, without a separate compile step. It needs the optional peer `@arkade-os/compiler`, which you install and pin yourself: `npm install --save-exact @arkade-os/compiler`. The root SDK never loads it. `files` maps relative `.ark` paths to their source, and imports resolve relative to the importing file.
+
+```typescript
+import { compile, CompileError } from '@arkade-os/sdk/compiler'
+
+try {
+  const { program, diagnostics } = await compile({
+    entry: 'contracts/vault.ark',
+    files: { 'contracts/vault.ark': vaultSource, 'shared/limits.ark': limitsSource },
+  })
+  for (const d of diagnostics) console.warn(`${d.file}:${d.start?.line} ${d.message}`)
+  const contract = client.contract(program, { owner, minimum: 1_000n })
+} catch (e) {
+  if (e instanceof CompileError) for (const d of e.diagnostics) console.error(d.message)
+  else throw e
+}
+```
+
+Warnings come back in `diagnostics`, and source errors reject with `CompileError`. The result's `artifact` is the compiler's raw output, with the source bundle, compiler version and fingerprint. CommonJS callers can `require('@arkade-os/sdk/compiler')`, which loads the ESM-only compiler through `import()` on the first call. In a browser, the bundler must emit the compiler's WASM asset; see the `@arkade-os/compiler` README.
+
+By default the result also carries `debug`, the compiler's debug file, and each covenant in `program` carries its `sourceMap`: the `asm` range of each statement, its line and column in the entry file, and its `require()` message when it has one. Pass `{ debug: false }` to leave both out. A file written by `arkadec --debug` attaches the same way through `arkade.programFromArtifact(artifact, debug)`, which refuses a file whose fingerprint does not match the artifact's. Source maps live in memory only: `stringifyArtifact` does not write them, so a restored contract has none.
 
 #### HD look-ahead window
 

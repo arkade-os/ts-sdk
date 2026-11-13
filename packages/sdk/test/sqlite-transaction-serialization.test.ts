@@ -1,20 +1,20 @@
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
-import { SQLiteIntentRepository } from "../src/repositories/sqlite/intentRepository";
+import { SQLiteBatchRegistrationRepository } from "../src/repositories/sqlite/intentRepository";
 import { SQLiteVirtualTxRepository } from "../src/repositories/sqlite/virtualTxRepository";
 import { SQLiteWalletRepository } from "../src/repositories/sqlite/walletRepository";
 import { SQLiteContractRepository } from "../src/repositories/sqlite/contractRepository";
 import type { Contract } from "../src/contracts/types";
 import { getSerializedExecutor, runInTransaction } from "../src/repositories/sqlite/transaction";
 import { ChainedTxType, type VirtualTx } from "../src/repositories/virtualTxRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 
 // Regression coverage for the shared-connection transaction races: SQLite
 // cannot nest BEGIN IMMEDIATE, so overlapping transactions on one executor
 // used to fail with "cannot start a transaction within a transaction".
 
-const intent = (id: string): ArkIntent => ({
+const intent = (id: string): BatchRegistration => ({
     proofTxId: id,
     state: "waiting_for_batch",
     createdAt: 1,
@@ -58,7 +58,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
             const db = createNodeSQLExecutor();
             const wallet = new SQLiteWalletRepository(db, { walletStateTransactions: true });
             const contracts = new SQLiteContractRepository(db);
-            const intents = new SQLiteIntentRepository(db);
+            const intents = new SQLiteBatchRegistrationRepository(db);
             const virtual = new SQLiteVirtualTxRepository(db);
             const existing: Contract = {
                 script: "existing",
@@ -71,7 +71,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
             const added: Contract = { ...existing, script: "added", address: "added" };
             await wallet.saveWalletState({ settings: { initial: true } });
             await contracts.saveContract(existing);
-            await collectIntents(intents);
+            await collectBatchRegistrations(intents);
             await virtual.getVirtualTx("x");
             let enter!: () => void;
             const entered = new Promise<void>((resolve) => {
@@ -103,7 +103,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
                 contracts.deleteContract(existing.script),
                 wallet.saveWalletState({ settings: { outside: true } }),
                 wallet.getWalletState(),
-                intents.saveIntent(intent("outside")),
+                intents.saveBatchRegistration(intent("outside")),
                 virtual.upsertVirtualTxs([vtx("outside")]),
             ].map((operation, index) =>
                 operation.then((value) => {
@@ -128,7 +128,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
                 lastSyncTime: undefined,
             });
             expect(settledBeforeRelease).toEqual([]);
-            expect((await collectIntents(intents)).map((row) => row.proofTxId)).toEqual([
+            expect((await collectBatchRegistrations(intents)).map((row) => row.proofTxId)).toEqual([
                 "outside",
             ]);
             expect(await virtual.getVirtualTx("outside")).not.toBeNull();
@@ -139,32 +139,35 @@ describe("SQLite transaction serialization (shared connection)", () => {
 
     it("serializes concurrent transactions across two repos on one executor", async () => {
         const db = createNodeSQLExecutor();
-        const intents = new SQLiteIntentRepository(db);
+        const intents = new SQLiteBatchRegistrationRepository(db);
         const vtxs = new SQLiteVirtualTxRepository(db);
-        await collectIntents(intents); // init
+        await collectBatchRegistrations(intents); // init
         await vtxs.getVirtualTx("x"); // init
 
         await Promise.all([
-            intents.saveIntent(intent("a")),
+            intents.saveBatchRegistration(intent("a")),
             vtxs.upsertVirtualTxs([vtx("t1")]),
-            intents.saveIntent(intent("b")),
+            intents.saveBatchRegistration(intent("b")),
             vtxs.upsertVirtualTxs([vtx("t2")]),
         ]);
 
-        expect((await collectIntents(intents)).map((i) => i.proofTxId).sort()).toEqual(["a", "b"]);
+        expect((await collectBatchRegistrations(intents)).map((i) => i.proofTxId).sort()).toEqual([
+            "a",
+            "b",
+        ]);
         expect(await vtxs.getVirtualTx("t1")).not.toBeNull();
         expect(await vtxs.getVirtualTx("t2")).not.toBeNull();
     });
 
-    it("serializes concurrent saveIntent on one repository", async () => {
+    it("serializes concurrent saveBatchRegistration on one repository", async () => {
         const db = createNodeSQLExecutor();
-        const intents = new SQLiteIntentRepository(db);
-        await collectIntents(intents);
+        const intents = new SQLiteBatchRegistrationRepository(db);
+        await collectBatchRegistrations(intents);
 
         const ids = Array.from({ length: 8 }, (_, i) => `i${i}`);
-        await Promise.all(ids.map((id) => intents.saveIntent(intent(id))));
+        await Promise.all(ids.map((id) => intents.saveBatchRegistration(intent(id))));
 
-        expect((await collectIntents(intents)).map((i) => i.proofTxId).sort()).toEqual(
+        expect((await collectBatchRegistrations(intents)).map((i) => i.proofTxId).sort()).toEqual(
             [...ids].sort(),
         );
     });
@@ -192,18 +195,18 @@ describe("SQLite transaction serialization (shared connection)", () => {
         const db = createNodeSQLExecutor();
         await db.run(LEGACY_VTXOS);
         const wallet = new SQLiteWalletRepository(db);
-        const intents = new SQLiteIntentRepository(db);
-        await collectIntents(intents);
+        const intents = new SQLiteBatchRegistrationRepository(db);
+        await collectBatchRegistrations(intents);
 
         // getWalletState triggers the migration transaction; race it against an
         // intent transaction on the same connection.
-        await Promise.all([wallet.getWalletState(), intents.saveIntent(intent("z"))]);
+        await Promise.all([wallet.getWalletState(), intents.saveBatchRegistration(intent("z"))]);
 
         const cols = await db.all<{ name: string; notnull: number }>(
             "PRAGMA table_info(ark_vtxos)",
         );
         expect(cols.find((c) => c.name === "script")?.notnull).toBe(1); // migrated
-        expect((await collectIntents(intents)).map((i) => i.proofTxId)).toContain("z");
+        expect((await collectBatchRegistrations(intents)).map((i) => i.proofTxId)).toContain("z");
     });
 
     it("serializes two wallet-repo migrations on a legacy table without a script column", async () => {

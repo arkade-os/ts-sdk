@@ -1,5 +1,5 @@
 import { intentRepositoryConformance } from "./conformance/intentRepository.conformance";
-import { SQLiteIntentRepository } from "../src/repositories/sqlite/intentRepository";
+import { SQLiteBatchRegistrationRepository } from "../src/repositories/sqlite/intentRepository";
 import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 import { expect, it, vi } from "vitest";
 
@@ -8,12 +8,12 @@ import { expect, it, vi } from "vitest";
 // only a real engine parses and enforces.
 intentRepositoryConformance(
     "sqlite",
-    async () => new SQLiteIntentRepository(createNodeSQLExecutor()),
+    async () => new SQLiteBatchRegistrationRepository(createNodeSQLExecutor()),
 );
 
 it("filters selective intent states in one SQLite page query", async () => {
     const db = createNodeSQLExecutor();
-    const repository = new SQLiteIntentRepository(db);
+    const repository = new SQLiteBatchRegistrationRepository(db);
     const makeIntent = (proofTxId: string, state: "cancelled" | "waiting_for_batch") => ({
         proofTxId,
         state,
@@ -27,21 +27,28 @@ it("filters selective intent states in one SQLite page query", async () => {
         proofInputs: [],
     });
     for (let i = 0; i < 200; i++) {
-        await repository.saveIntent(makeIntent(`a${String(i).padStart(3, "0")}`, "cancelled"));
+        await repository.saveBatchRegistration(
+            makeIntent(`a${String(i).padStart(3, "0")}`, "cancelled"),
+        );
     }
     for (let i = 0; i < 5; i++) {
-        await repository.saveIntent(makeIntent(`z${i}`, "waiting_for_batch"));
+        await repository.saveBatchRegistration(makeIntent(`z${i}`, "waiting_for_batch"));
     }
 
     const all = vi.spyOn(db, "all");
     const filter = { states: ["waiting_for_batch" as const] };
-    const first = await repository.getIntentsPage(filter, { limit: 2 });
+    const first = await repository.getBatchRegistrationsPage(filter, { limit: 2 });
     expect(first.items.map((intent) => intent.proofTxId)).toEqual(["z0", "z1"]);
     expect(first.nextCursor).toBe("z1");
     expect(all).toHaveBeenCalledTimes(1);
     all.mockClear();
-    const second = await repository.getIntentsPage(filter, { limit: 2, after: first.nextCursor });
+    const second = await repository.getBatchRegistrationsPage(filter, {
+        limit: 2,
+        after: first.nextCursor,
+    });
     expect(second.items.map((intent) => intent.proofTxId)).toEqual(["z2", "z3"]);
     expect(all).toHaveBeenCalledTimes(1);
-    expect((await repository.getIntentsPage({ states: [] }, { limit: 2 })).items).toEqual([]);
+    expect(
+        (await repository.getBatchRegistrationsPage({ states: [] }, { limit: 2 })).items,
+    ).toEqual([]);
 });

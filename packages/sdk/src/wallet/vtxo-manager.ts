@@ -22,7 +22,7 @@ import {
     type TimeHeight,
 } from "./vtxo";
 import {
-    ArkadeInfo,
+    OperatorInfo,
     OperatorProvider,
     OnchainCosignRejectedError,
     SettlementEvent,
@@ -258,7 +258,7 @@ export function byExpiryAscending(
 /**
  * Select inputs from `sorted` for one settlement: at most {@link MAX_VTXOS_PER_SETTLEMENT} inputs
  * with cumulative `value` no greater than `maxAmount` (`< 0` is the server's `-1` "no limit" for
- * `ArkadeInfo.vtxoMaxAmount`). The single output equals the inputs' sum and the server rejects
+ * `OperatorInfo.vtxoMaxAmount`). The single output equals the inputs' sum and the server rejects
  * outputs above `vtxoMaxAmount` with `AMOUNT_TOO_HIGH`; the overflow waits for the next cycle.
  *
  * Bounds gross `value`, not fee-adjusted net: strictly conservative, since the post-fee output is
@@ -710,7 +710,7 @@ export interface MigrationVtxoRef {
 
 /**
  * Machine-readable status for a single deprecated signer the wallet holds funds under. Derived at
- * read time from contract params plus a fresh {@link ArkadeInfo} snapshot — never persisted.
+ * read time from contract params plus a fresh {@link OperatorInfo} snapshot — never persisted.
  */
 export interface DeprecatedSignerReport {
     /** Deprecated signer key (x-only hex). */
@@ -837,8 +837,8 @@ interface MigrationCapableWallet {
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
-    /** Refresh the wallet's cached deprecated-signer set from a fresh {@link ArkadeInfo} snapshot. */
-    refreshDeprecatedSigners(info: ArkadeInfo): void;
+    /** Refresh the wallet's cached deprecated-signer set from a fresh {@link OperatorInfo} snapshot. */
+    refreshDeprecatedSigners(info: OperatorInfo): void;
     /**
      * Drain a rotation the wallet is applying off an `onServerInfoChanged` emit, so this pass
      * classifies against a settled, not half-rotated, signer snapshot. Optional: only the
@@ -1496,7 +1496,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         wallet: IWallet & RecoveryContractCapableWallet,
         contract: Contract,
         vtxos: ExtendedContractVtxo[],
-        info: ArkadeInfo | undefined,
+        info: OperatorInfo | undefined,
         dustAmount: bigint,
     ): Promise<void> {
         // Only swept-but-unspent VTXOs can be recovered; a re-run after a
@@ -2302,7 +2302,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * spendable VTXOs into cooperatively-migratable and cutoff-expired sets and building the
      * per-signer report. Current-signer contracts are skipped.
      */
-    private async classifyDeprecatedSignerContracts(info: ArkadeInfo): Promise<{
+    private async classifyDeprecatedSignerContracts(info: OperatorInfo): Promise<{
         reports: DeprecatedSignerReport[];
         migratable: ClassifiedVtxo[];
         expired: ClassifiedVtxo[];
@@ -2411,7 +2411,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * {@link isCooperativelyMigratable} plus a per-row CSV check — never by the fetch. Foreign-ASP
      * rows are excluded because their keys are not in the signer set.
      */
-    private async classifyDeprecatedSignerBoarding(info: ArkadeInfo): Promise<{
+    private async classifyDeprecatedSignerBoarding(info: OperatorInfo): Promise<{
         reports: DeprecatedSignerReport[];
         migratable: ClassifiedBoarding[];
         expired: ClassifiedBoarding[];
@@ -2536,7 +2536,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * rotated; current and unknown-signer snapshots are left alone. Safe to repeat:
      * `rotateServerSigner` is idempotent and serializes against HD receive rotation.
      */
-    private async ensureReceiveOnActiveSigner(info: ArkadeInfo): Promise<boolean> {
+    private async ensureReceiveOnActiveSigner(info: OperatorInfo): Promise<boolean> {
         const wallet = this.requireMigrationCapableWallet();
         const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
@@ -2566,7 +2566,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      */
     private async rotateForRecoverableInputs(
         inputs: { txid: string; vout: number }[],
-        info: ArkadeInfo,
+        info: OperatorInfo,
         owningContract?: Contract,
     ): Promise<boolean> {
         if (!isMigrationCapable(this.wallet)) return false;

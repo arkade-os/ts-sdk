@@ -1,12 +1,12 @@
 import { describe, it, expect, afterAll, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
-    ArkadeInfo,
+    OperatorInfo,
     DigestMismatchError,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
 } from "../../src";
@@ -93,7 +93,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
     const makeWallet = async (): Promise<Wallet> =>
         Wallet.create({
             identity: createTestIdentity(),
-            arkProvider: new RestArkProvider(operatorUrl),
+            arkProvider: new RestOperatorProvider(operatorUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -106,15 +106,15 @@ describe("server-info digest mismatch across a real signer rotation", () => {
         });
 
     /**
-     * `onServerInfoChanged` and the cached `_digest` live on `RestArkProvider`,
-     * not the `ArkProvider` interface `wallet.arkProvider` is typed as (the
+     * `onServerInfoChanged` and the cached `_digest` live on `RestOperatorProvider`,
+     * not the `OperatorProvider` interface `wallet.arkProvider` is typed as (the
      * wallet duck-types `onServerInfoChanged` at setup). Reach them via this
      * structural cast — the same `_digest` probe the unit suite
      * (`arkProviderDigest.test.ts`) uses.
      */
     type DigestProbe = {
         _digest: string;
-        onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void;
+        onServerInfoChanged(listener: (info: OperatorInfo) => void): () => void;
     };
 
     // Order matters: restore baseline signer A BEFORE the faucet redeems notes.
@@ -143,7 +143,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
             expect(digestA).not.toBe("");
 
             // Record every refreshed info the provider emits on a mismatch.
-            const emitted: ArkadeInfo[] = [];
+            const emitted: OperatorInfo[] = [];
             probe.onServerInfoChanged((info) => emitted.push(info));
 
             // Fund a real VTXO under A (the ark CLI faucet only funds while

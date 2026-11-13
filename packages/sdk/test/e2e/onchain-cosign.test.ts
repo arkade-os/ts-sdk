@@ -9,7 +9,7 @@ import {
     networks,
     OnchainWallet,
     Ramps,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
     SingleKey,
@@ -34,7 +34,7 @@ const COVENANT_SATS = 100_000;
 const COVENANT_SPEND = 99_500n;
 const FEE = 1_000;
 
-const arkProvider = new RestArkProvider(ARK_SERVER_URL);
+const arkProvider = new RestOperatorProvider(ARK_SERVER_URL);
 const emulator = new RestEmulatorProvider(EMULATOR_URL);
 const explorer = new EsploraProvider(ESPLORA_API_URL);
 
@@ -70,7 +70,7 @@ const covenantProgram = {
 async function createWallet(): Promise<Wallet> {
     return Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARK_SERVER_URL),
+        arkProvider: new RestOperatorProvider(ARK_SERVER_URL),
         indexerProvider: new RestIndexerProvider(ARK_SERVER_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,

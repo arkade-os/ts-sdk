@@ -44,7 +44,7 @@ function seededRepo(): InMemoryIntentRepository {
         partialForfeits: [],
         proofInputs: [{ txid: "v", vout: 0 }],
     };
-    void repo.saveIntent(intent);
+    void repo.saveBatchRegistration(intent);
     return repo;
 }
 
@@ -133,8 +133,10 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("swallows a repo write failure on finalized (money flow unaffected)", async () => {
         const repo = {
-            getIntentsPage: async () => ({ items: [{ state: "waiting_for_batch" } as ArkIntent] }),
-            saveIntent: async () => {
+            getBatchRegistrationsPage: async () => ({
+                items: [{ state: "waiting_for_batch" } as ArkIntent],
+            }),
+            saveBatchRegistration: async () => {
                 throw new Error("db down");
             },
         };
@@ -148,8 +150,10 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("still re-propagates the reason on failed when the repo write fails", async () => {
         const repo = {
-            getIntentsPage: async () => ({ items: [{ state: "waiting_for_batch" } as ArkIntent] }),
-            saveIntent: async () => {
+            getBatchRegistrationsPage: async () => ({
+                items: [{ state: "waiting_for_batch" } as ArkIntent],
+            }),
+            saveBatchRegistration: async () => {
                 throw new Error("db down");
             },
         };

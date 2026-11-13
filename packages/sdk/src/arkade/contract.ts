@@ -274,7 +274,7 @@ export type CallableFunctions = Record<
 
 // --- Arkade client ---------------------------------------------------------
 
-/** What {@link Arkade} needs from the Arkade server; see {@link ArkadeConnectOptions.arkade}. */
+/** What {@link Arkade} needs from the operator; see {@link ArkadeConnectOptions.arkade}. */
 export type ArkadeServerProvider = Pick<OperatorProvider, "getInfo"> &
     Partial<ArkadeBroadcaster & Pick<OperatorProvider, "cosignOnchainTx">>;
 
