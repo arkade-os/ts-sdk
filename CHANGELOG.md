@@ -104,7 +104,8 @@ style and have not been backfilled.
   co-signer key arkd holds, current or deprecated, is spent through arkd:
   `submitTx`/`finalizeTx` (two-step), `cosignOnchainTx`, and
   `registerIntent`/`submitSignedForfeitTxs`. Any other covenant still goes
-  through the emulator. Stored contracts keep the key they were built with,
+  through the emulator. A transaction or renewal mixing the two is refused up
+  front; spend them separately. Stored contracts keep the key they were built with,
   so covenants on the old emulator key keep working while arkd lists it.
   Against an arkd that does not run Arkade Script, new covenants cannot be
   co-signed. `BITCOIN_EMULATOR_PUBKEY`, `MUTINYNET_EMULATOR_PUBKEY`,
@@ -171,7 +172,8 @@ style and have not been backfilled.
   and the wallet-level spends of a generically spendable program contract
   (`send`, `settle`, `cosignOnchainTx`), which read the hashes off the coin
   and the selected path. The coin's hashes are derived from its contract on
-  every read and never persisted. More than 16 is refused, already by `Arkade.contract()`
+  every read, copied per read, and never persisted. A path arkd does not
+  co-sign, such as a unilateral exit, carries none. More than 16 is refused, already by `Arkade.contract()`
   when any collaborative function's spend would need more, rather than at that
   spend. Trees without such a leaf, swap offers included, build the same
   PSBTs as before, and an arkd that predates the field ignores it.

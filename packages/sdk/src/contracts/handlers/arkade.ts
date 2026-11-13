@@ -113,11 +113,11 @@ function pathsFor(
         if (opts.checkTimelocks && cltv !== undefined && !isCltvSatisfied(context, cltv)) {
             continue;
         }
+        // No arkadeTweaks: arkd never sees a spend it doesn't co-sign.
         paths.push({
             leaf: fn.tapLeafScript,
             ...(sequence !== undefined ? { sequence } : {}),
             ...(witness.length > 0 ? { extraWitness: witness } : {}),
-            ...tweaksOf(script, fn),
         });
     }
 

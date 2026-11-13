@@ -60,9 +60,15 @@ export async function renewProgramContractOutputs(
     const { indexer, network } = client;
     const arkProvider = client.arkProvider as OperatorProvider;
     // arkd signs the intent and the forfeits itself when it holds every leg's co-signer.
-    const viaOperator = targets.every(({ contract }) =>
+    const operated = targets.filter(({ contract }) =>
         client.operatorCosigns(contract.keys.emulatorKey),
-    );
+    ).length;
+    const viaOperator = operated === targets.length;
+    if (operated > 0 && !viaOperator) {
+        throw new Error(
+            "renewProgramContractOutputs: covenants co-signed by arkd and by the emulator cannot renew in one batch; renew them separately",
+        );
+    }
     const emulator = viaOperator ? undefined : client.emulator;
     if ((!viaOperator && !emulator) || !indexer) {
         throw new Error(

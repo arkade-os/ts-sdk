@@ -1326,6 +1326,16 @@ export class ArkadeTransactionBuilder {
                 !client.operatorCosigns(unlocker.contract.keys.emulatorKey),
         );
         if (emulated) {
+            const operated = inputs.find(
+                ({ unlocker }) =>
+                    unlocker.fn.arkadeScript &&
+                    client.operatorCosigns(unlocker.contract.keys.emulatorKey),
+            );
+            if (operated) {
+                throw new Error(
+                    `${emulated.unlocker.fn.name}, ${operated.unlocker.fn.name}: covenants co-signed by the emulator and by arkd cannot share a transaction; spend them separately`,
+                );
+            }
             // Covenant path: the emulator runs the arkade script, adds the remaining
             // co-signatures (incl. the contract checkpoint) and finalizes with arkd.
             if (!client.emulator) {
