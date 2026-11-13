@@ -4,7 +4,12 @@ import type { PSBTKeyMapKeys } from "@scure/btc-signer/psbt.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { Transaction } from "../utils/transaction";
-import { ConditionWitness, PrevArkTxField, VtxoTaprootTree } from "../utils/unknownFields";
+import {
+    ArkadeTweak,
+    ConditionWitness,
+    PrevArkTxField,
+    VtxoTaprootTree,
+} from "../utils/unknownFields";
 import { hex } from "@scure/base";
 import { getSequence, proofTapLeafScriptOf, VtxoScript } from "../script/base";
 import { ExtendedCoin } from "../wallet";
@@ -372,6 +377,9 @@ function prepareProofInput(coin: ProofInput | TransactionInput): TransactionInpu
     const unknown = [VtxoTaprootTree.encode(coin.tapTree)];
     if (coin.extraWitness) {
         unknown.push(ConditionWitness.encode(coin.extraWitness));
+    }
+    if (coin.arkadeTweaks?.length) {
+        unknown.push(ArkadeTweak.encode(coin.arkadeTweaks));
     }
     // Lands on proof input i+1 via craftToSignTx; the synthetic input 0 needs
     // no prevout tx, the emulator synthesises one for it.

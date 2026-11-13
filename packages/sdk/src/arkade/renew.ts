@@ -8,7 +8,6 @@ import { Proof } from "../proof";
 import type { OperatorProvider } from "../providers/ark";
 import { TreeSignerSession, type SignerSession } from "../tree/signingSession";
 import { withPrevTxs } from "../utils/prevoutTx";
-import { ArkadeTweak, setArkPsbtField } from "../utils/unknownFields";
 import type { VirtualCoin } from "../wallet";
 import { normalizeVtxo, toOffchainInputFeeParams } from "../wallet/vtxo";
 import { createAssetPacket } from "../wallet/asset";
@@ -144,13 +143,15 @@ export async function renewProgramContractOutputs(
     }
 
     const coins = await withPrevTxs(
-        legs.map(({ contract, coin, compiled, condition }) => ({
+        legs.map(({ contract, coin, compiled, condition, tweaks }) => ({
             ...coin,
             tapTree: contract.tapTree,
             forfeitTapLeafScript: compiled.tapLeafScript,
             proofTapLeafScript: compiled.tapLeafScript,
             // Written as ConditionWitness on the proof and the forfeits, where arkd evaluates it.
             ...(condition.length > 0 ? { extraWitness: condition } : {}),
+            // Proof input k+1 only; arkd reads no arkadetweak on a forfeit.
+            ...(tweaks.length > 0 ? { arkadeTweaks: tweaks } : {}),
         })),
         indexer,
     );
@@ -198,9 +199,6 @@ export async function renewProgramContractOutputs(
     const [signedProof, deleteProof] = await Promise.all(
         [message, deleteMessage].map((m) => {
             const proof = Proof.create(m, coins, outputs);
-            legs.forEach(({ tweaks }, k) => {
-                if (tweaks.length > 0) setArkPsbtField(proof, k + 1, ArkadeTweak, tweaks);
-            });
             const psbt = base64.encode(proof.toPSBT());
             // With no emulator the proof goes unsigned: arkd signs Arkade proofs on receipt.
             return emulator ? emulator.submitIntent({ proof: psbt, message: m }) : psbt;
