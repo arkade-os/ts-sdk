@@ -1,8 +1,8 @@
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi } from "vitest";
 import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 import { Batch } from "../src/wallet/batch";
 import {
     SettlementEventType,
@@ -30,9 +30,9 @@ const failed: BatchFailedEvent = {
 
 const intentTxId = "i1";
 
-function seededRepo(): InMemoryIntentRepository {
-    const repo = new InMemoryIntentRepository();
-    const intent: ArkIntent = {
+function seededRepo(): InMemoryBatchRegistrationRepository {
+    const repo = new InMemoryBatchRegistrationRepository();
+    const intent: BatchRegistration = {
         proofTxId: intentTxId,
         state: "waiting_for_batch",
         createdAt: 1,
@@ -58,8 +58,8 @@ function baseHandler(overrides: Partial<Batch.Handler> = {}): Batch.Handler {
     };
 }
 
-const stateOf = (repo: InMemoryIntentRepository) =>
-    collectIntents(repo, { proofTxIds: [intentTxId] }).then((r) => r[0]);
+const stateOf = (repo: InMemoryBatchRegistrationRepository) =>
+    collectBatchRegistrations(repo, { proofTxIds: [intentTxId] }).then((r) => r[0]);
 
 describe("wrapHandlerWithIntentPersistence", () => {
     it("advances to batch_in_progress on a started (non-skipped) batch", async () => {
@@ -134,7 +134,7 @@ describe("wrapHandlerWithIntentPersistence", () => {
     it("swallows a repo write failure on finalized (money flow unaffected)", async () => {
         const repo = {
             getBatchRegistrationsPage: async () => ({
-                items: [{ state: "waiting_for_batch" } as ArkIntent],
+                items: [{ state: "waiting_for_batch" } as BatchRegistration],
             }),
             saveBatchRegistration: async () => {
                 throw new Error("db down");
@@ -151,7 +151,7 @@ describe("wrapHandlerWithIntentPersistence", () => {
     it("still re-propagates the reason on failed when the repo write fails", async () => {
         const repo = {
             getBatchRegistrationsPage: async () => ({
-                items: [{ state: "waiting_for_batch" } as ArkIntent],
+                items: [{ state: "waiting_for_batch" } as BatchRegistration],
             }),
             saveBatchRegistration: async () => {
                 throw new Error("db down");

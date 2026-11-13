@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, InMemoryIntentRepository } from "../src";
+import { ArkAddress, InMemoryBatchRegistrationRepository } from "../src";
 import { Wallet } from "../src/wallet/wallet";
 import { markSdkPicked } from "../src/wallet/utils";
 import { BTC_ADDR, fundedWallet, parkSettle, stallSubmits } from "./concurrentSpendingFixture";
@@ -172,7 +172,7 @@ describe("concurrentSpending", () => {
 
     it("refuses a settle naming an in-flight coin before persisting an intent", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
-        const intentRepository = new InMemoryIntentRepository();
+        const intentRepository = new InMemoryBatchRegistrationRepository();
         const { wallet, coins } = await fundedWallet({
             concurrentSpending: true,
             intentRepository,
@@ -321,7 +321,7 @@ describe("a hold placed while the SDK is picking", () => {
 
     it("a bare settle that loses a VTXO to a hold never blocks the holder spending it", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
-        const intentRepository = new InMemoryIntentRepository();
+        const intentRepository = new InMemoryBatchRegistrationRepository();
         const { wallet, arkProvider, coins, outpoints } = await fundedWallet({
             concurrentSpending: true,
             intentRepository,

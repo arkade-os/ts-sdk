@@ -1,9 +1,12 @@
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
 import { applySettlementEventToIntent } from "../src/wallet/intentStateReducer";
 import { SettlementEventType } from "../src/providers/ark";
-import type { ArkIntent, IntentRepository } from "../src/repositories/intentRepository";
+import type {
+    BatchRegistration,
+    BatchRegistrationRepository,
+} from "../src/repositories/intentRepository";
 import { InMemoryContractRepository, InMemoryWalletRepository, SingleKey, Wallet } from "../src";
 
 // Exercises the persist + event-reduce contract the settle() path relies on:
@@ -11,8 +14,8 @@ import { InMemoryContractRepository, InMemoryWalletRepository, SingleKey, Wallet
 // and that a succeeded intent no longer locks its VTXOs.
 describe("settle intent persistence contract", () => {
     it("advances state from events and releases locked outpoints when terminal", async () => {
-        const repo = new InMemoryIntentRepository();
-        const base: ArkIntent = {
+        const repo = new InMemoryBatchRegistrationRepository();
+        const base: BatchRegistration = {
             proofTxId: "i1",
             state: "waiting_to_submit",
             createdAt: 1,
@@ -29,7 +32,7 @@ describe("settle intent persistence contract", () => {
 
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
 
-        const cur = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const cur = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         const next = applySettlementEventToIntent(cur, {
             type: SettlementEventType.BatchFinalized,
             id: "batch-1",
@@ -38,7 +41,7 @@ describe("settle intent persistence contract", () => {
         expect(next).toBeDefined();
         if (next) await repo.saveBatchRegistration(next);
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("ctx");
         expect(done.batchId).toBe("batch-1");
@@ -51,7 +54,7 @@ describe("wallet setup", () => {
         const intentRepository = {
             saveIntent: async () => {},
             getIntentsPage: async () => ({ items: [] }),
-        } as unknown as IntentRepository;
+        } as unknown as BatchRegistrationRepository;
         await expect(
             Wallet.create({
                 identity: SingleKey.fromRandomBytes(),
