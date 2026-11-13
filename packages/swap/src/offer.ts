@@ -139,6 +139,7 @@ export function swapProgramBinding(
     if (pkOf(current) === hex.encode(expected)) return current;
     const previous = bindSwapProgram(offer, operatorPubkey, true);
     if (pkOf(previous) === hex.encode(expected)) return previous;
+    // Neither matches (usually a rotated operator key): callers throw with that diagnosis.
     return current;
 }
 
