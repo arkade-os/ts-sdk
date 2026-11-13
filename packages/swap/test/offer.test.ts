@@ -11,9 +11,9 @@ import {
     Offer,
 } from "../src/offer";
 
-// deterministic keys -> the derived swap addresses must never drift (any
-// change to the program JSONs or the arg binding changes them); goldens from
-// the swap covenant's reference selfCheck
+// deterministic keys -> a fresh derivation must never drift (any change to the
+// program JSONs or the arg binding changes it). The solverd vectors below pin
+// offers funded on the previous tree.
 const operatorPubkey = hex.decode(
     "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
 );
@@ -54,21 +54,18 @@ const directionlessPayload = () =>
 const goldens: [Omit<Offer, "swapPkScript">, string][] = [
     [
         { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
-        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2",
+        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65p9nuw7ax6smcyx0cu5ftrgttu7qw7c7s9af0nrm7ga504ph6qs4c4p7zf",
     ],
     [
         { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys },
-        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65qz8884545l2ka5mps383ntsennz3csywl5t33gghnu9rxjlg5wfv467cj",
+        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc6440gseh0ur2r8xek73p2urxqxdvhldlyqsft8kuc9h92uz45kehqvxnzsr",
     ],
 ];
 
 describe("swap offer", () => {
-    it("compiles an arkadec artifact byte-identically to the hand-written asset program", () => {
+    it("loads the asset-swap artifact the binding compiles", () => {
         const compilerArtifact: ContractArtifact = JSON.parse(
-            readFileSync(
-                new URL("./fixtures/arkadec/banco-btc-to-asset.artifact.json", import.meta.url),
-                "utf8",
-            ),
+            readFileSync(new URL("../src/contracts/asset-swap.json", import.meta.url), "utf8"),
         );
         expect(compilerArtifact.formatVersion).toBe(1);
         expect(
@@ -114,6 +111,16 @@ describe("swap offer", () => {
         }
     });
 
+    it("selects the previous tree for a fresh derivation when asked", () => {
+        const [offer] = goldens[0];
+        const current = offerContract(offer, operatorPubkey);
+        const previous = offerContract(offer, operatorPubkey, "previous");
+        expect(hex.encode(offerContract(offer, operatorPubkey, "current").pkScript)).toBe(
+            hex.encode(current.pkScript),
+        );
+        expect(hex.encode(previous.pkScript)).not.toBe(hex.encode(current.pkScript));
+    });
+
     it.each([31, 33])("rejects a %s-byte asset txid in the bundled v1 program", (length) => {
         const {
             program,
@@ -127,10 +134,10 @@ describe("swap offer", () => {
             () =>
                 new arkade.ArkadeProgramScript(
                     program,
-                    { ...args, wantAssetTxid: new Uint8Array(length) },
+                    { ...args, assetTxid: new Uint8Array(length) },
                     bound,
                 ),
-        ).toThrow(/wantAssetTxid.*32-byte/);
+        ).toThrow(/assetTxid.*32-byte/);
     });
 
     it("roundtrips the TLV codec for both directions", () => {
@@ -158,13 +165,14 @@ describe("swap offer", () => {
             operatorPubkey,
         );
         expect(arkade.stringifyArtifact(program)).toBe(
-            '{"version":1,"name":"banco-asset-to-btc","params":[{"name":"makerWP","type":"pubkey"},' +
-                '{"name":"wantAmount","type":"int"},{"name":"server","type":"pubkey"},' +
-                '{"name":"user","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
-                '"functions":{"fulfill":{"tapscript":{"signers":["$server"]},"arkadeScript":' +
-                '{"asm":[0,"INSPECTOUTPUTVALUE","$wantAmount","GREATERTHANOREQUAL","VERIFY",0,' +
-                '"INSPECTOUTPUTSCRIPTPUBKEY",1,"EQUALVERIFY","$makerWP","EQUAL"]}},' +
-                '"cancel":{"tapscript":{"signers":["$user","$server"]}},' +
+            '{"version":1,"name":"SatsSwap","params":[{"name":"receiver","type":"pubkey"},' +
+                '{"name":"amount","type":"int"},{"name":"user","type":"pubkey"},' +
+                '{"name":"server","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
+                '"functions":{"fulfill":{"group":"fulfill","tapscript":{"signers":["$server"],' +
+                '"emulator":"fulfill","emulatorIndex":1},"arkadeScript":{"asm":["PUSHCURRENTINPUTINDEX","DUP",' +
+                '"INSPECTOUTPUTVALUE","$amount","GREATERTHANOREQUAL","VERIFY","INSPECTOUTPUTSCRIPTPUBKEY",1,' +
+                '"NUMEQUALVERIFY","$receiver","EQUAL"],"witness":[]}},"cancel":{"group":"cancel","tapscript":' +
+                '{"signers":["$user","$server"],"signatures":[{"name":"userSig","type":"signature"}]}},' +
                 '"exit":{"tapscript":{"signers":["$user"],"csv":{"type":"blocks","value":"$exitDelay"}}}}}',
         );
     });
@@ -242,19 +250,19 @@ describe("swap offer", () => {
                 // Serialization order in the covenant, display order in the id.
                 // Getting this backwards makes the lookup report the asset
                 // absent, which the VERIFY turns into an unspendable contract.
-                expect(hex.encode(args.wantAssetTxid as Uint8Array), drift(v.label)).toBe(
+                expect(hex.encode(args.assetTxid as Uint8Array), drift(v.label)).toBe(
                     V.script_txid_hex,
                 );
-                expect(hex.encode(args.wantAssetTxid as Uint8Array), drift(v.label)).not.toBe(
+                expect(hex.encode(args.assetTxid as Uint8Array), drift(v.label)).not.toBe(
                     V.txid_hex,
                 );
 
                 // ...and the index travels as a number, so ArkadeScript encodes
                 // it as a script number -- not as the 2-byte wire blob, which
                 // coincides only at group 258 and reads as -32767 at 65535.
-                expect(args.wantAssetGroupIndex, drift(v.label)).toBe(v.group_index);
+                expect(args.assetGroupIndex, drift(v.label)).toBe(v.group_index);
                 expect(
-                    hex.encode(arkade.ArkadeScript.encode([args.wantAssetGroupIndex as number])),
+                    hex.encode(arkade.ArkadeScript.encode([args.assetGroupIndex as number])),
                     drift(v.label),
                 ).toBe(framed(v.script_group_index_item_hex));
             });
@@ -384,15 +392,28 @@ describe("swap offer", () => {
 
         it("appends the exit closure, leaving the other two leaves in place", () => {
             // leaf order is part of the address (the tree is assembled from the
-            // list), so an exit inserted anywhere else derives a different swap
-            const withExit = decodeOffer(hex.decode(vectors[1].offerHex));
-            const { exitDelay: _unused, ...withoutExit } = withExit;
-            const before = offerContract(withoutExit, operatorPubkey);
-            const after = offerContract(withExit, operatorPubkey);
+            // list), so an exit inserted anywhere else derives a different swap.
+            // Drop the funded script: these two are fresh derivations of the
+            // current tree, and a carried swapPkScript would select the one
+            // the reference vector was funded on.
+            const decoded = decodeOffer(hex.decode(vectors[1].offerHex));
+            const { exitDelay, swapPkScript: _funded, ...binding } = decoded;
+            const before = offerContract(binding, operatorPubkey);
+            const after = offerContract({ ...binding, exitDelay }, operatorPubkey);
             expect(after.scripts.slice(0, 2).map((s) => hex.encode(s))).toEqual(
                 before.scripts.map((s) => hex.encode(s)),
             );
             expect(after.scripts).toHaveLength(3);
+        });
+
+        it("derives a fresh offer on the input-paired tree", () => {
+            const funded = decodeOffer(hex.decode(vectors[0].offerHex));
+            const { swapPkScript: _funded, ...binding } = funded;
+            const fresh = offerContract(binding, operatorPubkey);
+            expect(hex.encode(fresh.pkScript)).not.toBe(hex.encode(funded.swapPkScript));
+            expect(
+                new ArkAddress(operatorPubkey, fresh.tweakedPublicKey, "tark").encode(),
+            ).not.toBe(vectors[0].address);
         });
     });
 
