@@ -1586,7 +1586,7 @@ const funded = await contract.on('vtxo_received', async () => {
 await wallet.send({ address: contract.address, amount: 10_000 })
 ```
 
-`service` takes `{ network }` for the reference deployment or `{ operatorUrl, emulatorUrl? }` for a custom one, whose covenant paths stay disabled without `emulatorUrl`; passing the `arkade`/`emulator`/`indexer` providers yourself still works. Without a wallet, pass `storage: { contractRepository }` instead of `contractManager`: the client then owns a session-scoped manager, which `client.dispose()` stops.
+`service` takes `{ network }` for the reference deployment or `{ operatorUrl, emulatorUrl? }` for a custom one (see `ArkadeService` for when `emulatorUrl` is needed); passing the `arkade`/`emulator`/`indexer` providers yourself still works. Without a wallet, pass `storage: { contractRepository }` instead of `contractManager`: the client then owns a session-scoped manager, which `client.dispose()` stops.
 
 `contract.on('vtxo_received' | 'vtxo_spent' | 'connection_reset', cb)` reports activity from subscription on and returns a handle with `off()`. Coins that predate it are not replayed and a reconnect re-syncs silently, so read `contract.getVtxos()` (every stored VTXO, spent ones included) after subscribing and on each `connection_reset`.
 

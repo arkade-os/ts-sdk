@@ -164,7 +164,7 @@ export const PrevoutTxField: ArkPsbtFieldCoder<Uint8Array> = {
 };
 
 const ARKADE_TWEAK_LENGTH = 32;
-const MAX_ARKADE_TWEAKS = 16;
+export const MAX_ARKADE_TWEAKS = 16;
 
 /**
  * ArkadeTweak reveals the arkade script hashes tweaking the signer key in leaves the input does

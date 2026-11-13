@@ -809,7 +809,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
             expect(tweaks(emulatorKey)).toEqual([]);
         });
 
-        it("refuses to reveal more than 16 hashes", async () => {
+        it("refuses at creation a contract whose spend would reveal more than 16 hashes", async () => {
             const { ark } = await connect();
             const extra = Array.from({ length: 16 }, (_, i) => [
                 `c${i}`,
@@ -818,17 +818,14 @@ describe("arkade.Arkade / ArkadeContract", () => {
                     arkadeScript: { asm: [i + 2] },
                 },
             ]);
-            const contract = ark.contract(
-                {
-                    ...tweakOnly,
-                    functions: { ...tweakOnly.functions, ...Object.fromEntries(extra) },
-                },
-                { receiver, amount: AMOUNT, user },
-            );
+            const program = {
+                ...tweakOnly,
+                functions: { ...tweakOnly.functions, ...Object.fromEntries(extra) },
+            };
 
-            await expect(
-                contract.functions.collab().from(COIN).to(out, AMOUNT).build(),
-            ).rejects.toThrow("got 17, expected 1 to 16");
+            expect(() => ark.contract(program, { receiver, amount: AMOUNT, user })).toThrow(
+                "collab: a spend would reveal 17 arkade tweak hashes; arkd accepts at most 16",
+            );
         });
     });
 

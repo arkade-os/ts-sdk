@@ -120,7 +120,9 @@ style and have not been backfilled.
   onchain sends and receives, and arkade-to-arkade swaps) carries it as
   `profile.emulator_pubkey`, in x-only hex, and the solver's address is
   verified against that key. A solver whose strict schema predates the field
-  refuses these requests. `fillOffer` no longer needs an `emulator`: a fill of
+  refuses these requests. `requestArkadeSwap` therefore always reads the
+  operator's info live, even without a `receiveAddress`, since the key comes
+  from it. `fillOffer` no longer needs an `emulator`: a fill of
   an offer whose co-signer key arkd holds goes to arkd. Solver rendezvous
   accepts any well-formed card when the payment rails are given no
   `fallbackEmulatorPubkey`, since the request now names the key. With one
@@ -166,7 +168,9 @@ style and have not been backfilled.
   hashes) on the ark tx input, the onchain input or the intent proof input,
   listing the hashes of the covenant scripts whose leaves lack the plain
   server key, the spent one aside: arkd accepts a leaf on its plain server key
-  alone. More than 16 is refused. Trees without such a leaf, swap offers included, build the same
+  alone. More than 16 is refused, already by `Arkade.contract()` when any
+  collaborative function's spend would need more, rather than at that spend.
+  Trees without such a leaf, swap offers included, build the same
   PSBTs as before, and an arkd that predates the field ignores it.
   `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
   Wallet-level spends of a generically spendable program contract (`send`,

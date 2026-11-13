@@ -85,6 +85,7 @@ import {
 import {
     ArkadeTweak,
     ConditionWitness,
+    MAX_ARKADE_TWEAKS,
     PrevArkTxField,
     setArkPsbtField,
 } from "../utils/unknownFields";
@@ -669,7 +670,18 @@ export class Arkade {
             args = { ...args, SERVER_EXIT_DELAY: sequence };
         }
         const keys = { serverKey: this.serverKey, emulatorKey: this.emulatorKey };
-        return new ArkadeContract(this, tweakServerSigners(program, keys), args);
+        // Only creation rewrites; a restore compiles the stored program, keeping its address.
+        const contract = new ArkadeContract(this, tweakServerSigners(program, keys), args);
+        const { vtxoScript } = contract;
+        for (const fn of vtxoScript.compiled) {
+            const count = fn.def.tapscript.csv ? 0 : vtxoScript.arkadeTweaks(fn).length;
+            if (count > MAX_ARKADE_TWEAKS) {
+                throw new Error(
+                    `${fn.name}: a spend would reveal ${count} arkade tweak hashes; arkd accepts at most ${MAX_ARKADE_TWEAKS}`,
+                );
+            }
+        }
+        return contract;
     }
 
     /**
