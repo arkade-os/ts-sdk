@@ -306,6 +306,55 @@ describe("a claimed HTLC on a deployment that omits the spender txid", () => {
     });
 });
 
+describe("a funding the solver replaced by fee bump", () => {
+    const refused = vi.fn(async () => {
+        throw new Error("Failed to get transaction outspends");
+    });
+
+    it("classifies by the replacement output, since the backend refuses the gone tx's outspends", async () => {
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspends: refused,
+                getTransactions: vi.fn(async () => [historyTx("replacement", [])]),
+                getCoins: vi.fn(async () => [
+                    {
+                        txid: "replacement",
+                        vout: 0,
+                        value: 50_000,
+                        status: { confirmed: true, block_height: 90 },
+                    },
+                ]),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        expect(
+            await classifyOnchainHtlc(chain, {
+                htlc: HTLC,
+                minConfirmations: 1,
+                funding: { txid: "replaced", vout: 0 },
+            }),
+        ).toEqual({
+            phase: "claimable",
+            utxo: { txid: "replacement", vout: 0, amount: 50_000n, confirmations: 11 },
+        });
+    });
+
+    it("still fails the lookup for a funding the backend knows", async () => {
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspends: refused,
+                getTransactions: vi.fn(async () => [historyTx("funding", [])]),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        await expect(chain.getSpendingTx("funding", 0, HTLC.pkScript)).rejects.toThrow(
+            "Failed to get transaction outspends",
+        );
+    });
+});
+
 describe("chainSourceFrom.broadcast", () => {
     it("passes the raw hex through as a single transaction", async () => {
         const broadcastTransaction = vi.fn(async () => "the-txid");
