@@ -1028,6 +1028,8 @@ export async function submitViaEmulator(
     }
     const encodedArkTx = base64.encode(arkTx.toPSBT());
     const checkpointTxs = checkpoints.map((c) => base64.encode(c.toPSBT()));
+    // Decode the encoded bytes so the receipt's txid is that of the exact request, even if
+    // `arkTx` is mutated while the callback awaits.
     const submittedArkTx = beforeEmulatorSubmit
         ? Transaction.fromPSBT(base64.decode(encodedArkTx))
         : arkTx;

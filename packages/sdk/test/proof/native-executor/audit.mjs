@@ -95,13 +95,15 @@ assert.notDeepEqual(mutation.requested, mutation.callerAfterMutation);
 assert.equal(mutation.committedPayout, plan.payoutScript);
 assert.notEqual(mutation.exposedBefore, plan.payoutScript);
 assert.notEqual(mutation.exposedWhileQueued, plan.payoutScript);
-assert.equal(binding.mismatchedWatchRequests, 0);
-assert.equal(binding.matchingWatchRequests, 1);
-assert.deepEqual(binding.wrong.inputs, binding.document.inputs);
-assert.notEqual(binding.wrong.outputs[0].locking, binding.document.outputs[0].locking);
+assert.equal(binding.watchRequests, 1);
+const templates = http.requests.filter(
+    (row) => row.method === "POST" && row.path === "/v1/template",
+);
+assert.equal(templates.length, 1);
+assert.deepEqual(JSON.parse(templates[0].body.document), binding.document);
 const watches = http.requests.filter((row) => row.method === "POST" && row.path === "/v1/delegate");
 assert.equal(watches.length, 1);
-assert.equal(watches[0].body.templateId, binding.matchingTemplateId);
+assert.equal(watches[0].body.templateId, templates[0].response.template.id);
 assert(watches[0].respondedAt <= binding.pausedAt);
 assert.equal(legacy.lockedPositionsExcluded, true);
 assert.equal(http.requests.filter((row) => row.path === "/v1/tx/submit").length, 1);

@@ -187,29 +187,15 @@ try {
                 sdk.arkade.BigNum.encode(BigInt(Math.floor(Date.now() / 1000) - 172800)),
             ),
         };
-        const remoteExecution = await native.importTemplate(
-            savingsTemplate(artifactId, remoteArgs),
-            { [artifactId]: artifact },
-        );
+        const document = savingsTemplate(artifactId, remoteArgs);
+        const remoteExecution = await native.importTemplate(document, { [artifactId]: artifact });
         assert.notEqual(remoteExecution.contract.address, execution.contract.address);
         const remote = new sdk.RestDelegateeProvider(`${run.recorderUrl}/delegatee`);
-        const registered = await remote.registerArtifact(artifact);
-        assert.equal(registered.id, artifactId);
-        const document = savingsTemplate(registered.id, remoteArgs),
-            wrong = structuredClone(document);
-        wrong.outputs[0].locking = `5120${hex(await identity.xOnlyPublicKey())}`;
-        assert.notEqual(wrong.outputs[0].locking, document.outputs[0].locking);
-        const wrongTemplate = await remote.registerTemplate(wrong),
-            matching = await remote.registerTemplate(document);
-        await assert.rejects(
-            native.delegate(remoteExecution, remote, wrongTemplate.id),
-            /template ID does not match/,
-        );
         assert.equal(
             (await (await fetch(`${run.recorderUrl}/proof/remote-state`)).json()).watchRequests,
             0,
         );
-        const delegated = await native.delegate(remoteExecution, remote, matching.id);
+        const delegated = await native.delegate(remoteExecution, remote);
         assert.equal(delegated.address, remoteExecution.contract.address);
         assert.equal(delegated.status, "active");
         assert.equal(
@@ -226,16 +212,11 @@ try {
             address: delegated.address,
             funding: remoteFunding,
             payoutScript: plan.payoutScript,
-            templateId: matching.id,
             pausedAt,
         };
         await record("delegate-binding", {
-            wrong,
             document,
-            wrongTemplateId: wrongTemplate.id,
-            matchingTemplateId: matching.id,
-            mismatchedWatchRequests: 0,
-            matchingWatchRequests: 1,
+            watchRequests: 1,
             delegated,
             pausedAt,
             funding: remoteFunding,

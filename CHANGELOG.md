@@ -198,7 +198,9 @@ style and have not been backfilled.
   covenants that check a transaction version, locktime or input/output count
   the executor's one-input, three-output transaction does not meet. A
   position funded from asset-bearing coins stays spendable when the funding
-  transaction's asset packet assigns nothing to it. RestDelegateeProvider adds generic template and
+  transaction's asset packet assigns nothing to it. `delegate()` registers the
+  template and variables captured at import and watches under the ID the
+  delegatee returns. RestDelegateeProvider adds generic template and
   watch endpoints beside the unchanged legacy DelegateProvider.
 - **Native execution can await persistence before emulator dispatch.** The
   optional beforeEmulatorSubmit callback receives immutable exact proposal bytes;

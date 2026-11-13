@@ -1255,9 +1255,6 @@ export class ArkadeTransactionBuilder {
         }
         const { arkTx, checkpoints, inputs } = await this.assemble();
         const hasCovenant = inputs.some(({ unlocker }) => unlocker.fn.arkadeScript);
-        if (beforeEmulatorSubmit && !hasCovenant) {
-            throw new Error("beforeEmulatorSubmit is only supported for covenant spends");
-        }
 
         const userInputs = this.userInputIndexes(inputs);
 

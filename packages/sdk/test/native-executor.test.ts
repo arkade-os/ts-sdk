@@ -173,7 +173,7 @@ describe("SDK native template execution", () => {
             const execution = await s.importTemplate();
             const provider = remote(s);
             await expect(
-                s.executor.delegate(execution, provider as never, "renew-template", {}, expiresAt),
+                s.executor.delegate(execution, provider as never, expiresAt),
             ).rejects.toThrow(/invalid expiry/);
             for (const method of Object.values(provider)) expect(method).not.toHaveBeenCalled();
         },
@@ -185,13 +185,7 @@ describe("SDK native template execution", () => {
             const s = await setup();
             const execution = await s.importTemplate();
             const provider = remote(s);
-            await s.executor.delegate(
-                execution,
-                provider as never,
-                "renew-template",
-                {},
-                expiresAt,
-            );
+            await s.executor.delegate(execution, provider as never, expiresAt);
             expect(provider.registerDelegation).toHaveBeenCalledExactlyOnceWith(
                 "renew-template",
                 {},
@@ -200,34 +194,38 @@ describe("SDK native template execution", () => {
         },
     );
 
-    it("rejects a different template ID even when its watch has the same input address", async () => {
-        const s = await setup();
-        const execution = await s.importTemplate();
-        const provider = remote(s);
-        await expect(
-            s.executor.delegate(execution, provider as never, "other-payout-template"),
-        ).rejects.toThrow(/template.*match/);
-        expect(provider.registerDelegation).not.toHaveBeenCalled();
-    });
-
-    it("rejects different payout variables before creating a remote watch", async () => {
+    it("watches under the template ID the delegatee returns, with the imported variables", async () => {
         const s = await setup();
         const doc = { ...template(), variables: { destination: "bytes" } };
         doc.outputs[0].locking = "<destination>";
-        const variables = { destination: `5120${payout}` };
         const execution = await s.executor.importTemplate(
             doc,
             { "artifact-id": artifact },
-            variables,
+            { destination: `5120${payout}` },
         );
         const provider = remote(s);
-        await expect(
-            s.executor.delegate(execution, provider as never, "renew-template", {
-                destination: `5120${"22".repeat(32)}`,
-            }),
-        ).rejects.toThrow(/variables.*match/);
-        expect(provider.registerDelegation).not.toHaveBeenCalled();
+        provider.registerTemplate.mockResolvedValue({ id: "registered-template" });
+        await s.executor.delegate(execution, provider as never);
+        expect(provider.registerDelegation).toHaveBeenCalledExactlyOnceWith(
+            "registered-template",
+            { destination: `5120${payout}` },
+            0,
+        );
     });
+
+    it.each(["", undefined, 7])(
+        "rejects registered template ID %s before creating a remote watch",
+        async (id) => {
+            const s = await setup();
+            const execution = await s.importTemplate();
+            const provider = remote(s);
+            provider.registerTemplate.mockResolvedValue({ id } as never);
+            await expect(s.executor.delegate(execution, provider as never)).rejects.toThrow(
+                /invalid registered template ID/,
+            );
+            expect(provider.registerDelegation).not.toHaveBeenCalled();
+        },
+    );
 
     it.each([false, true])(
         "delegates only captured documents, artifacts and variables (inline: %s)",
@@ -251,15 +249,7 @@ describe("SDK native template execution", () => {
             const provider = remote(s);
             provider.registerArtifact.mockResolvedValue({ id: "registered-artifact" });
             if (!inline) expected.inputs[0].contract.definition.artifact = "registered-artifact";
-            const supplied = { destination: `5120${payout}` };
-            const delegated = s.executor.delegate(
-                execution,
-                provider as never,
-                "renew-template",
-                supplied,
-            );
-            supplied.destination = `5120${"44".repeat(32)}`;
-            await delegated;
+            await s.executor.delegate(execution, provider as never);
             if (inline) expect(provider.registerArtifact).not.toHaveBeenCalled();
             else expect(provider.registerArtifact).toHaveBeenCalledExactlyOnceWith(artifact);
             expect(provider.registerTemplate).toHaveBeenCalledExactlyOnceWith(expected);
@@ -868,16 +858,16 @@ describe("SDK native template execution", () => {
             address: "wrong-address",
             status: "active",
         });
-        await expect(
-            s.executor.delegate(execution, provider as never, "renew-template"),
-        ).rejects.toThrow(/different address/);
+        await expect(s.executor.delegate(execution, provider as never)).rejects.toThrow(
+            /different address/,
+        );
         provider.getInfo.mockResolvedValue({
             serverPubkey: `02${"22".repeat(32)}`,
             emulatorPubkey: s.key,
         });
-        await expect(
-            s.executor.delegate(execution, provider as never, "renew-template"),
-        ).rejects.toThrow(/keys differ/);
+        await expect(s.executor.delegate(execution, provider as never)).rejects.toThrow(
+            /keys differ/,
+        );
         expect(provider.registerDelegation).toHaveBeenCalledTimes(1);
         expect(s.wallet.send).not.toHaveBeenCalled();
     });

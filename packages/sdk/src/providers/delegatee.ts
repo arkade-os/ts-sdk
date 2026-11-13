@@ -76,6 +76,7 @@ export class RestDelegateeProvider implements DelegateeProvider {
         return info;
     }
 
+    // The delegatee API defines `document` as a JSON string, not an object.
     async registerArtifact(document: unknown): Promise<DelegateeDocument> {
         const response = await this.request<{ artifact: DelegateeDocument }>("artifact", {
             document: JSON.stringify(document),

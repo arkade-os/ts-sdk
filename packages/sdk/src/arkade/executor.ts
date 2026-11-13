@@ -402,30 +402,17 @@ export class NativeExecutor {
         return this.wallet.send({ address: execution.contract.address, amount });
     }
 
-    /** Bind the imported template and variables before creating a watch; restored handles require re-import. */
+    /** Delegate the template and variables captured at import; restored handles require re-import. */
     async delegate(
         execution: NativeExecution,
         provider: DelegateeProvider,
-        templateId: string,
-        variables: Record<string, string> = {},
         expiresAt = 0,
     ): Promise<DelegateeDelegation> {
         if (!Number.isSafeInteger(expiresAt) || expiresAt < 0)
             throw new Error("NativeExecutor: invalid expiry");
-        const supplied = { ...variables };
         this.check(execution);
         const binding = this.imported.get(execution)!.delegation;
         if (!binding) throw new Error("NativeExecutor: re-import the template before delegation");
-        if (
-            Object.keys(supplied).length !== Object.keys(binding.variables).length ||
-            Object.entries(binding.variables).some(([name, value]) => supplied[name] !== value)
-        ) {
-            throw new Error(
-                "NativeExecutor: delegation variables do not match the imported template",
-            );
-        }
-        if (typeof templateId !== "string" || !templateId)
-            throw new Error("NativeExecutor: invalid delegation template ID");
         await this.manager();
         const info = await provider.getInfo();
         const key = (encoded: string) => hex.encode(toXOnly(hex.decode(encoded), "delegatee key"));
@@ -447,12 +434,10 @@ export class NativeExecutor {
             document.inputs[0].contract.definition = { artifact: artifact.id };
         }
         const template = await provider.registerTemplate(document);
-        if (template.id !== templateId)
-            throw new Error(
-                "NativeExecutor: delegation template ID does not match the imported template",
-            );
+        if (typeof template.id !== "string" || !template.id)
+            throw new Error("NativeExecutor: invalid registered template ID");
         const delegation = await provider.registerDelegation(
-            templateId,
+            template.id,
             { ...binding.variables },
             expiresAt,
         );

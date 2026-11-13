@@ -287,9 +287,9 @@ describe("NativeExecutor with existing SQLite contracts", () => {
                     status: "active",
                 })),
             };
-            await expect(
-                next.native.delegate(restored, provider as never, "release"),
-            ).rejects.toThrow(/re-import.*delegat/);
+            await expect(next.native.delegate(restored, provider as never)).rejects.toThrow(
+                /re-import.*delegat/,
+            );
             expect(provider.getInfo).not.toHaveBeenCalled();
             expect(provider.registerDelegation).not.toHaveBeenCalled();
         },
