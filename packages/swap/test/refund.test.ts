@@ -6,7 +6,7 @@
  * `refundWithoutReceiver` leaf (carrying the CLTV that makes it valid), and
  * that a dead-but-funded swap is still refunded rather than reported done.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -900,7 +900,79 @@ describe("readLockupFate", () => {
                     [claim],
                 ),
             );
+            expect(fate).toEqual({ fate: "open", preimage: PREIMAGE });
+        });
+
+        it("reads P off the ark tx of a bare checkpoint next to a live output", async () => {
+            const checkpoint = spendOf(OUT_A, undefined, LOCKUP.claim());
+            const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
+            tx.addInput({ txid: checkpoint.txid, index: 0 });
+            tx.addOutput({ script: REFUND_PK_SCRIPT, amount: 1_000n });
+            setArkPsbtField(tx, 0, ConditionWitness, [PREIMAGE]);
+            const ark = { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
+            const vtxos = [
+                { ...OUT_A, spentBy: checkpoint.txid, arkTxId: ark.txid },
+                { ...OUT_B, spentBy: "" },
+            ];
+            expect(await readAsReceiver(fateIndexer(vtxos, [checkpoint, ark]))).toEqual({
+                fate: "open",
+                preimage: PREIMAGE,
+            });
+        });
+
+        it.each([
+            ["a refund spend", () => spendOf(OUT_A)],
+            ["a claim witness that does not hash", () => spendOf(OUT_A, [new Uint8Array(32)])],
+        ])("does not count %s as P being public", async (_name, build) => {
+            const spend = build();
+            const fate = await readAsReceiver(
+                fateIndexer(
+                    [
+                        { ...OUT_A, spentBy: spend.txid },
+                        { ...OUT_B, spentBy: "" },
+                    ],
+                    [spend],
+                ),
+            );
             expect(fate).toEqual({ fate: "open" });
+        });
+
+        it("stays open when the spend cannot be fetched", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const indexer = fateIndexer(
+                [
+                    { ...OUT_A, spentBy: claim.txid },
+                    { ...OUT_B, spentBy: "" },
+                ],
+                [claim],
+            );
+            indexer.getVirtualTxs = async () => {
+                throw new Error("indexer down");
+            };
+            expect(await readAsReceiver(indexer)).toEqual({ fate: "open" });
+        });
+
+        it("still throws when the spend cannot be fetched and nothing is live", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const indexer = fateIndexer([{ ...OUT_A, spentBy: claim.txid }], [claim]);
+            indexer.getVirtualTxs = async () => {
+                throw new Error("indexer down");
+            };
+            await expect(readAsReceiver(indexer)).rejects.toThrow("indexer down");
+        });
+
+        it("reads nothing extra for a send leg with a live output", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const indexer = fateIndexer(
+                [
+                    { ...OUT_A, spentBy: claim.txid },
+                    { ...OUT_B, spentBy: "" },
+                ],
+                [claim],
+            );
+            const fetched = vi.spyOn(indexer, "getVirtualTxs");
+            expect(await read(indexer)).toEqual({ fate: "open" });
+            expect(fetched).not.toHaveBeenCalled();
         });
     });
 
