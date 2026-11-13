@@ -119,6 +119,29 @@ style and have not been backfilled.
   cancel path, so the timeout timer and the abort listener are cleared instead
   of leaking. No breaking change.
 
+- **`@arkade-os/swap`: a claim arkd accepted but never finalized is finalized
+  before the swap settles.** On the two-step path (`oneShotSubmit: false`, or an
+  operator without one-shot), a claim whose finalize was lost has still
+  published `P`: the solver can settle the payer with it, while the trader's
+  sats do not exist until the claim is finalized, and only the trader can
+  finalize it. A Lightning receive leg read that `P` as `settled` and never
+  retried the finalize. `createSwapClient` now finalizes its own pending claim
+  whenever the lockup holds one (the lockup's `pendingOnly` outputs, checkpoints
+  rebuilt from the claim leaf under the operator's current or a deprecated key,
+  the server's signatures carried over from the indexer's copy); a failed
+  finalize ends the pass and is retried, so no deadline closes the swap first.
+  The claim is recorded as the swap's `claimTxid` before the finalize is sent,
+  so a lost response or a restart cannot put the rest of the lockup back behind
+  the value gate. A pending spend that is not ours is left to its submitter and
+  never counts as `P` being public. `onchain_receive` is left as it was: its
+  trader also holds the L1 refund, which finalizing could double.
+  `RfqSwapManagerCallbacks` gains optional `pendingClaims` (keyless) and
+  `finalizeClaim`; without both the manager settles as before.
+  `readLockupFate` also reads `P` off the ark tx: arkd up to v0.9.23 stores a
+  two-step claim's checkpoint without the condition witness until finalize, so
+  a funder saw `unknown` for a claim whose `P` was already public. No breaking
+  change.
+
 ### Added
 
 - **`@arkade-os/sdk/compiler` compiles Arkade source into a `Program`.** Contracts written in Arkade had to be compiled separately and their artifact JSON read with `programFromArtifact`. `compile({ entry, files }, { optimize?, debug? })` runs the installed `@arkade-os/compiler` over an in-memory project with relative imports and resolves to `{ program, artifact, debug, diagnostics }`: the `program` goes straight to `client.contract(program, args)`, the raw `artifact` keeps the source bundle, compiler version and fingerprint, `debug` is the compiler's debug file, and `diagnostics` carries the warnings. Each covenant segment of `program` carries its `sourceMap`, so a failing opcode can be traced back to its statement and `require()` message; `{ debug: false }` leaves the file and the maps out. `programFromArtifact(artifact, debug?)` attaches an `arkadec --debug` file the same way and refuses one whose fingerprint does not match the artifact's. Source errors reject with `CompileError`, whose `diagnostics` list every located error. The compiler is an optional peer (`^0.1.0-rc.1`) loaded on the first call, so the root SDK and every other subpath load without it; calling `compile` without it rejects with the install command, while initialization and compilation errors pass through unchanged. The subpath ships ESM and CJS builds; the CJS build loads the ESM-only compiler through `import()`.

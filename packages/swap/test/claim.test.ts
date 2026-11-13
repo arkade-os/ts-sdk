@@ -23,8 +23,18 @@ import {
 } from "@arkade-os/sdk";
 
 import { lightningReceiveContract } from "../src/rfq";
-import { LockupAmountMismatchError, pushClaim } from "../src/claim";
-import { LockupNeedsRecoveryError, MAX_LOCKUP_SPEND_INPUTS, type LockupVtxo } from "../src/refund";
+import {
+    LockupAmountMismatchError,
+    finalizePendingClaim,
+    findPendingClaims,
+    pushClaim,
+} from "../src/claim";
+import {
+    LockupNeedsRecoveryError,
+    MAX_LOCKUP_SPEND_INPUTS,
+    type LockupSpendIndexer,
+    type LockupVtxo,
+} from "../src/refund";
 import { CHF_ID, USD_ID } from "./fixtures";
 import { assetFlows } from "./helpers/assetPacket";
 
@@ -89,6 +99,9 @@ const fakeOperator = (
         /** Answer without countersigning, as a server that never signed. */
         cosign?: boolean;
         finalTx?: (signed: string) => string | undefined;
+        /** An operator that rotated: its new forfeit key, and the keys it deprecated. */
+        rotatedTo?: Uint8Array;
+        deprecated?: Uint8Array[];
     } = {},
 ): FakeOperator => {
     const submitted: { tx: string; checkpoints: string[] }[] = [];
@@ -100,7 +113,11 @@ const fakeOperator = (
         getInfo: async () => ({
             checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
             network: "regtest",
-            forfeitPubkey: hex.encode(key(3)),
+            forfeitPubkey: hex.encode(over.rotatedTo ?? key(3)),
+            deprecatedSigners: (over.deprecated ?? []).map((k) => ({
+                pubkey: hex.encode(k),
+                cutoffDate: 0n,
+            })),
         }),
         submitTx: async (tx: string, checkpoints: string[]) => {
             submitted.push({ tx, checkpoints });
@@ -617,5 +634,132 @@ describe("pushClaim", () => {
             ).rejects.toThrow(/checkpoint exit delay rejected/);
             expect(operator.submitted).toEqual([]);
         });
+    });
+});
+
+describe("finalizePendingClaim", () => {
+    /** A two-step claim whose finalize was lost: arkd holds it accepted and cosigned. */
+    const lostFinalize = async () => {
+        const contract = swapScript();
+        const operator = fakeOperator();
+        operator.finalizeTx = async () => {
+            throw new Error("connection reset");
+        };
+        await expect(
+            pushClaim(operator, {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: VTXOS,
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+                oneShot: false,
+            }),
+        ).rejects.toThrow(/connection reset/);
+        const [{ tx, checkpoints }] = operator.submitted;
+        const stored = await Promise.all(checkpoints.map(operatorCosign));
+        const arkTxid = Transaction.fromPSBT(base64.decode(tx)).id;
+        const pending = VTXOS.map((vtxo, i) => ({
+            ...vtxo,
+            isSpent: true,
+            spentBy: Transaction.fromPSBT(base64.decode(stored[i]!)).id,
+            arkTxId: arkTxid,
+        }));
+        return { contract, arkTxid, stored, pending, withheld: checkpoints };
+    };
+
+    const indexerOf = (pending: object[], stored: string[]): LockupSpendIndexer =>
+        ({
+            getVtxos: async (opts?: { pendingOnly?: boolean }) => ({
+                vtxos: opts?.pendingOnly ? pending : [],
+            }),
+            getVirtualTxs: async (txids: string[]) => ({
+                txs: stored.filter((c) =>
+                    txids.includes(Transaction.fromPSBT(base64.decode(c)).id),
+                ),
+            }),
+        }) as unknown as LockupSpendIndexer;
+
+    it("finalizes it with the server's signature, ours and exactly one preimage", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
+        const operator = fakeOperator();
+        await expect(
+            finalizePendingClaim(operator, indexerOf(pending, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([arkTxid]);
+
+        expect(operator.finalized.map((f) => f.txid)).toEqual([arkTxid]);
+        for (const checkpoint of operator.finalized[0]!.checkpoints) {
+            const tx = Transaction.fromPSBT(base64.decode(checkpoint));
+            const signers = tx.getInput(0).tapScriptSig!.map(([{ pubKey }]) => hex.encode(pubKey));
+            expect(signers.sort()).toEqual([hex.encode(key(3)), hex.encode(key(13))].sort());
+            expect(getArkPsbtFields(tx, 0, ConditionWitness)).toEqual([[PREIMAGE]]);
+        }
+    });
+
+    it("refuses to finalize when the indexer withheld the operator's signature", async () => {
+        const { contract, pending, withheld } = await lostFinalize();
+        const operator = fakeOperator();
+        await expect(
+            finalizePendingClaim(operator, indexerOf(pending, withheld), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).rejects.toThrow(/without the operator's signature/);
+        expect(operator.finalized).toEqual([]);
+    });
+
+    it("finalizes a claim checkpointed under a signer the operator has since deprecated", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
+        const operator = fakeOperator({
+            checkpointTapscript: checkpointTapscriptOf(
+                { type: "blocks", value: BigInt(144) },
+                key(4),
+            ),
+            rotatedTo: key(4),
+            deprecated: [key(3)],
+        });
+        await expect(
+            finalizePendingClaim(operator, indexerOf(pending, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([arkTxid]);
+    });
+
+    it("finds a claim of ours without any key, and nothing else the indexer names", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
+        const operator = fakeOperator();
+        const found = await findPendingClaims(operator, indexerOf(pending, stored), { contract });
+        expect(found.map((claim) => claim.arkTxid)).toEqual([arkTxid]);
+
+        // Spent through checkpoints our claim leaf does not rebuild, or not spent at all (an
+        // indexer that ignores `pendingOnly`): neither proves the spend is ours, nor `P` public.
+        const foreign = pending.map((vtxo) => ({ ...vtxo, spentBy: "ee".repeat(32) }));
+        const unspent = pending.map((vtxo) => ({ ...vtxo, isSpent: false, spentBy: "" }));
+        for (const vtxos of [foreign, unspent]) {
+            await expect(
+                findPendingClaims(operator, indexerOf(vtxos, stored), { contract }),
+            ).resolves.toEqual([]);
+        }
+    });
+
+    it("leaves a pending spend whose checkpoints are not our claim's to its submitter", async () => {
+        const { contract, stored, pending } = await lostFinalize();
+        const foreign = pending.map((vtxo) => ({ ...vtxo, spentBy: "ee".repeat(32) }));
+        const operator = fakeOperator();
+        await expect(
+            finalizePendingClaim(operator, indexerOf(foreign, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([]);
+        expect(operator.finalized).toEqual([]);
     });
 });
