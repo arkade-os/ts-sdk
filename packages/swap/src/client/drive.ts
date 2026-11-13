@@ -85,6 +85,7 @@ import {
 import {
     LOCKUP_OWNER,
     corridorOutcome,
+    isCorridorKind,
     readsChain,
     recordOutcome,
     type Outcome,
@@ -233,7 +234,11 @@ export const readableRecord = (record: SwapRecord): boolean => {
         }
     }
     if (record.family === "rfq") {
-        return typeof record.rfqId === "string" && typeof record.lockupAddress === "string";
+        return (
+            isCorridorKind(record.kind) &&
+            typeof record.rfqId === "string" &&
+            typeof record.lockupAddress === "string"
+        );
     }
     return record.family === "offer" && typeof record.offerHex === "string";
 };
