@@ -281,6 +281,8 @@ export function estimateOnchainCosignFee(nIn: number, nOut: number, feeRate: num
 export type OnchainSpendDeps = {
     arkProvider?: Pick<OperatorProvider, "cosignOnchainTx">;
     emulator?: Pick<EmulatorProvider, "submitOnchainTx">;
+    /** arkd itself runs the emulator inputs' Arkade Script, so they go to its cosign endpoint. */
+    viaOperator?: boolean;
     onchainProvider: Pick<OnchainProvider, "broadcastTransaction" | "getRawTransaction">;
 };
 
@@ -290,7 +292,7 @@ export async function submitOnchainSpend(
     deps: OnchainSpendDeps,
 ): Promise<string> {
     const emulated = emulatorInputIndexes(tx);
-    if (emulated.size > 0) {
+    if (emulated.size > 0 && !deps.viaOperator) {
         if (!deps.emulator) {
             throw new Error("emulator inputs present but no emulator provider configured");
         }
@@ -298,7 +300,7 @@ export async function submitOnchainSpend(
         tx = Transaction.fromPSBT(base64.decode(signedTx));
     }
     // arkd refuses a finalized input as unsigned, and finalizes every input itself.
-    if (arkInputs.size > 0) {
+    if (arkInputs.size > 0 || (emulated.size > 0 && deps.viaOperator)) {
         if (!deps.arkProvider) {
             throw new Error("arkd-cosigned inputs present but no arkProvider configured");
         }

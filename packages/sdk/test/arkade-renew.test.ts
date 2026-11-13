@@ -4,7 +4,13 @@ import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@scure/btc-signer/utils.js";
-import { arkade, CSVMultisigTapscript, networks, type VirtualCoin } from "../src";
+import {
+    arkade,
+    CSVMultisigTapscript,
+    networks,
+    REGTEST_EMULATOR_PUBKEY,
+    type VirtualCoin,
+} from "../src";
 import { Transaction } from "../src/utils/transaction";
 import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import { Extension } from "../src/extension";
@@ -294,6 +300,22 @@ describe("renewProgramContractOutputs", () => {
         await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
             /stream closed/,
         );
+        expect(registerIntent).toHaveBeenCalledTimes(1);
+    });
+
+    it("registers without the emulator once arkd holds the pinned co-signer", async () => {
+        const { ark, target, registerIntent } = await keeper(
+            () =>
+                (async function* () {
+                    throw new Error("stream closed");
+                })(),
+            { deprecatedSigners: [{ pubkey: REGTEST_EMULATOR_PUBKEY, cutoffDate: 0n }] },
+        );
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /stream closed/,
+        );
+        expect(ark.emulator!.submitIntent).not.toHaveBeenCalled();
         expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 
