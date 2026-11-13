@@ -147,8 +147,9 @@ style and have not been backfilled.
   `buildOnchain` and `renewProgramContractOutputs` now set the new
   `ArkadeTweak` PSBT input field (`0xde || "arkadetweak"`, 1 to 16 32-byte
   hashes) on the ark tx input, the onchain input or the intent proof input,
-  listing the hashes of the contract's other covenant scripts; more than 16
-  is refused. Trees without such a leaf, swap offers included, build the same
+  listing the hashes of the covenant scripts whose leaves lack the plain
+  server key, the spent one aside: arkd accepts a leaf on its plain server key
+  alone. More than 16 is refused. Trees without such a leaf, swap offers included, build the same
   PSBTs as before, and an arkd that predates the field ignores it.
   `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
   Wallet-level spends of a generically spendable program contract (`send`,

@@ -762,9 +762,8 @@ describe("arkade.Arkade / ArkadeContract", () => {
             }) satisfies arkade.Program;
         const tweakOnly = program({ signers: [{ tweak: "$server", fn: "pay" }], emulator: null });
         const payHash = arkade.arkadeScriptHash(arkade.resolveAsm(payTo, args));
-        const refundHash = arkade.arkadeScriptHash(arkade.resolveAsm([1], {}));
 
-        it("reveals the other covenants' hashes on each input of a tree with a tweak-only leaf", async () => {
+        it("reveals only the hashes of tweak-only leaves other than the spent one", async () => {
             const { ark } = await connect();
             const contract = ark.contract(tweakOnly, { receiver, amount: AMOUNT, user });
             const { arkTx } = await ark
@@ -774,7 +773,8 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 .to(out, 2n * AMOUNT)
                 .build();
 
-            expect(getArkPsbtFields(arkTx, 0, ArkadeTweak)).toEqual([[payHash, refundHash]]);
+            // `refund` keeps the plain server key, so arkd accepts it without its tweak.
+            expect(getArkPsbtFields(arkTx, 0, ArkadeTweak)).toEqual([[payHash]]);
             expect(getArkPsbtFields(arkTx, 1, ArkadeTweak)).toEqual([[payHash]]);
         });
 
@@ -802,15 +802,18 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 return vtxoScript.arkadeTweaks(vtxoScript.functionByName("collab")!);
             };
 
-            expect(tweaks(server)).toEqual([payHash, refundHash]);
+            expect(tweaks(server)).toEqual([payHash]);
             expect(tweaks(emulatorKey)).toEqual([]);
         });
 
         it("refuses to reveal more than 16 hashes", async () => {
             const { ark } = await connect();
-            const extra = Array.from({ length: 15 }, (_, i) => [
+            const extra = Array.from({ length: 16 }, (_, i) => [
                 `c${i}`,
-                { tapscript: { signers: ["$server"] }, arkadeScript: { asm: [i + 2] } },
+                {
+                    tapscript: { signers: [{ tweak: "$server", fn: `c${i}` }], emulator: null },
+                    arkadeScript: { asm: [i + 2] },
+                },
             ]);
             const contract = ark.contract(
                 {
