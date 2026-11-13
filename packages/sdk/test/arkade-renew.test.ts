@@ -336,6 +336,24 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 
+    it("refuses one renewal mixing covenants co-signed by arkd and by the emulator", async () => {
+        const { ark, target, registerIntent } = await keeper(() => (async function* () {})());
+        const viaArkd = new arkade.ArkadeContract(ark, renewable, target.contract.args, {
+            serverKey: ark.serverKey,
+            emulatorKey: ark.serverKey,
+        });
+        const coin = {
+            ...mintCoin(6000),
+            script: hex.encode(viaArkd.pkScript),
+            status: { confirmed: true },
+        } as unknown as VirtualCoin;
+
+        await expect(
+            arkade.renewProgramContractOutputs(ark, [target, { contract: viaArkd, coin }]),
+        ).rejects.toThrow("renew them separately");
+        expect(registerIntent).not.toHaveBeenCalled();
+    });
+
     it("keeps each coin's assets at its output, grouped by asset", async () => {
         const { ark, target, registerIntent } = await keeper(() =>
             (async function* () {
