@@ -196,6 +196,10 @@ style and have not been backfilled.
   must match the saved source, signed checkpoint and full-principal payout. A
   historical receipt commits only if the exact prepared request still matches;
   cached reads use no RPC. There is no release, replay or shared coin ownership.
+  The caller admits from `NativeExecutor.execute()`'s `beforeEmulatorSubmit`
+  hook; the executor does not do it itself. The slot never clears, even after
+  reconciliation or for a retry of the same proposal, so a wallet repository
+  journals exactly one native execution. That limit is intentional for now.
 
 - **Opt-in SDK-native execution for a bounded delegatee template subset.**
   NativeExecutor imports, funds and restores one-input, full-principal offchain
