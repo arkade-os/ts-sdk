@@ -86,6 +86,7 @@ jobs:
               test/e2e/early-settlement-fee.test.ts
               test/e2e/boardingRotation.test.ts
               test/e2e/non-interactive-delegate.test.ts
+              test/e2e/non-interactive-boarding.test.ts
               test/e2e/contract-params-change.test.ts
               test/e2e/restore.test.ts
               test/e2e/operatorOffline.test.ts
