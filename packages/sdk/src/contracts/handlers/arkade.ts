@@ -12,6 +12,7 @@ import { timelockToSequence } from "../../utils/timelock";
 import { extractPubKey } from "../../identity/descriptor";
 import {
     ArkadeProgramScript,
+    type CompiledProgramFunction,
     deserializeArkadeContractParams,
     resolveTimelockValue,
     resolveCsvTimelock,
@@ -31,6 +32,15 @@ function walletKeyFrom(context: PathContext): string | undefined {
     } catch {
         return undefined;
     }
+}
+
+/** The `arkadetweak` field of a spend through `fn`, omitted when no leaf needs one. */
+function tweaksOf(
+    script: ArkadeProgramScript,
+    fn: CompiledProgramFunction,
+): { arkadeTweaks?: Uint8Array[] } {
+    const arkadeTweaks = script.arkadeTweaks(fn);
+    return arkadeTweaks.length > 0 ? { arkadeTweaks } : {};
 }
 
 /**
@@ -91,6 +101,7 @@ function pathsFor(
             paths.push({
                 leaf: fn.tapLeafScript,
                 ...(witness.length > 0 ? { extraWitness: witness } : {}),
+                ...tweaksOf(script, fn),
             });
             continue;
         }
@@ -106,6 +117,7 @@ function pathsFor(
             leaf: fn.tapLeafScript,
             ...(sequence !== undefined ? { sequence } : {}),
             ...(witness.length > 0 ? { extraWitness: witness } : {}),
+            ...tweaksOf(script, fn),
         });
     }
 
@@ -190,19 +202,20 @@ export const ArkadeContractHandler: ContractHandler<ArkadeContractParams, Arkade
      * declared leaf.
      */
     deriveTapscripts(script: ArkadeProgramScript, _contract: Contract): DerivedContractTapscripts {
-        const collaborative = pathsFor(
+        let [selection] = pathsFor(
             script,
             { collaborative: true, currentTime: 0 },
             { checkTimelocks: false },
         );
-        const leaf =
-            collaborative[0]?.leaf ??
-            script.compiled.find((f) => f.arkadeScript)?.tapLeafScript ??
-            script.compiled[0].tapLeafScript;
+        if (!selection) {
+            const fn = script.compiled.find((f) => f.arkadeScript) ?? script.compiled[0];
+            selection = { leaf: fn.tapLeafScript, ...tweaksOf(script, fn) };
+        }
         return {
-            forfeitTapLeafScript: leaf,
-            proofTapLeafScript: leaf,
+            forfeitTapLeafScript: selection.leaf,
+            proofTapLeafScript: selection.leaf,
             tapTree: script.encode(),
+            ...(selection.arkadeTweaks ? { arkadeTweaks: selection.arkadeTweaks } : {}),
         };
     },
 };
