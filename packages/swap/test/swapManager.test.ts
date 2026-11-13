@@ -1596,6 +1596,21 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
         expect(s.claims[0].utxo).toMatchObject({ txid: FILL.txid, vout: FILL.vout });
     });
 
+    it("claims the solver's fill, not dust paid to the HTLC before it", async () => {
+        const s = spies();
+        const dust = { txid: "44".repeat(32), vout: 0, amount: BigInt(400), confirmations: 3 };
+        const chain = fakeChain({ utxos: [dust], mtp: SAFE_NOW });
+        const m = manager({ chain, now: SAFE_NOW, spies: s });
+        await m.addSwap(onchainSwap());
+        await m.poll();
+
+        chain.getScriptUtxos = async () => [dust, FILL];
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].utxo).toMatchObject({ txid: FILL.txid, vout: FILL.vout });
+    });
+
     it("bumps the fill it claimed, after the solver replaced the one it first saw", async () => {
         const claim = await ourClaim();
         let now = SAFE_NOW;
