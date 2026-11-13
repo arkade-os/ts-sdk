@@ -56,7 +56,14 @@ import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network, NetworkName } from "../networks";
-import { DEFAULT_NETWORK, getNetwork, networks, resolveEmulatorPubkey } from "../networks";
+import {
+    DEFAULT_NETWORK,
+    getNetwork,
+    networks,
+    pinnedEmulatorPubkey,
+    resolveEmulatorPubkey,
+} from "../networks";
+import { toXOnlySignerHex } from "../wallet/signerRotation";
 import type { ArkadeInfo, OperatorProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
@@ -393,6 +400,8 @@ export class Arkade {
      * a difference means the network rotated and this SDK's pin is stale.
      */
     readonly emulatorKey: Uint8Array | undefined;
+    /** Every signer key arkd advertises, current and deprecated, as x-only hex. */
+    readonly operatorKeys: ReadonlySet<string>;
     readonly checkpoint: CSVMultisigTapscript.Type;
     readonly indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     readonly identity?: Identity;
@@ -417,6 +426,7 @@ export class Arkade {
         serverKey: Uint8Array;
         serverExitDelay?: bigint;
         emulatorKey: Uint8Array | undefined;
+        operatorKeys: ReadonlySet<string>;
         checkpoint: CSVMultisigTapscript.Type;
         indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
         identity?: Identity;
@@ -432,6 +442,7 @@ export class Arkade {
         this.serverKey = fields.serverKey;
         this.serverExitDelay = fields.serverExitDelay;
         this.emulatorKey = fields.emulatorKey;
+        this.operatorKeys = fields.operatorKeys;
         this.checkpoint = fields.checkpoint;
         this.indexer = fields.indexer;
         this.identity = fields.identity;
@@ -439,6 +450,14 @@ export class Arkade {
         this.contractManager = fields.contractManager;
         this.oneShotSubmit = fields.oneShotSubmit;
         this.ownsContractManager = fields.ownsContractManager ?? false;
+    }
+
+    /** Whether arkd itself runs Arkade Script for covenants built on `emulatorKey`. */
+    operatorCosigns(emulatorKey: Uint8Array | undefined): boolean {
+        return (
+            emulatorKey !== undefined &&
+            this.operatorKeys.has(toXOnlySignerHex(hex.encode(emulatorKey)))
+        );
     }
 
     /**
@@ -485,12 +504,25 @@ export class Arkade {
                 ? getNetwork(info.network as NetworkName)
                 : DEFAULT_NETWORK);
 
+        // A caller-supplied provider may predate `deprecatedSigners`.
+        const operatorKeys = new Set(
+            [info.signerPubkey, ...(info.deprecatedSigners ?? []).map((s) => s.pubkey)]
+                .filter(Boolean)
+                .map(toXOnlySignerHex),
+        );
         // Pinned key, NOT the emulator's own /v1/info: otherwise whatever answers that URL picks
         // the key covenants commit to. A rotation is invisible until the pin ships;
         // `emulatorPubkey` covers that window.
+        // arkd listing the pinned co-signer among its own keys means it now runs Arkade Script
+        // itself: new covenants move to its current key, which it signs for without the emulator.
+        const pinned = pinnedEmulatorPubkey(network);
         let emulatorKey: Uint8Array | undefined;
-        if (emulator) {
+        if (opts.emulatorPubkey !== undefined) {
             emulatorKey = hex.decode(resolveEmulatorPubkey(network, opts.emulatorPubkey));
+        } else if (pinned && operatorKeys.has(toXOnlySignerHex(pinned))) {
+            emulatorKey = hex.decode(info.signerPubkey);
+        } else if (emulator) {
+            emulatorKey = hex.decode(resolveEmulatorPubkey(network));
         }
 
         // Up-front so contract instantiation stays synchronous.
@@ -526,6 +558,7 @@ export class Arkade {
             serverKey,
             serverExitDelay: info.unilateralExitDelay,
             emulatorKey,
+            operatorKeys,
             checkpoint,
             indexer,
             identity: opts.identity,
@@ -1200,6 +1233,9 @@ export class ArkadeTransactionBuilder {
         return submitOnchainSpend(signed, this.serverSigns(unlocker) ? new Set([0]) : new Set(), {
             arkProvider: client.arkProvider,
             emulator: client.emulator,
+            viaOperator:
+                !!unlocker.fn.arkadeScript &&
+                client.operatorCosigns(unlocker.contract.keys.emulatorKey),
             onchainProvider: client.onchain!,
         });
     }
@@ -1270,22 +1306,30 @@ export class ArkadeTransactionBuilder {
             }
         });
 
-        if (inputs.some(({ unlocker }) => unlocker.fn.arkadeScript)) {
+        const emulated = inputs.find(
+            ({ unlocker }) =>
+                unlocker.fn.arkadeScript &&
+                !client.operatorCosigns(unlocker.contract.keys.emulatorKey),
+        );
+        if (emulated) {
             // Covenant path: the emulator runs the arkade script, adds the remaining
             // co-signatures (incl. the contract checkpoint) and finalizes with arkd.
             if (!client.emulator) {
-                throw new Error("covenant spends require an `emulator` on the Arkade client");
+                throw new Error(
+                    `${emulated.unlocker.fn.name}: arkd does not hold this covenant's co-signer key, so the spend needs an \`emulator\` on the Arkade client`,
+                );
             }
             return submitViaEmulator(client.emulator, { arkTx, checkpoints }, client.identity, {
                 inputIndexes: userInputs,
             });
         }
 
-        // Pure-tapscript path → arkd directly.
+        // arkd directly: pure tapscript, or covenants whose co-signer arkd itself holds.
         const identity = client.identity;
-        if (!identity) {
+        if (!identity && userInputs.length > 0) {
             throw new Error("a signing identity is required for non-covenant spends");
         }
+        const userCheckpoints = new Set(userInputs.map((i) => checkpoints[i].id));
         // Checked before anything is signed.
         const ark = client.arkProvider;
         if (!ark.submitTx || !ark.finalizeTx) {
@@ -1298,10 +1342,21 @@ export class ArkadeTransactionBuilder {
             { arkTx, checkpoints },
             {
                 signArkTx: async (tx) => ({ arkTx: await this.signArk(tx, userInputs) }),
-                signCheckpoint: (checkpoint) => identity.sign(checkpoint, [0]),
+                signCheckpoint: async (checkpoint) => {
+                    if (!userCheckpoints.has(checkpoint.id)) return checkpoint;
+                    if (!identity) {
+                        throw new Error("a signing identity is required for non-covenant spends");
+                    }
+                    return identity.sign(checkpoint, [0]);
+                },
             },
             undefined,
-            { oneShot: client.oneShotSubmit },
+            // arkd keeps a checkpoint it signs alone two-step: no client signature selects one-shot.
+            {
+                oneShot:
+                    !inputs.some(({ unlocker }) => unlocker.fn.arkadeScript) &&
+                    client.oneShotSubmit,
+            },
         );
         return {
             txid: res.arkTxid,

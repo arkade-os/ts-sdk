@@ -120,7 +120,7 @@ const EMULATOR_PUBKEYS: Partial<Record<NetworkName, string>> = {
  *   it pass {@link resolveEmulatorPubkey}'s override, which the thrown message names.
  */
 export function defaultEmulatorPubkey(network: Network): string {
-    const pinned = network.name ? EMULATOR_PUBKEYS[network.name] : undefined;
+    const pinned = pinnedEmulatorPubkey(network);
     if (!pinned) {
         // Name the remedy: whoever hits this usually has a working emulator, so a bare refusal
         // reads as the SDK being broken.
@@ -136,6 +136,11 @@ export function defaultEmulatorPubkey(network: Network): string {
         );
     }
     return pinned;
+}
+
+/** The pinned co-signer key for `network`, or undefined where none is pinned. */
+export function pinnedEmulatorPubkey(network: Network): string | undefined {
+    return network.name ? EMULATOR_PUBKEYS[network.name] : undefined;
 }
 
 /**

@@ -172,6 +172,35 @@ describe("Arkade.connect with service", () => {
         expect(ark.contractManager).toBeUndefined();
     });
 
+    it("moves new covenants to the operator key once arkd lists the pinned co-signer", async () => {
+        const merged = {
+            ...info(),
+            deprecatedSigners: [{ pubkey: BITCOIN_EMULATOR_PUBKEY, cutoffDate: 0n }],
+        };
+        vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue(merged);
+        const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
+        expect(hex.encode(ark.emulatorKey!)).toBe(merged.signerPubkey);
+        expect(ark.operatorCosigns(hex.decode(BITCOIN_EMULATOR_PUBKEY))).toBe(true);
+
+        const override = "02" + TEST_PUB_KEY_HEX;
+        const pinned = await arkade.Arkade.connect({
+            service: { network: "bitcoin" },
+            emulatorPubkey: override,
+        });
+        expect(hex.encode(pinned.emulatorKey!)).toBe(override);
+        expect(pinned.operatorCosigns(pinned.emulatorKey)).toBe(false);
+    });
+
+    it("keeps an explicit emulatorPubkey without an emulator provider", async () => {
+        const override = "02" + TEST_PUB_KEY_HEX;
+        const ark = await arkade.Arkade.connect({
+            arkade: { getInfo: async () => info("regtest") },
+            emulatorPubkey: override,
+        });
+        expect(ark.emulator).toBeUndefined();
+        expect(hex.encode(ark.emulatorKey!)).toBe(override);
+    });
+
     it("storage builds and owns a manager, which dispose() stops", async () => {
         vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue(info("regtest"));
         const { manager, raw } = fakeManager();
