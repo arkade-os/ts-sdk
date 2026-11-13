@@ -665,20 +665,19 @@ export class ArkadeProgramScript extends VtxoScript {
         for (const { arkadeScript } of this.compiled) {
             if (arkadeScript) scripts.set(hex.encode(arkadeScript), arkadeScript);
         }
-        const tweaked = [...scripts.values()].map((s) =>
-            computeArkadeScriptPublicKey(serverKey, s),
-        );
-        const tweakOnly = this.compiled.some(({ def, leafScript }) => {
-            if (def.tapscript.csv) return false;
+        // arkd accepts a leaf on its plain server key alone: only leaves without it need a tweak.
+        const needed = new Map<string, Uint8Array>();
+        for (const { def, leafScript } of this.compiled) {
+            if (def.tapscript.csv) continue;
             const keys: Uint8Array[] = decodeTapscript(leafScript).params.pubkeys;
-            return (
-                !keys.some((k) => equalBytes(k, serverKey)) &&
-                keys.some((k) => tweaked.some((t) => equalBytes(k, t)))
-            );
-        });
-        if (!tweakOnly) return [];
-        if (spent.arkadeScript) scripts.delete(hex.encode(spent.arkadeScript));
-        return [...scripts.values()].map((s) => arkadeScriptHash(s));
+            if (keys.some((k) => equalBytes(k, serverKey))) continue;
+            for (const [id, script] of scripts) {
+                const key = computeArkadeScriptPublicKey(serverKey, script);
+                if (keys.some((k) => equalBytes(k, key))) needed.set(id, script);
+            }
+        }
+        if (spent.arkadeScript) needed.delete(hex.encode(spent.arkadeScript));
+        return [...needed.values()].map((s) => arkadeScriptHash(s));
     }
 }
 
