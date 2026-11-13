@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "packages/sdk/**"
+      - "packages/sdk/src/arkade/executor.ts"
+      - "packages/sdk/src/providers/delegatee.ts"
+      - "packages/sdk/test/proof/native-executor/**"
       - "regtest"
-      - "pnpm-lock.yaml"
       - ".github/workflows/native-executor-proof.yml"
 
 permissions:
