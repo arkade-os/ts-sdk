@@ -577,6 +577,8 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
+import { ExecutorContractHandler } from "./contracts/handlers/executor";
+import type { ExecutorContractParams } from "./contracts/handlers/executor";
 import type { ArkadeService } from "./arkade/service";
 import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
@@ -933,6 +935,7 @@ export {
     VHTLCV2ContractHandler,
     BoardingContractHandler,
     ArkadeContractHandler,
+    ExecutorContractHandler,
     isContractGenericallySpendable,
     gatedContracts,
     gateExclusion,
@@ -1182,6 +1185,7 @@ export type {
     VHTLCContractParams,
     VHTLCV2ContractParams,
     BoardingContractParams,
+    ExecutorContractParams,
     ArkadeContractParams,
     Discoverable,
     DiscoveryDeps,
@@ -1230,3 +1234,9 @@ export type {
     VirtualTx,
     VtxoBranch,
 };
+
+export type {
+    DelegationParams,
+    ExecutorContractKeys,
+    ExecutorDefault,
+} from "./script/executor/executorTemplate";

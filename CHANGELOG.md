@@ -98,6 +98,16 @@ style and have not been backfilled.
 
 ### Features
 
+- **The Executor's delegated contracts are a built-in contract type.**
+  `ExecutorContractHandler` (`type: "executor"`) derives the renewal and boarding
+  contracts of the Executor's default templates from the owner key, the
+  `DelegationParams` and the Executor's keys, so a restored wallet finds its
+  delegated coins without the service. It offers the owner's forfeit and exit
+  paths, never the emulator-enforced leaf the Executor spends with, and counts as
+  generic spending: coins the Executor boards are the wallet's own. The bundled
+  templates and their artifacts live under `script/executor/`;
+  `DefaultVtxo.Script` takes extra leaves after forfeit and exit.
+
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.
