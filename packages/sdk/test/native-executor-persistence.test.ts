@@ -20,20 +20,15 @@ import {
     SQLiteWalletRepository,
     type SQLExecutor,
 } from "../src/repositories/sqlite";
-import artifactJson from "./fixtures/arkadec/escrow.artifact.json";
+import artifactJson from "./proof/native-executor/timed-savings.json";
 import { createMockIndexerProvider, TEST_PUB_KEY, TEST_SERVER_PUB_KEY } from "./contracts/helpers";
 
 const artifact = artifactJson as arkade.ContractArtifact;
 const bindings = {
-    partyAPk: hex.encode(TEST_PUB_KEY),
-    partyBPk: hex.encode(TEST_SERVER_PUB_KEY),
-    oraclePk: hex.encode(TEST_PUB_KEY),
-    oracleMessageHash: "33".repeat(32),
-    partyAScript: "11".repeat(32),
-    partyBScript: "22".repeat(32),
-    settlementAmount: hex.encode(arkade.BigNum.encode(50_000n)),
-    timeoutHeight: "01",
-    exit: "64",
+    owner: hex.encode(TEST_PUB_KEY),
+    payout: "11".repeat(32),
+    releaseAt: hex.encode(arkade.BigNum.encode(1_700_000_000n)),
+    exitSequence: hex.encode(arkade.BigNum.encode(144n)),
 };
 const document = {
     format: "delegateed-template/v1",
@@ -42,7 +37,7 @@ const document = {
         {
             name: "funds",
             contract: { definition: artifact, arguments: bindings },
-            spend: { function: "cancel", leaf: "cancel" },
+            spend: { function: "release", leaf: "release" },
         },
     ],
     outputs: [
@@ -50,7 +45,7 @@ const document = {
             name: "payout",
             index: 0,
             value: { from: "funds" },
-            locking: `5120${bindings.partyAScript}`,
+            locking: `5120${bindings.payout}`,
         },
     ],
     packets: { output_index: 1 },
@@ -275,7 +270,7 @@ describe("NativeExecutor with existing SQLite contracts", () => {
             expect(restored.contract.args).toEqual(original.contract.args);
             expect(restored.contract.keys.serverKey).not.toEqual(next.client.serverKey);
             expect(restored.contract.keys.userKey).not.toEqual(next.client.userKey);
-            expect(restored.functionName).toBe("cancel");
+            expect(restored.functionName).toBe("release");
             expect(hex.encode(restored.destination)).toBe(document.outputs[0].locking);
             expect(create).not.toHaveBeenCalled();
             expect(refresh).not.toHaveBeenCalled();
@@ -406,7 +401,7 @@ describe("NativeExecutor with existing SQLite contracts", () => {
             "script mismatch",
             (row: any) => {
                 const args = JSON.parse(row.params.args);
-                args.partyAScript = `0x${"44".repeat(32)}`;
+                args.payout = `0x${"44".repeat(32)}`;
                 row.params.args = JSON.stringify(args);
             },
         ],
@@ -421,7 +416,7 @@ describe("NativeExecutor with existing SQLite contracts", () => {
             variables: {},
             plan: {
                 version: 1,
-                functionName: "cancel",
+                functionName: "release",
                 destinationHex: document.outputs[0].locking,
             },
         };
@@ -491,7 +486,7 @@ describe("NativeExecutor with existing SQLite contracts", () => {
                         app: { position: "legacy-1" },
                         genericallySpendable: false,
                         nativeExecution: expect.objectContaining({
-                            plan: expect.objectContaining({ functionName: "cancel" }),
+                            plan: expect.objectContaining({ functionName: "release" }),
                         }),
                     },
                 });

@@ -10,11 +10,14 @@ import {
 } from "../src";
 import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../src/extension/asset";
 import {
+    BigNum,
     NativeExecutor,
     type Arkade,
     type ArkadeContract,
     type ContractArtifact,
 } from "../src/arkade";
+import escrowJson from "./fixtures/arkadec/escrow.artifact.json";
+import savingsJson from "./proof/native-executor/timed-savings.json";
 
 const artifact: ContractArtifact = {
     contractName: "Return",
@@ -582,6 +585,79 @@ describe("SDK native template execution", () => {
         );
         expect(s.contract.register).not.toHaveBeenCalled();
     });
+
+    it.each([
+        // Asserts nLockTime >= timeoutHeight, but the leaf has no CLTV to set it.
+        [
+            "escrow cancel",
+            escrowJson,
+            "cancel",
+            {
+                partyAPk: "02".repeat(32),
+                partyBPk: "03".repeat(32),
+                oraclePk: "04".repeat(32),
+                oracleMessageHash: "33".repeat(32),
+                partyAScript: payout,
+                partyBScript: "22".repeat(32),
+                settlementAmount: hex.encode(BigNum.encode(50_000n)),
+                timeoutHeight: "01",
+                exit: "64",
+            },
+        ],
+        // Asserts version 2 and two inputs, for a batch intent.
+        [
+            "timed-savings renew",
+            savingsJson,
+            "renew",
+            {
+                owner: "02".repeat(32),
+                payout,
+                releaseAt: hex.encode(BigNum.encode(1_700_000_000n)),
+                exitSequence: hex.encode(BigNum.encode(144n)),
+            },
+        ],
+    ])(
+        "rejects the %s covenant the executor's transaction cannot satisfy",
+        async (_, definition, fn, args) => {
+            const s = await setup();
+            const doc = template();
+            doc.inputs[0] = {
+                ...doc.inputs[0],
+                contract: { definition: definition as never, arguments: args as never },
+                spend: { function: fn, leaf: fn },
+            };
+            await expect(s.executor.importTemplate(doc)).rejects.toThrow(/covenant checks/);
+            expect(s.contract.register).not.toHaveBeenCalled();
+            expect(s.wallet.send).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([true, false])(
+        "checks a covenant locktime against the leaf's CLTV (CLTV leaf: %s)",
+        async (cltv) => {
+            const s = await setup();
+            const timed = structuredClone(artifact);
+            timed.constructorInputs.push({ name: "lock", type: "int" });
+            timed.functions[0].arkade!.asm = [
+                "OP_INSPECTLOCKTIME",
+                "<lock>",
+                "OP_GREATERTHANOREQUAL",
+            ];
+            if (cltv)
+                timed.functions[0].leaves[0].asm.unshift(
+                    "<lock>",
+                    "OP_CHECKLOCKTIMEVERIFY",
+                    "OP_DROP",
+                );
+            const doc = template();
+            Object.assign(doc.inputs[0].contract.arguments, {
+                lock: hex.encode(BigNum.encode(500n)),
+            });
+            const imported = s.executor.importTemplate(doc, { "artifact-id": timed });
+            if (cltv) await expect(imported).resolves.toBeDefined();
+            else await expect(imported).rejects.toThrow(/covenant checks/);
+        },
+    );
 
     it("rejects an external signer before allowing funding", async () => {
         const s = await setup();

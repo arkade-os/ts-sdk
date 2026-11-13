@@ -9,7 +9,9 @@ import { Packet as AssetPacket } from "../extension/asset";
 import type { DelegateeProvider, DelegateeDelegation } from "../providers/delegatee";
 import { programFromArtifact, type ContractArtifact } from "./artifact";
 import { Arkade, ArkadeContract, type ArkadeParamValue, type ArkadeSpendResult } from "./contract";
-import type { Program } from "./program";
+import { resolveAsm, resolveTimelockValue, type ArkadeFunction, type Program } from "./program";
+import { ArkadeScript, type ArkadeScriptOP } from "./script";
+import * as BigNum from "./bignum";
 import type { EmulatorSubmitOptions } from "../utils/arkTransaction";
 
 type ObjectValue = Record<string, unknown>;
@@ -53,7 +55,65 @@ function taproot(destination: Uint8Array): Uint8Array {
     return destination;
 }
 
-function nativeFunction(program: Program, name: string): void {
+const comparisons: Record<string, (actual: bigint, bound: bigint) => boolean> = {
+    NUMEQUAL: (a, b) => a === b,
+    NUMEQUALVERIFY: (a, b) => a === b,
+    NUMNOTEQUAL: (a, b) => a !== b,
+    LESSTHAN: (a, b) => a < b,
+    LESSTHANOREQUAL: (a, b) => a <= b,
+    GREATERTHAN: (a, b) => a > b,
+    GREATERTHANOREQUAL: (a, b) => a >= b,
+};
+
+function scriptNumber(op: ArkadeScriptOP | undefined): bigint | undefined {
+    if (typeof op === "number") return BigInt(op);
+    if (!(op instanceof Uint8Array)) return undefined;
+    try {
+        return BigNum.decode(op);
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * The SDK cannot evaluate a covenant, so a check on a transaction field the executor fixes is
+ * accepted only as `<field> <number> <comparison>` whose result must hold; any other use rejects.
+ */
+function covenantShape(fn: ArkadeFunction, args: Record<string, ArkadeParamValue>): void {
+    // What buildOffchainTx produces for one input paying payout + extension + anchor.
+    const fields: Record<string, bigint> = {
+        INSPECTVERSION: 3n,
+        INSPECTLOCKTIME:
+            fn.tapscript.cltv === undefined ? 0n : resolveTimelockValue(fn.tapscript.cltv, args),
+        INSPECTNUMINPUTS: 1n,
+        INSPECTNUMOUTPUTS: 3n,
+    };
+    const ops = ArkadeScript.decode(resolveAsm(fn.arkadeScript!.asm, args));
+    for (const [i, op] of ops.entries()) {
+        if (typeof op !== "string" || !Object.hasOwn(fields, op)) continue;
+        const bound = scriptNumber(ops[i + 1]);
+        const compare = ops[i + 2];
+        const enforced =
+            compare === "NUMEQUALVERIFY" || ops[i + 3] === "VERIFY" || i + 3 === ops.length;
+        if (
+            bound === undefined ||
+            typeof compare !== "string" ||
+            !Object.hasOwn(comparisons, compare) ||
+            !enforced ||
+            !comparisons[compare](fields[op], bound)
+        ) {
+            throw new Error(
+                "NativeExecutor: the covenant checks the transaction version, locktime or input/output count in a form the executor cannot satisfy",
+            );
+        }
+    }
+}
+
+function nativeFunction(
+    program: Program,
+    name: string,
+    args: Record<string, ArkadeParamValue>,
+): void {
     const fn = Object.hasOwn(program.functions, name) ? program.functions[name] : undefined;
     if (
         !fn?.arkadeScript ||
@@ -72,6 +132,7 @@ function nativeFunction(program: Program, name: string): void {
             "NativeExecutor: the selected leaf requires unsupported conditions, witnesses, signers or CSV",
         );
     }
+    covenantShape(fn, args);
 }
 
 function hasPlan(saved: unknown): saved is { plan: unknown } {
@@ -209,7 +270,7 @@ export class NativeExecutor {
             throw new Error("NativeExecutor: expected one zero-argument covenant leaf");
         }
         const functionName = String(spend.function);
-        nativeFunction(program, functionName);
+        nativeFunction(program, functionName, args);
         const contract = this.arkade.contract(program, args);
         const output = object(
             t.outputs[0],
@@ -315,7 +376,7 @@ export class NativeExecutor {
                 "NativeExecutor: restored contract does not match stored script or address",
             );
         }
-        nativeFunction(contract.program, functionName);
+        nativeFunction(contract.program, functionName, contract.args);
         return this.own(contract, functionName, destination);
     }
 
