@@ -519,6 +519,8 @@ export type OnchainHtlcPhase =
  * the stored record) is what distinguishes "never funded" from "funded and
  * already spent": without it a spent HTLC looks unfunded. Its spend is read
  * before anything else at the script, so an output paid there later cannot hide it.
+ * Once `claimSubmitted`, that output is also the one claimed; before, the largest is, so
+ * dust seen first cannot shadow the fill.
  *
  * `claimed` carries the preimage read from the spend's witness — the receipt;
  * `swept` is a spend that reveals no matching preimage.
@@ -529,12 +531,14 @@ export async function classifyOnchainHtlc(
         htlc: OnchainHtlc;
         minConfirmations: number;
         funding?: { txid: string; vout: number };
+        claimSubmitted?: boolean;
     },
 ): Promise<OnchainHtlcPhase> {
     const utxos = await chain.getScriptUtxos(input.htlc.pkScript);
     const { funding } = input;
-    const pinned = funding && utxos.find((u) => u.txid === funding.txid && u.vout === funding.vout);
-    if (funding && !pinned) {
+    const recorded =
+        funding && utxos.find((u) => u.txid === funding.txid && u.vout === funding.vout);
+    if (funding && !recorded) {
         const spend = await chain.getSpendingTx(funding.txid, funding.vout, input.htlc.pkScript);
         if (spend) {
             const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
@@ -545,7 +549,9 @@ export async function classifyOnchainHtlc(
             return preimage ? { phase: "claimed", txid, preimage } : { phase: "swept", txid };
         }
     }
-    const best = pinned || utxos.sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
+    const best =
+        (input.claimSubmitted && recorded) ||
+        utxos.sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
     if (!best) return { phase: "unfunded" };
     if (best.confirmations < input.minConfirmations)
         return { phase: "awaiting_confirmations", utxo: best };

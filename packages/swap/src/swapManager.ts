@@ -1500,6 +1500,7 @@ export class RfqSwapManager {
                 htlc: swap.htlc,
                 minConfirmations: swap.minConfirmations,
                 funding: swap.funding,
+                claimSubmitted: swap.claimTxid !== undefined,
             });
         } catch {
             // Fall THROUGH: the refund gate depends on `refundLocktime` alone, so an
