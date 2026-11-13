@@ -40,8 +40,8 @@ const payTo = [
 
 // `satisfies arkade.Program` (not `: arkade.Program`) preserves the literal
 // type, and `inputs: [...] as const` keeps it a tuple — so the contract's
-// `functions.claim` is typed `(preimage: Uint8Array) => ...` with exact arity,
-// rather than falling back to the loose `(...args: ArkadeArgValue[])`.
+// `functions.claim` is typed `({ tapscript: [preimage: Uint8Array] }) => ...`
+// with exact arity, rather than falling back to the loose `(...args: ArkadeArgValue[])`.
 function htlcProgram() {
     return {
         version: 1,
@@ -53,10 +53,10 @@ function htlcProgram() {
         ],
         functions: {
             claim: {
-                inputs: [{ name: "preimage", type: "bytes" }] as const,
                 tapscript: {
                     signers: ["$server"],
                     asm: ["HASH160", "$hash", "EQUALVERIFY"],
+                    inputs: [{ name: "preimage", type: "bytes" }] as const,
                     witness: ["preimage"],
                 },
                 arkadeScript: { asm: payTo, witness: [0] },
@@ -70,11 +70,13 @@ function htlcProgram() {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function _typecheckStrongInputs(ark: arkade.Arkade) {
     const c = ark.contract(htlcProgram(), {});
-    c.functions.claim(new Uint8Array(32)); // ok: `preimage` is a Uint8Array
+    c.functions.claim({ tapscript: [new Uint8Array(32)] }); // ok: `preimage` is a Uint8Array
     // @ts-expect-error preimage must be Uint8Array, not a number
-    c.functions.claim(123);
-    // @ts-expect-error claim takes exactly one argument
+    c.functions.claim({ tapscript: [123] });
+    // @ts-expect-error claim takes its tapscript argument
     c.functions.claim();
+    // @ts-expect-error claim's arkadeScript declares no inputs
+    c.functions.claim({ tapscript: [new Uint8Array(32)], arkadeScript: [0n] });
     // @ts-expect-error no such function
     c.functions.nope();
 }
@@ -254,7 +256,10 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const preimage = new Uint8Array(32).fill(0x42);
         // a valid 34-byte p2tr output for the `.to(...)`
         const out = new Uint8Array([0x51, 0x20, ...receiver]);
-        const { txid } = await contract.functions.claim(preimage).to(out, AMOUNT).send();
+        const { txid } = await contract.functions
+            .claim({ tapscript: [preimage] })
+            .to(out, AMOUNT)
+            .send();
         expect(txid).toBeTruthy();
 
         const tx = Transaction.fromPSBT(base64.decode(captured.arkTx!));
@@ -296,7 +301,9 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const { ark } = await connect({ identity: stubIdentity(receiver) });
         expect(() => new arkade.ArkadeContract(ark, exitProgram())).toThrow(/not bound/);
         const contract = ark.contract(htlcProgram(), args);
-        expect(() => (contract.functions.claim as any)(123n)).toThrow(/expects bytes/);
+        expect(() => (contract.functions.claim as any)({ tapscript: [123n] })).toThrow(
+            /expects bytes/,
+        );
     });
 
     it("rejects an external leaf signer before signing", async () => {
@@ -509,14 +516,13 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const covenantBytes = new Uint8Array(32).fill(1),
             condition = new Uint8Array(32).fill(2);
         const covenant = type === "bytes32" ? covenantBytes : { value: covenantBytes };
-        const call = contract.functions.claim;
-        expect(() => call(covenant, 2n, condition)).toThrow(/boolean/);
-        expect(() => call(covenant, Number.MAX_SAFE_INTEGER + 1, condition)).toThrow(
-            /safe integer/,
-        );
-        expect(() => call(covenant, 1n, 3n)).toThrow(/bytes/);
-        expect(() => call(covenant, 1n, new Uint8Array(31))).toThrow(/32-byte/);
-        const { arkTx, checkpoints } = await call(covenant, 1n, condition)
+        const call = (flag: unknown, leaf: unknown) =>
+            contract.functions.claim({ arkadeScript: [covenant, flag], tapscript: [leaf] } as any);
+        expect(() => call(2n, condition)).toThrow(/boolean/);
+        expect(() => call(Number.MAX_SAFE_INTEGER + 1, condition)).toThrow(/safe integer/);
+        expect(() => call(1n, 3n)).toThrow(/bytes/);
+        expect(() => call(1n, new Uint8Array(31))).toThrow(/32-byte/);
+        const { arkTx, checkpoints } = await call(1n, condition)
             .from(COIN)
             .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
             .build();
@@ -611,11 +617,14 @@ describe("arkade.Arkade / ArkadeContract", () => {
         );
 
         const request: Policy = { owner: oracles[0], outs };
-        expect({ ...contract.unlock.spend(request, 1n).args }).toEqual({
+        expect({
+            ...contract.unlock.spend({ arkadeScript: [request, 1n] }).args.arkadeScript,
+        }).toEqual({
             ...flat("request", oracles[0]),
             flag: 1n,
         });
-        const spend = contract.functions.spend;
+        const spend = (...covenant: unknown[]) =>
+            contract.functions.spend({ arkadeScript: covenant } as any);
         expect(() => spend(oracles[0], outs[0].txid, 0n, outs[1].txid, 1n, 1n)).toThrow(
             /expected 2 argument/,
         );
@@ -659,7 +668,10 @@ describe("arkade.Arkade / ArkadeContract", () => {
             constructor(readonly owner: Uint8Array) {}
             readonly outs = outs;
         }
-        expect({ ...contract.unlock.spend(new Owner(oracles[0]), 1n).args }).toEqual({
+        expect({
+            ...contract.unlock.spend({ arkadeScript: [new Owner(oracles[0]), 1n] }).args
+                .arkadeScript,
+        }).toEqual({
             ...flat("request", oracles[0]),
             flag: 1n,
         });

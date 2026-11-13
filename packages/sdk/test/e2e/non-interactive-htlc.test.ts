@@ -26,10 +26,10 @@ const nonInteractiveHTLC = {
     ],
     functions: {
         claim: {
-            inputs: [{ name: "preimage", type: "bytes" }] as const,
             tapscript: {
                 signers: ["$server"],
                 asm: ["HASH160", "$hash", "EQUAL"],
+                inputs: [{ name: "preimage", type: "bytes" }] as const,
                 witness: ["preimage"],
             },
             arkadeScript: {
@@ -103,7 +103,7 @@ describe("non-interactive vHTLC", () => {
         // try to claim to the wrong address : should fail
         await expect(
             contract.functions
-                .claim(HTLC_PREIMAGE)
+                .claim({ tapscript: [HTLC_PREIMAGE] })
                 .to(new Uint8Array([0x6a]), CONTRACT_AMOUNT)
                 .send(),
         ).rejects.toThrow();
@@ -111,7 +111,7 @@ describe("non-interactive vHTLC", () => {
         // try to claim but the wrong amount : should fail
         await expect(
             contract.functions
-                .claim(HTLC_PREIMAGE)
+                .claim({ tapscript: [HTLC_PREIMAGE] })
                 .to([
                     { script: receiverPkScript, amount: CONTRACT_AMOUNT - 1n },
                     { script: randomP2TR(), amount: 1n },
@@ -121,7 +121,7 @@ describe("non-interactive vHTLC", () => {
 
         // try to claim with right address and amount : should succeed
         const { txid } = await contract.functions
-            .claim(HTLC_PREIMAGE)
+            .claim({ tapscript: [HTLC_PREIMAGE] })
             .to(receiverPkScript, CONTRACT_AMOUNT)
             .send();
 
