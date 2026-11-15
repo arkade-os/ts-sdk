@@ -76,6 +76,7 @@ describe("swap offer", () => {
         const binding = swapProgramBinding(
             { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
             operatorPubkey,
+            "current",
         );
         const generated = arkade.programFromArtifact(compilerArtifact);
         expect(generated.params?.map((p) => p.name)).toEqual([
@@ -101,7 +102,7 @@ describe("swap offer", () => {
 
     it("derives the golden swap addresses for both directions", () => {
         for (const [offer, golden] of goldens) {
-            const contract = offerContract(offer, operatorPubkey);
+            const contract = offerContract(offer, operatorPubkey, "current");
             const address = new ArkAddress(
                 operatorPubkey,
                 contract.tweakedPublicKey,
@@ -111,12 +112,44 @@ describe("swap offer", () => {
         }
     });
 
-    it("selects the previous tree for a fresh derivation when asked", () => {
+    it.each([
+        [
+            "asset-swap",
+            "current",
+            0,
+            "512004b3e3bdd36a1bc10cfc728958d0b5f3c077b1e817a97cc7bf23b47d437d0215",
+        ],
+        [
+            "sats-swap",
+            "current",
+            1,
+            "5120d5e8866efe0d4339b36f442ae0cc033597fb7e40412b3db982dcaae0ab4b66e0",
+        ],
+        [
+            "asset-swap",
+            "previous",
+            0,
+            "5120380f74f6e40eb347c46294a601bc6edfff0d509beb513bac392e8bfc6dec1d84",
+        ],
+        [
+            "sats-swap",
+            "previous",
+            1,
+            "5120004739eb4ad3eab769b0c2278cd70cce628e20477e8b8c508bcf8519a5f451c9",
+        ],
+    ] as const)("pins the %s pkScript on the %s tree", (_artifact, generation, i, pkScript) => {
+        const [offer] = goldens[i];
+        expect(hex.encode(offerContract(offer, operatorPubkey, generation).pkScript)).toBe(
+            pkScript,
+        );
+    });
+
+    it("derives the previous tree for a fresh derivation unless asked for current", () => {
         const [offer] = goldens[0];
-        const current = offerContract(offer, operatorPubkey);
+        const current = offerContract(offer, operatorPubkey, "current");
         const previous = offerContract(offer, operatorPubkey, "previous");
-        expect(hex.encode(offerContract(offer, operatorPubkey, "current").pkScript)).toBe(
-            hex.encode(current.pkScript),
+        expect(hex.encode(offerContract(offer, operatorPubkey).pkScript)).toBe(
+            hex.encode(previous.pkScript),
         );
         expect(hex.encode(previous.pkScript)).not.toBe(hex.encode(current.pkScript));
     });
@@ -129,6 +162,7 @@ describe("swap offer", () => {
         } = swapProgramBinding(
             { wantAmount: 50_000n, wantAsset: testAsset, ...keys },
             operatorPubkey,
+            "current",
         );
         expect(
             () =>
@@ -163,6 +197,7 @@ describe("swap offer", () => {
         const { program } = swapProgramBinding(
             { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys, exitDelay: EXIT_BLOCKS },
             operatorPubkey,
+            "current",
         );
         expect(arkade.stringifyArtifact(program)).toBe(
             '{"version":1,"name":"SatsSwap","params":[{"name":"receiver","type":"pubkey"},' +
@@ -245,6 +280,7 @@ describe("swap offer", () => {
                 const { args } = swapProgramBinding(
                     { wantAmount: BigInt(50_000), wantAsset: assetId, ...keys },
                     operatorPubkey,
+                    "current",
                 );
 
                 // Serialization order in the covenant, display order in the id.
@@ -398,8 +434,8 @@ describe("swap offer", () => {
             // the reference vector was funded on.
             const decoded = decodeOffer(hex.decode(vectors[1].offerHex));
             const { exitDelay, swapPkScript: _funded, ...binding } = decoded;
-            const before = offerContract(binding, operatorPubkey);
-            const after = offerContract({ ...binding, exitDelay }, operatorPubkey);
+            const before = offerContract(binding, operatorPubkey, "current");
+            const after = offerContract({ ...binding, exitDelay }, operatorPubkey, "current");
             expect(after.scripts.slice(0, 2).map((s) => hex.encode(s))).toEqual(
                 before.scripts.map((s) => hex.encode(s)),
             );
@@ -409,7 +445,7 @@ describe("swap offer", () => {
         it("derives a fresh offer on the input-paired tree", () => {
             const funded = decodeOffer(hex.decode(vectors[0].offerHex));
             const { swapPkScript: _funded, ...binding } = funded;
-            const fresh = offerContract(binding, operatorPubkey);
+            const fresh = offerContract(binding, operatorPubkey, "current");
             expect(hex.encode(fresh.pkScript)).not.toBe(hex.encode(funded.swapPkScript));
             expect(
                 new ArkAddress(operatorPubkey, fresh.tweakedPublicKey, "tark").encode(),

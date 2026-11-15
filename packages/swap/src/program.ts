@@ -32,12 +32,12 @@ export const legacySwapPrograms: typeof swapPrograms = {
 export const ASSET_SWAP_V3 = "asset-swap-v3";
 export const ASSET_SWAP_V2 = "asset-swap-v2";
 
-/** The covenants this build can derive, most preferred first: what `requestArkadeSwap`'s
- * `covenantVersions` should carry. Keep in step with `offerGenerationFor`. */
+/** The covenants this build can derive, most preferred first: the list every asset RFQ
+ * advertises by default. Keep in step with `offerGenerationFor`. */
 export const ASSET_SWAP_COVENANT_VERSIONS = [ASSET_SWAP_V3, ASSET_SWAP_V2] as const;
 
-/** Absent is the baseline: a solver names no version unless the request advertised a list.
- * An id this build cannot derive throws rather than fall back. */
+/** No version is `asset-swap-v2`: a solver that did not negotiate (it predates the field, or
+ * was asked without the list) fills only that tree. An id this build cannot derive throws. */
 export const offerGenerationFor = (covenantVersion: string | undefined): "current" | "previous" => {
     if (covenantVersion === ASSET_SWAP_V3) return "current";
     if (covenantVersion === undefined || covenantVersion === ASSET_SWAP_V2) return "previous";

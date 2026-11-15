@@ -741,26 +741,42 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
     return payload as RfqQuote;
 };
 
-/** A pre-negotiation solver's strict schema refuses `covenant_versions` with no error code;
- * asked again without it, it quotes the baseline covenant. */
+/**
+ * Ask for an arkade↔arkade quote advertising `covenant_versions`, and read the tree to derive.
+ * No `covenant_version` in the quote is `asset-swap-v2`, the covenant every solver serves.
+ * A pre-negotiation solver's strict schema refuses the list with a bare `unsupported_payload`;
+ * it is asked once more without it, under a fresh rfq_id.
+ */
 export const requestCovenantQuote = async (
     transport: RfqTransport,
     request: Record<string, unknown>,
-): Promise<RfqQuote> => {
+    advertised: readonly string[],
+): Promise<{ quote: RfqQuote; rfqId: string; generation: "current" | "previous" }> => {
+    let sent: Record<string, unknown> = request;
+    let quote: RfqQuote;
     try {
-        return await transport.requestQuote(request);
+        quote = await transport.requestQuote(request);
     } catch (error) {
         if (
             !(error instanceof SwapRefusal) ||
             error.reason !== "unsupported_payload" ||
             error.errorCode !== undefined ||
-            !("covenant_versions" in request)
+            !advertised.includes(ASSET_SWAP_V2)
         ) {
             throw error;
         }
         const { covenant_versions: _, ...baseline } = request;
-        return transport.requestQuote(baseline);
+        sent = { ...baseline, rfq_id: newRfqId() };
+        quote = await transport.requestQuote(sent);
     }
+    if (sent !== request && quote.covenant_version !== undefined) {
+        throw new Error(`solver chose covenant ${quote.covenant_version}, but none was advertised`);
+    }
+    const covenant = quote.covenant_version ?? ASSET_SWAP_V2;
+    if (!advertised.includes(covenant)) {
+        throw new Error(`solver chose covenant ${covenant}, not one of ${advertised.join(", ")}`);
+    }
+    return { quote, rfqId: String(sent.rfq_id), generation: offerGenerationFor(covenant) };
 };
 
 /** The pair of a request we built, when it named one. */
@@ -1457,7 +1473,6 @@ export async function requestArkadeSwap(
     if (!params.wantAsset && !params.offerAsset) {
         throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
     }
-    const rfqId = params.rfqId ?? newRfqId();
     const amountSide = params.amountSide ?? "from";
     const receiveAddress = params.receiveAddress;
     const [makerAddress, makerPublicKey] = await Promise.all([
@@ -1483,10 +1498,10 @@ export async function requestArkadeSwap(
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
     );
     const covenantVersions = params.covenantVersions ?? ASSET_SWAP_COVENANT_VERSIONS;
-    const quote = await requestCovenantQuote(
+    const { quote, rfqId, generation } = await requestCovenantQuote(
         transport,
         arkadeSwapRequest({
-            rfqId,
+            rfqId: params.rfqId ?? newRfqId(),
             ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
             ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
             amount: params.amount,
@@ -1495,6 +1510,7 @@ export async function requestArkadeSwap(
             makerPublicKey,
             covenantVersions,
         }),
+        covenantVersions,
     );
     if (quote.pair !== pair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
@@ -1528,13 +1544,6 @@ export async function requestArkadeSwap(
             );
         }
     }
-    const covenant = quote.covenant_version ?? ASSET_SWAP_V2;
-    if (!covenantVersions.includes(covenant)) {
-        throw new Error(
-            `solver chose covenant ${covenant}, not one of ${covenantVersions.join(", ")}`,
-        );
-    }
-    const generation = offerGenerationFor(covenant);
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
         ...(info === undefined ? {} : { info }),

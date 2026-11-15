@@ -120,12 +120,13 @@ export function withExitClosure(
 
 /** Exported for the asset-id vector tests (the args are the only place both asset-id forms are
  * visible). Deliberately absent from the package index -- not public API.
- * A carried `swapPkScript` selects the tree that compiles to it.
+ * A carried `swapPkScript` selects the tree that compiles to it; without one, `generation` picks.
+ * Defaults to `previous`: the tree every solver fills unless both sides negotiated `asset-swap-v3`.
  */
 export function swapProgramBinding(
     offer: Omit<Offer, "swapPkScript"> & { swapPkScript?: Uint8Array },
     operatorPubkey: Uint8Array,
-    generation: "current" | "previous" = "current",
+    generation: "current" | "previous" = "previous",
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
@@ -134,13 +135,13 @@ export function swapProgramBinding(
     }
     const expected = offer.swapPkScript;
     // A fresh derivation has no funded script to match, so it takes the requested generation.
-    if (!expected) return bindSwapProgram(offer, operatorPubkey, generation === "previous");
+    if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, generation === "previous");
     const current = bindSwapProgram(offer, operatorPubkey, false);
     if (pkOf(current) === hex.encode(expected)) return current;
     const previous = bindSwapProgram(offer, operatorPubkey, true);
     if (pkOf(previous) === hex.encode(expected)) return previous;
     // Neither matches (usually a rotated operator key): callers throw with that diagnosis.
-    return current;
+    return generation === "previous" ? previous : current;
 }
 
 function bindSwapProgram(
@@ -183,10 +184,21 @@ function bindSwapProgram(
     };
 }
 
+type CompiledSwapScript = InstanceType<typeof arkade.ArkadeProgramScript>;
+const compiledBindings = new WeakMap<SwapProgramBinding, CompiledSwapScript>();
+
+/** The binding's taproot tree, compiled once however many callers ask. */
+function compileSwapBinding(binding: SwapProgramBinding): CompiledSwapScript {
+    let script = compiledBindings.get(binding);
+    if (!script) {
+        script = new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys);
+        compiledBindings.set(binding, script);
+    }
+    return script;
+}
+
 function pkOf(binding: SwapProgramBinding): string {
-    return hex.encode(
-        new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys).pkScript,
-    );
+    return hex.encode(compileSwapBinding(binding).pkScript);
 }
 
 /** Compile the offer's contract: program + args -> taproot tree.
@@ -198,8 +210,7 @@ export function offerContract(
     operatorPubkey: Uint8Array,
     generation?: "current" | "previous",
 ): InstanceType<typeof arkade.ArkadeProgramScript> {
-    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey, generation);
-    return new arkade.ArkadeProgramScript(program, args, keys);
+    return compileSwapBinding(swapProgramBinding(offer, operatorPubkey, generation));
 }
 
 // ── Offer wire format ────────────────────────────────────────────────────────
@@ -952,12 +963,13 @@ export async function prepareOfferCancel(
     const operatorPubkey = swapAddress
         ? ArkAddress.decode(swapAddress).serverPubKey
         : client.serverKey;
-    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     // a mismatch means the wrong operator key; getUtxos would just return nothing, so fail with the
     // diagnosis instead
+    let binding: SwapProgramBinding;
     let rebuilt: InstanceType<typeof arkade.ArkadeProgramScript>;
     try {
-        rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
+        binding = swapProgramBinding(offer, operatorPubkey);
+        rebuilt = compileSwapBinding(binding);
     } catch (cause) {
         // a pinned key that is not a curve point throws in the taproot encoder — same diagnosis
         throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript), { cause });
@@ -965,7 +977,7 @@ export async function prepareOfferCancel(
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
         throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript));
     }
-    const contract = new arkade.ArkadeContract(client, program, args, keys);
+    const contract = new arkade.ArkadeContract(client, binding.program, binding.args, binding.keys);
 
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
     const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
@@ -1126,8 +1138,8 @@ export async function connectFillContract(
     });
 
     const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
-    const { program, args, keys } = swapProgramBinding(offer, serverKey);
-    const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
+    const binding = swapProgramBinding(offer, serverKey);
+    const rebuilt = compileSwapBinding(binding);
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
         throw new Error(
             "rebuilt covenant does not match the offer's swapPkScript — the server " +
@@ -1135,7 +1147,7 @@ export async function connectFillContract(
                 "funded address) to pin the original key",
         );
     }
-    return new arkade.ArkadeContract(client, program, args, keys);
+    return new arkade.ArkadeContract(client, binding.program, binding.args, binding.keys);
 }
 
 export function resolveDeposit<V extends { txid: string; vout: number }>(

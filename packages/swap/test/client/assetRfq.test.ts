@@ -26,7 +26,7 @@ import {
     QuoteVerificationFailed,
     UnsupportedRoute,
 } from "../../src/client/errors";
-import { deriveOffer, OFFER_PACKET_TYPE } from "../../src/offer";
+import { deriveOffer, OFFER_PACKET_TYPE, offerContract } from "../../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_V3 } from "../../src/program";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
@@ -228,25 +228,83 @@ describe("quote() on a negotiated asset market", () => {
         expect(quote.take.amount).toBe(898_017_765_697_677n);
     });
 
-    it("derives the covenant the solver chose from the advertised list", async () => {
-        const { client } = await setup({
-            answer: (payload) =>
-                arkadeAssetAnswer({ ...payload, covenant_versions: [ASSET_SWAP_V2] }, CLOCK),
-        });
-        const quote = await client.quote(buy());
-        expect(quote.market.backend).toBe("rfq");
-    });
+    describe("covenant negotiation", () => {
+        const treeOf = (client: Awaited<ReturnType<typeof setup>>["client"], id: string) => {
+            const preparation = client.preparationOf(id);
+            if (!preparation || !("offer" in preparation)) throw new Error("no offer preparation");
+            const { binding, operatorPubkey, swapPkScript } = preparation.offer;
+            const pk = (g: "current" | "previous") =>
+                hex.encode(offerContract(binding, operatorPubkey, g).pkScript);
+            return [pk("current"), pk("previous")].indexOf(hex.encode(swapPkScript)) === 0
+                ? "current"
+                : "previous";
+        };
 
-    it("asks a solver that refuses the covenant list once more without it", async () => {
-        const { client, transport } = await setup({
-            answer: (payload) => {
-                if ("covenant_versions" in payload) throw new SwapRefusal("unsupported_payload");
-                return arkadeAssetAnswer(payload, CLOCK);
-            },
+        it("derives the current tree when the solver echoes asset-swap-v3", async () => {
+            const { client } = await setup();
+            const quote = await client.quote(buy());
+            expect(treeOf(client, quote.id)).toBe("current");
         });
-        await client.quote(buy());
-        expect(transport.sent).toHaveLength(2);
-        expect(transport.sent[1]).not.toHaveProperty("covenant_versions");
+
+        it("derives the previous tree when the solver picks asset-swap-v2", async () => {
+            const { client } = await setup({
+                answer: (payload) =>
+                    arkadeAssetAnswer({ ...payload, covenant_versions: [ASSET_SWAP_V2] }, CLOCK),
+            });
+            const quote = await client.quote(buy());
+            expect(treeOf(client, quote.id)).toBe("previous");
+        });
+
+        it("derives the previous tree when the solver names no covenant", async () => {
+            const { client } = await setup({
+                answer: ({ covenant_versions: _, ...payload }) => arkadeAssetAnswer(payload, CLOCK),
+            });
+            const quote = await client.quote(buy());
+            expect(treeOf(client, quote.id)).toBe("previous");
+        });
+
+        it("refuses a covenant it did not advertise", async () => {
+            const { client } = await setup({
+                answer: (payload) => ({
+                    ...arkadeAssetAnswer(payload, CLOCK),
+                    covenant_version: "asset-swap-v9",
+                }),
+            });
+            await expect(client.quote(buy())).rejects.toThrow(
+                "solver chose covenant asset-swap-v9",
+            );
+        });
+
+        it("asks a solver that refuses the list once more without it, on the previous tree", async () => {
+            const { client, transport } = await setup({
+                answer: (payload) => {
+                    if ("covenant_versions" in payload)
+                        throw new SwapRefusal("unsupported_payload");
+                    return arkadeAssetAnswer(payload, CLOCK);
+                },
+            });
+            const quote = await client.quote(buy());
+            expect(transport.sent).toHaveLength(2);
+            expect(transport.sent[1]).not.toHaveProperty("covenant_versions");
+            expect(transport.sent[1]?.rfq_id).not.toBe(transport.sent[0]?.rfq_id);
+            expect(client.preparationOf(quote.id)).toMatchObject({
+                rfqId: transport.sent[1]?.rfq_id,
+            });
+            expect(treeOf(client, quote.id)).toBe("previous");
+        });
+
+        it.each([
+            ["covenant_version_unsupported", "unsupported_payload"],
+            [undefined, "no_liquidity"],
+        ] as const)("does not retry a refusal with code %s, reason %s", async (code, reason) => {
+            const { client, transport } = await setup({
+                answer: () => {
+                    throw new SwapRefusal(reason, undefined, code ? { errorCode: code } : {});
+                },
+            });
+            await expect(client.quote(buy())).rejects.toThrow();
+            expect(transport.sent).toHaveLength(1);
+        });
     });
 
     it("hands the accept path the covenant it verified, and writes nothing", async () => {
@@ -610,6 +668,10 @@ describe("accept() on a negotiated asset market", () => {
         const derived = preparation && "offer" in preparation ? preparation.offer : undefined;
         expect(stored.swapAddress).toBe(derived?.address);
         expect(stored.offerHex).toBe(derived?.offerHex);
+        // the fixture solver negotiates asset-swap-v3, so accept must keep that tree
+        expect(derived?.swapPkScript).toEqual(
+            derived && offerContract(derived.binding, derived.operatorPubkey, "current").pkScript,
+        );
         expect(wallet.contracts[0]?.script).toBe(
             hex.encode(derived?.swapPkScript ?? new Uint8Array()),
         );

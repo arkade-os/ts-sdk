@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { asset } from "@arkade-os/sdk";
 import { requestArkadeSwap, SwapRefusal, type RfqTransport } from "../src/rfq";
-import { deriveOffer } from "../src/offer";
+import { createOffer, deriveOffer, offerContract } from "../src/offer";
 import { ASSET_SWAP_COVENANT_VERSIONS, ASSET_SWAP_V2, ASSET_SWAP_V3 } from "../src/program";
 import { acceptWallet } from "./client/fixtures";
 
@@ -67,7 +67,7 @@ describe("requestArkadeSwap covenant negotiation", () => {
         );
     });
 
-    it("takes the baseline tree when the solver names no covenant", async () => {
+    it("derives the previous tree when the solver names no covenant", async () => {
         const f = await setup("previous");
         const result = await f.request();
         expect(result.address).toBe(f.previous.address);
@@ -80,7 +80,7 @@ describe("requestArkadeSwap covenant negotiation", () => {
         );
     });
 
-    it("advertises every covenant it derives when the caller names none", async () => {
+    it("advertises [asset-swap-v3, asset-swap-v2] and takes the current tree on v3", async () => {
         const f = await setup("current", ASSET_SWAP_V3, null);
         const result = await f.request();
         expect(result.address).toBe(f.current.address);
@@ -95,7 +95,23 @@ describe("requestArkadeSwap covenant negotiation", () => {
         const result = await f.request();
         expect(result.address).toBe(f.previous.address);
         expect(f.requestQuote).toHaveBeenCalledTimes(2);
-        expect(f.requestQuote.mock.calls[1]?.[0]).not.toHaveProperty("covenant_versions");
+        const [[first], [second]] = f.requestQuote.mock.calls as [Record<string, unknown>][];
+        expect(second).not.toHaveProperty("covenant_versions");
+        expect(second?.rfq_id).not.toBe(first?.rfq_id);
+        expect(result.rfqId).toBe(second?.rfq_id);
+    });
+
+    it("refuses a retried quote that names a covenant nobody advertised", async () => {
+        const f = await setup("current", ASSET_SWAP_V3, null);
+        f.requestQuote.mockRejectedValueOnce(new SwapRefusal("unsupported_payload"));
+        await expect(f.request()).rejects.toThrow("but none was advertised");
+    });
+
+    it("does not retry any other refusal", async () => {
+        const f = await setup("previous", undefined, null);
+        f.requestQuote.mockRejectedValueOnce(new SwapRefusal("no_liquidity"));
+        await expect(f.request()).rejects.toMatchObject({ reason: "no_liquidity" });
+        expect(f.requestQuote).toHaveBeenCalledTimes(1);
     });
 
     it("does not retry a solver that read the list and supports none of it", async () => {
@@ -109,5 +125,26 @@ describe("requestArkadeSwap covenant negotiation", () => {
             errorCode: "covenant_version_unsupported",
         });
         expect(f.requestQuote).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("offer generation default", () => {
+    it("derives the legacy tree when createOffer is given no generation", async () => {
+        const f = await acceptWallet();
+        const created = await createOffer(f.wallet, {
+            wantAmount: 50_000n,
+            wantAsset,
+            emulatorPubkey,
+        });
+        const previous = await deriveOffer(f.wallet, {
+            wantAmount: 50_000n,
+            wantAsset,
+            emulatorPubkey,
+            generation: "previous",
+        });
+        expect(created.address).toBe(previous.address);
+        expect(hex.encode(offerContract(previous.binding, previous.operatorPubkey).pkScript)).toBe(
+            hex.encode(previous.swapPkScript),
+        );
     });
 });
