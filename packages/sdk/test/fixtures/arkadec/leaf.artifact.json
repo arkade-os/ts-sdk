@@ -1,0 +1,82 @@
+{
+  "formatVersion": 1,
+  "contractName": "Leaf",
+  "constructorInputs": [
+    {
+      "name": "k",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "spend",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "s",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "<k>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "spend",
+          "witness": [
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<OPERATOR_KEY:spend>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateral",
+      "leaves": [
+        {
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "s",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<OPERATOR_EXIT_DELAY>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<k>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "codeHash": "sha256:57ea398a0d58ab3b4a15ccaac0277c553a6779e6e7b8a018f1c82f22d6318e19",
+  "source": {
+    "entry": "leaf.ark",
+    "files": {
+      "leaf.ark": "pragma arkade ^0.1.0;\n\ncontract Leaf(pubkey k) {\n  function spend(signature s) {\n    require(checkSig(s, k));\n  }\n\n  function unilateral(signature s) tapscript {\n    require(older(operatorExitDelay));\n    require(checkSig(s, k));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-20T21:24:28.556359+00:00",
+  "fingerprint": "sha256:99dba49080304a1c3acf23ade447ade3008882b69c18530c97893a90afd664cf"
+}

@@ -1,0 +1,12 @@
+pragma arkade ^0.1.0;
+
+contract Leaf(pubkey k) {
+  function spend(signature s) {
+    require(checkSig(s, k));
+  }
+
+  function unilateral(signature s) tapscript {
+    require(older(operatorExitDelay));
+    require(checkSig(s, k));
+  }
+}

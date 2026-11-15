@@ -1,0 +1,112 @@
+{
+  "formatVersion": 1,
+  "contractName": "Top",
+  "constructorInputs": [
+    {
+      "name": "x",
+      "type": "pubkey"
+    },
+    {
+      "name": "y",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "go",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "<CONTRACT:Mid(<x>,<y>)>",
+          "OP_1",
+          "OP_SWAP",
+          "OP_ROT",
+          "OP_EQUALVERIFY",
+          "OP_NUMEQUALVERIFY",
+          "1",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "<CONTRACT:Leaf(<x>)>",
+          "OP_1",
+          "OP_SWAP",
+          "OP_ROT",
+          "OP_EQUALVERIFY",
+          "OP_NUMEQUALVERIFY",
+          "OP_1"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "go",
+          "witness": [
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<OPERATOR_KEY:go>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "exit",
+      "leaves": [
+        {
+          "name": "exit",
+          "witness": [
+            {
+              "name": "s",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "t",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "500000000",
+            "OP_CHECKLOCKTIMEVERIFY",
+            "OP_DROP",
+            "<x>",
+            "OP_CHECKSIGVERIFY",
+            "<OPERATOR_KEY>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "contracts": {
+    "Leaf": "sha256:57ea398a0d58ab3b4a15ccaac0277c553a6779e6e7b8a018f1c82f22d6318e19",
+    "Mid": "sha256:f0886422d3a123ba2919efb7f983489259f8c67b537f5f9dfba863c758cd5bb3"
+  },
+  "codeHash": "sha256:f87d10251fd247d2169ba1a53a9bf59de78e47e02a823bd2b68c4a849c6c531c",
+  "source": {
+    "entry": "top.ark",
+    "files": {
+      "leaf.ark": "pragma arkade ^0.1.0;\n\ncontract Leaf(pubkey k) {\n  function spend(signature s) {\n    require(checkSig(s, k));\n  }\n\n  function unilateral(signature s) tapscript {\n    require(older(operatorExitDelay));\n    require(checkSig(s, k));\n  }\n}\n",
+      "mid.ark": "pragma arkade ^0.1.0;\n\nimport \"leaf.ark\";\n\ncontract Mid(pubkey k, pubkey other) {\n  @allow(unsigned-spend-path, \"test\")\n  function go() {\n    require(tx.outputs[0].script == new Leaf(other));\n  }\n\n  function exit(signature s, signature t) tapscript {\n    require(after(500000000));\n    require(checkMultisig([k, operator], [s, t]));\n  }\n}\n",
+      "top.ark": "pragma arkade ^0.1.0;\n\nimport \"mid.ark\";\nimport \"leaf.ark\";\n\ncontract Top(pubkey x, pubkey y) {\n  @allow(unsigned-spend-path, \"test\")\n  function go() {\n    require(tx.outputs[0].script == new Mid(x, y));\n    require(tx.outputs[1].script == new Leaf(x));\n  }\n\n  function exit(signature s, signature t) tapscript {\n    require(after(500000000));\n    require(checkMultisig([x, operator], [s, t]));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-20T21:24:28.543205+00:00",
+  "fingerprint": "sha256:b9f17e38d4e70396cfdbd01e8bb3b414f4d086781741664d1a0cc7e87ad69ede"
+}

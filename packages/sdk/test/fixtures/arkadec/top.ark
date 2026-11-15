@@ -1,0 +1,17 @@
+pragma arkade ^0.1.0;
+
+import "mid.ark";
+import "leaf.ark";
+
+contract Top(pubkey x, pubkey y) {
+  @allow(unsigned-spend-path, "test")
+  function go() {
+    require(tx.outputs[0].script == new Mid(x, y));
+    require(tx.outputs[1].script == new Leaf(x));
+  }
+
+  function exit(signature s, signature t) tapscript {
+    require(after(500000000));
+    require(checkMultisig([x, operator], [s, t]));
+  }
+}

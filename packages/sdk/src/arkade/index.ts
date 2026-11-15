@@ -47,6 +47,7 @@ export {
     isContractArtifact,
     type ContractArtifact,
     type ContractDebugInfo,
+    type ProgramFromArtifactOptions,
 } from "./artifact";
 export {
     ArkadeProgramScript,
