@@ -12,6 +12,7 @@ import {
     signingDescriptorIndex,
     deriveDescriptorLeafPubKey,
     isAddressAllocationCapable,
+    getNetwork,
 } from "../src";
 import { buildReceiveContract } from "../src/wallet/walletReceiveRotator";
 import type { DescriptorProvider } from "../src/identity/descriptorProvider";
@@ -22,6 +23,7 @@ import {
 import { ExpoWallet } from "../src/wallet/expo/wallet";
 import { ServiceWorkerWallet } from "../src/wallet/serviceWorker/wallet";
 import { jsonResponse } from "./helpers/response";
+import { scopedWalletRequest, testWalletBinding } from "./helpers/walletRequest";
 
 /**
  * The explicit multi-type address allocator (`getNewAddresses`).
@@ -374,17 +376,37 @@ describe("Wallet.getNewAddresses", () => {
         it("the worker handler mints through the wallet it owns", async () => {
             const handler = new WalletMessageHandler();
             const getNewAddresses = vi.fn().mockResolvedValue(minted);
-            // `handleMessage` gates every non-INIT message on `readonlyWallet`,
-            // so both handles have to be present for the switch to be reached.
-            (handler as any).wallet = { getNewAddresses };
-            (handler as any).readonlyWallet = { getNewAddresses };
-
-            const response: any = await handler.handleMessage({
-                id: "1",
-                tag: DEFAULT_MESSAGE_TAG,
-                type: "GET_NEW_ADDRESSES",
-                payload: { types: ["default", "boarding"], forceNew: true },
-            } as any);
+            const wallet = {
+                getNewAddresses,
+                identity: SingleKey.fromHex(SINGLEKEY_HEX),
+                network: getNetwork("mutinynet"),
+                indexerProvider: {},
+            };
+            const binding = testWalletBinding(
+                await wallet.identity.xOnlyPublicKey(),
+                "http://localhost:7070",
+                wallet.network.name,
+            );
+            await handler.start(
+                {
+                    wallet: wallet as never,
+                    readonlyWallet: wallet as never,
+                    arkProvider: {} as never,
+                    walletRequestBinding: binding,
+                },
+                { walletRepository: new InMemoryWalletRepository() },
+            );
+            const response: any = await handler.handleMessage(
+                scopedWalletRequest(
+                    {
+                        id: "1",
+                        tag: DEFAULT_MESSAGE_TAG,
+                        type: "GET_NEW_ADDRESSES",
+                        payload: { types: ["default", "boarding"], forceNew: true },
+                    } as any,
+                    binding,
+                ),
+            );
 
             // The worker is the single writer of the HD watermark, so the page
             // must be able to reach the whole operation, not just the index.

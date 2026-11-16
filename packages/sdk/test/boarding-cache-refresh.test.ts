@@ -20,6 +20,7 @@ import {
     makeStaticWalletForTest,
     teardownRestoreHarness,
 } from "./helpers/restoreWallet";
+import { scopedWalletRequest, testWalletBinding } from "./helpers/walletRequest";
 
 const DEPRECATED_SIGNER = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 const coin = (byte: string): Coin => ({
@@ -100,8 +101,17 @@ async function setup(hd: boolean) {
     getCoins.mockClear();
 
     const handler = new WalletMessageHandler();
+    const walletRequestBinding = testWalletBinding(
+        await wallet.identity.xOnlyPublicKey(),
+        "http://localhost:7070",
+        wallet.network.name,
+    );
     await handler.start(
-        { readonlyWallet: wallet, arkProvider: new RestOperatorProvider("http://localhost:7070") },
+        {
+            readonlyWallet: wallet,
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
+            walletRequestBinding,
+        },
         { walletRepository },
     );
     onTestFinished(() => handler.stop());
@@ -112,12 +122,17 @@ async function setup(hd: boolean) {
             expect(coins.some((c) => c.txid === coin("dd").txid)).toBe(false);
             return;
         }
-        const response = await handler.handleMessage({
-            id: "boarding-refresh",
-            tag: DEFAULT_MESSAGE_TAG,
-            type: path,
-            payload: { arkServerUrl: "http://localhost:7070" },
-        });
+        const response = await handler.handleMessage(
+            scopedWalletRequest(
+                {
+                    id: "boarding-refresh",
+                    tag: DEFAULT_MESSAGE_TAG,
+                    type: path,
+                    payload: { arkServerUrl: "http://localhost:7070" },
+                },
+                walletRequestBinding,
+            ),
+        );
         if (response.error) throw response.error;
     };
     return {

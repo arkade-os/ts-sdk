@@ -934,7 +934,7 @@ Retry the same id and inputs after a lost reply or restart. These holds also blo
 selected SDK sends and settlements; they are for transactions the application builds externally.
 Await `hold.release()` only after proving settlement or non-submission. An ambiguous submission
 must keep its hold. Acquire and release require a worker supporting scoped reservations; a retained
-handle cannot release a different identity/operator's hold after worker reinitialization.
+handle cannot release a different identity/operator/network's hold after worker reinitialization.
 
 Direct wallet limits:
 
@@ -1245,6 +1245,16 @@ const balance = await wallet.getBalance()
 
 For watch-only wallets, use `ServiceWorkerReadonlyWallet` with a
 `ReadonlySingleKey` identity instead.
+
+Deploy the page and worker from the same SDK version. Each proxy stays bound to its original
+identity, operator URL and network, including reads used to prepare transactions. If another tab
+reinitializes the worker for a different wallet, the old proxy rejects requests. Pass
+`expectedNetwork: 'regtest'` (or your configured network) to `setup` or `create` to verify it during
+bootstrap. Mixed protocol versions reject requests and require a worker update.
+
+Use `wallet.onWalletUpdate(update => { ... })` to subscribe to contract and coin updates, and call
+its returned function to unsubscribe. It filters `CONTRACT_EVENT`, `VTXO_UPDATE` and `UTXO_UPDATE`
+by the same captured wallet binding; raw service-worker message listeners do not provide that check.
 
 ### Faster startup without changing existing reads
 

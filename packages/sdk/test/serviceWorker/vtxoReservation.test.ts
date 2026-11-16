@@ -6,6 +6,7 @@ import { IndexedDBVtxoReservationRepository } from "../../src/repositories/index
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 import { SingleKey } from "../../src/identity";
+import { bindTestWallet, scopedWalletRequest } from "../helpers/walletRequest";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -31,12 +32,13 @@ async function setup(
             ),
         ),
     );
+    const binding = { scope, network: fixture.wallet.network.name! };
     await handler.start(
         {
             wallet: fixture.wallet,
             readonlyWallet: fixture.wallet,
             arkProvider: fixture.arkProvider,
-            vtxoReservationScope: scope,
+            walletRequestBinding: binding,
         },
         { walletRepository: fixture.wallet.walletRepository },
     );
@@ -45,12 +47,18 @@ async function setup(
         if (response.error) throw response.error;
         return response;
     });
-    const proxy = Object.assign(Object.create(ServiceWorkerWallet.prototype), {
-        messageTag: "test",
-        sendMessage,
-        identity: proxyIdentity,
-        initConfig: { arkServer: { url: operatorUrl } },
-    }) as ServiceWorkerWallet;
+    const proxy = bindTestWallet(
+        Object.assign(Object.create(ServiceWorkerWallet.prototype), {
+            messageTag: "test",
+            sendMessageDirect: sendMessage,
+            pingServiceWorker: async () => {},
+            inflightRequests: new Map(),
+            messageTimeouts: {},
+            identity: proxyIdentity,
+            initConfig: { arkServer: { url: operatorUrl } },
+        }) as ServiceWorkerWallet,
+        binding,
+    );
     return { ...fixture, handler, proxy, sendMessage, repository, dbName, scope };
 }
 
@@ -97,12 +105,20 @@ describe("service-worker VTXO reservations", () => {
     it("retries a failed release and ignores unrelated or repeated releases", async () => {
         const { wallet, coins, outpoints, proxy, sendMessage, handler } = await setup();
         const reservation = await proxy.reserveVtxos([coins[0]], "taxi-transfer");
-        await handler.handleMessage({
-            tag: "test",
-            type: "RELEASE_SCOPED_VTXOS",
-            id: "foreign-release",
-            payload: { reservationId: "someone-else", scope: handler.vtxoReservationScope },
-        });
+        await handler.handleMessage(
+            scopedWalletRequest(
+                {
+                    tag: "test",
+                    type: "RELEASE_SCOPED_VTXOS",
+                    id: "foreign-release",
+                    payload: {
+                        reservationId: "someone-else",
+                        scope: handler.walletRequestBinding.scope,
+                    },
+                },
+                handler.walletRequestBinding,
+            ),
+        );
         expect((await wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[0]);
         sendMessage.mockRejectedValueOnce(new Error("worker unavailable"));
         await expect(reservation.release()).rejects.toThrow("worker unavailable");
@@ -189,14 +205,17 @@ describe("service-worker VTXO reservations", () => {
                     wallet: replacement.wallet,
                     readonlyWallet: replacement.wallet,
                     arkProvider: replacement.arkProvider,
-                    vtxoReservationScope: replacement.scope,
+                    walletRequestBinding: {
+                        scope: replacement.scope,
+                        network: replacement.wallet.network.name,
+                    },
                 },
                 { walletRepository: replacement.wallet.walletRepository },
             );
-            await expect(retained.release()).rejects.toThrow("Reservation scope does not match");
+            await expect(retained.release()).rejects.toThrow("Wallet request scope does not match");
             await expect(
                 original.proxy.reserveVtxos([original.coins[2]], "other-transfer"),
-            ).rejects.toThrow("Reservation scope does not match");
+            ).rejects.toThrow("Wallet request scope does not match");
             expect(await replacement.repository.getReservations()).toEqual([
                 { id: "taxi-transfer", outpoints: [{ txid: replacement.coins[1].txid, vout: 0 }] },
             ]);
@@ -206,7 +225,10 @@ describe("service-worker VTXO reservations", () => {
                     wallet: resumed.wallet,
                     readonlyWallet: resumed.wallet,
                     arkProvider: resumed.arkProvider,
-                    vtxoReservationScope: resumed.scope,
+                    walletRequestBinding: {
+                        scope: resumed.scope,
+                        network: resumed.wallet.network.name,
+                    },
                 },
                 { walletRepository: resumed.wallet.walletRepository },
             );

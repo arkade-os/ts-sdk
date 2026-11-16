@@ -1405,9 +1405,11 @@ describe("MessageBus default buildServices", () => {
             new InMemoryContractRepository(),
             { messageHandlers: [], ...(intentRepository ? { intentRepository } : {}) },
         );
-        const create = vi
-            .spyOn(Wallet, "create")
-            .mockResolvedValue({ dispose: vi.fn() } as unknown as Wallet);
+        const create = vi.spyOn(Wallet, "create").mockResolvedValue({
+            dispose: vi.fn(),
+            network: { name: "bitcoin" },
+            indexerProvider: {},
+        } as unknown as Wallet);
         await (bus as any).buildServices(config);
         const storage = create.mock.calls[0][0].storage;
         create.mockRestore();
@@ -1436,7 +1438,11 @@ describe("MessageBus default buildServices", () => {
                 onchainProvider,
             },
         );
-        const created = { dispose: vi.fn() } as unknown as Wallet;
+        const created = {
+            dispose: vi.fn(),
+            network: { name: "bitcoin" },
+            indexerProvider: {},
+        } as unknown as Wallet;
         const create = vi.spyOn(Wallet, "create").mockResolvedValue(created);
         const createReadonly = vi.spyOn(ReadonlyWallet, "create").mockResolvedValue(created);
         await (bus as any).buildServices(config);

@@ -43,6 +43,7 @@ import {
 import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -142,15 +143,20 @@ section("contractHandlers singleton: CJS + ESM");
 const runNode = (args, cwd) => spawnSync(process.execPath, args, { cwd, encoding: "utf8" });
 
 const expectedTypes = "arkade,boarding,default,delegate,vhtlc,vhtlc-v2";
-const boardingExports = `
+const publicExports = `
 for (const name of ["classifyBoardingExpiry", "decodeBoardingExit"]) {
     if (typeof root[name] !== "function") throw new Error("missing root export " + name);
+}
+for (const name of ["ServiceWorkerWallet", "ServiceWorkerReadonlyWallet"]) {
+    if (typeof root[name]?.prototype.onWalletUpdate !== "function") {
+        throw new Error("missing " + name + ".onWalletUpdate");
+    }
 }
 `;
 
 const cjsSingleton = `
 const root = require("./dist/index.cjs");
-${boardingExports}
+${publicExports}
 const handlerEntry = require("./dist/contracts/handlers/index.cjs");
 if (root.contractHandlers !== handlerEntry.contractHandlers) {
     throw new Error("contractHandlers identity differs across CJS entries");
@@ -168,7 +174,7 @@ if (got !== ${JSON.stringify(expectedTypes)}) {
 
 const esmSingleton = `
 const root = await import("./dist/index.js");
-${boardingExports}
+${publicExports}
 const handlerEntry = await import("./dist/contracts/handlers/index.js");
 if (root.contractHandlers !== handlerEntry.contractHandlers) {
     throw new Error("contractHandlers identity differs across ESM entries");
@@ -199,6 +205,40 @@ writeFileSync(
     join(consumer, "package.json"),
     JSON.stringify({ name: "smoke-consumer", type: "module", private: true }),
 );
+writeFileSync(
+    join(consumer, "wallet-update.ts"),
+    `import { ServiceWorkerWallet, type WalletUpdate } from "@arkade-os/sdk";
+declare const wallet: ServiceWorkerWallet;
+const unsubscribe: () => void = wallet.onWalletUpdate((update: WalletUpdate) => {
+    if (update.type === "CONTRACT_EVENT") update.payload.event.type satisfies string;
+    else if (update.type === "UTXO_UPDATE") update.payload.coins.length satisfies number;
+    else update.payload.newVtxos.length satisfies number;
+});
+void unsubscribe;
+`,
+);
+{
+    const r = runNode(
+        [
+            createRequire(import.meta.url).resolve("typescript/bin/tsc"),
+            "--noEmit",
+            "--strict",
+            "--skipLibCheck",
+            "--target",
+            "ES2022",
+            "--module",
+            "NodeNext",
+            "--moduleResolution",
+            "NodeNext",
+            "--lib",
+            "ES2022,DOM",
+            "wallet-update.ts",
+        ],
+        consumer,
+    );
+    if (r.status === 0) ok("WalletUpdate public type and subscription compile for a consumer");
+    else fail(`WalletUpdate consumer → ${(r.stderr || r.stdout).trim()}`);
+}
 
 // Subpaths that must Node-import cleanly without optional Expo peers.
 // wallet/expo/background is intentionally absent — see section 6.
