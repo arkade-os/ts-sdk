@@ -169,7 +169,12 @@ import {
     RequestGetStoredContractsWithVtxos,
     ResponseGetStoredContractsWithVtxos,
     DEFAULT_MESSAGE_TAG,
+    RequestArkadeCash,
+    ResponseArkadeCash,
+    isLongRunningCashAction,
     deserializeAggregateError,
+    deserializeArkadeCashCreateError,
+    isSerializedArkadeCashCreateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
 import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
@@ -312,6 +317,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     RECOVER_VTXOS: 50_000,
     RENEW_VTXOS: 50_000,
     SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    // Only `get`/`activities`/`reveal`: `create` and `claim` stream with no deadline.
+    ARKADE_CASH: 50_000,
     COSIGN_ONCHAIN_TX: 50_000,
     SEND_ONCHAIN: 50_000,
     // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
@@ -616,6 +623,40 @@ const initializeMessageBus = (
 };
 
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
+    readonly arkadeCash = (
+        request: import("../../arkadeCash/messages").ArkadeCashRequest,
+    ): Promise<import("../../arkadeCash/messages").ArkadeCashResponse | undefined> =>
+        this.cashRequest(request);
+
+    private async cashRequest(
+        request: import("../../arkadeCash/messages").ArkadeCashRequest,
+    ): Promise<import("../../arkadeCash/messages").ArkadeCashResponse | undefined> {
+        const message: RequestArkadeCash = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "ARKADE_CASH",
+            payload: request,
+        };
+        // `create` and `claim` run sends and sweeps with no deadline on either
+        // side (see `WalletMessageHandler.isLongRunning`); the rest are reads.
+        try {
+            const response = isLongRunningCashAction(request)
+                ? await this.sendMessageWithRetry(message, {
+                      onEvent: () => {},
+                      isComplete: (resp) => resp.type === "ARKADE_CASH",
+                  })
+                : await this.sendMessage(message);
+            return (response as ResponseArkadeCash).payload;
+        } catch (error) {
+            // Rejects like an in-process `Wallet.createCash`: the funded token
+            // rides on the error's `cash`.
+            if (isSerializedArkadeCashCreateError(error)) {
+                throw deserializeArkadeCashCreateError(error);
+            }
+            throw error;
+        }
+    }
+
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
