@@ -14,6 +14,8 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **Swap funding requires atomic repository creation.** `AssetSwapRepository` is version 6 and requires `createSwapRecordIfAbsent(record)`, which returns true only after durably inserting an absent quote ID. Only that caller may fund; existing unstamped records remain pending and reconcile positive funding evidence, including after a lost reply or restart. The four built-in repositories implement native atomic creation without a data migration; custom repositories must provide the same guarantee. Existing funded records and recovery readers remain compatible.
+
 - **New swap offers use compiler-generated covenants.** Want-BTC and want-asset offers now load artifacts generated from canonical `.ark` sources with pinned compiler `e264d5e6`. Numeric witness-version equality changes new offer addresses. Existing encoded offers and stored contracts retain their exact legacy programs for filling, cancellation and recovery; leaf order, required signers and the public offer/fill APIs are unchanged.
 
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
@@ -110,6 +112,10 @@ style and have not been backfilled.
   helper. Type-level only, non-breaking.
 
 ### Bug Fixes
+
+- **Quoted funding never donates unavoidable change.** Swap funding passes `maxChangeFee: 0`, so a send that cannot return its change fails before provider submission. Operator fees are still supported.
+
+- **Swap quotes expose the deposit carrier before funding.** `Quote.depositCarrierSats` reports the verified RFQ carrier or the feed operator's carrier in addition to the asset give leg, so consumers can show net BTC proceeds without deducting the inclusive fee twice. Feed quotes price and persist the same carrier they fund, even if operator info changes before acceptance, and canonical asset identifiers are normalized when accepting either feed direction.
 
 - **Canonical BTC market IDs retain dust validation.** The shared swap protocol now recognizes CAIP BTC identifiers as well as legacy `btc` when checking deposit and receive amounts, so direct consumers receive the same dust guard as the swap client.
 

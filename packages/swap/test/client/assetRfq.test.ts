@@ -131,6 +131,7 @@ describe("quote() on a negotiated asset market", () => {
 
         expect(quote.give).toEqual({ asset: BTC, amount: 10_000n });
         expect(quote.take).toEqual({ asset: USD, amount: 990n });
+        expect(quote.depositCarrierSats).toBeUndefined();
         expect(quote.market.backend).toBe("rfq");
         expect(quote.solver).toBe(hex.encode(SOLVER_PUBKEY));
         expect(transport.sent).toHaveLength(1);
@@ -201,6 +202,7 @@ describe("quote() on a negotiated asset market", () => {
         // mispricing only when both legs are the same asset.
         expect(quote.give).toEqual({ asset: USD, amount: 1_000n });
         expect(quote.take).toEqual({ asset: BTC, amount: 9_970n });
+        expect(quote.depositCarrierSats).toBe(330n);
         // The spread plus the 330-sat carrier, which the filler keeps: this solver returns none of it.
         expect(quote.fee).toEqual({ amount: 360n, asset: BTC });
     });
@@ -212,6 +214,7 @@ describe("quote() on a negotiated asset market", () => {
         const quote = await client.quote(sell());
 
         expect(quote.take).toEqual({ asset: BTC, amount: 10_300n });
+        expect(quote.depositCarrierSats).toBe(330n);
         expect(quote.fee).toEqual({ amount: 30n, asset: BTC });
     });
 
@@ -252,6 +255,7 @@ describe("quote() on a negotiated asset market", () => {
 
         expect(quote.market.backend).toBe("feed");
         expect(quote.take.amount).toBe(CARD_PAYOUT);
+        expect(quote.depositCarrierSats).toBeUndefined();
         expect(quote.solver).toBeUndefined();
         expect(transport.sent).toHaveLength(0);
     });
@@ -261,6 +265,7 @@ describe("quote() on a negotiated asset market", () => {
         const quote = await client.quote(sell());
 
         expect(quote.market.backend).toBe("feed");
+        expect(quote.depositCarrierSats).toBe(330n);
         // 1_000 cents is 10_000 sats, less 30bps, plus the 330-sat carrier the deposit rides on.
         expect(quote.take).toEqual({ asset: BTC, amount: 10_300n });
         expect(quote.fee).toEqual({ amount: 30n, asset: BTC });
@@ -272,6 +277,7 @@ describe("quote() on a negotiated asset market", () => {
         const quote = await client.quote(sell());
 
         expect(quote.take).toEqual({ asset: BTC, amount: 9_970n });
+        expect(quote.depositCarrierSats).toBe(330n);
         expect(quote.fee).toEqual({ amount: 360n, asset: BTC });
     });
 
@@ -509,6 +515,9 @@ describe("accept() on a negotiated asset market", () => {
             answer: async (payload) => ({ ...(await base(payload)), carrier_sats: "546" }),
         });
         const quote = await client.quote(sell());
+        expect(quote.depositCarrierSats).toBe(546n);
+        expect(quote.take.amount - (quote.depositCarrierSats ?? 0n)).toBe(9_424n);
+        expect(quote.fee).toEqual({ amount: 576n, asset: BTC });
         await client.accept(quote);
 
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
@@ -516,15 +525,47 @@ describe("accept() on a negotiated asset market", () => {
         expect(wallet.sent[0]?.amount).toBe(546);
     });
 
-    it("attaches no carrier to a BTC deposit", async () => {
+    it.each([
+        { backend: "RFQ", card: assetCard },
+        { backend: "feed", card: canonicalSpotCard },
+    ])("attaches no carrier to a $backend BTC deposit", async ({ card }) => {
         const wallet = await acceptWallet();
-        const { client, repository } = await setup({ wallet });
+        const { client, repository } = await setup({ wallet, snapshot: [card] });
         const quote = await client.quote(buy());
+        expect(quote.depositCarrierSats).toBeUndefined();
         await client.accept(quote);
 
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(stored.carrierSats).toBeUndefined();
+        expect(wallet.sent[0]?.amount).toBe(10_000);
     });
+
+    it.each([
+        { carrier: 330n, card: canonicalSpotCard, net: 9_970n, fee: 30n },
+        { carrier: 546n, card: canonicalSpotCard, net: 9_970n, fee: 30n },
+        { carrier: 546n, card: spotCard, net: 9_424n, fee: 576n },
+    ])(
+        "funds the feed carrier at $carrier sats and fee $fee after operator info changes",
+        async ({ carrier, card, net, fee }) => {
+            const wallet = await acceptWallet();
+            const info = await wallet.wallet.getArkadeInfo();
+            let dust = carrier;
+            wallet.wallet.getArkadeInfo = async () => ({ ...info, dust });
+            const { client, repository } = await setup({ wallet, snapshot: [card] });
+            const quote = await client.quote(sell());
+
+            expect(quote.depositCarrierSats).toBe(carrier);
+            expect(client.preparationOf(quote.id)).toMatchObject({ carrierSats: carrier });
+            expect(quote.take.amount - (quote.depositCarrierSats ?? 0n)).toBe(net);
+            expect(quote.fee).toEqual({ amount: fee, asset: BTC });
+            dust = 777n;
+            await client.accept(quote);
+
+            const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+            expect(stored.carrierSats).toBe(carrier.toString());
+            expect(wallet.sent[0]?.amount).toBe(Number(carrier));
+        },
+    );
 
     it("settles one exchange() through one RFQ round trip", async () => {
         const { client, transport, wallet, repository } = await harness();

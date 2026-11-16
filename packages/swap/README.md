@@ -15,6 +15,10 @@ const client = createSwapClient({ wallet, repository: new IndexedDbAssetSwapRepo
 Construction is synchronous and inert: no network, no wallet read, no repository open. The first
 call that needs one does it.
 
+The direct-wallet API supports SDK `0.5.6`. `ServiceWorkerWallet` integrations require SDK
+`0.5.7-taxi.2` for financial mutation scopes; pin that SDK candidate explicitly. The workspace
+dependency alone does not qualify older worker wallets.
+
 Market discovery needs no configuration either: the client defaults to the reference solver
 registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
 registry instead with `discovery: { registryUrl }`, or opt out of registries entirely with
@@ -162,6 +166,9 @@ There is no implicit default and never an in-memory fallback: accepting a swap w
 write it is the silent loss the rule exists to forbid, so `accept` refuses with
 `MissingCorridorDep("arkade", "repository")` instead. In-memory is available, explicitly, which is
 the only way ephemeral storage is on the table.
+
+Custom repositories must implement the version 6 atomic-creation contract in
+[`AssetSwapRepository`](src/repository.ts); the built-in backends provide it.
 
 Neither React Native subpath adds a dependency — they take the SDK's structural `SQLExecutor` and
 `RealmLike` handles, so you pass the database you already opened. `@arkade-os/swap/node` is the

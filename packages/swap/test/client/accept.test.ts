@@ -14,7 +14,7 @@ import { collectSwapRecords } from "../../src/repository";
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { SendDeadlineExceededError } from "@arkade-os/sdk";
+import { DefaultVtxo, SendDeadlineExceededError, Wallet } from "@arkade-os/sdk";
 import { createSwapClient, type SwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
 import {
@@ -32,6 +32,9 @@ import { requestLightningSend } from "../../src/rfq";
 import { createRfqSwapRecord } from "../../src/rfqRecord";
 import { rfqSecretsProfile } from "../../src/rfqProfileParts";
 import { conflictingFields } from "../../src/client/accept";
+import { resolveCorridorBase } from "../../src/client/corridors/deps";
+import { corridorSet } from "../../src/client/corridors/registry";
+import { walletOperator } from "../../src/refund";
 import type { Quote, QuoteInput } from "../../src/client/quote";
 import {
     assetSwapIdOf,
@@ -43,11 +46,13 @@ import {
     EMULATOR_PUBKEY_HEX,
     FUNDING_TXID,
     PAYMENT_HASH,
+    OPERATOR_PUBKEY,
     USD_ASSET_ID,
     acceptWallet,
     clockAt,
     feedServing,
     invoiceFor,
+    key,
     lightningCard,
     onchainCard,
     solverFor,
@@ -227,9 +232,6 @@ describe("accept() — the ordering", () => {
         // The stamp is best effort: the money has moved, and failing the caller
         // here would report as failed a swap that is already funded.
         const saved = vi.spyOn(repository, "saveSwapRecord");
-        saved.mockImplementationOnce(async (r) => {
-            await InMemoryAssetSwapRepository.prototype.saveSwapRecord.call(repository, r);
-        });
         saved.mockImplementationOnce(async () => {
             throw new Error("quota exceeded");
         });
@@ -237,6 +239,7 @@ describe("accept() — the ordering", () => {
         const swap = await h.client.accept(quote);
         expect(swap.fundingTxid).toBe(FUNDING_TXID);
         expect(h.wallet.sent).toHaveLength(1);
+        expect((await repository.getSwapRecord(quote.id))?.fundingTxid).toBeUndefined();
     });
 
     it("leaves nothing durable when registration fails", async () => {
@@ -251,7 +254,9 @@ describe("accept() — the ordering", () => {
 
     it("leaves nothing durable when the record cannot be written", async () => {
         const repository = new InMemoryAssetSwapRepository();
-        vi.spyOn(repository, "saveSwapRecord").mockRejectedValue(new Error("quota exceeded"));
+        vi.spyOn(repository, "createSwapRecordIfAbsent").mockRejectedValue(
+            new Error("quota exceeded"),
+        );
         const h = await setup({ repository });
         const quote = await quoteFor(h, "lightningSend");
 
@@ -295,11 +300,85 @@ describe("accept() — the offer extension packet", () => {
 
         const [payment] = h.wallet.sent;
         expect(payment?.assets).toEqual([{ assetId: USD_ASSET_ID, amount: 10_000n }]);
-        expect(payment?.amount).toBeUndefined();
+        expect(payment?.amount).toBe(Number(quote.depositCarrierSats));
     });
 });
 
 describe("accept() — idempotency by quote id", () => {
+    it("funds once across separate runtimes that both read an absent record", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "spot");
+        const preparation = h.client.preparationOf(quote.id);
+        const corridors = corridorSet(
+            await resolveCorridorBase({
+                wallet: h.wallet.wallet,
+                operator: walletOperator(h.wallet.wallet),
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                requireLive: false,
+            }),
+        );
+        vi.resetModules();
+        const { acceptQuote: first } = await import("../../src/client/accept");
+        vi.resetModules();
+        const { acceptQuote: second } = await import("../../src/client/accept");
+        expect(first).not.toBe(second);
+        const read = h.repository.getSwapRecord.bind(h.repository);
+        let reads = 0;
+        let release = () => {};
+        const bothRead = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        vi.spyOn(h.repository, "getSwapRecord").mockImplementation(async (id) => {
+            const record = await read(id);
+            if (record === undefined && ++reads <= 2) {
+                if (reads === 2) release();
+                await bothRead;
+            }
+            return record;
+        });
+        const input = {
+            quote,
+            preparation,
+            wallet: h.wallet.wallet,
+            repository: h.repository,
+            corridors,
+            now: NOW,
+        };
+        const results = await Promise.all([first(input), second(input)]);
+        expect(h.wallet.sent).toHaveLength(1);
+        expect(results[0].id).toBe(results[1].id);
+        expect((await read(quote.id))?.fundingTxid).toBe(FUNDING_TXID);
+    });
+
+    it("fails closed if the winning atomic record disappears", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "spot");
+        const create = vi.spyOn(h.repository, "createSwapRecordIfAbsent").mockResolvedValue(false);
+        await expect(h.client.accept(quote)).rejects.toThrow("winning swap record is missing");
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(h.wallet.sent).toHaveLength(0);
+    });
+
+    it("reads funded records through a legacy repository but refuses new creation", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "spot");
+        const funded = await h.client.accept(quote);
+        const legacy = new Proxy(h.repository, {
+            get(target, property) {
+                if (property === "version") return 5;
+                if (property === "createSwapRecordIfAbsent") return undefined;
+                const value = Reflect.get(target, property);
+                return typeof value === "function" ? value.bind(target) : value;
+            },
+        });
+        const old = await setup({ repository: legacy });
+        expect((await old.client.accept(quote)).fundingTxid).toBe(funded.fundingTxid);
+        const fresh = await quoteFor(old, "spot");
+        await expect(old.client.accept(fresh)).rejects.toThrow("v6 atomic creation");
+        expect(old.wallet.sent).toHaveLength(0);
+        await old.client[Symbol.asyncDispose]();
+    });
+
     it.each(ALL_ROUTES)("returns the same swap and funds once, on %s", async (route) => {
         const h = await setup();
         const quote = await quoteFor(h, route);
@@ -328,7 +407,7 @@ describe("accept() — idempotency by quote id", () => {
         expect(second.artifact).toEqual(first.artifact);
     });
 
-    it("resumes a persisted-but-unfunded record rather than starting over", async () => {
+    it("keeps a persisted but unstamped record pending rather than funding again", async () => {
         let fail = true;
         const h = await setup({ failSend: () => (fail ? new Error("send exploded") : undefined!) });
         const quote = await quoteFor(h, "lightningSend");
@@ -337,8 +416,8 @@ describe("accept() — idempotency by quote id", () => {
         fail = false;
         const swap = await h.client.accept(quote);
 
-        expect(swap.fundingTxid).toBe(FUNDING_TXID);
-        expect(h.wallet.sent).toHaveLength(1);
+        expect(swap.fundingTxid).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
         expect(await collectSwapRecords(h.repository)).toHaveLength(1);
     });
 
@@ -592,7 +671,36 @@ describe("accept() — the pre-flight and the clock", () => {
     });
 });
 
-describe("accept() — reconcile from evidence before a second funding", () => {
+describe("accept() — reconcile an attempted funding", () => {
+    it("keeps a lost funding reply pending across empty reads and restart until positive evidence", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "spot");
+        const originalSend = h.wallet.wallet.send.bind(h.wallet.wallet);
+        const send = vi.spyOn(h.wallet.wallet, "send").mockImplementation(async (...args) => {
+            await originalSend(...args);
+            throw new Error("funding reply lost");
+        });
+        await expect(h.client.accept(quote)).rejects.toThrow("funding reply lost");
+        const original = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        send.mockImplementation(originalSend);
+        const pending = await h.client.accept(quote);
+        expect(pending.fundingTxid).toBeUndefined();
+        expect(send).toHaveBeenCalledTimes(1);
+        await h.client[Symbol.asyncDispose]();
+
+        const restarted = await setup({ repository: h.repository });
+        expect((await restarted.client.accept(quote)).fundingTxid).toBeUndefined();
+        expect(restarted.wallet.sent).toHaveLength(0);
+        restarted.wallet.deposits.set(original.swapPkScript, [
+            { txid: FUNDING_TXID, value: Number(original.give.amount) },
+        ]);
+        expect((await restarted.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        const restored = await h.repository.getSwapRecord(quote.id);
+        expect(restored).toMatchObject({ id: original.id, offerHex: original.offerHex });
+        expect(restarted.wallet.sent).toHaveLength(0);
+        await restarted.client[Symbol.asyncDispose]();
+    });
+
     it("adopts the deposit a crashed accept already made", async () => {
         let fail = true;
         const h = await setup({
@@ -627,12 +735,12 @@ describe("accept() — reconcile from evidence before a second funding", () => {
         fail = false;
         vi.setSystemTime((quote.expiresAt + 1) * 1000);
 
-        await expect(h.client.accept(quote)).rejects.toThrow(QuoteExpired);
+        expect((await h.client.accept(quote)).fundingTxid).toBeUndefined();
         expect((await h.repository.getSwapRecord(quote.id))?.fundingTxid).toBeUndefined();
         expect(h.wallet.sent).toHaveLength(0);
     });
 
-    it("funds a persisted record after preparation eviction when no deposit is found", async () => {
+    it("keeps a persisted record pending after preparation eviction when no deposit is found", async () => {
         let fail = true;
         const h = await setup({
             failSend: () => (fail ? new Error("send exploded") : undefined!),
@@ -645,8 +753,8 @@ describe("accept() — reconcile from evidence before a second funding", () => {
         fail = false;
         const swap = await h.client.accept(quote);
 
-        expect(swap.fundingTxid).toBe(FUNDING_TXID);
-        expect(h.wallet.sent).toHaveLength(1);
+        expect(swap.fundingTxid).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
     });
 
     it("reconciles a persisted funding record after preparation eviction", async () => {
@@ -688,8 +796,8 @@ describe("accept() — reconcile from evidence before a second funding", () => {
 
         fail = false;
         const swap = await h.client.accept(quote);
-        expect(swap.fundingTxid).toBe(FUNDING_TXID);
-        expect(h.wallet.sent).toHaveLength(1);
+        expect(swap.fundingTxid).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
     });
 
     it("matches an asset deposit on the asset entry, not the sat carrier", async () => {
@@ -747,7 +855,7 @@ describe("accept() — a record written when BTC was slip44:0 on every network",
         } as Quote;
     };
 
-    it("funds the deposit as BTC, not as an asset", async () => {
+    it("keeps an unstamped legacy BTC deposit pending without a second send", async () => {
         const fail = { on: true };
         const h = await setup({
             failSend: () => (fail.on ? new Error("send exploded") : undefined!),
@@ -756,10 +864,8 @@ describe("accept() — a record written when BTC was slip44:0 on every network",
 
         const swap = await h.client.accept(legacy);
 
-        expect(swap.fundingTxid).toBe(FUNDING_TXID);
-        const [payment] = h.wallet.sent;
-        expect(payment?.amount).toBe(Number(legacy.give.amount));
-        expect(payment?.assets).toBeUndefined();
+        expect(swap.fundingTxid).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
     });
 
     it("adopts a crashed first attempt's deposit by its sat value", async () => {
@@ -874,6 +980,56 @@ describe("accept() — what the record carries", () => {
 });
 
 describe("accept funding deadline", () => {
+    it.each([0, 111])(
+        "funds the exact quote without donating %s sats of change",
+        async (change) => {
+            const h = await setup();
+            const quote = await quoteFor(h, "spot");
+            const script = new DefaultVtxo.Script({
+                pubKey: key(21),
+                serverPubKey: OPERATOR_PUBKEY,
+                csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+            });
+            const submit = vi.fn().mockResolvedValue(FUNDING_TXID);
+            const context = {
+                offchainTapscript: script,
+                arkServerPublicKey: OPERATOR_PUBKEY,
+                serverUnrollScript: {},
+                network: { hrp: "tark" },
+                dustAmount: 330n,
+                recipientAddressContext: () => ({
+                    hrp: "tark",
+                    signerSet: { active: hex.encode(OPERATOR_PUBKEY), deprecated: new Map() },
+                }),
+                arkProvider: { getInfo: vi.fn().mockResolvedValue({ vtxoMinAmount: 330n }) },
+                getSpendableVtxos: vi.fn().mockResolvedValue([
+                    {
+                        txid: "01".repeat(32),
+                        vout: 0,
+                        value: Number(quote.give.amount) + change,
+                        virtualStatus: { state: "preconfirmed", batchExpiry: 1 },
+                    },
+                ]),
+                _submitOffchainSpend: submit,
+            };
+            const impl = Wallet.prototype as unknown as {
+                _sendImpl: (...args: unknown[]) => Promise<string>;
+            };
+            const send = vi
+                .spyOn(h.wallet.wallet, "send")
+                .mockImplementation((...args) => impl._sendImpl.apply(context, args));
+            if (change) {
+                await expect(h.client.accept(quote)).rejects.toThrow("Cannot form minimum change");
+                expect(submit).not.toHaveBeenCalled();
+            } else {
+                expect((await h.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+                expect(submit).toHaveBeenCalledOnce();
+            }
+            expect(send.mock.calls[0]?.[0]).toMatchObject({ maxChangeFee: 0 });
+            await h.client[Symbol.asyncDispose]();
+        },
+    );
+
     it.each(FUNDING_ROUTES)(
         "preserves the recipient and caps the deadline on %s",
         async (route) => {
@@ -884,8 +1040,10 @@ describe("accept funding deadline", () => {
             const sent = send.mock.calls[0]?.[0] as {
                 recipients: { address: string; extensions?: unknown[] }[];
                 validUntil: number;
+                maxChangeFee: number;
             };
             expect(sent.validUntil).toBe(quote.expiresAt);
+            expect(sent.maxChangeFee).toBe(0);
             expect(sent.recipients).toHaveLength(1);
             expect(sent.recipients[0]?.address).toBe(h.wallet.contracts[0]?.address);
             if (route === "spot") expect(sent.recipients[0]?.extensions).toHaveLength(1);
@@ -946,7 +1104,7 @@ describe("accept funding deadline", () => {
         },
     );
 
-    it("keeps a generic funding failure resumable and watched", async () => {
+    it("keeps a generic funding failure pending and watched without a second send", async () => {
         const h = await setup();
         const quote = await quoteFor(h, "spot");
         const send = vi
@@ -962,7 +1120,7 @@ describe("accept funding deadline", () => {
         send.mockResolvedValue(FUNDING_TXID);
         await h.client.accept(quote, { validUntil: NOW + 2 });
         await h.client.accept(quote, { validUntil: NOW + 2 });
-        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenCalledTimes(1);
         await h.client[Symbol.asyncDispose]();
     });
 
@@ -1106,7 +1264,7 @@ it.each(["lightningSend", "onchainSend"] as const)(
 );
 
 it.each([false, true])(
-    "retains an earlier uncertain submission after a later unsent attempt (restart %s)",
+    "retains an uncertain submission without another funding attempt (restart %s)",
     async (restart) => {
         const h = await setup();
         const quote = await quoteFor(h, "spot");
@@ -1119,9 +1277,9 @@ it.each([false, true])(
         vi.spyOn(resumed.wallet.wallet, "send").mockRejectedValueOnce(
             new SendDeadlineExceededError(NOW + 1),
         );
-        await expect(resumed.client.accept(quote, { validUntil: NOW + 1 })).rejects.toBeInstanceOf(
-            SendDeadlineExceededError,
-        );
+        expect(
+            (await resumed.client.accept(quote, { validUntil: NOW + 1 })).fundingTxid,
+        ).toBeUndefined();
         const row = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(row.status).toBe("pending");
         expect(row.fundingNotSubmitted).toBeUndefined();
@@ -1153,13 +1311,13 @@ it("keeps a delayed first accept watched when a second identical offer is cancel
     let entered = () => {};
     const saving = new Promise<void>((resolve) => (entered = resolve));
     const blocked = new Promise<void>((resolve) => (release = resolve));
-    const save = h.repository.saveSwapRecord.bind(h.repository);
-    vi.spyOn(h.repository, "saveSwapRecord").mockImplementation(async (record) => {
+    const create = h.repository.createSwapRecordIfAbsent.bind(h.repository);
+    vi.spyOn(h.repository, "createSwapRecordIfAbsent").mockImplementation(async (record) => {
         if (record.id === older.id && record.fundingTxid === undefined) {
             entered();
             await blocked;
         }
-        await save(record);
+        return create(record);
     });
     const send = vi
         .spyOn(h.wallet.wallet, "send")
@@ -1192,7 +1350,9 @@ it("keeps a failed record save watched without pinning another wallet's identica
     const second = await setup();
     const unsaved = await quoteFor(first, "spot");
     const cancelled = await quoteFor(second, "spot");
-    vi.spyOn(first.repository, "saveSwapRecord").mockRejectedValue(new Error("store offline"));
+    vi.spyOn(first.repository, "createSwapRecordIfAbsent").mockRejectedValue(
+        new Error("store offline"),
+    );
     await expect(first.client.accept(unsaved)).rejects.toThrow("store offline");
     vi.spyOn(second.wallet.wallet, "send").mockRejectedValue(
         new SendDeadlineExceededError(NOW + 1),
