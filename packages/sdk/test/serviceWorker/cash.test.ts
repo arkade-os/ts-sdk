@@ -178,7 +178,10 @@ describe("Worker ArkadeCash", () => {
             createdAt: 10,
             settled: true,
         });
-        vi.spyOn(handler as never, "buildTransactionHistoryFromCache").mockResolvedValue([
+        vi.spyOn(
+            handler as unknown as { buildTransactionHistoryFromCache: () => Promise<unknown> },
+            "buildTransactionHistoryFromCache",
+        ).mockResolvedValue([
             tx("funding", TxType.TxSent, 5_000),
             tx("sweep", TxType.TxReceived, 3_000),
             // A real settlement is a batch row, keyed by the commitment alone.
@@ -245,7 +248,10 @@ describe("Worker ArkadeCash", () => {
         await handler.start({ arkProvider: wallet.arkProvider, wallet, readonlyWallet: wallet }, {
             walletRepository: wallet.walletRepository,
         } as never);
-        vi.spyOn(handler as never, "buildTransactionHistoryFromCache").mockResolvedValue([
+        vi.spyOn(
+            handler as unknown as { buildTransactionHistoryFromCache: () => Promise<unknown> },
+            "buildTransactionHistoryFromCache",
+        ).mockResolvedValue([
             {
                 key: { arkTxid: "", commitmentTxid: "settle", boardingTxid: "" },
                 type: TxType.TxReceived,
