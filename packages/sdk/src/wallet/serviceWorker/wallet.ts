@@ -21,7 +21,9 @@ import {
     Recipient,
     SendParams,
     SendOnchainParams,
+    Outpoint,
 } from "..";
+import type { VtxoReservation } from "../wallet";
 import {
     OperatorInfo,
     INFO_FETCH_TIMEOUT_MS,
@@ -116,6 +118,8 @@ import {
     RequestGetUnsupportedContracts,
     ResponseGetUnsupportedContracts,
     RequestSend,
+    RequestReserveVtxos,
+    RequestReleaseVtxos,
     RequestSendWithDeadline,
     RequestSendWithInputExpiryFloor,
     ResponseSend,
@@ -303,6 +307,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are treated as long-running on both sides of the bus: the values below
     // are retained only for type completeness and are never enforced.
     SEND: 50_000,
+    RESERVE_VTXOS: 10_000,
+    RELEASE_VTXOS: 10_000,
     SEND_WITH_DEADLINE: 50_000,
     SEND_WITH_INPUT_EXPIRY_FLOOR: 50_000,
     SETTLE: 50_000,
@@ -2202,6 +2208,39 @@ export class ServiceWorkerWallet
             }
             throw error;
         }
+    }
+
+    /**
+     * Durable across tabs and worker restarts. Reuse the application operation id to resume;
+     * release only after proving settlement or non-submission. SDK sends cannot spend this hold.
+     */
+    async reserveVtxos(
+        outpoints: readonly Outpoint[],
+        reservationId = getRandomId(),
+    ): Promise<VtxoReservation> {
+        const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
+        const message: RequestReserveVtxos = {
+            tag: this.messageTag,
+            type: "RESERVE_VTXOS",
+            id: getRandomId(),
+            payload: { outpoints: snapshot, reservationId },
+        };
+        await this.sendMessage(message);
+        let released = false;
+        return {
+            outpoints: snapshot.map((outpoint) => ({ ...outpoint })),
+            release: async () => {
+                if (released) return;
+                const request: RequestReleaseVtxos = {
+                    tag: this.messageTag,
+                    type: "RELEASE_VTXOS",
+                    id: getRandomId(),
+                    payload: { reservationId },
+                };
+                await this.sendMessage(request);
+                released = true;
+            },
+        };
     }
 
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {

@@ -1899,6 +1899,7 @@ describe("SettlementConfig", () => {
             const contractManagerDispose = vi.fn();
             const wallet = Object.create(Wallet.prototype) as Wallet;
             Object.assign(wallet, {
+                reservationWrites: new Set(),
                 _vtxoManager: { dispose: managerDispose },
                 _contractManager: { dispose: contractManagerDispose },
             });

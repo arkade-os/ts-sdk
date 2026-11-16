@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { excludeLockedOutpoints, spendableVtxosExcludingLocked } from "../src/wallet/wallet";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import type { ArkIntent } from "../src/repositories/intentRepository";
+import { fundedWallet } from "./concurrentSpendingFixture";
 
 describe("excludeLockedOutpoints", () => {
     it("drops vtxos locked by non-terminal intents", () => {
@@ -76,4 +77,34 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
             "b",
         ]);
     });
+});
+
+describe("intent-store failures before spending", () => {
+    it.each(["selection", "send", "selected send", "settle", "selected settle"] as const)(
+        "refuses %s when lock ownership cannot be read",
+        async (operation) => {
+            const repository = new InMemoryIntentRepository();
+            const { wallet, coins, arkProvider } = await fundedWallet({
+                intentRepository: repository,
+            });
+            const failure = new Error("intent locks unavailable");
+            vi.spyOn(repository, "getLockedVtxoOutpoints").mockRejectedValue(failure);
+            const submit = vi
+                .spyOn(wallet as any, "_buildAndSubmitOffchainTx")
+                .mockResolvedValue({ arkTxid: "11".repeat(32), signedCheckpointTxs: [] });
+            const recipient = { address: await wallet.getAddress(), amount: 2_000 };
+            const operations = {
+                selection: () => wallet.getSpendableVtxos(),
+                send: () => wallet.send(recipient),
+                "selected send": () =>
+                    wallet.send({ recipients: [recipient], selectedVtxos: [coins[0]] }),
+                settle: () => wallet.settle(),
+                "selected settle": () => wallet.settle({ inputs: [coins[0]], outputs: [] }),
+            };
+
+            await expect(operations[operation]()).rejects.toBe(failure);
+            expect(submit).not.toHaveBeenCalled();
+            expect(arkProvider.registerIntent).not.toHaveBeenCalled();
+        },
+    );
 });

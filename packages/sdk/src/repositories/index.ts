@@ -3,6 +3,8 @@ export * from "./page";
 export * from "./contractRepository";
 export * from "./intentRepository";
 export * from "./virtualTxRepository";
+export * from "./vtxoReservationRepository";
+export * from "./indexedDB/vtxoReservationRepository";
 export * from "./inMemory/intentRepository";
 export * from "./inMemory/virtualTxRepository";
 export * from "./indexedDB/virtualTxRepository";

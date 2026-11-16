@@ -12,6 +12,7 @@ import {
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
 import type { IntentRepository } from "../src/repositories/intentRepository";
+import type { VtxoReservationRepository } from "../src/repositories/vtxoReservationRepository";
 import { SingleKey } from "../src/identity/singleKey";
 
 const SERVER_KEY = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -56,7 +57,11 @@ const outpoint = (coin: { txid: string; vout: number }) => `${coin.txid}:${coin.
 
 /** Three 10,000-sat VTXOs on the wallet's own script, expiring 10h, 20h and 30h out. */
 export async function fundedWallet(
-    opts: { concurrentSpending?: boolean; intentRepository?: IntentRepository } = {},
+    opts: {
+        concurrentSpending?: boolean;
+        intentRepository?: IntentRepository;
+        vtxoReservationRepository?: VtxoReservationRepository;
+    } = {},
 ) {
     const walletRepository = new InMemoryWalletRepository();
     const arkProvider = {
@@ -81,6 +86,7 @@ export async function fundedWallet(
             walletRepository,
             contractRepository: new InMemoryContractRepository(),
             ...(opts.intentRepository ? { intentRepository: opts.intentRepository } : {}),
+            vtxoReservationRepository: opts.vtxoReservationRepository,
         },
         settlementConfig: false,
         ...(opts.concurrentSpending === undefined

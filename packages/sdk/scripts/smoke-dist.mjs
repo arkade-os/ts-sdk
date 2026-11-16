@@ -142,9 +142,15 @@ section("contractHandlers singleton: CJS + ESM");
 const runNode = (args, cwd) => spawnSync(process.execPath, args, { cwd, encoding: "utf8" });
 
 const expectedTypes = "arkade,boarding,default,delegate,vhtlc,vhtlc-v2";
+const boardingExports = `
+for (const name of ["classifyBoardingExpiry", "decodeBoardingExit"]) {
+    if (typeof root[name] !== "function") throw new Error("missing root export " + name);
+}
+`;
 
 const cjsSingleton = `
 const root = require("./dist/index.cjs");
+${boardingExports}
 const handlerEntry = require("./dist/contracts/handlers/index.cjs");
 if (root.contractHandlers !== handlerEntry.contractHandlers) {
     throw new Error("contractHandlers identity differs across CJS entries");
@@ -162,6 +168,7 @@ if (got !== ${JSON.stringify(expectedTypes)}) {
 
 const esmSingleton = `
 const root = await import("./dist/index.js");
+${boardingExports}
 const handlerEntry = await import("./dist/contracts/handlers/index.js");
 if (root.contractHandlers !== handlerEntry.contractHandlers) {
     throw new Error("contractHandlers identity differs across ESM entries");
