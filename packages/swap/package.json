@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.1.6",
+    "version": "0.1.7-taxi.0",
     "type": "module",
     "description": "Client-side Arkade Intents asset swaps: state a route, get an outcome. Pay a bolt11 invoice, receive over Lightning, exchange assets, or withdraw onchain.",
     "repository": {
@@ -97,7 +97,9 @@
         "test:unit": "vitest run --exclude test/e2e",
         "test:integration": "vitest run --no-file-parallelism --exclude \"test/e2e/rfq*.test.ts\" test/e2e/",
         "test:integration:rfq": "vitest run --no-file-parallelism test/e2e/rfq",
-        "smoke:dist": "node scripts/smoke-dist.mjs"
+        "smoke:dist": "node scripts/smoke-dist.mjs",
+        "contracts:check": "node scripts/compile-offers.mjs",
+        "contracts:generate": "node scripts/compile-offers.mjs --write"
     },
     "engines": {
         "node": ">=22.13.0"

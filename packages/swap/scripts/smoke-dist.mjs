@@ -209,7 +209,7 @@ if (hex.encode(payload) !== hex.encode(roundtripped)) {
     throw new Error("TLV round-trip is not byte-identical");
 }
 const golden =
-    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2";
+    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc648qxum5ux0zjz46yyh8qvnzhrf2p4amdvrel5vharxed7x2kq9ez9lns8q";
 if (address !== golden) throw new Error(`address drift: ${address}`);
 
 console.log("smoke OK:", payload.length, "byte payload,", address);

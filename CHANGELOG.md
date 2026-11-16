@@ -14,6 +14,8 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **New swap offers use compiler-generated covenants.** Want-BTC and want-asset offers now load artifacts generated from canonical `.ark` sources with pinned compiler `e264d5e6`. Numeric witness-version equality changes new offer addresses. Existing encoded offers and stored contracts retain their exact legacy programs for filling, cancellation and recovery; leaf order, required signers and the public offer/fill APIs are unchanged.
+
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
 - **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
   `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that

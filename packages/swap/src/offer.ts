@@ -3,12 +3,12 @@
  *
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
- * README's Roles section). One program per WANT side (`swap-want-asset` / `swap-want-btc`
- * `.program.json`). The covenant constrains only what `fulfill` pays `$makerWP` and never inspects
+ * README's Roles section). One compiled artifact per WANT side (`swap-want-asset` / `swap-want-btc`).
+ * The covenant constrains only what `fulfill` pays `$makerWP` and never inspects
  * the deposit, which is what lets asset↔asset swaps ride the want-asset program.
  */
 import { hex } from "@scure/base";
-import { concatBytes } from "@scure/btc-signer/utils.js";
+import { concatBytes, equalBytes } from "@scure/btc-signer/utils.js";
 import {
     ASSET_CARRIER_SATS as SDK_ASSET_CARRIER_SATS,
     ArkAddress,
@@ -28,8 +28,9 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
-import wantAssetProgram from "./swap-want-asset.program.json";
-import wantBtcProgram from "./swap-want-btc.program.json";
+import wantAssetArtifact from "../contracts/swap-want-asset.artifact.json";
+import wantBtcArtifact from "../contracts/swap-want-btc.artifact.json";
+import { legacySwapPrograms } from "./legacy/offerPrograms";
 import {
     promoteOfferContract,
     RETIRABLE,
@@ -45,8 +46,7 @@ import {
     updateAssetSwapBestEffort,
 } from "./store";
 
-// json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
-type Artifact = Parameters<typeof arkade.parseArtifact>[0];
+type Artifact = Parameters<typeof arkade.programFromArtifact>[0];
 
 /**
  * The contracts, one per WANT side — pure data, shared verbatim with any other implementation.
@@ -60,8 +60,8 @@ export const swapPrograms: Record<
     "wantAsset" | "wantBtc",
     ReturnType<typeof arkade.parseArtifact>
 > = {
-    wantAsset: arkade.parseArtifact(wantAssetProgram as Artifact),
-    wantBtc: arkade.parseArtifact(wantBtcProgram as Artifact),
+    wantAsset: arkade.programFromArtifact(wantAssetArtifact as Artifact),
+    wantBtc: arkade.programFromArtifact(wantBtcArtifact as Artifact),
 };
 
 // ── Offer ────────────────────────────────────────────────────────────────────
@@ -147,7 +147,7 @@ export function swapProgramBinding(
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
-    return {
+    const binding: SwapProgramBinding = {
         program: withExitClosure(
             offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
             offer.exitDelay,
@@ -170,6 +170,18 @@ export function swapProgramBinding(
             emulatorKey: offer.emulatorPubkey,
         },
     };
+    if ("swapPkScript" in offer && offer.swapPkScript instanceof Uint8Array) {
+        const current = new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys);
+        if (!equalBytes(current.pkScript, offer.swapPkScript)) {
+            const program = withExitClosure(
+                offer.wantAsset ? legacySwapPrograms.wantAsset : legacySwapPrograms.wantBtc,
+                offer.exitDelay,
+            );
+            const legacy = new arkade.ArkadeProgramScript(program, binding.args, binding.keys);
+            if (equalBytes(legacy.pkScript, offer.swapPkScript)) return { ...binding, program };
+        }
+    }
+    return binding;
 }
 
 /** Compile the offer's contract: program + args -> taproot tree.
@@ -461,7 +473,8 @@ function offerContractParams(
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
 ) {
-    const { program, args, keys } = swapProgramBinding(binding, operatorPubkey);
+    const offer = { ...binding, swapPkScript: expectedPkScript };
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering any other script would leave the real deposit
     // unwatched and unmarked

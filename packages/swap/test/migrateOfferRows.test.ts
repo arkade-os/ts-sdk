@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
     ArkAddress,
+    arkade,
     ContractManager,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -12,12 +13,19 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 import { migrateV0OfferRows } from "../src/migrateOfferRows";
-import { encodeOffer, offerContract, restoreOfferCoverage, type Offer } from "../src/offer";
+import {
+    encodeOffer,
+    swapProgramBinding,
+    withExitClosure,
+    restoreOfferCoverage,
+    type Offer,
+} from "../src/offer";
+import { legacySwapPrograms } from "../src/legacy/offerPrograms";
 import type { AssetSwap } from "../src/store";
 import wantAssetV0 from "../src/legacy/swap-want-asset.program.v0.json";
 import wantBtcV0 from "../src/legacy/swap-want-btc.program.v0.json";
-import wantAssetV1 from "../src/swap-want-asset.program.json";
-import wantBtcV1 from "../src/swap-want-btc.program.json";
+import wantAssetV1 from "../src/legacy/swap-want-asset.program.v1.json";
+import wantBtcV1 from "../src/legacy/swap-want-btc.program.v1.json";
 import v0Wallet from "./fixtures/program-v0-offer.json";
 
 const makerKey = hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1");
@@ -94,7 +102,15 @@ const makeOffer = (wantAsset: boolean, exitDelay?: RelativeTimelock): Offer => {
         emulatorPubkey: EMULATOR_KEY,
         ...(exitDelay && { exitDelay }),
     };
-    return { ...binding, swapPkScript: offerContract(binding, hex.decode(SERVER_KEY)).pkScript };
+    const { args, keys } = swapProgramBinding(binding, hex.decode(SERVER_KEY));
+    const program = withExitClosure(
+        wantAsset ? legacySwapPrograms.wantAsset : legacySwapPrograms.wantBtc,
+        exitDelay,
+    );
+    return {
+        ...binding,
+        swapPkScript: new arkade.ArkadeProgramScript(program, args, keys).pkScript,
+    };
 };
 
 const record = (offer: Offer): AssetSwap => ({
@@ -291,8 +307,7 @@ describe("migrateV0OfferRows", () => {
         await manager.dispose();
     });
 
-    // A failure here means a v1 program file changed: the migration's target needs reconsidering.
-    it("targets the current program files", () => {
+    it("targets the frozen legacy program files", () => {
         const patch = (v0: typeof wantAssetV0) => ({
             ...v0,
             version: 1,
