@@ -43,10 +43,6 @@ over. Tokens trade on Arkade; external Lightning and Bitcoin routes exchange nat
 pair is refused before publication until that settlement corridor exists in the client.
 See [`OpenRfqOptions`](src/client/openRfq.ts) for progress, relay and timing controls.
 
-Configure `relays` or `policy.rfq.relays` to a rendezvous the intended operators listen on.
-Otherwise the client uses known card relays, then opportunistic public defaults when no
-cards supply them. Public defaults do not guarantee a shared solver rendezvous.
-
 ## Solver priority and failover
 
 Opt in with `policy: { solverRouting: {} }`. The

@@ -629,6 +629,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 return Object.freeze(offers);
             };
             let updates = Promise.resolve();
+            let progressRevision = 0;
             try {
                 ensureLive("openRfq");
                 const { collectOpenRfqBids } = await import("../openRfqTransport");
@@ -640,17 +641,26 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                         relays: [...relays],
                         windowMs,
                         signal: controller.signal,
-                        onBids: (bids) => {
-                            updates = updates.then(async () => {
-                                const offers = await filter(bids);
-                                if (!controller.signal.aborted && !disposed) {
-                                    try {
-                                        options.onBids?.(offers);
-                                    } catch {}
-                                }
-                            });
-                            void updates.catch(() => {});
-                        },
+                        onBids:
+                            options.onBids === undefined
+                                ? undefined
+                                : (bids) => {
+                                      const revision = ++progressRevision;
+                                      updates = updates.then(async () => {
+                                          if (revision !== progressRevision) return;
+                                          const offers = await filter(bids);
+                                          if (
+                                              revision === progressRevision &&
+                                              !controller.signal.aborted &&
+                                              !disposed
+                                          ) {
+                                              try {
+                                                  options.onBids?.(offers);
+                                              } catch {}
+                                          }
+                                      });
+                                      void updates.catch(() => {});
+                                  },
                     },
                 );
                 await updates;

@@ -121,6 +121,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Open RFQ keeps valid progress and better late offers.** Unobserved progress no longer repeats card and policy checks, and obsolete queued snapshots cannot consume bid expiry or replace newer results. Full collectors keep the best 64 bids instead of the first 64, within the unchanged authenticated-reply decryption budget.
+
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's
   `notifyIncomingFunds` returns. When that function threw after the funds

@@ -48,12 +48,13 @@ const fixture = (outcome: () => Promise<string> = () => Promise.resolve("ok")) =
         destroy,
         close: vi.fn(),
     };
-    const bid = (
+    const makeBid = (
         changes: Record<string, unknown> = {},
         eventChanges: Record<string, unknown> = {},
+        signer = solverKey,
     ) => {
         const open = JSON.parse(published!.content);
-        const key = nip44.v2.utils.getConversationKey(solverKey, getPublicKey(clientKey));
+        const key = nip44.v2.utils.getConversationKey(signer, getPublicKey(clientKey));
         const event = finalizeEvent(
             {
                 kind: 24859,
@@ -79,8 +80,12 @@ const fixture = (outcome: () => Promise<string> = () => Promise.resolve("ok")) =
                 ),
                 ...eventChanges,
             },
-            solverKey,
+            signer,
         );
+        return event;
+    };
+    const bid = (...args: Parameters<typeof makeBid>) => {
+        const event = JSON.parse(JSON.stringify(makeBid(...args))) as Event;
         receive?.(event);
         return event;
     };
@@ -91,6 +96,7 @@ const fixture = (outcome: () => Promise<string> = () => Promise.resolve("ok")) =
         close,
         destroy,
         bid,
+        makeBid,
         get published() {
             return published;
         },
@@ -105,7 +111,10 @@ const fixture = (outcome: () => Promise<string> = () => Promise.resolve("ok")) =
     };
 };
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+});
 
 describe("open RFQ collection", () => {
     it("publishes a public size only and collects sealed prices without owning the pool", async () => {
@@ -143,8 +152,7 @@ describe("open RFQ collection", () => {
         vi.useFakeTimers();
         const f = fixture();
         const result = collectOpenRfqBids(request(), f.options);
-        const malformed = f.bid({ open_id: "foreign" });
-        f.inject({ ...malformed, sig: "0".repeat(128) });
+        f.bid({ open_id: "foreign" });
         f.bid(
             {},
             {
@@ -170,6 +178,80 @@ describe("open RFQ collection", () => {
         f.bid({ from_amount: "9999" });
         await vi.advanceTimersByTimeAsync(1_000);
         expect(await result).toEqual([]);
+    });
+
+    it("drops an otherwise valid reply with an invalid signature", async () => {
+        vi.useFakeTimers();
+        const f = fixture();
+        const result = collectOpenRfqBids(request(), f.options);
+        const reply = JSON.parse(JSON.stringify(f.makeBid())) as Event;
+        f.inject({ ...reply, sig: "0".repeat(128) });
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(await result).toEqual([]);
+    });
+
+    it.each(["from", "to"] as const)(
+        "retains a better late bid at capacity for an exact-%s request",
+        async (amountSide) => {
+            vi.useFakeTimers();
+            const f = fixture();
+            const result = collectOpenRfqBids({ ...request(), amountSide }, f.options);
+            for (let i = 0; i < 64; i++) {
+                const counter = String(100 + i);
+                f.bid(
+                    amountSide === "from"
+                        ? { to_amount: counter }
+                        : { from_amount: counter, to_amount: "10000" },
+                    {},
+                    generateSecretKey(),
+                );
+            }
+            const better = f.bid(
+                amountSide === "from"
+                    ? { to_amount: "999" }
+                    : { from_amount: "1", to_amount: "10000" },
+                {},
+                generateSecretKey(),
+            );
+            const worse = f.bid(
+                amountSide === "from"
+                    ? { to_amount: "1" }
+                    : { from_amount: "999", to_amount: "10000" },
+                {},
+                generateSecretKey(),
+            );
+            await vi.advanceTimersByTimeAsync(1_000);
+            const bids = await result;
+            expect(bids).toHaveLength(64);
+            expect(bids[0]?.id).toBe(better.id);
+            expect(bids.some((bid) => bid.id === worse.id)).toBe(false);
+        },
+    );
+
+    it("bounds authenticated reply decryptions while preserving an admitted bid", async () => {
+        vi.useFakeTimers();
+        const f = fixture();
+        const decrypt = vi.spyOn(nip44.v2, "decrypt");
+        const result = collectOpenRfqBids(request(), f.options);
+        const admitted = f.bid();
+        const malformed = f.makeBid({ open_id: "foreign" });
+        for (let i = 0; i < 255; i++) {
+            f.inject(
+                finalizeEvent(
+                    {
+                        kind: malformed.kind,
+                        created_at: malformed.created_at,
+                        tags: [...malformed.tags, ["nonce", String(i)]],
+                        content: malformed.content,
+                    },
+                    f.solverKey,
+                ),
+            );
+        }
+        f.inject(f.makeBid({ to_amount: "123000000000000000002" }));
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(decrypt).toHaveBeenCalledTimes(256);
+        expect((await result).map((bid) => bid.id)).toEqual([admitted.id]);
     });
 
     it("ignores sealed replies using another open RFQ wire version", async () => {

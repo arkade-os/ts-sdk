@@ -21,7 +21,7 @@ export interface CollectOpenRfqOptions {
 }
 
 const MAX_BIDS = 64;
-const MAX_SEEN_EVENTS = 256;
+const MAX_AUTHENTICATED_REPLY_DECRYPTIONS = 256;
 const MAX_EVENT_CONTENT = 100_000;
 const MAX_WINDOW_MS = 30_000;
 
@@ -118,7 +118,7 @@ export const collectOpenRfqBids = (
                             reply.created_at > current + 5 ||
                             reply.created_at >= request.bidsUntil ||
                             seen.has(reply.id) ||
-                            seen.size >= MAX_SEEN_EVENTS
+                            seen.size >= MAX_AUTHENTICATED_REPLY_DECRYPTIONS
                         )
                             return;
                         const recipients = reply.tags.filter((tag) => tag[0] === "p");
@@ -132,6 +132,7 @@ export const collectOpenRfqBids = (
                             return;
                         try {
                             if (!verifyEvent(reply)) return;
+                            // Signed malformed replies also count, keeping decryption work bounded.
                             seen.add(reply.id);
                             const key = nip44.v2.utils.getConversationKey(secretKey, reply.pubkey);
                             const bid = parseOpenRfqBid(
@@ -157,7 +158,15 @@ export const collectOpenRfqBids = (
                                         ? bid.toAmount > previous.toAmount
                                         : bid.fromAmount < previous.fromAmount;
                                 if (!improved) return;
-                            } else if (bids.size >= MAX_BIDS) return;
+                            } else if (bids.size >= MAX_BIDS) {
+                                const worst = rankOpenRfqBids(
+                                    [...bids.values()],
+                                    request.amountSide,
+                                ).at(-1)!;
+                                if (rankOpenRfqBids([worst, bid], request.amountSide)[0] !== bid)
+                                    return;
+                                bids.delete(worst.solverPubkey);
+                            }
                             bids.set(bid.solverPubkey, bid);
                             options.onBids?.(
                                 rankOpenRfqBids([...bids.values()], request.amountSide),
