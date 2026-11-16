@@ -51,6 +51,12 @@ export {
 } from "./artifact";
 export { NativeExecutor, type NativeExecution } from "./executor";
 export {
+    NativeExecutionJournal,
+    type NativeExecutionRecord,
+    type NativeExecutionObservation,
+    type NativeExecutionReceipt,
+} from "./executionJournal";
+export {
     ArkadeProgramScript,
     stringifyArtifact,
     serializeArkadeContractParams,
