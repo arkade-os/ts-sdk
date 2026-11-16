@@ -291,6 +291,22 @@ describe("ExecutorManagerImpl.register", () => {
         expect(provider.registerDelegation).not.toHaveBeenCalled();
     });
 
+    it("refuses a renewal window as long as the operator's VTXO expiry", async () => {
+        const provider = makeProvider();
+        const operator = { ...(await wallet.getOperatorInfo()), vtxoTreeExpiry: 86400n };
+        const manager = new ExecutorManagerImpl(provider, {
+            ...wallet,
+            getOperatorInfo: async () => operator,
+        });
+        await expect(manager.registerRenewal(params)).rejects.toThrow(
+            "renewalWindow 86400s must be shorter than the operator's VTXO expiry of 86400s",
+        );
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+        // a block-typed expiry has no duration to compare against
+        operator.vtxoTreeExpiry = 144n;
+        await expect(manager.registerBoarding(params)).resolves.toBeDefined();
+    });
+
     it("refuses a service on another network than the wallet's operator", async () => {
         const provider = makeProvider();
         provider.getInfo.mockResolvedValue({

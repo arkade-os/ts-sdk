@@ -104,8 +104,11 @@ style and have not been backfilled.
   `getExecutorManager()`. `registerBoarding({ renewalWindow, maxFee })` registers
   the wallet's key under the Executor's `boarding` template, exit delays
   defaulting to the operator's; the manager refuses an Executor on another
-  network or operator, or one that derives a different address. While the watch
-  is active, `getBoardingAddress()` answers the delegated boarding address: the
+  network or operator, or one that derives a different address, and a
+  `renewalWindow` as long as the operator's VTXO expiry, under which every
+  renewed coin would be due again at once and pay `maxFee` each batch. While
+  the watch is active, `getBoardingAddress()` answers the delegated boarding
+  address: the
   Executor boards every deposit there into the wallet's renewal contract while
   the wallet is offline. A boarded coin is the wallet's own: it counts, spends
   and renews like any other, incoming-funds subscribers hear of it, and the

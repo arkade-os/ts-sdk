@@ -243,6 +243,14 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${server}`,
             );
         }
+        // A window as long as the coin's life makes every renewed coin due again at once, each
+        // round paying up to maxFee. Block-typed expiries (regtest only) have no fixed duration.
+        const lifetime = operator.vtxoTreeExpiry;
+        if (lifetime !== undefined && lifetime >= 512n && options.renewalWindow >= lifetime) {
+            throw new Error(
+                `renewalWindow ${options.renewalWindow}s must be shorter than the operator's VTXO expiry of ${lifetime}s`,
+            );
+        }
         const params: DelegationParams = {
             renewalWindow: options.renewalWindow,
             maxFee: options.maxFee,
