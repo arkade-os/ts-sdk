@@ -81,7 +81,7 @@ const setup = async (
         paused?: boolean;
         disabledSource?: string;
         veto?: boolean;
-        beforePreferences?: () => void;
+        beforePreferences?: () => void | Promise<void>;
         snapshot?: DiscoveredMarket[];
         ttlFloor?: number;
         quoteDelaySeconds?: number;
@@ -101,8 +101,8 @@ const setup = async (
             quoteTtlFloorSeconds: over.ttlFloor,
             ...(over.veto ? { selectMarket: () => undefined } : {}),
             solverRouting: {
-                preferences: ({ candidates }) => {
-                    over.beforePreferences?.();
+                preferences: async ({ candidates }) => {
+                    await over.beforePreferences?.();
                     return {
                         disabled: candidates
                             .filter((c) => over.paused || c.card.source === over.disabledSource)
@@ -214,6 +214,72 @@ describe("open RFQ selection", () => {
             "pair",
         ]);
         expect(vi.mocked(collectOpenRfqBids).mock.calls[0][0].openId).toMatch(/^[0-9a-f]{64}$/);
+        await client[Symbol.asyncDispose]();
+    });
+    it.each([false, true])(
+        "keeps bids valid through redundant progress snapshots (observer: %s)",
+        async (observe) => {
+            const { client } = await setup({
+                beforePreferences: async () => {
+                    await Promise.resolve();
+                    vi.setSystemTime(Date.now() + 5_000);
+                },
+            });
+            const onBids = vi.fn();
+            vi.mocked(collectOpenRfqBids).mockImplementation(async (request, progress) => {
+                const first = { ...bid(), openId: request.openId };
+                let latest = first;
+                for (let i = 0; i < 64; i++) {
+                    latest = {
+                        ...first,
+                        id: i.toString(16).padStart(64, "0"),
+                        toAmount: first.toAmount + BigInt(i),
+                    };
+                    progress.onBids?.([latest]);
+                }
+                return [latest];
+            });
+            const auction = await client.openRfq(input, {
+                ...options,
+                ...(observe ? { onBids } : {}),
+            });
+            expect(auction.bids.map((offer) => offer.toAmount)).toEqual([2_555n]);
+            if (observe) expect(onBids).toHaveBeenLastCalledWith(auction.bids);
+            else expect(onBids).not.toHaveBeenCalled();
+            await client[Symbol.asyncDispose]();
+        },
+    );
+    it("suppresses an obsolete progress result after an asynchronous preference read", async () => {
+        let started!: () => void;
+        let release!: () => void;
+        let first = true;
+        const reading = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const { client } = await setup({
+            beforePreferences: async () => {
+                if (!first) return;
+                first = false;
+                started();
+                await gate;
+            },
+        });
+        const onBids = vi.fn();
+        vi.mocked(collectOpenRfqBids).mockImplementation(async (request, progress) => {
+            const older = { ...bid(), openId: request.openId };
+            const newer = { ...older, id: "b".repeat(64), toAmount: 2_493n };
+            progress.onBids?.([older]);
+            await reading;
+            progress.onBids?.([newer]);
+            release();
+            return [newer];
+        });
+        const auction = await client.openRfq(input, { ...options, onBids });
+        expect(auction.bids.map((offer) => offer.toAmount)).toEqual([2_493n]);
+        expect(onBids.mock.calls.map(([offers]) => offers[0]?.toAmount)).toEqual([2_493n]);
         await client[Symbol.asyncDispose]();
     });
     it("filters policy-paused offers and registry-restricted sources", async () => {
