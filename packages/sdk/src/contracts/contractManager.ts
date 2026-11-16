@@ -1102,7 +1102,13 @@ export class ContractManager implements IContractManager {
 
     async reconcilePendingBatchRegistrations(): Promise<void> {
         if (this.disposed) return;
-        await this.reconcileStaleIntents();
+        const reconciliation = this.reconcileStaleIntents();
+        this.inFlightEvents.add(reconciliation);
+        try {
+            await reconciliation;
+        } finally {
+            this.inFlightEvents.delete(reconciliation);
+        }
     }
 
     /** @see IContractManager.refillLookAhead */

@@ -658,15 +658,15 @@ export type ResponseContractEvent = ResponseEnvelope & {
 
 // Asset operations
 export type RequestReserveVtxos = RequestEnvelope & {
-    type: "RESERVE_VTXOS";
-    payload: { outpoints: Outpoint[]; reservationId: string };
+    type: "RESERVE_SCOPED_VTXOS";
+    payload: { outpoints: Outpoint[]; reservationId: string; scope: string };
 };
 export type ResponseReserveVtxos = ResponseEnvelope & {
     type: "VTXOS_RESERVED";
 };
 export type RequestReleaseVtxos = RequestEnvelope & {
-    type: "RELEASE_VTXOS";
-    payload: { reservationId: string };
+    type: "RELEASE_SCOPED_VTXOS";
+    payload: { reservationId: string; scope: string };
 };
 export type ResponseReleaseVtxos = ResponseEnvelope & {
     type: "VTXOS_RELEASED";
@@ -1178,6 +1178,7 @@ export class WalletMessageHandler
 
     private wallet: Wallet | undefined;
     private readonlyWallet: ReadonlyWallet | undefined;
+    private vtxoReservationScope: string | undefined;
 
     private arkProvider: OperatorProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
@@ -1223,6 +1224,7 @@ export class WalletMessageHandler
         const [services, repositories, channel] = params;
         this.readonlyWallet = services.readonlyWallet;
         this.wallet = services.wallet;
+        this.vtxoReservationScope = services.vtxoReservationScope;
         this.arkProvider = services.arkProvider;
         this.walletRepository = repositories.walletRepository;
         this.channel = channel;
@@ -1239,6 +1241,7 @@ export class WalletMessageHandler
         this.contractEventsEpoch++;
         this.boardingEpoch++;
         this.channel = undefined;
+        this.vtxoReservationScope = undefined;
         this.onNextTick = [];
 
         if (this.incomingFundsSubscription) {
@@ -1346,6 +1349,14 @@ export class WalletMessageHandler
             throw new ReadonlyWalletError();
         }
         return this.wallet;
+    }
+
+    private requireReservationWallet(scope: string): Wallet {
+        const wallet = this.requireWallet();
+        if (!scope || scope !== this.vtxoReservationScope) {
+            throw new Error("Reservation scope does not match the active wallet");
+        }
+        return wallet;
     }
 
     private tagged(res: Partial<WalletUpdaterResponse>): WalletUpdaterResponse {
@@ -1890,15 +1901,17 @@ export class WalletMessageHandler
                         type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED",
                     });
                 }
-                case "RESERVE_VTXOS": {
-                    const wallet = this.requireWallet();
-                    const { reservationId, outpoints } = message.payload;
+                case "RESERVE_SCOPED_VTXOS": {
+                    const { reservationId, outpoints, scope } = message.payload;
+                    const wallet = this.requireReservationWallet(scope);
                     await wallet.reserveVtxosPersistently(outpoints, reservationId);
                     return this.tagged({ id, type: "VTXOS_RESERVED" });
                 }
-                case "RELEASE_VTXOS": {
-                    const { reservationId } = message.payload;
-                    await this.requireWallet().releaseVtxoReservation(reservationId);
+                case "RELEASE_SCOPED_VTXOS": {
+                    const { reservationId, scope } = message.payload;
+                    await this.requireReservationWallet(scope).releaseVtxoReservation(
+                        reservationId,
+                    );
                     return this.tagged({ id, type: "VTXOS_RELEASED" });
                 }
                 case "SEND": {

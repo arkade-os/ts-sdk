@@ -20,8 +20,7 @@ import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, BatchRegistrationRepository, WalletRepository } from "../repositories";
 import { IndexedDBVtxoReservationRepository } from "../repositories/indexedDB/vtxoReservationRepository";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { hex } from "@scure/base";
+import { vtxoReservationScope } from "../wallet/vtxoReservationScope";
 import {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
@@ -56,6 +55,7 @@ type MessageBusServices = {
     arkProvider: OperatorProvider;
     wallet?: Wallet;
     readonlyWallet: ReadonlyWallet;
+    vtxoReservationScope?: string;
 };
 export interface MessageHandler<
     REQ extends RequestEnvelope = RequestEnvelope,
@@ -554,13 +554,9 @@ export class MessageBus {
 
         if (isSigningSerialized(serialized)) {
             const identity = hydrateIdentity(serialized) as Identity;
-            const operatorUrl = new URL(config.arkServer.url);
-            const reservationScope = hex.encode(
-                sha256(
-                    new TextEncoder().encode(
-                        `${operatorUrl.origin}${operatorUrl.pathname.replace(/\/$/, "")}|${hex.encode(await identity.xOnlyPublicKey())}`,
-                    ),
-                ),
+            const reservationScope = vtxoReservationScope(
+                config.arkServer.url,
+                await identity.xOnlyPublicKey(),
             );
             if (this.reservationStore?.scope !== reservationScope) {
                 await this.reservationStore?.repository[Symbol.asyncDispose]();
@@ -591,7 +587,12 @@ export class MessageBus {
                 oneShotSubmit: config.oneShotSubmit,
                 minBatchExpirySeconds: config.minBatchExpirySeconds,
             });
-            return { wallet, arkProvider, readonlyWallet: wallet };
+            return {
+                wallet,
+                arkProvider,
+                readonlyWallet: wallet,
+                vtxoReservationScope: reservationScope,
+            };
         }
 
         const identity = hydrateIdentity(serialized) as ReadonlyIdentity;

@@ -208,6 +208,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         const s = setup(true);
         await expect(s.settle()).rejects.toBe(s.failure);
         const manager = Object.assign(Object.create(ContractManager.prototype), {
+            inFlightEvents: new Set(),
             config: {
                 intentRepository: repository,
                 indexerProvider: { getVtxos: vi.fn().mockResolvedValue({ vtxos: [input] }) },
@@ -229,6 +230,44 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         expect(s.provider.deleteIntent).toHaveBeenCalledTimes(2);
         expect((await collectIntents(repository))[0].state).toBe("cancelled");
         expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
+    });
+
+    it("drains public reconciliation before disposal and rejects new passes after disposal", async () => {
+        const s = setup(true);
+        await expect(s.settle()).rejects.toBe(s.failure);
+        let finishRead!: (value: { vtxos: ExtendedVirtualCoin[] }) => void;
+        const getVtxos = vi.fn(
+            () =>
+                new Promise<{ vtxos: ExtendedVirtualCoin[] }>((resolve) => {
+                    finishRead = resolve;
+                }),
+        );
+        s.provider.deleteIntent.mockResolvedValue(undefined);
+        const manager = Object.assign(Object.create(ContractManager.prototype), {
+            inFlightEvents: new Set(),
+            eventCallbacks: new Set(),
+            lookAheadEntries: new Map(),
+            config: {
+                intentRepository: repository,
+                indexerProvider: { getVtxos },
+                intentReconciliation: { deleteIntent: s.provider.deleteIntent },
+            },
+        }) as ContractManager;
+        const pass = manager.reconcilePendingBatchRegistrations();
+        await vi.waitFor(() => expect(getVtxos).toHaveBeenCalledOnce());
+        let disposed = false;
+        const disposal = manager.dispose().then(() => {
+            disposed = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(disposed).toBe(false);
+        expect((await collectIntents(repository))[0].state).toBe("waiting_to_submit");
+        finishRead({ vtxos: [input] });
+        await Promise.all([pass, disposal]);
+        expect(disposed).toBe(true);
+        expect((await collectIntents(repository))[0].state).toBe("cancelled");
+        await manager.reconcilePendingBatchRegistrations();
+        expect(getVtxos).toHaveBeenCalledOnce();
     });
 
     it.each([undefined, noMatch()])(

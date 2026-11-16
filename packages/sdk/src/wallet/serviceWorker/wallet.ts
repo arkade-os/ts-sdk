@@ -24,6 +24,7 @@ import {
     Outpoint,
 } from "..";
 import type { VtxoReservation } from "../wallet";
+import { vtxoReservationScope } from "../vtxoReservationScope";
 import {
     OperatorInfo,
     INFO_FETCH_TIMEOUT_MS,
@@ -307,8 +308,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are treated as long-running on both sides of the bus: the values below
     // are retained only for type completeness and are never enforced.
     SEND: 50_000,
-    RESERVE_VTXOS: 10_000,
-    RELEASE_VTXOS: 10_000,
+    RESERVE_SCOPED_VTXOS: 10_000,
+    RELEASE_SCOPED_VTXOS: 10_000,
     SEND_WITH_DEADLINE: 50_000,
     SEND_WITH_INPUT_EXPIRY_FLOOR: 50_000,
     SETTLE: 50_000,
@@ -2211,19 +2212,27 @@ export class ServiceWorkerWallet
     }
 
     /**
-     * Durable across tabs and worker restarts. Reuse the application operation id to resume;
+     * Durable across tabs and worker restarts. Persist the application operation id before calling;
      * release only after proving settlement or non-submission. SDK sends cannot spend this hold.
      */
     async reserveVtxos(
         outpoints: readonly Outpoint[],
-        reservationId = getRandomId(),
+        reservationId: string,
     ): Promise<VtxoReservation> {
+        if (typeof reservationId !== "string" || !reservationId) {
+            throw new Error("Reservation id is required");
+        }
         const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
+        const config = await this.buildInitConfig();
+        const scope = vtxoReservationScope(
+            config.arkServer.url,
+            await this.identity.xOnlyPublicKey(),
+        );
         const message: RequestReserveVtxos = {
             tag: this.messageTag,
-            type: "RESERVE_VTXOS",
+            type: "RESERVE_SCOPED_VTXOS",
             id: getRandomId(),
-            payload: { outpoints: snapshot, reservationId },
+            payload: { outpoints: snapshot, reservationId, scope },
         };
         await this.sendMessage(message);
         let released = false;
@@ -2233,9 +2242,9 @@ export class ServiceWorkerWallet
                 if (released) return;
                 const request: RequestReleaseVtxos = {
                     tag: this.messageTag,
-                    type: "RELEASE_VTXOS",
+                    type: "RELEASE_SCOPED_VTXOS",
                     id: getRandomId(),
-                    payload: { reservationId },
+                    payload: { reservationId, scope },
                 };
                 await this.sendMessage(request);
                 released = true;

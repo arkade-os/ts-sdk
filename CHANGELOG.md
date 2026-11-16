@@ -115,6 +115,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.
+
 - **Settlement refuses registration when its initial recovery proof cannot be saved.** With an intent repository configured, the first journal write is required before contacting the operator. A retry of an ambiguous proof retains its existing lock, while a previously terminal proof starts a fresh locked lifecycle. Later persistence errors still cannot cancel a completed batch.
 
 - **Spending stops when intent locks cannot be read.** Coin selection, explicit sends, settlements and durable reservation acquisition propagate a configured intent repository's read failure instead of treating it as an empty lock set. Explicit spending also refuses inputs held by another pending registration. Balance display retains its best-effort fallback.

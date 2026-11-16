@@ -909,7 +909,7 @@ one output.
 
 #### Holding VTXOs for your own use
 
-`reserveVtxos` keeps VTXOs out of every pick the SDK makes for you — `send`, `settle()`, exits,
+`Wallet.reserveVtxos` keeps VTXOs out of every pick the SDK makes for you — `send`, `settle()`, exits,
 renewal, payment-router rails and swap funding — until you release them. You can still spend them
 by naming them. It works with or without `concurrentSpending`.
 
@@ -927,7 +927,16 @@ Held VTXOs stay in `getVtxos()` and in `getBalance().total`, and move from `avai
 already picked a VTXO when you hold it, that spend throws `VtxoReservedError` (`holder: "held"`)
 instead of spending it; exits and renewal pick again or retry on their own.
 
-Limits:
+For `ServiceWorkerWallet`, use `await workerWallet.reserveVtxos(coins, operationId)` after saving
+that operation id durably in your application. The worker persists the hold under its identity
+and operator URL before acknowledging it, and restores holds before automatic spending starts.
+Retry the same id and inputs after a lost reply or restart. These holds also block explicitly
+selected SDK sends and settlements; they are for transactions the application builds externally.
+Await `hold.release()` only after proving settlement or non-submission. An ambiguous submission
+must keep its hold. Acquire and release require a worker supporting scoped reservations; a retained
+handle cannot release a different identity/operator's hold after worker reinitialization.
+
+Direct wallet limits:
 
 - Reservations are in memory, per `Wallet` instance. Two processes or two `Wallet` instances on one
   seed do not see each other's reservations; the operator refuses whichever spend loses.
@@ -937,8 +946,7 @@ Limits:
   long-lived hold before the VTXO expires, or the operator sweeps it and it comes back only through
   recovery.
 - `toReadonly()` views and the service worker's balance reads do not see reservations.
-- `reserveVtxos` is on `Wallet`; the service-worker and Expo wallets accept `concurrentSpending`
-  but do not expose holds yet.
+- Expo wallets accept `concurrentSpending` but do not expose holds yet.
 
 If your app keeps its own reserved-outpoint set, call `reserveVtxos` where you add to it and
 `release()` where you remove, then let the SDK pick: plain `send`, router payments without
