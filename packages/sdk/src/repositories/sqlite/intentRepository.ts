@@ -1,8 +1,8 @@
 import { Outpoint } from "../../wallet";
 import {
-    ArkIntent,
-    ArkIntentState,
-    IntentPageFilter,
+    BatchRegistration,
+    BatchRegistrationState,
+    BatchRegistrationPageFilter,
     BatchRegistrationRepository,
     intentMatchesFilter,
     isTerminalBatchRegistrationState,
@@ -80,14 +80,14 @@ export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepos
 
     async clear(): Promise<void> {
         await this.ensureInit();
-        // Route through the same serialized write chain as saveIntent so a
+        // Route through the same serialized write chain as saveBatchRegistration so a
         // clear can't interleave with an in-flight transaction on this executor.
         await runInTransaction(this.db, async (tx) => {
             await tx.run(`DELETE FROM ${this.t}`);
         });
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: BatchRegistration): Promise<void> {
         await this.ensureInit();
         const now = Date.now();
         await runInTransaction(this.db, async (tx) => {
@@ -143,10 +143,10 @@ export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepos
         });
     }
 
-    async getIntentsPage(
-        filter: IntentPageFilter | undefined,
+    async getBatchRegistrationsPage(
+        filter: BatchRegistrationPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         await this.ensureInit();
         if (filter?.states?.length === 0) return { items: [] };
@@ -155,7 +155,7 @@ export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepos
             : "";
         const stateParams = filter?.states ?? [];
         const batchSize = Math.max(64, page.limit + 1);
-        const rows: ArkIntent[] = [];
+        const rows: BatchRegistration[] = [];
         let after = page.after;
         // SQL narrows by indexed state; the shared filter handles the remaining predicates.
         while (rows.length <= page.limit) {
@@ -180,20 +180,30 @@ export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepos
         const rows = await this.db.all<IntentRow>(`SELECT * FROM ${this.t}`);
         const out: Outpoint[] = [];
         for (const r of rows) {
-            if (isTerminalBatchRegistrationState(r.state as ArkIntentState)) continue;
+            if (isTerminalBatchRegistrationState(r.state as BatchRegistrationState)) continue;
             for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[]) out.push(o);
         }
         return out;
     }
 
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: BatchRegistration) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: BatchRegistrationPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
+    }
+
     async [Symbol.asyncDispose](): Promise<void> {}
 }
 
-function rowToIntent(r: IntentRow): ArkIntent {
+function rowToIntent(r: IntentRow): BatchRegistration {
     return {
         proofTxId: r.intent_tx_id,
         registrationId: r.intent_id ?? undefined,
-        state: r.state as ArkIntentState,
+        state: r.state as BatchRegistrationState,
         validFrom: r.valid_from ?? undefined,
         validUntil: r.valid_until ?? undefined,
         createdAt: r.created_at,

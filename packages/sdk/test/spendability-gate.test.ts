@@ -15,7 +15,7 @@ import {
     ReadonlyWallet,
     VHTLCContractHandler,
     Wallet,
-    type ArkProvider,
+    type OperatorProvider,
     type Contract,
     type GetSpendableVtxosFilter,
     type GetVtxosFilter,
@@ -139,7 +139,9 @@ async function seededWallet(opts?: {
     }
 
     const config = {
-        arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
+        arkProvider: {
+            getInfo: async () => arkInfo(),
+        } as Partial<OperatorProvider> as OperatorProvider,
         indexerProvider: opts?.indexerProvider ?? offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],

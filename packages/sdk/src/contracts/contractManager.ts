@@ -48,7 +48,7 @@ import {
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { UnsupportedProgramVersionError } from "../arkade/program";
-import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
+import { ContractFilter, ContractRepository, BatchRegistrationRepository } from "../repositories";
 import { reconcileIntents, type IntentReconciliationDeps } from "../wallet/intentReconciliation";
 import {
     advanceSyncCursor,
@@ -611,7 +611,7 @@ export interface ContractManagerConfig {
      * When present, the online sync reconciles persisted non-terminal settlement intents against
      * indexer state (crash recovery) on boot and reconnect; see {@link reconcileIntents}.
      */
-    intentRepository?: IntentRepository;
+    intentRepository?: BatchRegistrationRepository;
 
     /** Lets the reconciliation release stale intents from arkd; see {@link IntentReconciliationDeps}. */
     intentReconciliation?: Pick<IntentReconciliationDeps, "deleteIntent" | "isOutpointInFlight">;

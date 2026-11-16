@@ -1,11 +1,10 @@
 import { Outpoint } from "../../wallet";
 import {
     BatchRegistration,
-    ArkIntent,
-    IntentPageFilter,
+    BatchRegistrationPageFilter,
     BatchRegistrationRepository,
     intentMatchesFilter,
-    isTerminalIntentState,
+    isTerminalBatchRegistrationState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
@@ -70,17 +69,17 @@ export class IndexedDBBatchRegistrationRepository implements BatchRegistrationRe
         await awaitTransaction(transaction);
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: BatchRegistration): Promise<void> {
         const db = await this.getDB();
         const transaction = db.transaction([STORE_INTENTS], "readwrite");
         transaction.objectStore(STORE_INTENTS).put(toStored({ ...intent, updatedAt: Date.now() }));
         await awaitTransaction(transaction);
     }
 
-    async getIntentsPage(
-        filter: IntentPageFilter | undefined,
+    async getBatchRegistrationsPage(
+        filter: BatchRegistrationPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         const db = await this.getDB();
         const store = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
@@ -103,7 +102,7 @@ export class IndexedDBBatchRegistrationRepository implements BatchRegistrationRe
             page.after === undefined ? undefined : IDBKeyRange.lowerBound(page.after, true);
         const request = store.openCursor(range);
         return new Promise((resolve, reject) => {
-            const rows: ArkIntent[] = [];
+            const rows: BatchRegistration[] = [];
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {
                 const cursor = request.result;
@@ -128,8 +127,19 @@ export class IndexedDBBatchRegistrationRepository implements BatchRegistrationRe
         const all = (await promisifyRequest(store.getAll())) as StoredIntent[];
         const out: Outpoint[] = [];
         for (const i of all)
-            if (!isTerminalIntentState(i.state)) for (const o of i.intentVtxos) out.push(o);
+            if (!isTerminalBatchRegistrationState(i.state))
+                for (const o of i.intentVtxos) out.push(o);
         return out;
+    }
+
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: BatchRegistration) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: BatchRegistrationPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

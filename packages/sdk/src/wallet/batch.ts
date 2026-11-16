@@ -128,6 +128,24 @@ export namespace Batch {
     }
 
     /**
+     * Starts `stream` so the provider subscribes now, before the caller registers an intent whose
+     * batch could otherwise start unseen. The returned iterator replays the first event; pass it
+     * to {@link join}.
+     */
+    export function prime(
+        stream: AsyncIterableIterator<SettlementEvent>,
+    ): AsyncIterableIterator<SettlementEvent> {
+        const first = stream.next();
+        // Would surface as an unhandled rejection if the caller exits before join reads it.
+        void first.catch(() => {});
+        return (async function* () {
+            const result = await first;
+            if (!result.done) yield result.value;
+            yield* stream;
+        })();
+    }
+
+    /**
      * Start the state machine that will process the batch events and join a batch.
      * @param eventIterator - The events stream to process.
      * @param handler - How to react to events.

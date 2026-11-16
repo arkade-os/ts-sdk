@@ -51,7 +51,7 @@ function seededRepo(): InMemoryIntentRepository {
         partialForfeits: [],
         proofInputs: [{ txid: "v", vout: 0 }],
     };
-    void repo.saveIntent(intent);
+    void repo.saveBatchRegistration(intent);
     return repo;
 }
 

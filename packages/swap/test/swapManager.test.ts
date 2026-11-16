@@ -948,6 +948,25 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(isRfqSwapTerminal(swap.state)).toBe(false);
     });
 
+    it("never finalizes a pending Arkade claim, whose trader also holds the L1 refund", async () => {
+        const s = spies();
+        let finalized = false;
+        await drive({
+            spies: s,
+            indexer: lockupClaimed(),
+            chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME }),
+            install: {
+                ...s.callbacks,
+                pendingClaims: async () => [CLAIM_TXID],
+                finalizeClaim: async () => {
+                    finalized = true;
+                },
+            },
+        });
+
+        expect(finalized).toBe(false);
+    });
+
     it("never finalizes on the Arkade deadline while the L1 half is still funded", async () => {
         // Mainline failure: trader funded L1, solver never funded the lockup
         // (`unknown`), and this leg's refund leaf opens after that deadline.
@@ -1062,6 +1081,28 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
 
         expect(s.lockupClaims).toHaveLength(0);
         expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/below the agreed/);
+    });
+
+    it("keeps the value gate when a spend of the lockup reveals P, scoped to Lightning receives", async () => {
+        // A Lightning receive reads `P` off the lockup; here the L1 refund path could take both
+        // legs, so the gate stays on until a claim of ours is recorded.
+        const claim = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
+        const s = spies();
+        const { swap } = await drive({
+            spies: s,
+            indexer: fakeIndexer({
+                vtxos: [...spentBy(claim.txid), { ...LOCKUP_OUTPOINT, vout: 1, spentBy: "" }],
+                txs: [claim],
+            }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                vtxos: () => [{ ...LOCKUP_OUTPOINT, vout: 1, value: LOCKUP_VALUE - 1 }],
+            }),
+            chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+        });
+
+        expect(s.lockupClaims).toHaveLength(0);
         expect(swap.blockedReason).toMatch(/below the agreed/);
     });
 
@@ -2475,6 +2516,380 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // `settled`, never state `claimed`
         expect(swap.state).toBe("settled");
         expect(await m.hasSwap(RFQ_ID)).toBe(false);
+    });
+
+    describe("a claim of ours that revealed P but was never finalized", () => {
+        const revealed = () => {
+            const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
+            return fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] });
+        };
+        const withFinalize = (
+            s: Spies,
+            finalizeClaim: () => Promise<void>,
+            pendingClaims: () => Promise<readonly string[]> = async () => [CLAIM_TXID],
+        ) => ({ ...s.callbacks, pendingClaims, finalizeClaim });
+        /** Lockup outputs the first contract read fails on, so a pass leaves them unclaimed. */
+        const remainderAfterAFailedRead = () => {
+            let reads = 0;
+            return fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                vtxos: () => {
+                    if (reads++ === 0) throw new Error("contract read failed");
+                    return [{ ...LOCKUP_OUTPOINT, value: 1_000 }];
+                },
+            });
+        };
+
+        it("is finalized, and the swap settles on the next read", async () => {
+            const s = spies();
+            let finalized = false;
+            const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const m = manager({
+                indexer: revealed(),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(
+                    s,
+                    async () => {
+                        finalized = true;
+                    },
+                    async () => (finalized ? [] : [CLAIM_TXID]),
+                ),
+            });
+            await pass(m, swap);
+            expect(finalized).toBe(true);
+            expect(swap.state).toBe("claimed");
+
+            await m.poll();
+            expect(swap.state).toBe("settled");
+        });
+
+        it("keeps a pending claim monitored while the fate read fails past the deadline", async () => {
+            const s = spies();
+            let attempts = 0;
+            const swap = receiveSwap();
+            const indexer = fakeIndexer();
+            indexer.getVtxos = async () => {
+                throw new Error("indexer unreachable");
+            };
+            const m = manager({
+                indexer,
+                now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    attempts += 1;
+                    throw new Error("finalize refused");
+                }),
+            });
+            await pass(m, swap);
+            await m.poll();
+
+            expect(attempts).toBe(2);
+            expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        });
+
+        it("does not end a claim on a read that learned nothing past the deadline", async () => {
+            // Finalized, or finalized with the answer lost: either way the claim is recorded.
+            for (const answerLost of [false, true]) {
+                const s = spies();
+                let finalized = false;
+                const swap = receiveSwap();
+                const indexer = fakeIndexer();
+                indexer.getVtxos = async () => {
+                    throw new Error("indexer unreachable");
+                };
+                const m = manager({
+                    indexer,
+                    now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+                    spies: s,
+                    install: withFinalize(
+                        s,
+                        async () => {
+                            finalized = true;
+                            if (answerLost) throw new Error("response lost");
+                        },
+                        async () => (finalized ? [] : [CLAIM_TXID]),
+                    ),
+                });
+                await pass(m, swap);
+                await m.poll();
+
+                expect(swap.claimTxid).toBe(CLAIM_TXID);
+                expect(isRfqSwapTerminal(swap.state)).toBe(false);
+            }
+        });
+
+        it("still treats P as public once the pending claim it saw is gone", async () => {
+            const s = spies();
+            let finalizedRemotely = false;
+            const swap = receiveSwap();
+            const m = manager({
+                indexer: fundedIndexer(),
+                contracts: remainderAfterAFailedRead(),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                // It landed, but the answer was lost.
+                install: withFinalize(
+                    s,
+                    async () => {
+                        finalizedRemotely = true;
+                        throw new Error("response lost");
+                    },
+                    async () => (finalizedRemotely ? [] : [CLAIM_TXID]),
+                ),
+            });
+            await pass(m, swap);
+            expect(swap.claimTxid).toBe(CLAIM_TXID);
+            expect(s.lockupClaims).toEqual([]);
+
+            await m.poll();
+            expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+        });
+
+        it("still treats P as public after a restart that followed a lost finalize answer", async () => {
+            const s = spies();
+            let finalizedRemotely = false;
+            let saved: LightningReceiveSwap | undefined;
+            const install: AvailableRfqSwapManagerCallbacks = {
+                ...withFinalize(
+                    s,
+                    async () => {
+                        finalizedRemotely = true;
+                        throw new Error("response lost");
+                    },
+                    async () => (finalizedRemotely ? [] : [CLAIM_TXID]),
+                ),
+                saveSwap: async (swap) => {
+                    saved = { ...swap } as LightningReceiveSwap;
+                },
+            };
+            const contracts = remainderAfterAFailedRead();
+            await pass(
+                manager({
+                    indexer: fundedIndexer(),
+                    contracts,
+                    now: BEFORE_DEADLINE,
+                    spies: s,
+                    install,
+                }),
+                receiveSwap(),
+            );
+            expect(saved?.claimTxid).toBe(CLAIM_TXID);
+
+            // A fresh process, from the saved record alone.
+            const restarted = manager({
+                indexer: fundedIndexer(),
+                contracts,
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install,
+            });
+            await pass(restarted, saved!);
+            expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+        });
+
+        it("does not read a pending spend that is not ours as P being public", async () => {
+            const s = spies();
+            let called = false;
+            const swap = receiveSwap();
+            const indexer = fundedIndexer();
+            const read = indexer.getVtxos.bind(indexer);
+            // The indexer names a pending spend, but no claim of ours rebuilds from it.
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
+                opts?.pendingOnly
+                    ? fakeIndexer({ vtxos: spentBy("ee".repeat(32)) }).getVtxos()
+                    : read();
+            const m = manager({
+                indexer,
+                contracts: fundedContracts(1_000),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(
+                    s,
+                    async () => {
+                        called = true;
+                    },
+                    async () => [],
+                ),
+            });
+            await pass(m, swap);
+
+            expect(called).toBe(false);
+            expect(s.lockupClaims).toEqual([]);
+            expect(swap.blockedReason).toMatch(/below the agreed/);
+        });
+
+        describe("P read off a spend of the lockup, with no recorded claimTxid", () => {
+            /** A claim that revealed `P` on output 0, beside a live output 1: the chain state after
+             * a crash (or a lost finalize response) before `claimTxid` reached storage. */
+            const partlyClaimed = () => {
+                const claim = spendOfLockup({
+                    script: RECEIVE_LOCKUP,
+                    conditionWitness: [PREIMAGE],
+                });
+                return fakeIndexer({
+                    vtxos: [...spentBy(claim.txid), { ...LOCKUP_OUTPOINT, vout: 1, spentBy: "" }],
+                    txs: [claim],
+                });
+            };
+            const nothingPending = (s: Spies) =>
+                withFinalize(
+                    s,
+                    async () => {},
+                    async () => [],
+                );
+
+            it("claims the rest with the value gate off", async () => {
+                const s = spies();
+                const swap = receiveSwap();
+                const m = manager({
+                    indexer: partlyClaimed(),
+                    contracts: fundedContracts(1_000, { vout: 1 }),
+                    now: BEFORE_DEADLINE,
+                    spies: s,
+                    install: nothingPending(s),
+                });
+                await pass(m, swap);
+
+                expect(swap.blockedReason).toBeUndefined();
+                expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+                expect(swap.claimTxid).toBe(CLAIM_TXID);
+            });
+
+            it("keeps the claimed label within the lag", async () => {
+                const s = spies();
+                const swap = receiveSwap({ state: "claimable" });
+                const m = manager({
+                    indexer: partlyClaimed(),
+                    contracts: fundedContracts(1_000, { vout: 1 }),
+                    now: REFUND_LOCKTIME,
+                    spies: s,
+                    install: nothingPending(s),
+                });
+                await pass(m, swap);
+
+                expect(swap.blockedReason).toBeUndefined();
+                expect(swap.state).toBe("claimable");
+                expect(s.lockupClaims).toEqual([]);
+            });
+
+            it("ends refunded, not failed, past the lag", async () => {
+                const s = spies();
+                const swap = receiveSwap({ state: "claimable", claimFailure: "response lost" });
+                const m = manager({
+                    indexer: partlyClaimed(),
+                    contracts: fundedContracts(1_000, { vout: 1 }),
+                    now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS,
+                    spies: s,
+                    install: nothingPending(s),
+                });
+                await pass(m, swap);
+
+                expect(swap.state).toBe("refunded");
+                expect(swap.failure).toBeUndefined();
+            });
+        });
+
+        it("keeps the swap unsettled while the finalize fails", async () => {
+            const s = spies();
+            const failures: string[] = [];
+            const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const m = manager({
+                indexer: revealed(),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    throw new Error("finalize refused");
+                }),
+            });
+            m.onSwapFailed((_swap, error) => failures.push(error.message));
+            await pass(m, swap);
+
+            expect(failures).toEqual(["finalize refused"]);
+            expect(swap.state).toBe("claimed");
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        });
+
+        it("finalizes a pending batch while the rest of the lockup is still open", async () => {
+            const s = spies();
+            const swap = receiveSwap();
+            const m = manager({
+                indexer: fundedIndexer(),
+                contracts: fundedContracts(1_000),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(s, async () => {}),
+            });
+            await pass(m, swap);
+
+            expect(swap.claimTxid).toBe(CLAIM_TXID);
+            // `P` is public, so the 1,000-sat remainder is claimed past the value gate.
+            expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+        });
+
+        it("still claims the rest of an open lockup while a finalize fails before the deadline", async () => {
+            const s = spies();
+            const failures: string[] = [];
+            const swap = receiveSwap();
+            const m = manager({
+                indexer: fundedIndexer(),
+                contracts: fundedContracts(1_000),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    throw new Error("finalize refused");
+                }),
+            });
+            m.onSwapFailed((_swap, error) => failures.push(error.message));
+            await pass(m, swap);
+
+            expect(failures).toContain("finalize refused");
+            expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+        });
+
+        it("keeps retrying a failing finalize on an open lockup past the deadline", async () => {
+            const s = spies();
+            let attempts = 0;
+            const swap = receiveSwap({ claimFailure: "connection reset" });
+            const m = manager({
+                indexer: fundedIndexer(),
+                contracts: fundedContracts(1_000),
+                now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    attempts += 1;
+                    throw new Error("finalize refused");
+                }),
+            });
+            await pass(m, swap);
+            await m.poll();
+
+            expect(attempts).toBe(2);
+            expect(isRfqSwapTerminal(swap.state)).toBe(false);
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        });
+
+        it("settles without calling it when nothing is pending", async () => {
+            const s = spies();
+            let called = false;
+            const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const m = manager({
+                indexer: revealed(),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(
+                    s,
+                    async () => {
+                        called = true;
+                    },
+                    async () => [],
+                ),
+            });
+            await pass(m, swap);
+
+            expect(called).toBe(false);
+            expect(swap.state).toBe("settled");
+        });
     });
 
     it("a claim that never lands ends refunded when the solver takes the lockup back", async () => {

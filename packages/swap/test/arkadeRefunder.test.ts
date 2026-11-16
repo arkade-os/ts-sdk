@@ -15,7 +15,7 @@ import {
     SingleKey,
     Transaction,
     getNetwork,
-    type ArkProvider,
+    type OperatorProvider,
     type IWallet,
     type Network,
 } from "@arkade-os/sdk";
@@ -56,7 +56,7 @@ const CHECKPOINT_TAPSCRIPT = hex.encode(
     }).script,
 );
 
-const fakeOperator = (): ArkProvider =>
+const fakeOperator = (): OperatorProvider =>
     ({
         getInfo: async () => ({
             checkpointTapscript: CHECKPOINT_TAPSCRIPT,
@@ -69,7 +69,7 @@ const fakeOperator = (): ArkProvider =>
             signedCheckpointTxs: checkpoints,
         }),
         finalizeTx: async () => {},
-    }) as unknown as ArkProvider;
+    }) as unknown as OperatorProvider;
 
 /** The lockup as the contract manager serves it: the registered row, one
  * normalized output per entry. The swept half arrives already tagged. */
@@ -137,7 +137,7 @@ const refunderWith = async (
         stored?: RfqSwapRecord | null;
         wallet?: IWallet;
         network?: () => Promise<Network>;
-        operator?: ArkProvider;
+        operator?: OperatorProvider;
     } = {},
 ) => {
     const repository = new InMemoryAssetSwapRepository();

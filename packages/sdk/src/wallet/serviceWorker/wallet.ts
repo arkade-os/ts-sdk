@@ -23,7 +23,7 @@ import {
     SendOnchainParams,
 } from "..";
 import {
-    ArkadeInfo,
+    OperatorInfo,
     INFO_FETCH_TIMEOUT_MS,
     OnchainCosignAmbiguousError,
     OnchainCosignUnsupportedError,
@@ -1100,7 +1100,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * Delegated to the worker, which holds the wallet that owns the connection.
      * The payload crosses raw — see {@link ResponseGetOperatorInfo} for why.
      */
-    async getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+    async getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
         const message: RequestGetOperatorInfo = {
             id: getRandomId(),
             tag: this.messageTag,
@@ -1129,7 +1129,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     /** @deprecated Use {@link getOperatorInfo}. */
-    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
         return this.getOperatorInfo(opts);
     }
 

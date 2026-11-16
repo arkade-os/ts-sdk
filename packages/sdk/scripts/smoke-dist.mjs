@@ -23,7 +23,10 @@
 //   5. Public package-name resolution: build a consumer dir with
 //      node_modules/@arkade-os/sdk → symlink to repo root, spawn
 //      Node CJS and ESM probes for each Node-safe public subpath.
-//   6. wallet/expo/background is validated structurally only — it
+//   6. compiler: the /compiler subpath compiles from CJS and ESM with the
+//      optional peer, and with the peer unresolvable the root still loads
+//      while compile() rejects with the install hint.
+//   7. wallet/expo/background is validated structurally only — it
 //      eagerly imports optional Expo peers so it cannot be Node-imported
 //      without them installed.
 
@@ -38,7 +41,7 @@ import {
     mkdtempSync,
 } from "node:fs";
 import { dirname, join, resolve, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 
@@ -198,6 +201,7 @@ const nodeSafe = [
     "./repositories/realm",
     "./worker/expo",
     "./wallet/expo",
+    "./compiler",
 ];
 
 const signerSessionProbe = `
@@ -265,7 +269,58 @@ if (failures.length) {
     }
 }
 
-// ── 6. wallet/expo/background: structural only ────────────────────────
+// ── 6. compiler peer: present and absent ─────────────────────────────
+section("compiler: compiles with the peer, hints without it");
+
+// Resolve the peer from an empty directory, so Node fails to find it exactly as
+// it would in an application that never installed it.
+const noPeerDir = join(tmp, "no-compiler");
+mkdirSync(noPeerDir);
+writeFileSync(
+    join(tmp, "hooks.mjs"),
+    `const parentURL = ${JSON.stringify(pathToFileURL(join(noPeerDir, "index.js")).href)};
+export function resolve(specifier, context, next) {
+    return next(specifier, specifier === "@arkade-os/compiler" ? { ...context, parentURL } : context);
+}`,
+);
+writeFileSync(
+    join(tmp, "no-compiler.mjs"),
+    `import { register } from "node:module";\nregister("./hooks.mjs", import.meta.url);`,
+);
+
+const noPeer = ["--import", pathToFileURL(join(tmp, "no-compiler.mjs")).href];
+
+const compilerProbe = (load, expected) => `
+(async () => {
+    const root = ${load}("@arkade-os/sdk");
+    if (Object.keys(root).length === 0) throw new Error("root SDK has no exports");
+    const { compile } = ${load}("@arkade-os/sdk/compiler");
+    const source = "contract A(pubkey user) { function spend(signature s) tapscript { require(older(serverExitDelay)); require(checkSig(s, user)); } }";
+    const outcome = await compile({ entry: "a.ark", files: { "a.ark": source } }).then(
+        (r) => (r.program.functions.spend ? "compiled" : "no spend function"),
+        (e) => (/npm install --save-exact @arkade-os\\/compiler/.test(e.message) ? "hinted" : e.stack),
+    );
+    if (outcome !== ${JSON.stringify(expected)}) throw new Error(outcome);
+})().catch((e) => {
+    console.error(e.message);
+    process.exit(1);
+});
+`;
+for (const [label, args] of [
+    ["CJS", ["-e", compilerProbe("require", "compiled")]],
+    ["ESM", ["--input-type=module", "-e", compilerProbe("await import", "compiled")]],
+    ["CJS without peer", [...noPeer, "-e", compilerProbe("require", "hinted")]],
+    [
+        "ESM without peer",
+        [...noPeer, "--input-type=module", "-e", compilerProbe("await import", "hinted")],
+    ],
+]) {
+    const r = runNode(args, consumer);
+    if (r.status === 0) ok(`compiler ${label}`);
+    else fail(`compiler ${label}: ` + (r.stderr || r.stdout).trim());
+}
+
+// ── 7. wallet/expo/background: structural only ────────────────────────
 section("wallet/expo/background: structural files exist");
 
 const bg = pkg.exports["./wallet/expo/background"];

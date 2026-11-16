@@ -38,7 +38,7 @@ const terminalIntent = (state: ArkIntentState): ArkIntent => ({
 describe("persistIntentSnapshot terminal stickiness", () => {
     it("does not clobber a succeeded intent with a later 'cancelled'", async () => {
         const repo = new InMemoryIntentRepository();
-        await repo.saveIntent(terminalIntent("batch_succeeded"));
+        await repo.saveBatchRegistration(terminalIntent("batch_succeeded"));
 
         // Simulates settle()'s catch after Batch.join already succeeded.
         await persistIntentSnapshot.call(
@@ -61,7 +61,7 @@ describe("persistIntentSnapshot terminal stickiness", () => {
 
     it("does not clobber a failed intent either", async () => {
         const repo = new InMemoryIntentRepository();
-        await repo.saveIntent(terminalIntent("batch_failed"));
+        await repo.saveBatchRegistration(terminalIntent("batch_failed"));
 
         await persistIntentSnapshot.call({ intentRepository: repo }, "i1", "cancelled", {}, {}, []);
 

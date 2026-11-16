@@ -6,7 +6,7 @@ import { Transaction } from "../../src/utils/transaction";
 import {
     ArkAddress,
     DefaultVtxo,
-    type ArkadeInfo,
+    type OperatorInfo,
     type ContractVtxo,
     type ExtendedCoin,
     type Identity,
@@ -33,7 +33,7 @@ const identity: Identity = {
 };
 
 // 0.0025/sat: 1000 sats -> 2.5, the fractional per-input fee this exercises.
-const arkInfo = (offchainInput: string): ArkadeInfo => ({
+const arkInfo = (offchainInput: string): OperatorInfo => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",

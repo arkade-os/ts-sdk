@@ -1,7 +1,7 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import type { Transaction } from "@scure/btc-signer";
 import type { EmulatorProvider } from "../providers/emulator";
-import { ArkadeInfo, OperatorProvider, Output, SettlementEvent } from "../providers/ark";
+import { OperatorInfo, OperatorProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
@@ -14,7 +14,7 @@ import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
     ContractRepository,
     WalletRepository,
-    IntentRepository,
+    BatchRegistrationRepository,
     VirtualTxRepository,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
@@ -286,7 +286,7 @@ export type StorageConfig = {
      * instance may settle against it: reconciliation deletes from the operator any
      * pending intent that instance is not settling itself.
      */
-    intentRepository?: IntentRepository;
+    intentRepository?: BatchRegistrationRepository;
     /**
      * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
      * VTXO's exit branch into it and prunes it on spend (both best-effort, see
@@ -1110,12 +1110,12 @@ export interface IReadonlyWallet {
      * `signerPubkey` or a delay into a covenant, where a stale snapshot could derive an address
      * the operator no longer co-signs for.
      *
-     * @see ArkadeInfo
+     * @see OperatorInfo
      */
-    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo>;
+    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo>;
 
     /** @deprecated Use {@link getOperatorInfo}. */
-    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo>;
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo>;
 
     /**
      * Operator-side chain reads for scripts the wallet does not own (e.g. a plugin's covenant);

@@ -11,7 +11,7 @@ export type BatchRegistrationState =
 
 /** Every registration state, in lifecycle order. Single source of truth so a new
  *  state is handled by every state-derived helper (terminal/non-terminal). */
-export const ALL_INTENT_STATES: readonly BatchRegistrationState[] = [
+export const ALL_BATCH_REGISTRATION_STATES: readonly BatchRegistrationState[] = [
     "waiting_to_submit",
     "waiting_for_batch",
     "batch_in_progress",
@@ -44,7 +44,7 @@ export interface BatchRegistration {
      * until the proof is registered with the operator.
      */
     registrationId?: string;
-    state: ArkIntentState;
+    state: BatchRegistrationState;
     validFrom?: number;
     validUntil?: number;
     createdAt: number;
@@ -89,13 +89,17 @@ export type IntentPageFilter = BatchRegistrationPageFilter;
 export interface BatchRegistrationRepository extends AsyncDisposable {
     readonly version: 1;
     clear(): Promise<void>;
-    /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
-    saveIntent(intent: ArkIntent): Promise<void>;
-    /** Bounded intents in `intentTxId` order, not chronological order; `after` is exclusive. */
-    getIntentsPage(
-        filter: IntentPageFilter | undefined,
+    /** Upsert by primary key; implementation sets `updatedAt = Date.now()`. */
+    saveBatchRegistration(intent: BatchRegistration): Promise<void>;
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent: BatchRegistrationRepository["saveBatchRegistration"];
+    /** Bounded registrations in primary key order, not chronological order; `after` is exclusive. */
+    getBatchRegistrationsPage(
+        filter: BatchRegistrationPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>>;
+    ): Promise<PageResult<BatchRegistration>>;
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage: BatchRegistrationRepository["getBatchRegistrationsPage"];
     /**
      * Outpoints held by NON-terminal registrations — `waiting_to_submit`,
      * `waiting_for_batch`, and `batch_in_progress` — to exclude from spendable
@@ -111,11 +115,11 @@ export interface BatchRegistrationRepository extends AsyncDisposable {
     getLockedVtxoOutpoints(): Promise<Outpoint[]>;
 }
 
-/** @deprecated Use {@link collectBatchRegistrations}. */
-export const collectIntents = (
-    repository: Pick<IntentRepository, "getIntentsPage">,
-    filter?: IntentPageFilter,
-) => collectPages((page: PageRequest) => repository.getIntentsPage(filter, page));
+/** Collects in primary key order; sort by `createdAt` for chronological display. */
+export const collectBatchRegistrations = (
+    repository: Pick<BatchRegistrationRepository, "getBatchRegistrationsPage">,
+    filter?: BatchRegistrationPageFilter,
+) => collectPages((page: PageRequest) => repository.getBatchRegistrationsPage(filter, page));
 
 /**
  * Enforce the "registrationId unique when present" contract for backends without a
@@ -171,5 +175,5 @@ export type IntentRepository = BatchRegistrationRepository;
 export const isTerminalIntentState = isTerminalBatchRegistrationState;
 /** @deprecated Use {@link BATCH_REGISTRATION_TERMINAL_STATES}. */
 export const INTENT_TERMINAL_STATES = BATCH_REGISTRATION_TERMINAL_STATES;
-/** Collects in primary key order; sort by `createdAt` for chronological display. */
-export const collectBatchRegistrations = collectIntents;
+/** @deprecated Use {@link collectBatchRegistrations}. */
+export const collectIntents = collectBatchRegistrations;

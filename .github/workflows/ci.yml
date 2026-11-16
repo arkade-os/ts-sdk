@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit dependencies
+        run: pnpm audit --audit-level high
+
       - name: Lint
         run: pnpm run lint
 
@@ -76,6 +79,7 @@ jobs:
             test_files: >-
               test/e2e/asset.test.ts
               test/e2e/asset-covenant.test.ts
+              test/e2e/arkade-renew.test.ts
               test/e2e/arkadeCash.test.ts
               test/e2e/liquidation.test.ts
           - package: sdk

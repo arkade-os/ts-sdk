@@ -16,7 +16,7 @@ import {
 import {
     OnchainCosignAmbiguousError,
     OnchainCosignRejectedError,
-    RestArkProvider,
+    RestOperatorProvider,
 } from "../../src/providers/ark";
 import { Ramps } from "../../src/wallet/ramps";
 import { convertVtxo } from "../../src/wallet/vtxo";
@@ -297,7 +297,7 @@ describe("cosign outcomes through Ramps.offboardExact", () => {
             "fetch",
             vi.fn(async () => new Response(body, { status })),
         );
-        const rest = new RestArkProvider("http://ark");
+        const rest = new RestOperatorProvider("http://ark");
         arkProvider.cosignOnchainTx.mockImplementation((psbt: string) =>
             rest.cosignOnchainTx(psbt),
         );

@@ -24,7 +24,7 @@ import {
     ReadonlyWallet,
     SingleKey,
     VHTLCV2ContractHandler,
-    type ArkProvider,
+    type OperatorProvider,
     type ExtendedVirtualCoin,
     type IWallet,
     type IndexerProvider,
@@ -331,7 +331,9 @@ const realWallet = async () => {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkProvider: { getInfo: async () => operatorInfo() } as Partial<ArkProvider> as ArkProvider,
+        arkProvider: {
+            getInfo: async () => operatorInfo(),
+        } as Partial<OperatorProvider> as OperatorProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],

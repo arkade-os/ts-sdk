@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-    CachingArkProvider,
+    CachingOperatorProvider,
     FetchError,
     OnchainCosignAmbiguousError,
     OnchainCosignRejectedError,
     OnchainCosignUnsupportedError,
-    RestArkProvider,
+    RestOperatorProvider,
 } from "../../src";
 
 const okJson = (body: unknown, status = 200) =>
@@ -23,17 +23,17 @@ const cosignWith = (response: Response | Error) => {
             ? vi.fn().mockRejectedValue(response)
             : vi.fn().mockResolvedValue(response);
     vi.stubGlobal("fetch", fetchMock);
-    const provider = new RestArkProvider("http://ark");
+    const provider = new RestOperatorProvider("http://ark");
     return { fetchMock, provider, err: provider.cosignOnchainTx("x").catch((e) => e) };
 };
 
-describe("RestArkProvider.cosignOnchainTx", () => {
+describe("RestOperatorProvider.cosignOnchainTx", () => {
     afterEach(() => vi.unstubAllGlobals());
 
     it("posts the psbt and returns the txid", async () => {
         const fetchMock = vi.fn().mockResolvedValue(okJson({ txid: "ab".repeat(32) }));
         vi.stubGlobal("fetch", fetchMock);
-        const txid = await new RestArkProvider("http://ark").cosignOnchainTx("cHNidP8=");
+        const txid = await new RestOperatorProvider("http://ark").cosignOnchainTx("cHNidP8=");
         expect(txid).toBe("ab".repeat(32));
         const [url, init] = fetchMock.mock.calls[0];
         expect(url).toBe("http://ark/v1/tx/onchain/cosign");
@@ -45,7 +45,7 @@ describe("RestArkProvider.cosignOnchainTx", () => {
         async (status) => {
             const fetchMock = vi.fn().mockResolvedValue(new Response("Not Found", { status }));
             vi.stubGlobal("fetch", fetchMock);
-            const p = new RestArkProvider("http://ark");
+            const p = new RestOperatorProvider("http://ark");
             await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(
                 OnchainCosignUnsupportedError,
             );
@@ -64,7 +64,7 @@ describe("RestArkProvider.cosignOnchainTx", () => {
                 : new Response("Not Found", { status: 404 }),
         );
         vi.stubGlobal("fetch", fetchMock);
-        const p = new RestArkProvider("http://ark");
+        const p = new RestOperatorProvider("http://ark");
         await p.getInfo();
         await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
         await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
@@ -109,13 +109,13 @@ describe("RestArkProvider.cosignOnchainTx", () => {
         expect(await err).toBeInstanceOf(OnchainCosignAmbiguousError);
     });
 
-    it("CachingArkProvider forwards", async () => {
+    it("CachingOperatorProvider forwards", async () => {
         const inner = { cosignOnchainTx: vi.fn().mockResolvedValue("t") } as any;
-        expect(await new CachingArkProvider(inner).cosignOnchainTx!("p")).toBe("t");
+        expect(await new CachingOperatorProvider(inner).cosignOnchainTx!("p")).toBe("t");
         expect(inner.cosignOnchainTx).toHaveBeenCalledWith("p");
     });
 
-    it("CachingArkProvider omits cosignOnchainTx when the inner provider lacks it", () => {
-        expect(new CachingArkProvider({} as any).cosignOnchainTx).toBeUndefined();
+    it("CachingOperatorProvider omits cosignOnchainTx when the inner provider lacks it", () => {
+        expect(new CachingOperatorProvider({} as any).cosignOnchainTx).toBeUndefined();
     });
 });

@@ -10,7 +10,7 @@ import {
     Ramps,
     Coin,
     VirtualCoin,
-    RestArkProvider,
+    RestOperatorProvider,
     ArkError,
     ArkAddress,
     buildOffchainTx,
@@ -969,7 +969,7 @@ describe("Common", () => {
             });
 
             it("should parse ark errors", { timeout: 60000 }, async () => {
-                const provider = new RestArkProvider("http://localhost:7070");
+                const provider = new RestOperatorProvider("http://localhost:7070");
                 try {
                     await provider.submitTx("invalid", ["invalid"]);
                 } catch (error: any) {
@@ -983,7 +983,7 @@ describe("Common", () => {
             });
 
             it("should register and delete intents", { timeout: 60000 }, async () => {
-                const provider = new RestArkProvider("http://localhost:7070");
+                const provider = new RestOperatorProvider("http://localhost:7070");
 
                 // Create fresh wallet instances for this test
                 const alice = await factory();
@@ -1068,7 +1068,7 @@ describe("Common", () => {
                 expect(finalized).toHaveLength(0);
                 expect(pending).toHaveLength(0);
 
-                const arkProvider = new RestArkProvider("http://localhost:7070");
+                const arkProvider = new RestOperatorProvider("http://localhost:7070");
                 const serverInfo = await arkProvider.getInfo();
                 const checkpointTapscript = CSVMultisigTapscript.decode(
                     hex.decode(serverInfo.checkpointTapscript),
@@ -1228,7 +1228,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 1 — No delegate
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1246,7 +1246,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 2 — Add delegate
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1316,7 +1316,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 3 — Remove delegate
         const wallet3 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1397,7 +1397,7 @@ describe("Cross-contract spending", () => {
         // Step 1 — No delegate: receive 1000 to default address
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1415,7 +1415,7 @@ describe("Cross-contract spending", () => {
         // Step 2 — Enable delegate: receive 1000 to delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1521,7 +1521,7 @@ describe("Cross-contract spending", () => {
         // Step 1 — No delegate: receive 1000 to default address
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1533,7 +1533,7 @@ describe("Cross-contract spending", () => {
         // Step 2 — Enable delegate: receive 1000 to delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),

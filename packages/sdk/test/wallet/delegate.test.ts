@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { hex } from "@scure/base";
 import { DelegateManagerImpl, findDestinationOutputIndex } from "../../src/wallet/delegate";
-import type { ArkadeInfo, Identity, TapLeaves } from "../../src";
+import type { OperatorInfo, Identity, TapLeaves } from "../../src";
 import type { DelegateProvider } from "../../src/providers/delegate";
 import {
     TEST_DEFAULT_ARK_ADDRESS,
@@ -46,7 +46,7 @@ describe("default delegation schedule", () => {
             network: "mutinynet",
             sessionDuration,
             signerPubkey: TEST_SERVER_PUB_KEY_HEX,
-        } as ArkadeInfo;
+        } as OperatorInfo;
         const identity = { sign: async (tx: unknown) => tx } as unknown as Identity;
         const coin = createMockContractVtxo(hex.encode(testDelegateScript.pkScript), {
             value: 1_000_000,

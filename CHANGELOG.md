@@ -110,7 +110,83 @@ style and have not been backfilled.
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.
 
+- **`waitForIncomingFunds` takes a `NotifiesIncomingFunds` capability instead
+  of the `Wallet` class.** The new exported interface declares only
+  `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
+  helper. Type-level only, non-breaking.
+
+### Bug Fixes
+
+- **`waitForIncomingFunds` no longer hangs when the subscription
+  breaks.** The helper calls the unsubscribe function that the caller's
+  `notifyIncomingFunds` returns. When that function threw after the funds
+  arrived, the promise was left pending forever, past its timeout and with its
+  abort listener already removed. Teardown now runs inside a guard, so the
+  promise still settles with the funds. A `notifyIncomingFunds` that throws
+  synchronously, before it returns its promise, is routed through the same
+  cancel path, so the timeout timer and the abort listener are cleared instead
+  of leaking. No breaking change.
+
+- **`@arkade-os/swap`: a claim arkd accepted but never finalized is finalized
+  before the swap settles.** On the two-step path (`oneShotSubmit: false`, or an
+  operator without one-shot), a claim whose finalize was lost has still
+  published `P`: the solver can settle the payer with it, while the trader's
+  sats do not exist until the claim is finalized, and only the trader can
+  finalize it. A Lightning receive leg read that `P` as `settled` and never
+  retried the finalize. `createSwapClient` now finalizes its own pending claim
+  whenever the lockup holds one (the lockup's `pendingOnly` outputs, checkpoints
+  rebuilt from the claim leaf under the operator's current or a deprecated key,
+  the server's signatures carried over from the indexer's copy); a failed
+  finalize ends the pass and is retried, so no deadline closes the swap first.
+  The claim is recorded as the swap's `claimTxid` before the finalize is sent,
+  so a lost response cannot put the rest of the lockup back behind
+  the value gate. A pending spend that is not ours is left to its submitter, and
+  counts as `P` being public only if it reveals `P`. `onchain_receive` is left as it was: its
+  trader also holds the L1 refund, which finalizing could double.
+  `RfqSwapManagerCallbacks` gains optional `pendingClaims` (keyless) and
+  `finalizeClaim`; without both the manager settles as before.
+  `readLockupFate` also reads `P` off the ark tx: arkd up to v0.9.23 stores a
+  two-step claim's checkpoint without the condition witness until finalize, so
+  a funder saw `unknown` for a claim whose `P` was already public. No breaking
+  change.
+
+- **`@arkade-os/swap`: a Lightning receive no longer forgets that `P` is public
+  after a crash.** The value gate was dropped only when the swap's `claimTxid`
+  was set, and that field reached storage only at the end of a pass. A crash
+  between a claim landing and that save (a `claimLockup`, or a finalize of a
+  pending claim), or a two-step claim whose finalize response was lost,
+  restarted with the rest of a partly claimed lockup behind the gate. The
+  trader then left that rest to the solver's reclaim and the swap still read
+  `settled`. `readLockupFate` now reports a hash-verified `P` on a lockup that
+  still has live outputs (`open` gains an optional `preimage`, read only for the
+  receiver), and a Lightning receive drops the gate on it. A spend that does not
+  reveal `P` still counts for nothing, and `onchain_receive` is unchanged. No
+  breaking change.
+
 ### Added
+
+- **`@arkade-os/sdk/compiler` compiles Arkade source into a `Program`.** Contracts written in Arkade had to be compiled separately and their artifact JSON read with `programFromArtifact`. `compile({ entry, files }, { optimize?, debug? })` runs the installed `@arkade-os/compiler` over an in-memory project with relative imports and resolves to `{ program, artifact, debug, diagnostics }`: the `program` goes straight to `client.contract(program, args)`, the raw `artifact` keeps the source bundle, compiler version and fingerprint, `debug` is the compiler's debug file, and `diagnostics` carries the warnings. Each covenant segment of `program` carries its `sourceMap`, so a failing opcode can be traced back to its statement and `require()` message; `{ debug: false }` leaves the file and the maps out. `programFromArtifact(artifact, debug?)` attaches an `arkadec --debug` file the same way and refuses one whose fingerprint does not match the artifact's. Source errors reject with `CompileError`, whose `diagnostics` list every located error. The compiler is an optional peer (`^0.1.0-rc.1`) loaded on the first call, so the root SDK and every other subpath load without it; calling `compile` without it rejects with the install command, while initialization and compilation errors pass through unchanged. The subpath ships ESM and CJS builds; the CJS build loads the ESM-only compiler through `import()`.
+
+- **Identities from a passkey.** `MnemonicIdentity.createPasskey({ rp, userName })`
+  creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
+  `MnemonicIdentity.fromPasskey({ rpId })` derives the same words again on any device
+  the passkey syncs to. Both return the identity, the words (for the app to offer as a
+  backup) and the credential id. The derivation follows Breez's seedless-restore
+  implementation: a `label` (default `DEFAULT_PASSKEY_LABEL`, `"Default"`) is the PRF
+  salt as its UTF-8 bytes, unnormalized, and the first 16 bytes of the PRF output are
+  the BIP39 entropy for 12 words, as Breez's SDK derives them, so the same passkey and
+  label give the same words as a Breez wallet; each label is a separate wallet.
+  `words: 24` instead takes all 32 bytes, as the spec text's `BIP39(root_key)` reads.
+  Without `credentialIds`, the passkey the user picks decides the wallet. A passkey is
+  used once right after creation and refused (`PasskeyUnconfirmed`) if that use fails
+  for any reason, with the underlying error as `cause`, and refused (`PrfUnavailable`)
+  if it gives no 32-byte secret or one different from the secret it returned at
+  creation (an authenticator that returns none at creation has nothing to compare
+  against); both carry the new passkey's `credentialId`, so an app can fall back to
+  that passkey. The
+  primitives (`createPrfPasskey`, `evaluatePrf`, `mnemonicFromPrf`, `prfSupport`) are
+  exported; every call that prompts takes a `client` in place of
+  `navigator.credentials`, and `mnemonicFromPrf` refuses a secret that is not 32 bytes.
 
 - **Onchain coin spends come from the arkd indexer first.** arkd v0.9.22
   records the onchain coins whose spend it signed or watched (boarding inputs
@@ -308,6 +384,39 @@ style and have not been backfilled.
   `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
   longer reports a txid it did not submit.
 
+- **`renewProgramContractOutputs` renews covenant VTXOs without an owner
+  key.** A covenant coin whose owner is offline was swept at batch expiry unless the
+  app hand-rolled the intent, the emulator packet and a batch handler that
+  still demanded a signer. The helper registers one intent for any number of
+  coins, each through a covenant function that lets proof input k+1 through
+  to output k (`renew` by default) with its assets, has the emulator sign the
+  proof, and joins the batch. `createArkadeBatchHandler` takes `undefined` as
+  its signer for this: forfeits go to the emulator unsigned, and boarding
+  inputs and inputs without an Arkade script, whose forfeits need a key, are
+  refused when the handler is built. A function whose leaf names any key but
+  the server's is refused before anything is registered, since no owner signs
+  a renewal, and so are a coin its contract does not lock and a server
+  provider lacking a method the renewal or its batch calls. The caller's `signal` ends the wait for a batch; one aborted
+  before registration registers nothing. A renewal that fails or is aborted
+  after registering deletes its intent with a delete proof the emulator signs
+  up front alongside the registration, as `Wallet.settle` does; a left intent
+  held the coins until arkd dropped it, failing retries with "duplicated
+  input". `EmulatorProvider.submitIntent` accepts a delete message for this.
+  Once the forfeits are being sent the signal is ignored and the intent kept,
+  and the renewal waits for the batch's outcome: arkd can commit it by then,
+  and an abort would report spent coins as unrenewed and lose the commitment
+  txid. It subscribes to batch events before
+  registering, as `Wallet.settle` does, so a batch that starts while the
+  intent is being registered is not missed; the new `Batch.prime` does the
+  subscribing for both. A renewal the server would charge an intent fee for
+  is refused before anything is signed: the covenant keeps each output equal
+  to its input, so no fee can be paid and arkd would reject the intent. A
+  renew leaf's condition witness goes on the proof and on the forfeits, where
+  arkd evaluates it. A leaf whose witness names a call input, which a renewal
+  cannot supply, or that has a CSV timelock, which arkd refuses as a forfeit
+  path, is refused before anything is signed. The renewal's asset packet is
+  built by `createAssetPacket`, as a wallet send's is.
+
 ### Changed
 
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
@@ -329,6 +438,11 @@ style and have not been backfilled.
   `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
   `ark-intent-proof-message` tag does not change, because the operator verifies it.
 
+- **The provider source uses `Proof` and `SignedProof`.** `OperatorProvider`,
+  `CachingOperatorProvider` and the batch registration reconciliation no
+  longer name the deprecated `Intent` and `SignedIntent`. The types are the
+  same, so nothing changes for callers.
+
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
   at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
@@ -346,6 +460,21 @@ style and have not been backfilled.
   stored data does not change.
 
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
+
+- **`IntentRepository` methods are named after batch registrations.**
+  `saveIntent` becomes `saveBatchRegistration`, and `getIntentsPage` becomes
+  `getBatchRegistrationsPage`. The SDK calls the new names, so a custom
+  repository must add them, and creating a wallet with a repository that lacks
+  them now throws. The old names stay on the interface and on the InMemory,
+  IndexedDB, SQLite and Realm classes as deprecated methods.
+  `collectIntents` now reads through `getBatchRegistrationsPage`, so a plain
+  object passed to it must have that method.
+
+- **The SDK uses the batch registration names in its own code.** Internal code
+  no longer refers to `ArkIntent`, `IntentRepository`, `collectIntents` or the
+  other deprecated batch registration names. `collectBatchRegistrations` now
+  holds the implementation, and `collectIntents` is its alias. Every deprecated
+  name stays exported and behaves as before.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
@@ -367,6 +496,11 @@ style and have not been backfilled.
   `CachingArkProvider` and `ExpoArkProvider` take the matching names, and
   `Wallet.create` takes `operatorProvider`. Every old name stays as a deprecated
   alias. Passing both `operatorProvider` and `arkProvider` throws.
+
+- **The SDK uses `OperatorInfo` in its own code.** Internal code and the
+  published `.d.ts` name `OperatorInfo`, `GetOperatorInfoOptions` and
+  `networkFromOperatorInfo` instead of their deprecated aliases. The types are
+  the same, so nothing changes for callers.
 
 - **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
   `[]` with no wallet, which a caller could not tell from a wallet with no
@@ -393,6 +527,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`createArkadeBatchHandler` writes an input's condition witness on its
+  forfeit.** arkd evaluates a condition leaf against the forfeit's
+  ConditionWitness field when it verifies the forfeit's signatures. The proof
+  carried it but the forfeit never did, so a batch spending a coin through a
+  condition leaf failed with `INVALID_FORFEIT_TXS`. An input's `extraWitness`
+  now goes on its forfeit too.
 
 - **Expired boarding UTXOs held under a deprecated signer are now swept.**
   After the operator rotated its signer, deposits made to a boarding address on
@@ -1367,6 +1507,36 @@ style and have not been backfilled.
   it benefits too: a settled output cost three or four sequential Electrum
   round trips, plus a fetch of every other transaction at an address that
   received more than one deposit. Output is unchanged.
+
+### Internal
+
+- **Dev-tooling dependency overrides raised past every high and critical
+  advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
+  development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and
+  `async-storage` peer installs, never in the SDK's runtime `dependencies`.
+  The `pnpm-workspace.yaml` overrides for `@xmldom/xmldom`, `node-forge`,
+  `vite`, `brace-expansion`, `shell-quote`, `js-yaml` and `markdown-it` now
+  sit at the patched floors, and new ones cover `tinypool` (prototype-pollution
+  RCE gadget, pulled in by `vitest`), `image-size`, `browserslist`,
+  `compression`, `zod`, `nanoid` and `source-map-js`. `pnpm audit --audit-level high` now
+  reports none. Published packages are unchanged.
+- **`vitest` and `@vitest/coverage-v8` move to 4.1.12.** Two moderate
+  advisories on `vitest` and `@vitest/mocker` (path traversal and code injection
+  through an unauthenticated manual mock) are fixed only from 4.1.11 on. The
+  move also retires the `tinypool` override, since 4.x no longer depends on
+  `tinypool`. One `syncOnchain` test now searches the `console.warn` calls
+  instead of reading the first, because a background sync left over from the
+  previous test can warn into the same spy, and six test files have type
+  annotations adjusted for vitest 4's stricter mock typings. No source change.
+- **Overrides cleaned up and an audit gate added to CI.** `markdown-it` is
+  capped below 15, because the `>=14.3.3` floor resolved to 15, which
+  needs `linkify-it` 6 and crashed `typedoc`. `minimatch` moves to 11 for every
+  consumer except `typedoc`, which calls `matchOne`, removed in 11, so it keeps
+  10.x. That leaves one moderate advisory on `minimatch` with no fix reachable
+  through `typedoc`. `glob` 13 moves to 14. The `zod` override is scoped to
+  `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
+  audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
+  high` and fails on any new high or critical advisory.
 
 ## [0.4.77] - 2026-09-30
 

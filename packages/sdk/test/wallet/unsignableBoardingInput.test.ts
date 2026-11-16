@@ -5,7 +5,7 @@ import {
     MnemonicIdentity,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    RestArkProvider,
+    RestOperatorProvider,
 } from "../../src";
 import { jsonResponse } from "../helpers/response";
 
@@ -70,7 +70,7 @@ describe("unsignable boarding input diagnostic", () => {
         const wallet = await Wallet.create({
             identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
             walletMode: "hd",
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),
@@ -96,7 +96,7 @@ describe("unsignable boarding input diagnostic", () => {
         const wallet = await Wallet.create({
             identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
             walletMode: "hd",
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),

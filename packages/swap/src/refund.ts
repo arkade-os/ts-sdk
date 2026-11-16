@@ -238,8 +238,12 @@ export interface LockupSpend {
 }
 
 export type LockupFate =
-    /** At least one output at the lockup is still unspent. Not over. */
-    | { fate: "open" }
+    /**
+     * At least one output at the lockup is still unspent. Not over. `preimage` is `P`,
+     * hash-verified, read off a spent output while another is still live: the lockup is partly
+     * claimed and `P` is public. Read only for the receiver.
+     */
+    | { fate: "open"; preimage?: Uint8Array }
     /** Spent by a witness carrying a preimage that HASHES to the quote's `payment_hash`. */
     | { fate: "claimed"; preimage: Uint8Array; spends: readonly LockupSpend[] }
     /** Every lockup output was spent through a recognized refund leaf. `leafScripts` are
@@ -317,7 +321,9 @@ export async function readLockupFate(
         /** `sha256(P)`, hex — the quote's `payment_hash`. */
         paymentHash: string;
         /** Read for the lockup's receiver, who holds no leaf that recovers a swept output:
-         * once a claim revealed `P`, swept outputs no longer hold the lockup `open`. */
+         * once a claim revealed `P`, swept outputs no longer hold the lockup `open`. It also
+         * enables the partly-claimed read: `open.preimage`, `P` found on a spent output while
+         * another is still live. */
         receiver?: boolean;
     },
 ): Promise<LockupFate> {
@@ -336,16 +342,16 @@ export async function readLockupFate(
     const spentBy = new Map<string, LockupSpend>();
     let everySpendNamed = true;
     let sweptLeft = false;
+    let live = false;
     for (const vtxo of all) {
         // Not `spentBy` alone: the wire permits `isSpent: true` with an EMPTY `spentBy`.
         if (!isVtxoSpent(vtxo)) {
-            if (!(input.receiver && vtxo.isSwept)) return { fate: "open" };
-            sweptLeft = true;
+            if (input.receiver && vtxo.isSwept) sweptLeft = true;
+            else live = true;
             continue;
         }
         // Truthiness, not presence: an unnamed `spentBy` is "". When set it names the
-        // CHECKPOINT tx, which carries the lockup leaf's witness (the ark tx spends the
-        // checkpoint, so it is the wrong place to look).
+        // CHECKPOINT tx, which carries the lockup leaf's witness.
         if (vtxo.spentBy)
             spentBy.set(vtxo.spentBy, {
                 checkpointTxid: vtxo.spentBy,
@@ -355,8 +361,22 @@ export async function readLockupFate(
         else everySpendNamed = false;
     }
 
+    // Send legs, and a lockup with nothing spent, have no `P` to look for: no extra read.
+    if (live && (!input.receiver || spentBy.size === 0)) return { fate: "open" };
+
     const spends = [...spentBy.values()];
-    const { txs } = await indexer.getVirtualTxs([...spentBy.keys()]);
+    // The ark tx carries `P` from submit; arkd before v0.9.24 stores a two-step claim's
+    // checkpoint without it until a finalize the claimer may never send.
+    const arkTxids = new Set(spends.flatMap((spend) => (spend.txid ? [spend.txid] : [])));
+    let txs: string[];
+    try {
+        ({ txs } = await indexer.getVirtualTxs([...new Set([...spentBy.keys(), ...arkTxids])]));
+    } catch (error) {
+        // A live output keeps the lockup `open` whatever the spends say: an outage, or a
+        // `private` operator, must not turn that into `unknown`.
+        if (live) return { fate: "open" };
+        throw error;
+    }
     const refunded = new Set<string>();
     const leafScripts = new Set<string>();
     for (const raw of txs) {
@@ -367,19 +387,35 @@ export async function readLockupFate(
             continue; // undecodable blob: nothing learned from it
         }
         // Bound by the PSBT's own id (witness cannot change a taproot txid), not by position.
-        if (!spentBy.has(tx.id)) continue;
+        const checkpoint = spentBy.has(tx.id);
+        if (!checkpoint && !arkTxids.has(tx.id)) continue;
         for (let i = 0; i < tx.inputsLength; i++) {
             const spent = tx.getInput(i);
             if (!spent.txid) continue;
             // Same txid convention as the indexer (cf. `assertCheckpointsMatchInputs`).
             const txid = hex.encode(spent.txid);
+            if (!checkpoint) {
+                // An ark tx spends each checkpoint at vout 0; it proves a claim, never a refund.
+                if (spent.index !== 0 || !spentBy.has(txid)) continue;
+                const preimage = candidateWitnessItems(tx, i).find((candidate) =>
+                    hashesTo(candidate, input.paymentHash),
+                );
+                if (preimage) {
+                    return live
+                        ? { fate: "open", preimage }
+                        : { fate: "claimed", preimage, spends };
+                }
+                continue;
+            }
             const vtxo = all.find(
                 (vtxo) => vtxo.txid === txid && vtxo.vout === spent.index && vtxo.spentBy === tx.id,
             );
             if (!vtxo) continue;
             for (const candidate of candidateWitnessItems(tx, i)) {
                 if (hashesTo(candidate, input.paymentHash)) {
-                    return { fate: "claimed", preimage: candidate, spends };
+                    return live
+                        ? { fate: "open", preimage: candidate }
+                        : { fate: "claimed", preimage: candidate, spends };
                 }
             }
             const leafScript = refundLeafScript(tx, i);
@@ -390,7 +426,7 @@ export async function readLockupFate(
         }
     }
 
-    if (sweptLeft) return { fate: "open" };
+    if (live || sweptLeft) return { fate: "open" };
     return everySpendNamed && all.every((vtxo) => refunded.has(`${vtxo.txid}:${vtxo.vout}`))
         ? { fate: "returned", spends, leafScripts: [...leafScripts] }
         : { fate: "unknown" };

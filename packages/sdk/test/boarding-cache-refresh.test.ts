@@ -3,7 +3,7 @@ import { Address, OutScript } from "@scure/btc-signer";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
     isVtxoSpent,
-    RestArkProvider,
+    RestOperatorProvider,
     toXOnlySignerHex,
     type Coin,
     type InMemoryWalletRepository,
@@ -101,7 +101,7 @@ async function setup(hd: boolean) {
 
     const handler = new WalletMessageHandler();
     await handler.start(
-        { readonlyWallet: wallet, arkProvider: new RestArkProvider("http://localhost:7070") },
+        { readonlyWallet: wallet, arkProvider: new RestOperatorProvider("http://localhost:7070") },
         { walletRepository },
     );
     onTestFinished(() => handler.stop());

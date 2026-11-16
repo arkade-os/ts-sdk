@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, asset, type ArkadeInfo, type IWallet } from "@arkade-os/sdk";
+import { ArkAddress, asset, type OperatorInfo, type IWallet } from "@arkade-os/sdk";
 import { requestArkadeSwap, type RfqTransport } from "../src/rfq";
 import { acceptWallet } from "./client/fixtures";
 import { decodeOffer, deriveOffer } from "../src/offer";
@@ -14,7 +14,7 @@ const info = {
     network: "regtest",
     signerPubkey: `02${hex.encode(server)}`,
     unilateralExitDelay: 144n,
-} as ArkadeInfo;
+} as OperatorInfo;
 const params = {
     wantAmount: 50_000n,
     wantAsset: asset.AssetId.fromString("aa".repeat(32) + "0000"),

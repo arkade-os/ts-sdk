@@ -4,7 +4,7 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     type OnchainProvider,
 } from "../src";
 import { jsonResponse } from "./helpers/response";
@@ -97,7 +97,7 @@ describe("getBoardingTxs — sweep correlation without outspend txid", () => {
         const wallet = await Wallet.create({
             identity: SingleKey.fromHex(SINGLEKEY_HEX),
             walletMode: "static",
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),
@@ -161,7 +161,7 @@ describe("getBoardingTxs — spend status of the boarding output only", () => {
         const wallet = await Wallet.create({
             identity: SingleKey.fromHex(SINGLEKEY_HEX),
             walletMode: "static",
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
@@ -225,7 +225,7 @@ describe("getBoardingTxs — spend status of the boarding output only", () => {
         const wallet = await Wallet.create({
             identity: SingleKey.fromHex(SINGLEKEY_HEX),
             walletMode: "static",
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
@@ -282,7 +282,7 @@ describe("getBoardingTxs — spender already in the address history", () => {
         return Wallet.create({
             identity: SingleKey.fromHex(SINGLEKEY_HEX),
             walletMode: "static",
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             onchainProvider,
             storage: {
                 walletRepository: new InMemoryWalletRepository(),

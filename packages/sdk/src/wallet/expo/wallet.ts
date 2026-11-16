@@ -22,7 +22,7 @@ import type {
     SendParams,
     SendOnchainParams,
 } from "..";
-import type { ArkadeInfo, SettlementEvent } from "../../providers/ark";
+import type { OperatorInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type {
     AddressAllocationCapable,
@@ -312,12 +312,12 @@ export class ExpoWallet
         return this.wallet.getBoardingAddress();
     }
 
-    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
         return this.wallet.getOperatorInfo(opts);
     }
 
     /** @deprecated Use {@link getOperatorInfo}. */
-    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
         return this.getOperatorInfo(opts);
     }
 

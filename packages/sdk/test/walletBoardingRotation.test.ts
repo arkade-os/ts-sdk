@@ -7,7 +7,7 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     toXOnlySignerHex,
 } from "../src";
 import { jsonResponse } from "./helpers/response";
@@ -88,7 +88,7 @@ function makeHdWallet(
     return Wallet.create({
         identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
         walletMode: "hd",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestOperatorProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
             contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -103,7 +103,7 @@ describe("Wallet boarding rotation", () => {
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(SINGLEKEY_HEX),
                 walletMode: "static",
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: walletRepo,
                     contractRepository: new InMemoryContractRepository(),
@@ -274,7 +274,7 @@ describe("Wallet boarding rotation", () => {
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(SINGLEKEY_HEX),
                 walletMode: "static",
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: walletRepo,
                     contractRepository: new InMemoryContractRepository(),

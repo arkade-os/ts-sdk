@@ -4,7 +4,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     VtxoManager,
     Wallet,
@@ -116,7 +116,7 @@ describe("deprecated-signer migration (real rotation)", () => {
         Wallet.create({
             identity: createTestIdentity(useMnemonic),
             boardingTimelock,
-            arkProvider: new RestArkProvider(operatorUrl),
+            arkProvider: new RestOperatorProvider(operatorUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
