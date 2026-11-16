@@ -28,10 +28,9 @@ block-typed for offers, seconds-typed for RFQ — and one arkd cannot serve both
 its own stack. They share ports, so only one can be up at a time locally; CI runs them as separate
 matrix jobs.
 
-The offer profile builds a compatible Go solver from the public source revision
-pinned in `scripts/build-swap-solver.mjs`, in both local runs and CI. The image
-stays local to Docker; no registry publication is required. Set `SOLVER_IMAGE`
-explicitly to use a different compatible image.
+The offer profile pins a Go solver image in `packages/swap/.env.regtest` that
+supports the same compiler artifacts as the swap client, in both local runs
+and CI. Set `SOLVER_IMAGE` explicitly to use a different compatible image.
 
 ### Per-package stack control
 
