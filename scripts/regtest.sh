@@ -76,6 +76,10 @@ fi
 ln -sfn "$REGTEST_DIR" "$ROOT_DIR/packages/$PKG_DIR/regtest"
 
 cmd_up() {
+  if [ "$PKG" = "swap" ] && [ -z "${SOLVER_IMAGE:-}" ]; then
+    SOLVER_IMAGE=$(node "$ROOT_DIR/scripts/build-swap-solver.mjs" "$ENV_FILE")
+    export SOLVER_IMAGE
+  fi
   node "$REGTEST_DIR/regtest.mjs" start --env "$ENV_FILE"
 }
 
