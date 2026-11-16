@@ -38,6 +38,7 @@ import {
     IssuanceResult,
     IWallet,
     NewAddress,
+    Outpoint,
     Recipient,
     ReissuanceParams,
     SendOnchainParams,
@@ -579,6 +580,21 @@ export type ResponseContractEvent = ResponseEnvelope & {
 };
 
 // Asset operations
+export type RequestReserveVtxos = RequestEnvelope & {
+    type: "RESERVE_VTXOS";
+    payload: { outpoints: Outpoint[]; reservationId: string };
+};
+export type ResponseReserveVtxos = ResponseEnvelope & {
+    type: "VTXOS_RESERVED";
+};
+export type RequestReleaseVtxos = RequestEnvelope & {
+    type: "RELEASE_VTXOS";
+    payload: { reservationId: string };
+};
+export type ResponseReleaseVtxos = ResponseEnvelope & {
+    type: "VTXOS_RELEASED";
+};
+
 export type RequestSend = RequestEnvelope & {
     type: "SEND";
     payload: {
@@ -966,6 +982,8 @@ export type WalletUpdaterRequest =
     | RequestGetUsedSigningDescriptors
     | RequestAdvanceSigningDescriptorWatermark
     | RequestSend
+    | RequestReserveVtxos
+    | RequestReleaseVtxos
     | RequestSendWithDeadline
     | RequestSendWithInputExpiryFloor
     | RequestGetAssetDetails
@@ -1034,6 +1052,8 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseAdvanceSigningDescriptorWatermark
         | ResponseContractEvent
         | ResponseSend
+        | ResponseReserveVtxos
+        | ResponseReleaseVtxos
         | ResponseSendDeadlineExceeded
         | ResponseGetAssetDetails
         | ResponseIssue
@@ -1707,6 +1727,17 @@ export class WalletMessageHandler
                         type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED",
                     });
                 }
+                case "RESERVE_VTXOS": {
+                    const wallet = this.requireWallet();
+                    const { reservationId, outpoints } = message.payload;
+                    await wallet.reserveVtxosPersistently(outpoints, reservationId);
+                    return this.tagged({ id, type: "VTXOS_RESERVED" });
+                }
+                case "RELEASE_VTXOS": {
+                    const { reservationId } = message.payload;
+                    await this.requireWallet().releaseVtxoReservation(reservationId);
+                    return this.tagged({ id, type: "VTXOS_RELEASED" });
+                }
                 case "SEND": {
                     const wallet = this.requireWallet();
                     const { recipients, selectedVtxos, maxChangeFee } = (message as RequestSend)
@@ -2032,6 +2063,7 @@ export class WalletMessageHandler
             isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+            isReserved: (vtxo) => this.wallet?.isVtxoReserved(vtxo) ?? false,
             dustCarrier: getDustAmount(this.readonlyWallet),
         });
 

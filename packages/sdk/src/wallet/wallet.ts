@@ -130,6 +130,7 @@ import type {
     BatchRegistrationState,
 } from "../repositories/intentRepository";
 import { isTerminalBatchRegistrationState } from "../repositories/intentRepository";
+import type { VtxoReservationRepository } from "../repositories/vtxoReservationRepository";
 import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
@@ -564,6 +565,26 @@ function coinKeys(inputs: readonly ExtendedCoin[]): string[] {
     return inputs
         .filter((input) => typeof input === "object" && input !== null)
         .map((input) => `${input.txid}:${input.vout}`);
+}
+
+function assertNoPersistentReservation(
+    inputs: readonly ExtendedCoin[],
+    reservations?: ReadonlySet<string>,
+): void {
+    const held = coinKeys(inputs).filter((key) => reservations?.has(key));
+    if (held.length > 0) throw new VtxoReservedError(held, "held");
+}
+
+async function assertNoIntentLockedInputs(
+    inputs: readonly Outpoint[],
+    repository?: Pick<BatchRegistrationRepository, "getLockedVtxoOutpoints">,
+): Promise<void> {
+    if (!repository) return;
+    const locked = new Set(
+        (await repository.getLockedVtxoOutpoints()).map(({ txid, vout }) => `${txid}:${vout}`),
+    );
+    const held = inputs.map(({ txid, vout }) => `${txid}:${vout}`).filter((key) => locked.has(key));
+    if (held.length > 0) throw new VtxoReservedError(held, "in-flight");
 }
 
 /** Drop VTXOs whose outpoint is locked by a non-terminal intent; same array when none is. */
@@ -1417,7 +1438,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`) &&
                 !this._heldOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
         );
-        const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
+        const locked = await this.lockedOutpoints();
+        const unlocked = selectable.filter((coin) => !locked.has(`${coin.txid}:${coin.vout}`));
         logExcludedVtxos("getSpendableVtxos", vtxos, [
             gateExclusion(gated),
             outpointExclusion(pendingRecovery, PENDING_RECOVERY_REASON),
@@ -1499,15 +1521,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 : undefined;
     }
 
-    /** The intent store's lock set. Fails open, like every other read of it. */
+    /** Spending must stop when persisted ownership cannot be read. */
     protected async lockedOutpoints(): Promise<Set<string>> {
         if (!this.intentRepository) return new Set();
-        try {
-            const locked = await this.intentRepository.getLockedVtxoOutpoints();
-            return new Set(locked.map((o) => `${o.txid}:${o.vout}`));
-        } catch {
-            return new Set();
-        }
+        const locked = await this.intentRepository.getLockedVtxoOutpoints();
+        return new Set(locked.map((o) => `${o.txid}:${o.vout}`));
     }
 
     /**
@@ -3332,6 +3350,70 @@ export class Wallet
         };
     }
 
+    private reservationRepository?: VtxoReservationRepository;
+    private persistentReservations = new Map<string, VtxoReservation>();
+    private persistentReservedOutpoints = new Set<string>();
+    private reservationWrites = new Set<Promise<void>>();
+
+    private withReservationWrite(fn: () => Promise<void>): Promise<void> {
+        const run = this._withTxLock(fn);
+        this.reservationWrites.add(run);
+        void run.finally(() => this.reservationWrites.delete(run)).catch(() => undefined);
+        return run;
+    }
+
+    isVtxoReserved(outpoint: Outpoint): boolean {
+        return this._heldOutpoints.has(`${outpoint.txid}:${outpoint.vout}`);
+    }
+
+    /** Restored before automatic spending. Reusing an owner id must name the same inputs. */
+    async reserveVtxosPersistently(outpoints: readonly Outpoint[], id: string): Promise<void> {
+        if (!this.reservationRepository) throw new Error("VTXO reservation repository is required");
+        if (typeof id !== "string" || !id) throw new Error("Reservation id is required");
+        const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
+        await this.withReservationWrite(async () => {
+            const existing = this.persistentReservations.get(id);
+            if (existing) {
+                const keys = (inputs: readonly Outpoint[]) =>
+                    inputs
+                        .map(({ txid, vout }) => `${txid}:${vout}`)
+                        .sort()
+                        .join("|");
+                if (keys(existing.outpoints) !== keys(snapshot)) {
+                    throw new Error("Reservation id already holds different inputs");
+                }
+                return;
+            }
+            await assertNoIntentLockedInputs(snapshot, this.intentRepository);
+            const hold = this.reserveVtxos(snapshot);
+            for (const { txid, vout } of snapshot)
+                this.persistentReservedOutpoints.add(`${txid}:${vout}`);
+            try {
+                await this.reservationRepository!.saveReservation({ id, outpoints: snapshot });
+                this.persistentReservations.set(id, hold);
+            } catch (error) {
+                await hold.release();
+                for (const { txid, vout } of snapshot)
+                    this.persistentReservedOutpoints.delete(`${txid}:${vout}`);
+                throw error;
+            }
+        });
+    }
+
+    /** The owner must establish settlement or non-submission before releasing a durable hold. */
+    async releaseVtxoReservation(id: string): Promise<void> {
+        if (!this.reservationRepository) throw new Error("VTXO reservation repository is required");
+        await this.withReservationWrite(async () => {
+            await this.reservationRepository!.deleteReservation(id);
+            const hold = this.persistentReservations.get(id);
+            await hold?.release();
+            for (const { txid, vout } of hold?.outpoints ?? []) {
+                this.persistentReservedOutpoints.delete(`${txid}:${vout}`);
+            }
+            this.persistentReservations.delete(id);
+        });
+    }
+
     /**
      * @internal For `AssetManager`: reserves what `fn` submits, hiding it from other picks until
      * the submit ends. With `concurrentSpending`, `fn` runs under the wallet lock, released once
@@ -3636,6 +3718,7 @@ export class Wallet
     }
 
     override async dispose(): Promise<void> {
+        await Promise.allSettled([...this.reservationWrites]);
         // Drain an in-flight restore so it can't hit torn-down managers (deadlock-free:
         // _runRestore never calls dispose()).
         await this._restoreInFlight?.catch(() => undefined);
@@ -3850,6 +3933,23 @@ export class Wallet
         wallet.exitDataCapture = config.storage?.exitDataCapture;
         wallet._concurrentSpending = config.concurrentSpending === true;
 
+        wallet.reservationRepository = config.storage?.vtxoReservationRepository;
+        try {
+            for (const reservation of (await wallet.reservationRepository?.getReservations()) ??
+                []) {
+                wallet.persistentReservations.set(
+                    reservation.id,
+                    wallet.reserveVtxos(reservation.outpoints),
+                );
+                for (const { txid, vout } of reservation.outpoints) {
+                    wallet.persistentReservedOutpoints.add(`${txid}:${vout}`);
+                }
+            }
+        } catch (error) {
+            await wallet.dispose().catch(() => undefined);
+            throw error;
+        }
+
         await wallet.getVtxoManager();
         return wallet;
     }
@@ -3944,6 +4044,14 @@ export class Wallet
     ): Promise<string> {
         const picked = params === undefined || isSdkPicked(params);
         if (params?.inputs) {
+            await assertNoIntentLockedInputs(
+                params.inputs.filter((input): input is ExtendedCoin => typeof input !== "string"),
+                this.intentRepository,
+            );
+            assertNoPersistentReservation(
+                params.inputs.filter((input): input is ExtendedCoin => typeof input !== "string"),
+                this.persistentReservedOutpoints,
+            );
             for (const input of params.inputs) {
                 // validate arknotes inputs
                 if (typeof input === "string") {
@@ -4197,6 +4305,8 @@ export class Wallet
 
         // After the last await before the inputs go pending, so a hold placed during signing is
         // caught; a throw here leaves nothing pending, so the holder can spend them.
+        await assertNoIntentLockedInputs(params.inputs, this.intentRepository);
+        assertNoPersistentReservation(params.inputs, this.persistentReservedOutpoints);
         if (picked) this._assertNotHeld(params.inputs);
         // Hide the inputs from concurrent getVtxos() callers before the intent registers, and
         // claim them before the first persist so reconciliation never races this settle.
@@ -4208,14 +4318,6 @@ export class Wallet
         const settlingKeys = params.inputs.map((i) => `${i.txid}:${i.vout}`);
         for (const key of settlingKeys) this._settlingOutpoints.add(key);
         onReserved?.();
-        await this.persistIntentSnapshot(
-            intentTxId,
-            "waiting_to_submit",
-            intent,
-            deleteIntent,
-            params.inputs,
-        );
-
         const topics = [
             ...signingPublicKeys,
             ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
@@ -4225,12 +4327,23 @@ export class Wallet
         let stream: AsyncIterableIterator<SettlementEvent> | undefined;
         // Set just before registering: a failure earlier has no batch registration to delete.
         let registering = false;
+        let recoveryProofStored = false;
         // Set once Batch.join returns: the batch is committed on-chain and no
         // local cleanup failure may cancel it. Authoritative in memory even if
         // the hook's terminal repo write failed, which repo state can't tell us.
         let committedTxid: string | undefined;
 
         try {
+            await this.persistIntentSnapshot(
+                intentTxId,
+                "waiting_to_submit",
+                intent,
+                deleteIntent,
+                params.inputs,
+                undefined,
+                true,
+            );
+            recoveryProofStored = true;
             stream = this.arkProvider.getEventStream(abortController.signal, topics);
             // Subscribe before safeRegisterIntent can trigger operator-side batch events.
             const primedStream = Batch.prime(stream);
@@ -4304,7 +4417,7 @@ export class Wallet
                     }
                 }
             }
-            if (released) {
+            if (released && recoveryProofStored) {
                 await this.persistIntentSnapshot(
                     intentTxId,
                     "cancelled",
@@ -4690,7 +4803,7 @@ export class Wallet
     }
 
     /**
-     * Best-effort upsert into {@link intentRepository}; never throws into the settle path.
+     * Persists before registration; later snapshots are best effort.
      * Preserves fields the event reducer already wrote.
      */
     private async persistIntentSnapshot(
@@ -4700,14 +4813,23 @@ export class Wallet
         deleteIntent: SignedProof<Proof.DeleteMessage>,
         inputs: ExtendedCoin[],
         patch?: Partial<BatchRegistration>,
+        required = false,
     ): Promise<void> {
         const repo = this.intentRepository;
         if (!repo) return;
         try {
             const now = Date.now();
-            const existing = (
+            let existing: BatchRegistration | undefined = (
                 await collectBatchRegistrations(repo, { proofTxIds: [intentTxId] })
             )[0];
+            if (required && existing) {
+                if (!isTerminalBatchRegistrationState(existing.state)) {
+                    throw new Error(
+                        `Settlement proof ${intentTxId} already has a pending registration`,
+                    );
+                }
+                existing = undefined;
+            }
             // Terminal is sticky: a later step throwing into settle()'s catch passes "cancelled",
             // which must not clobber a `batch_succeeded` whose money already moved.
             if (existing && isTerminalBatchRegistrationState(existing.state)) {
@@ -4731,6 +4853,7 @@ export class Wallet
                 ...patch,
             });
         } catch (e) {
+            if (required) throw e;
             console.error(`Failed to persist intent ${intentTxId} (state=${state})`, e);
         }
     }
@@ -5880,6 +6003,7 @@ export class Wallet
             throw new Error("send({ maxChangeFee }): expected a non-negative safe integer");
         }
         if (selectedVtxos) {
+            await assertNoIntentLockedInputs(selectedVtxos, this.intentRepository);
             if (inputExpiryFloor) selectedVtxos = selectedVtxos.map(normalizeVtxo);
             if (
                 inputExpiryFloor &&
@@ -6268,6 +6392,8 @@ export class Wallet
         picked = false,
         options?: { validUntil?: number },
     ): Promise<string> {
+        await assertNoIntentLockedInputs(inputs, this.intentRepository);
+        assertNoPersistentReservation(inputs, this.persistentReservedOutpoints);
         if (picked) this._assertNotHeld(inputs);
         if (onReserved) this._assertNotInFlight(inputs);
         this._addPendingSpends(inputs);
@@ -6416,6 +6542,8 @@ export class Wallet
         serverUnrollScript: CSVMultisigTapscript.Type,
         options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        await assertNoIntentLockedInputs(inputs, this.intentRepository);
+        assertNoPersistentReservation(inputs, this.persistentReservedOutpoints);
         const validUntil = captureSendDeadline(options?.validUntil);
         assertSendDeadline(validUntil);
         void this.logUngatedInputs("buildAndSubmitOffchainTx", inputs);
@@ -6892,11 +7020,11 @@ export class VtxoReservedError extends Error {
     }
 }
 
-/** A hold placed by {@link Wallet.reserveVtxos}. */
+/** A hold excluding its inputs from automatic selection. */
 export interface VtxoReservation {
     readonly outpoints: readonly Outpoint[];
     /** Idempotent. */
-    release(): void;
+    release(): void | Promise<void>;
 }
 
 /** @internal Submits an Arkade transaction for {@link Wallet.withSpendLock}'s caller. */

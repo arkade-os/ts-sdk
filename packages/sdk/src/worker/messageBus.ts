@@ -19,6 +19,9 @@ import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, BatchRegistrationRepository, WalletRepository } from "../repositories";
+import { IndexedDBVtxoReservationRepository } from "../repositories/indexedDB/vtxoReservationRepository";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { hex } from "@scure/base";
 import {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
@@ -230,6 +233,7 @@ export class MessageBus {
     private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
     private readonly boundOnMessage = this.onMessage.bind(this);
     private readonly intentRepository?: BatchRegistrationRepository;
+    private reservationStore?: { scope: string; repository: IndexedDBVtxoReservationRepository };
     private readonly onchainProvider?: (network: NetworkName) => OnchainProvider;
     /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
     private broadcastQueue: ResponseEnvelope[] = [];
@@ -312,6 +316,8 @@ export class MessageBus {
         self.removeEventListener("message", this.boundOnMessage);
 
         await Promise.all(Array.from(this.handlers.values()).map((updater) => updater.stop()));
+        await this.reservationStore?.repository[Symbol.asyncDispose]();
+        this.reservationStore = undefined;
     }
 
     /** Invalidate every broadcast belonging to the outgoing generation. */
@@ -548,13 +554,33 @@ export class MessageBus {
 
         if (isSigningSerialized(serialized)) {
             const identity = hydrateIdentity(serialized) as Identity;
+            const operatorUrl = new URL(config.arkServer.url);
+            const reservationScope = hex.encode(
+                sha256(
+                    new TextEncoder().encode(
+                        `${operatorUrl.origin}${operatorUrl.pathname.replace(/\/$/, "")}|${hex.encode(await identity.xOnlyPublicKey())}`,
+                    ),
+                ),
+            );
+            if (this.reservationStore?.scope !== reservationScope) {
+                await this.reservationStore?.repository[Symbol.asyncDispose]();
+                this.reservationStore = {
+                    scope: reservationScope,
+                    repository: new IndexedDBVtxoReservationRepository(
+                        `arkade-reservations-${reservationScope}`,
+                    ),
+                };
+            }
             const wallet = await Wallet.create({
                 identity,
                 arkProvider,
                 arkServerPublicKey: config.arkServer.publicKey,
                 indexerProvider,
                 onchainProvider: this.onchainProvider,
-                storage,
+                storage: {
+                    ...storage,
+                    vtxoReservationRepository: this.reservationStore.repository,
+                },
                 delegateProvider,
                 settlementConfig: config.settlementConfig,
                 concurrentSpending: config.concurrentSpending,

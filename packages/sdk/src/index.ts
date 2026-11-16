@@ -535,6 +535,16 @@ export {
 } from "./repositories/walletRepository";
 export { collectContracts } from "./repositories/contractRepository";
 export { collectBatchRegistrations, collectIntents } from "./repositories/intentRepository";
+export {
+    classifyBoardingExpiry,
+    decodeBoardingExit,
+    type BoardingExpiry,
+} from "./utils/arkTransaction";
+export type {
+    StoredVtxoReservation,
+    VtxoReservationRepository,
+} from "./repositories/vtxoReservationRepository";
+export { IndexedDBVtxoReservationRepository } from "./repositories/indexedDB/vtxoReservationRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
