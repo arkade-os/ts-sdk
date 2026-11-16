@@ -46,8 +46,8 @@ const EXECUTOR_ARTIFACTS: Record<string, object> = {
 
 /** The ids the service computes for the bundled documents; they change with the bundle. */
 export const DEFAULT_TEMPLATE_IDS: Readonly<Record<ExecutorDefault, string>> = {
-    renewal: "81295635686b72b6983636bb2b42cff1b75f703248b13de8a2ae134ce7bd2091",
-    boarding: "1358adff9283c4fe11734e4238d6d091d433dbcb2b0c852d5fea433c4314d51a",
+    renewal: "d78996bc48dca7d9cc6da69bf2ee8d8feaa521c4aa5998c410e3e9ba2dc69297",
+    boarding: "2f8b8761c3d98230cbb170814643f591c29f737c0cf68f600f81920024dccbf8",
 };
 
 type Field = { name: string; type: string };

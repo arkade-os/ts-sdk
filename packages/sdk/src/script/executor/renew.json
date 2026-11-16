@@ -1,6 +1,6 @@
 {
     "format": "template/v1",
-    "type": "intent",
+    "type": "proof",
     "variables": {
         "owner": "pubkey",
         "exit_delay": "int",
@@ -10,9 +10,6 @@
     "inputs": [
         {
             "name": "funds",
-            "schedule": {
-                "before_expiry_seconds": "<renewal_window>"
-            },
             "contract": {
                 "definition": {
                     "artifact": "faa3249b8a28e999963994e4020e832285351eb7ce3b4821bcb3b4498f5b8ef3"
@@ -24,34 +21,17 @@
                     "maxFee": "<max_fee>"
                 }
             },
-            "spend": {
-                "function": "renew",
-                "leaf": "renew"
-            }
+            "spend": { "function": "renew", "leaf": "renew" }
         }
     ],
     "outputs": [
         {
             "name": "renewed",
-            "index": 0,
-            "value": {
-                "from": "funds"
-            },
-            "locking": {
-                "from": "funds"
-            },
-            "assets": [
-                {
-                    "from": "funds"
-                }
-            ]
+            "value": { "from": "funds" },
+            "locking": { "from": "funds" },
+            "assets": [{ "from": "funds" }]
         }
     ],
-    "fees": {
-        "from": "funds",
-        "max": "<max_fee>"
-    },
-    "packets": {
-        "output_index": 1
-    }
+    "fees": { "from": "funds", "max": "<max_fee>" },
+    "delegation": { "schedule": { "funds": { "before_expiry_seconds": "<renewal_window>" } } }
 }

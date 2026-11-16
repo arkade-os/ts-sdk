@@ -1,6 +1,6 @@
 {
     "format": "template/v1",
-    "type": "intent",
+    "type": "proof",
     "variables": {
         "owner": "pubkey",
         "boarding_exit_delay": "int",
@@ -12,9 +12,6 @@
         {
             "name": "deposit",
             "type": "onchain",
-            "schedule": {
-                "min_confirmations": 1
-            },
             "contract": {
                 "definition": {
                     "artifact": "e3c0fa053fbb529a252a1025e3453a41f01949f4e49d50de7dfe5d3510470ed3"
@@ -22,25 +19,17 @@
                 "arguments": {
                     "owner": "<owner>",
                     "boardingExitDelay": "<boarding_exit_delay>",
-                    "renewalProgram": {
-                        "program": "funds"
-                    },
+                    "renewalProgram": { "program": "funds" },
                     "maxFee": "<max_fee>"
                 }
             },
-            "spend": {
-                "function": "board",
-                "leaf": "board"
-            }
+            "spend": { "function": "board", "leaf": "board" }
         }
     ],
     "outputs": [
         {
             "name": "funds",
-            "index": 0,
-            "value": {
-                "from": "deposit"
-            },
+            "value": { "from": "deposit" },
             "locking": {
                 "contract": {
                     "definition": {
@@ -56,11 +45,6 @@
             }
         }
     ],
-    "fees": {
-        "from": "deposit",
-        "max": "<max_fee>"
-    },
-    "packets": {
-        "output_index": 1
-    }
+    "fees": { "from": "deposit", "max": "<max_fee>" },
+    "delegation": { "schedule": { "deposit": { "min_confirmations": 1 } } }
 }

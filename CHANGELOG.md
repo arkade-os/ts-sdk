@@ -129,8 +129,11 @@ style and have not been backfilled.
   delegated coins without the service. It offers the owner's forfeit and exit
   paths, never the emulator-enforced leaf the Executor spends with, and counts as
   generic spending: coins the Executor boards are the wallet's own. The bundled
-  templates and their artifacts live under `script/executor/`;
-  `DefaultVtxo.Script` takes extra leaves after forfeit and exit.
+  templates and their artifacts live under `script/executor/`, in the
+  `template/v1` format the Executor ships from its template/v1 release on: a
+  `proof` type with the schedule under `delegation`. An Executor still on the
+  earlier documents lists other template ids, and `defaultTemplates()` refuses
+  it. `DefaultVtxo.Script` takes extra leaves after forfeit and exit.
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
