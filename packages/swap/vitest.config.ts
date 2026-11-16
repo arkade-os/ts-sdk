@@ -12,9 +12,7 @@ export default mergeConfig(
             // — `watchOfferSwaps`, `RfqSwapManager`'s contract subscription —
             // silently degrades to whatever polling the test does itself.
             // UNDICI-ES is the flag's own "this is experimental" warning.
-            poolOptions: {
-                forks: { execArgv: ["--experimental-eventsource", "--disable-warning=UNDICI-ES"] },
-            },
+            execArgv: ["--experimental-eventsource", "--disable-warning=UNDICI-ES"],
         },
     }),
 );
