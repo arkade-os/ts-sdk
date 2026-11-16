@@ -431,7 +431,7 @@ describe("VHTLCV2ContractHandler", () => {
             [v2Contract, v2Script],
         ] as const) {
             const derived = deriveContractTapscripts(contract);
-            expect(leafHex({ leaf: derived.intentTapLeafScript })).toBe(
+            expect(leafHex({ leaf: derived.proofTapLeafScript })).toBe(
                 script.refundWithoutReceiverScript,
             );
             expect(leafHex({ leaf: derived.forfeitTapLeafScript })).toBe(
@@ -448,7 +448,7 @@ describe("VHTLCV2ContractHandler", () => {
         // The pipeline entry point, not just the handler method: this is the
         // call `annotateVtxos` makes, and the one that used to throw.
         const derived = deriveContractTapscripts(contract);
-        expect(leafHex({ leaf: derived.intentTapLeafScript })).toBe(
+        expect(leafHex({ leaf: derived.proofTapLeafScript })).toBe(
             script.refundWithoutReceiverScript,
         );
         expect(leafHex({ leaf: derived.forfeitTapLeafScript })).toBe(
@@ -1203,7 +1203,7 @@ describe("VHTLCV2ContractHandler", () => {
             expect(entry.vtxos).toHaveLength(1);
             expect(entry.vtxos[0].value).toBe(5000);
             // Annotated with the leaf the sender can actually spend.
-            expect(leafHex({ leaf: entry.vtxos[0].intentTapLeafScript })).toBe(
+            expect(leafHex({ leaf: entry.vtxos[0].proofTapLeafScript })).toBe(
                 VHTLCV2ContractHandler.createScript(params).refundWithoutReceiverScript,
             );
             // And the manager does not consider itself degraded.

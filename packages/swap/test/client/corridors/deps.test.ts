@@ -13,7 +13,7 @@ import {
     ESPLORA_URL,
     ProviderUnavailableError,
     REGTEST_EMULATOR_PUBKEY,
-    type ArkadeInfo,
+    type OperatorInfo,
     type IWallet,
     type OnchainProvider,
 } from "@arkade-os/sdk";
@@ -329,7 +329,7 @@ describe("resolveCorridorBase", () => {
         ({ getArkadeInfo }) as IWallet;
 
     it("reads live, and derives the network and signer set from that one read", async () => {
-        const getArkadeInfo = vi.fn(async () => info as unknown as ArkadeInfo);
+        const getArkadeInfo = vi.fn(async () => info as unknown as OperatorInfo);
         const base = await resolveCorridorBase({
             wallet: walletAnswering(getArkadeInfo),
             operator: {} as SwapOperator,
@@ -353,7 +353,7 @@ describe("resolveCorridorBase", () => {
             Object.assign(new Error("aborted"), { name: "TimeoutError" }),
             // Across the service-worker boundary the error is a fresh `Error`
             // whose only branchable identity is `cause.name`.
-            new Error("Failed to get arkade info: Error", {
+            new Error("Failed to get operator info: Error", {
                 cause: Object.assign(new Error("offline"), { name: "ProviderUnavailableError" }),
             }),
             "a thrown string",
@@ -376,7 +376,7 @@ describe("resolveCorridorBase", () => {
         // could answer from cache still refuses here.
         const getArkadeInfo = vi.fn(async (opts?: { requireLive?: boolean }) => {
             if (opts?.requireLive) throw new ProviderUnavailableError("offline");
-            return info as unknown as ArkadeInfo;
+            return info as unknown as OperatorInfo;
         });
         await expect(
             resolveCorridorBase({

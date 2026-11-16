@@ -63,6 +63,19 @@ describe("service-worker wallet durations", () => {
         );
     });
 
+    it("applies the deprecated GET_ARKADE_INFO timeout to GET_OPERATOR_INFO", async () => {
+        const rejection = expect(
+            ServiceWorkerReadonlyWallet.create({
+                ...options(),
+                messageBusTimeoutMs: 0,
+                messageTimeouts: { GET_ARKADE_INFO: 1_234 },
+            }),
+        ).rejects.toThrow("MessageBus timed out");
+        await vi.advanceTimersByTimeAsync(0);
+        await rejection;
+        expect(postMessage.mock.calls[0][0].config.messageTimeouts.GET_OPERATOR_INFO).toBe(1_234);
+    });
+
     it("keeps zero as an immediate bootstrap timeout", async () => {
         const rejection = expect(
             ServiceWorkerReadonlyWallet.create({ ...options(), messageBusTimeoutMs: 0 }),

@@ -78,7 +78,7 @@ describe("VHTLCContractHandler (v1)", () => {
         // call `annotateVtxos` makes, and the one that used to throw
         // `legacy.forfeit is not a function`.
         const derived = deriveContractTapscripts(contractOf(p));
-        expect(leafHex(derived.intentTapLeafScript)).toBe(script.refundWithoutReceiverScript);
+        expect(leafHex(derived.proofTapLeafScript)).toBe(script.refundWithoutReceiverScript);
         expect(leafHex(derived.forfeitTapLeafScript)).toBe(script.refundWithoutReceiverScript);
         expect(hex.encode(derived.tapTree)).toBe(hex.encode(script.encode()));
     });
@@ -119,7 +119,7 @@ describe("VHTLCContractHandler (v1)", () => {
         const [entry] = await manager.getContractsWithVtxos({ script });
         expect(entry.vtxos).toHaveLength(1);
         expect(entry.vtxos[0].value).toBe(5000);
-        expect(leafHex(entry.vtxos[0].intentTapLeafScript)).toBe(
+        expect(leafHex(entry.vtxos[0].proofTapLeafScript)).toBe(
             VHTLCContractHandler.createScript(p).refundWithoutReceiverScript,
         );
         // Visible, and not degraded...

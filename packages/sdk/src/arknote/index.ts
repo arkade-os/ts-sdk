@@ -37,7 +37,7 @@ export class ArkNote implements ExtendedCoin {
     readonly txid: string;
     readonly vout = 0;
     readonly forfeitTapLeafScript: TapLeafScript;
-    readonly intentTapLeafScript: TapLeafScript;
+    readonly proofTapLeafScript: TapLeafScript;
     readonly tapTree: Bytes;
     readonly status: Status;
     readonly extraWitness?: Bytes[] | undefined;
@@ -62,9 +62,14 @@ export class ArkNote implements ExtendedCoin {
         this.txid = hex.encode(new Uint8Array(preimageHash).reverse());
         this.tapTree = this.vtxoScript.encode();
         this.forfeitTapLeafScript = leaf;
-        this.intentTapLeafScript = leaf;
+        this.proofTapLeafScript = leaf;
         this.status = { confirmed: true };
         this.extraWitness = [this.preimage];
+    }
+
+    /** @deprecated Use {@link proofTapLeafScript}. */
+    get intentTapLeafScript(): TapLeafScript {
+        return this.proofTapLeafScript;
     }
 
     /**

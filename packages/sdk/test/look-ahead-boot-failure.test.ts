@@ -48,7 +48,7 @@ describe("look-ahead failure during startup", () => {
         "keeps the wallet running and reports the band as unfinished (lazyInitialization=%s)",
         async (lazyInitialization) => {
             const drain = vi
-                .spyOn(ContractManager.prototype as never, "scheduleLookAheadDrain" as never)
+                .spyOn(ContractManager.prototype as any, "scheduleLookAheadDrain")
                 .mockRejectedValueOnce(new ProviderUnavailableError("operator down"));
 
             // The point of the fix: construction survives the outage.
@@ -77,7 +77,7 @@ describe("look-ahead failure during startup", () => {
 
     it("keeps a lazy boot's terminal failure degraded across later syncs", async () => {
         const drain = vi
-            .spyOn(ContractManager.prototype as never, "scheduleLookAheadDrain" as never)
+            .spyOn(ContractManager.prototype as any, "scheduleLookAheadDrain")
             .mockRejectedValueOnce(new Error("schema violation"));
         const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -125,7 +125,7 @@ describe("look-ahead failure during startup", () => {
 
     it("still propagates a terminal failure", async () => {
         const drain = vi
-            .spyOn(ContractManager.prototype as never, "scheduleLookAheadDrain" as never)
+            .spyOn(ContractManager.prototype as any, "scheduleLookAheadDrain")
             .mockRejectedValueOnce(new Error("schema violation"));
 
         await expect(makeManager()).rejects.toThrow("schema violation");

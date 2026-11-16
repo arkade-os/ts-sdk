@@ -53,8 +53,9 @@ export interface LightningReceiveProfile extends Record<string, unknown> {
     /**
      * Our Arkade claim's txid, once submitted.
      *
-     * `claimIfFunded` derives `partiallyClaimed` from this. Restoring without it re-arms the value
-     * gate against a partly claimed lockup, refusing the remainder over an already-public preimage.
+     * `claimIfFunded`'s `partiallyClaimed` comes from this, or from a spend of the lockup that
+     * reveals `P`. Restoring without it costs one pass that reads the lockup, and the value gate
+     * stays off as long as a spend carries `P`.
      */
     claimTxid?: string;
 }

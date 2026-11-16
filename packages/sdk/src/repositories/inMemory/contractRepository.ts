@@ -1,5 +1,5 @@
 import { ContractFilter, ContractRepository } from "../contractRepository";
-import { Contract, watchStateOf } from "../../contracts";
+import { Contract, scopeOf, watchStateOf } from "../../contracts";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
 /**
@@ -7,7 +7,7 @@ import { assertPageRequest, pageResult, type PageRequest, type PageResult } from
  * Data is ephemeral and scoped to the instance.
  */
 export class InMemoryContractRepository implements ContractRepository {
-    readonly version = 3 as const;
+    readonly version = 4 as const;
     private readonly contractsByScript = new Map<string, Contract>();
 
     async clear(): Promise<void> {
@@ -30,7 +30,8 @@ export class InMemoryContractRepository implements ContractRepository {
                     (matches(contract.script, filter.script) &&
                         matches(contract.state, filter.state) &&
                         matches(contract.type, filter.type) &&
-                        matches(watchStateOf(contract), filter.watch)),
+                        matches(watchStateOf(contract), filter.watch) &&
+                        matches(scopeOf(contract), filter.scope)),
             )
             .sort((a, b) => (a.script < b.script ? -1 : a.script > b.script ? 1 : 0))
             .slice(0, page.limit + 1);

@@ -5,7 +5,7 @@ import {
     InMemoryWalletRepository,
     ProviderUnavailableError,
     Wallet,
-    type ArkProvider,
+    type OperatorProvider,
     type ExtendedVirtualCoin,
     type IndexerProvider,
     type OnchainProvider,
@@ -69,7 +69,7 @@ export async function fundedWallet(
         identity: SingleKey.fromHex(
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         ),
-        arkProvider: arkProvider as Partial<ArkProvider> as ArkProvider,
+        arkProvider: arkProvider as Partial<OperatorProvider> as OperatorProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],
@@ -104,7 +104,7 @@ export async function fundedWallet(
                 expiresAt: new Date(Date.now() + (i + 1) * 10 * HOUR),
                 script: wallet.defaultContractScript,
                 forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-                intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+                proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
                 tapTree: new Uint8Array(64),
             }) as unknown as ExtendedVirtualCoin,
     );

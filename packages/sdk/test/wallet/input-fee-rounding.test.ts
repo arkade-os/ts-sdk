@@ -6,7 +6,7 @@ import { Transaction } from "../../src/utils/transaction";
 import {
     ArkAddress,
     DefaultVtxo,
-    type ArkadeInfo,
+    type OperatorInfo,
     type ContractVtxo,
     type ExtendedCoin,
     type Identity,
@@ -33,7 +33,7 @@ const identity: Identity = {
 };
 
 // 0.0025/sat: 1000 sats -> 2.5, the fractional per-input fee this exercises.
-const arkInfo = (offchainInput: string): ArkadeInfo => ({
+const arkInfo = (offchainInput: string): OperatorInfo => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
@@ -60,7 +60,7 @@ function delegateVtxo(value: number): ContractVtxo {
         value,
         tapTree: testDelegateScript.encode(),
         forfeitTapLeafScript: testDelegateScript.forfeit(),
-        intentTapLeafScript: testDelegateScript.delegate(),
+        proofTapLeafScript: testDelegateScript.delegate(),
         expiresAt: new Date(Date.now() + 86_400_000),
     });
 }
@@ -128,9 +128,9 @@ const boardingUtxo = (value: number): ExtendedCoin =>
         txid: `boarding-${value}`,
         vout: 0,
         value,
-        status: { confirmed: true },
+        status: { confirmed: true, block_height: 100, block_time: 1 },
         forfeitTapLeafScript: boardingTapscript.forfeit(),
-        intentTapLeafScript: boardingTapscript.forfeit(),
+        proofTapLeafScript: boardingTapscript.forfeit(),
         tapTree: boardingTapscript.encode(),
     }) as unknown as ExtendedCoin;
 
@@ -151,7 +151,10 @@ describe("periodic settle boarding fee rounding", () => {
             boardingTapscript,
             network: {},
             signOnchainBoardingTx: vi.fn(),
-            onchainProvider: { getChainTip: vi.fn() },
+            onchainProvider: {
+                getChainTip: vi.fn().mockResolvedValue({ height: 101, time: 2 }),
+                getMedianTimePast: vi.fn().mockResolvedValue(1),
+            },
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue({
                     fees: { intentFee: { onchainInput: "amount * 0.9" } },

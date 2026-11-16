@@ -18,7 +18,7 @@ import {
     toProviderUnavailable,
 } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
-import { Intent, Proof } from "../proof";
+import { Proof } from "../proof";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { ARKADE_VERSION_HEADERS, fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
@@ -35,6 +35,43 @@ export class DigestMismatchError extends Error {
     constructor(message: string) {
         super(message);
         this.name = "DigestMismatchError";
+    }
+}
+
+export const ONCHAIN_COSIGN_UNSUPPORTED_PREFIX = "Arkade server does not support onchain cosigning";
+export const ONCHAIN_COSIGN_REJECTED_PREFIX = "Arkade server refused to cosign onchain tx: ";
+
+export class OnchainCosignUnsupportedError extends Error {
+    constructor() {
+        super(ONCHAIN_COSIGN_UNSUPPORTED_PREFIX);
+        this.name = "OnchainCosignUnsupportedError";
+    }
+}
+
+/** arkd's structured error name is carried in the message as `[NAME] ` so it survives structured clone. */
+export class OnchainCosignRejectedError extends Error {
+    constructor(
+        readonly serverMessage: string,
+        readonly arkErrorName?: string,
+    ) {
+        super(
+            `${ONCHAIN_COSIGN_REJECTED_PREFIX}${arkErrorName ? `[${arkErrorName}] ` : ""}${serverMessage}`,
+        );
+        this.name = "OnchainCosignRejectedError";
+    }
+}
+
+export const ONCHAIN_COSIGN_AMBIGUOUS_PREFIX =
+    "Onchain cosign outcome unknown, the transaction may have been broadcast: ";
+
+/** The cosign request may have broadcast the tx: never retry the payment with other coins. */
+export class OnchainCosignAmbiguousError extends Error {
+    constructor(
+        readonly detail: string,
+        options?: { cause?: unknown },
+    ) {
+        super(`${ONCHAIN_COSIGN_AMBIGUOUS_PREFIX}${detail}`, options);
+        this.name = "OnchainCosignAmbiguousError";
     }
 }
 
@@ -299,6 +336,9 @@ export interface OperatorProvider {
     /** Fetch the operator's configuration and fee settings. */
     getInfo(): Promise<OperatorInfo>;
 
+    /** Cosign and broadcast an onchain tx spending server-cosigned UTXOs; returns the txid. */
+    cosignOnchainTx?(psbtB64: string): Promise<string>;
+
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
         signedArkTx: string,
@@ -313,10 +353,10 @@ export interface OperatorProvider {
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 
     /** Register a signed intent with the operator. */
-    registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string>;
+    registerIntent(intent: SignedProof<Proof.RegisterMessage>): Promise<string>;
 
     /** Delete a previously registered intent. */
-    deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void>;
+    deleteIntent(intent: SignedProof<Proof.DeleteMessage>): Promise<void>;
 
     /** Confirm an already registered intent id. */
     confirmRegistration(intentId: string): Promise<void>;
@@ -389,24 +429,26 @@ export class RestOperatorProvider implements OperatorProvider {
      * stale. Empty until the first {@link getInfo}.
      */
     private _digest = "";
+    private _onchainCosignUnsupported = false;
     private _hasServerInfo = false;
     private _suppressNextGetInfoChangeEmit = false;
 
-    private _serverInfoListeners = new Set<(info: ArkadeInfo) => void>();
+    private _serverInfoListeners = new Set<(info: OperatorInfo) => void>();
 
     /**
      * Subscribe to operator info changes. Fired after a stale-info
      * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
      * Returns an unsubscribe function.
      */
-    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
+    onServerInfoChanged(listener: (info: OperatorInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
         return () => {
             this._serverInfoListeners.delete(listener);
         };
     }
 
-    private emitServerInfoChanged(info: ArkadeInfo): void {
+    private emitServerInfoChanged(info: OperatorInfo): void {
+        this._onchainCosignUnsupported = false;
         for (const listener of this._serverInfoListeners) {
             try {
                 listener(info);
@@ -476,7 +518,8 @@ export class RestOperatorProvider implements OperatorProvider {
         // rejecting the request — terminal, even when grpc-gateway renders it as a
         // 5xx. Only a non-structured 429/5xx (a bare proxy/gateway failure) is a
         // retryable availability condition.
-        if (!arkError) throwIfHttpUnavailable(response, "arkade");
+        // 501 (gRPC UNIMPLEMENTED) is permanent, not an availability failure.
+        if (!arkError && response.status !== 501) throwIfHttpUnavailable(response, "arkade");
         if (!isArkError(arkError, ArkErrorName.DIGEST_MISMATCH)) return response;
         // arkd rejected this request because our cached operator info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
@@ -639,6 +682,44 @@ export class RestOperatorProvider implements OperatorProvider {
         };
     }
 
+    async cosignOnchainTx(psbtB64: string): Promise<string> {
+        if (this._onchainCosignUnsupported) throw new OnchainCosignUnsupportedError();
+        let response: Response;
+        let text: string;
+        try {
+            response = await this.authedFetch(`${this.serverUrl}/v1/tx/onchain/cosign`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tx: psbtB64 }),
+            });
+            if (response.ok) {
+                // Thrown here so a malformed success reads as ambiguous: arkd may have broadcast.
+                const { txid } = await response.json();
+                if (typeof txid !== "string" || !txid)
+                    throw new Error("cosign response has no txid");
+                return txid;
+            }
+            text = await response.text();
+        } catch (e) {
+            if (e instanceof DigestMismatchError) throw e;
+            throw new OnchainCosignAmbiguousError(e instanceof Error ? e.message : String(e), {
+                cause: e,
+            });
+        }
+        const arkError = maybeArkError(new Error(text));
+        if (!arkError && (response.status === 404 || response.status === 501)) {
+            this._onchainCosignUnsupported = true;
+            throw new OnchainCosignUnsupportedError();
+        }
+        // arkd answers INTERNAL_ERROR even after a successful broadcast (failed db write).
+        if (!arkError || arkError.name === ArkErrorName.INTERNAL_ERROR) {
+            throw new OnchainCosignAmbiguousError(
+                arkError?.message ?? `${response.status} ${text}`,
+            );
+        }
+        throw new OnchainCosignRejectedError(arkError.message, arkError.name);
+    }
+
     async finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void> {
         const url = `${this.serverUrl}/v1/tx/finalize`;
         await this.postJson(
@@ -651,7 +732,7 @@ export class RestOperatorProvider implements OperatorProvider {
         );
     }
 
-    async registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string> {
+    async registerIntent(intent: SignedProof<Proof.RegisterMessage>): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await this.postJson(
             url,
@@ -668,7 +749,7 @@ export class RestOperatorProvider implements OperatorProvider {
         return data.intentId;
     }
 
-    async deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void> {
+    async deleteIntent(intent: SignedProof<Proof.DeleteMessage>): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         await this.postJson(
             url,
@@ -1217,7 +1298,7 @@ namespace ProtoTypes {
 
 /**
  * Budget for a single live `/v1/info` fetch. Exported so the service-worker
- * page deadline for GET_ARKADE_INFO is DERIVED from it (budget + queue
+ * page deadline for GET_OPERATOR_INFO is DERIVED from it (budget + queue
  * headroom).
  */
 export const INFO_FETCH_TIMEOUT_MS = 12_000;

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { hex } from "@scure/base";
 import { DelegateManagerImpl, findDestinationOutputIndex } from "../../src/wallet/delegate";
-import type { ArkadeInfo, Identity } from "../../src";
+import type { OperatorInfo, Identity, TapLeaves } from "../../src";
 import type { DelegateProvider } from "../../src/providers/delegate";
 import {
     TEST_DEFAULT_ARK_ADDRESS,
@@ -24,7 +24,11 @@ describe("default delegation schedule", () => {
     });
 
     /** The `valid_at` signed for a coin expiring at `expiry`, delegated with no explicit date. */
-    async function validAt(expiry: number, sessionDuration: bigint): Promise<number> {
+    async function validAt(
+        expiry: number,
+        sessionDuration: bigint,
+        leaf: Partial<TapLeaves> = { proofTapLeafScript: testDelegateScript.delegate() },
+    ): Promise<number> {
         const delegate = vi.fn(async (_intent: { message: { valid_at: number } }) => {});
         const provider = {
             getDelegateInfo: async () => ({
@@ -42,13 +46,13 @@ describe("default delegation schedule", () => {
             network: "mutinynet",
             sessionDuration,
             signerPubkey: TEST_SERVER_PUB_KEY_HEX,
-        } as ArkadeInfo;
+        } as OperatorInfo;
         const identity = { sign: async (tx: unknown) => tx } as unknown as Identity;
         const coin = createMockContractVtxo(hex.encode(testDelegateScript.pkScript), {
             value: 1_000_000,
             tapTree: testDelegateScript.encode(),
             forfeitTapLeafScript: testDelegateScript.forfeit(),
-            intentTapLeafScript: testDelegateScript.delegate(),
+            ...leaf,
             expiresAt: new Date(expiry),
         });
 
@@ -62,6 +66,15 @@ describe("default delegation schedule", () => {
     it("leaves three operator sessions before expiry", async () => {
         const expiry = NOW + 30 * 86_400_000;
         expect(await validAt(expiry, 60n)).toBe(expiry / 1000 - 180);
+    });
+
+    it("delegates a coin that sets only the deprecated leaf key", async () => {
+        const expiry = NOW + 30 * 86_400_000;
+        const leaf = {
+            proofTapLeafScript: undefined,
+            intentTapLeafScript: testDelegateScript.delegate(),
+        };
+        expect(await validAt(expiry, 60n, leaf)).toBe(expiry / 1000 - 180);
     });
 
     it("stays before expiry when already inside that window", async () => {

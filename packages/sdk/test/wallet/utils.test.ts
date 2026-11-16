@@ -101,7 +101,7 @@ describe("extendVirtualCoinForContract tapscript memoization", () => {
         );
         expect(a.tapTree).toEqual(uncached.tapTree);
         expect(a.forfeitTapLeafScript).toEqual(uncached.forfeitTapLeafScript);
-        expect(a.intentTapLeafScript).toEqual(uncached.intentTapLeafScript);
+        expect(a.proofTapLeafScript).toEqual(uncached.proofTapLeafScript);
         expect(b.tapTree).toEqual(a.tapTree);
         expect(b.vout).toBe(1);
     });

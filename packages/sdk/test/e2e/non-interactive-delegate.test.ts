@@ -11,7 +11,7 @@ import {
     resolveBatchExpiryPolicy,
     Proof,
     networks,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
     SingleKey,
@@ -75,7 +75,7 @@ const delegateProgram = {
 
 describe("arkade delegate (covenant batch refresh) — intent submission", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const arkProvider = new RestOperatorProvider(OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);
@@ -132,7 +132,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
                     value: vtxo.value,
                     tapTree,
                     forfeitTapLeafScript: arkadeLeaf,
-                    intentTapLeafScript: arkadeLeaf,
+                    proofTapLeafScript: arkadeLeaf,
                     status: vtxo.status,
                     isSpent: vtxo.isSpent,
                 },
@@ -249,7 +249,7 @@ function buildDelegateHandler(opts: {
     session: any;
 }): Batch.Handler {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const arkProvider = new RestOperatorProvider(OPERATOR_URL);
 
     let batchId: string;
     let sweepTapLeaf: Uint8Array;

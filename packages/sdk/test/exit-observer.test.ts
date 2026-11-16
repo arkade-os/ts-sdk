@@ -112,7 +112,7 @@ function exitedVtxo(overrides?: Partial<ExtendedVirtualCoin>): ExtendedVirtualCo
         script: hex.encode(script.pkScript),
         tapTree: script.encode(),
         forfeitTapLeafScript: script.forfeit(),
-        intentTapLeafScript: script.exit(),
+        proofTapLeafScript: script.exit(),
         isUnrolled: true,
         isSpent: false,
         isSwept: false,

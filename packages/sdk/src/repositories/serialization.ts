@@ -49,11 +49,12 @@ export const deserializeAssets = (
     assets: Array<{ assetId: string; amount: string | number | bigint }> | undefined,
 ): Asset[] | undefined => assets?.map(deserializeAsset);
 
-export const serializeVtxo = (v: ExtendedVirtualCoin) => ({
+export const serializeVtxo = ({ proofTapLeafScript, ...v }: ExtendedVirtualCoin) => ({
     ...v,
     tapTree: hex.encode(v.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
-    intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript),
+    // Rows keep the old key, so stored coins still read.
+    intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript ?? proofTapLeafScript),
     extraWitness: v.extraWitness?.map(hex.encode),
     assets: serializeAssets(v.assets),
 });
@@ -66,11 +67,12 @@ export const createdAtToIso = (createdAt: Date | string | number): string =>
           ? createdAt.toISOString()
           : new Date(createdAt).toISOString();
 
-export const serializeUtxo = (u: ExtendedCoin) => ({
+export const serializeUtxo = ({ proofTapLeafScript, ...u }: ExtendedCoin) => ({
     ...u,
     tapTree: hex.encode(u.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),
-    intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript),
+    // Rows keep the old key, so stored coins still read.
+    intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript ?? proofTapLeafScript),
     extraWitness: u.extraWitness?.map(hex.encode),
 });
 
@@ -81,21 +83,24 @@ export const deserializeTapLeaf = (t: SerializedTapLeaf): TapLeafScript => {
 };
 
 // Normalized on the way out so persisted Date fields are rehydrated and optional facts are present.
-export const deserializeVtxo = (o: SerializedVtxo): NormalizedExtendedVirtualCoin =>
+export const deserializeVtxo = ({
+    intentTapLeafScript,
+    ...o
+}: SerializedVtxo): NormalizedExtendedVirtualCoin =>
     normalizeVtxo({
         ...o,
         createdAt: new Date(o.createdAt),
         tapTree: hex.decode(o.tapTree),
         forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
-        intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
+        proofTapLeafScript: deserializeTapLeaf(intentTapLeafScript),
         extraWitness: o.extraWitness?.map(hex.decode),
         assets: deserializeAssets(o.assets),
     });
 
-export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
+export const deserializeUtxo = ({ intentTapLeafScript, ...o }: SerializedUtxo): ExtendedCoin => ({
     ...o,
     tapTree: hex.decode(o.tapTree),
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
-    intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
+    proofTapLeafScript: deserializeTapLeaf(intentTapLeafScript),
     extraWitness: o.extraWitness?.map(hex.decode),
 });

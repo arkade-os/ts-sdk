@@ -440,7 +440,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                     isSpent: false,
                     script: "5120deadbeef",
                     forfeitTapLeafScript: makeTapLeaf(),
-                    intentTapLeafScript: makeTapLeaf(),
+                    proofTapLeafScript: makeTapLeaf(),
                     tapTree: new Uint8Array(32),
                 } as ExtendedVirtualCoin,
             ]);
@@ -493,7 +493,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                     isUnrolled: false,
                     script: "5120deadbeef",
                     forfeitTapLeafScript: makeTapLeaf(),
-                    intentTapLeafScript: makeTapLeaf(),
+                    proofTapLeafScript: makeTapLeaf(),
                     tapTree: new Uint8Array(32),
                 } as unknown as ExtendedVirtualCoin,
             ]);
@@ -527,7 +527,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                     spentBy: "",
                     script: "5120deadbeef",
                     forfeitTapLeafScript: makeTapLeaf(),
-                    intentTapLeafScript: makeTapLeaf(),
+                    proofTapLeafScript: makeTapLeaf(),
                     tapTree: new Uint8Array(32),
                 } as unknown as ExtendedVirtualCoin,
             ]);

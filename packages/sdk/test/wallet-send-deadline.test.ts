@@ -72,7 +72,7 @@ function coin(wallet: Wallet): ExtendedVirtualCoin {
         commitmentTxIds: [],
         script: hex.encode(tapscript.pkScript),
         forfeitTapLeafScript: tapscript.forfeit(),
-        intentTapLeafScript: tapscript.forfeit(),
+        proofTapLeafScript: tapscript.forfeit(),
         tapTree: tapscript.encode(),
     };
 }

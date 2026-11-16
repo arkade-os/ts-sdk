@@ -24,7 +24,7 @@ import {
     ReadonlyWallet,
     SingleKey,
     VHTLCV2ContractHandler,
-    type ArkProvider,
+    type OperatorProvider,
     type ExtendedVirtualCoin,
     type IWallet,
     type IndexerProvider,
@@ -323,7 +323,7 @@ const vtxo = (script: string, value: number): ExtendedVirtualCoin =>
         isPreconfirmed: false,
         script,
         forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-        intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+        proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
         tapTree: new Uint8Array(64),
     }) as unknown as ExtendedVirtualCoin;
 
@@ -331,7 +331,9 @@ const realWallet = async () => {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkProvider: { getInfo: async () => operatorInfo() } as Partial<ArkProvider> as ArkProvider,
+        arkProvider: {
+            getInfo: async () => operatorInfo(),
+        } as Partial<OperatorProvider> as OperatorProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],

@@ -26,7 +26,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     MnemonicIdentity,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
     deriveDescriptorLeafPubKey,
@@ -114,7 +114,7 @@ async function makeInnerWallet(opts: {
     const wallet = await Wallet.create({
         identity: opts.identity,
         walletMode: opts.hd ? "hd" : "static",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestOperatorProvider("http://localhost:7070"),
         storage: {
             walletRepository: opts.walletRepository,
             contractRepository: new InMemoryContractRepository(),

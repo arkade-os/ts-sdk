@@ -163,6 +163,51 @@ describe("EsploraProvider.watchAddresses", () => {
         (globalThis as any).WebSocket = originalWebSocket;
     });
 
+    describe("transaction values", () => {
+        it("delivers numeric satoshi output values over the websocket", async () => {
+            mockFetch.mockResolvedValueOnce(okJson([]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stop = await provider.watchAddresses(["addr1"], callback);
+            const tx: ExplorerTransaction = {
+                txid: "deposit",
+                vout: [{ scriptpubkey_address: "addr1", value: 10000 }],
+                status: { confirmed: true, block_time: 1 },
+            };
+
+            await FakeWebSocket.instances[0].dispatch("message", wsMessage("addr1", [tx]));
+
+            expect(callback).toHaveBeenCalledExactlyOnceWith([tx]);
+            stop();
+        });
+
+        it("rejects string output values over the websocket", async () => {
+            mockFetch.mockResolvedValueOnce(okJson([]));
+            const callback = vi.fn();
+            const provider = new EsploraProvider("http://localhost:3000");
+            const stop = await provider.watchAddresses(["addr1"], callback);
+
+            await FakeWebSocket.instances[0].dispatch("message", {
+                data: JSON.stringify({
+                    "multi-address-transactions": {
+                        addr1: {
+                            confirmed: [
+                                {
+                                    txid: "deposit",
+                                    vout: [{ scriptpubkey_address: "addr1", value: "10000" }],
+                                    status: { confirmed: true, block_time: 1 },
+                                },
+                            ],
+                        },
+                    },
+                }),
+            });
+
+            expect(callback).not.toHaveBeenCalled();
+            stop();
+        });
+    });
+
     describe("teardown safety", () => {
         it("does not leave a poll interval when stop() races the websocket-error fallback", async () => {
             // The fallback poll awaits a full address-history fetch *before* it
@@ -358,7 +403,9 @@ describe("EsploraProvider.watchAddresses", () => {
 
             expect(callback).not.toHaveBeenCalled();
             expect(
-                warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
+                warn.mock.calls.some((c: unknown[]) =>
+                    /may not have been reported/i.test(String(c[0])),
+                ),
             ).toBe(true);
         });
 
@@ -654,7 +701,9 @@ describe("EsploraProvider.watchAddresses", () => {
 
             expect(callback).not.toHaveBeenCalled();
             expect(
-                warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
+                warn.mock.calls.some((c: unknown[]) =>
+                    /may not have been reported/i.test(String(c[0])),
+                ),
             ).toBe(true);
         });
 

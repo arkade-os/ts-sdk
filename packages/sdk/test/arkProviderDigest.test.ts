@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { RestArkProvider, DigestMismatchError } from "../src/providers/ark";
+import { RestOperatorProvider, DigestMismatchError } from "../src/providers/ark";
 import { jsonResponse } from "./helpers/response";
 
 const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -58,7 +58,7 @@ function digestMismatchBody() {
     });
 }
 
-function digestOf(provider: RestArkProvider): string {
+function digestOf(provider: RestOperatorProvider): string {
     return (provider as unknown as { _digest: string })._digest;
 }
 
@@ -74,9 +74,9 @@ afterEach(() => {
 // off a mocked fetch proved non-deterministic on CI runners), so the behavior
 // below is what we lock in: digest caching and the DIGEST_MISMATCH detection
 // contract — keyed on arkd's structured ErrorDetails name, not a raw substring.
-describe("RestArkProvider server-info digest negotiation", () => {
+describe("RestOperatorProvider server-info digest negotiation", () => {
     it("getInfo caches the server digest", async () => {
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         vi.stubGlobal(
             "fetch",
             vi.fn(async () => okInfo("dX")),
@@ -92,7 +92,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         // service-worker page deadline (20s), so the worker never reaches its
         // snapshot fallback. The budget aborts first; the rejection must then
         // classify RETRYABLE or the fallback would treat it as terminal.
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         const fetchSpy = vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => {
             expect(init?.signal).toBeInstanceOf(AbortSignal);
             return okInfo("d1");
@@ -110,7 +110,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         // info read after the operator rotated advances the cached digest,
         // arkd stops answering DIGEST_MISMATCH, and the one event-driven
         // rotation trigger is suppressed by the act of reading.
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         const digests = ["d1", "d1", "d2"];
         vi.stubGlobal(
             "fetch",
@@ -133,7 +133,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
 
     it("getInfo emits onServerInfoChanged when a refresh returns a changed digest", async () => {
         const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         let digest = "d1";
         let signer = SIGNER;
         vi.stubGlobal(
@@ -157,7 +157,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
 
     it("getInfo emits when a previously empty digest changes", async () => {
         const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         let digest = "";
         let signer = SIGNER;
         vi.stubGlobal(
@@ -181,7 +181,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
     });
 
     it("getInfo does not emit on first populate or on an unchanged digest", async () => {
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         const seen: unknown[] = [];
         vi.stubGlobal(
             "fetch",
@@ -196,7 +196,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
     });
 
     it("on DIGEST_MISMATCH refreshes + emits onServerInfoChanged + throws (no silent retry)", async () => {
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         let submitAttempts = 0;
         vi.stubGlobal(
             "fetch",
@@ -222,7 +222,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
     });
 
     it("ignores a body that only contains the DIGEST_MISMATCH token (not a structured arkd error)", async () => {
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         let submitAttempts = 0;
         vi.stubGlobal(
             "fetch",
@@ -256,7 +256,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
     });
 
     it("does not emit or retry when a non-digest error comes back", async () => {
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         let submitAttempts = 0;
         vi.stubGlobal(
             "fetch",
@@ -277,7 +277,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
     });
 
     it("surfaces (does not silently swallow) a body-read failure during digest detection", async () => {
-        const provider = new RestArkProvider("http://ark.test");
+        const provider = new RestOperatorProvider("http://ark.test");
         vi.stubGlobal(
             "fetch",
             vi.fn(async (url: string) => {
@@ -319,7 +319,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
     });
 });
 
-describe("RestArkProvider.submitTx response validation", () => {
+describe("RestOperatorProvider.submitTx response validation", () => {
     afterEach(() => vi.unstubAllGlobals());
 
     it("rejects a response without finalArkTx", async () => {
@@ -327,9 +327,9 @@ describe("RestArkProvider.submitTx response validation", () => {
             "fetch",
             vi.fn(async () => jsonResponse({ arkTxid: "aa", signedCheckpointTxs: [] })),
         );
-        await expect(new RestArkProvider("http://ark.test").submitTx("rawtx", [])).rejects.toThrow(
-            /missing finalArkTx/,
-        );
+        await expect(
+            new RestOperatorProvider("http://ark.test").submitTx("rawtx", []),
+        ).rejects.toThrow(/missing finalArkTx/);
     });
 
     it("returns a response carrying finalArkTx", async () => {
@@ -338,8 +338,8 @@ describe("RestArkProvider.submitTx response validation", () => {
             "fetch",
             vi.fn(async () => jsonResponse(body)),
         );
-        await expect(new RestArkProvider("http://ark.test").submitTx("rawtx", [])).resolves.toEqual(
-            body,
-        );
+        await expect(
+            new RestOperatorProvider("http://ark.test").submitTx("rawtx", []),
+        ).resolves.toEqual(body);
     });
 });

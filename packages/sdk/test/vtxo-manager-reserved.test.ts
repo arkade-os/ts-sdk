@@ -30,7 +30,7 @@ describe("VtxoManager and a concurrent spend", () => {
             commitmentTxIds: [],
             expiresAt: new Date(now + 5_000),
             forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
             tapTree: new Uint8Array(),
         };
         let onEvent: ((event: unknown) => void) | undefined;

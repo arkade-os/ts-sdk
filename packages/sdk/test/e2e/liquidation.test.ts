@@ -10,7 +10,7 @@ import {
     EmulatorPacket,
     Extension,
     networks,
-    RestArkProvider,
+    RestOperatorProvider,
     RestEmulatorProvider,
     RestIndexerProvider,
     Transaction,
@@ -82,7 +82,7 @@ const liquidationProgram = {
 
 describe("liquidation (oracle-signed asset burn)", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const arkProvider = new RestOperatorProvider(OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);

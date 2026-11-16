@@ -12,9 +12,9 @@ import {
     initBatchesDatabase,
     STORE_INTENTS,
 } from "../src/repositories/indexedDB/batchesSchema";
-import { IndexedDBIntentRepository } from "../src/repositories/indexedDB/intentRepository";
+import { IndexedDBBatchRegistrationRepository } from "../src/repositories/indexedDB/intentRepository";
 import { IndexedDBVirtualTxRepository } from "../src/repositories/indexedDB/virtualTxRepository";
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
 import { DEFAULT_DB_NAME } from "../src/worker/browser/utils";
 import { awaitTransaction, promisifyRequest } from "../src/repositories/indexedDB/idbUtils";
 import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
@@ -63,11 +63,11 @@ describe("IndexedDB schema", () => {
     it("keeps the intent/virtualtx repositories out of the wallet database", async () => {
         expect(BATCHES_DB_NAME).not.toBe(DEFAULT_DB_NAME);
         const contracts = new IndexedDBContractRepository();
-        const intents = new IndexedDBIntentRepository();
+        const intents = new IndexedDBBatchRegistrationRepository();
         const virtualTxs = new IndexedDBVirtualTxRepository();
         try {
             // intent repository first: on a shared name it would fix the version
-            await expect(collectIntents(intents, {})).resolves.toEqual([]);
+            await expect(collectBatchRegistrations(intents, {})).resolves.toEqual([]);
             await expect(collectContracts(contracts, {})).resolves.toEqual([]);
             await expect(virtualTxs.getVirtualTx("00".repeat(32))).resolves.toBeNull();
         } finally {

@@ -65,7 +65,7 @@ function vtxoInput(
         script: hex.encode(script.pkScript),
         tapTree: script.encode(),
         forfeitTapLeafScript: script.forfeit(),
-        intentTapLeafScript: script.forfeit(),
+        proofTapLeafScript: script.forfeit(),
         ...facts,
     } as unknown as ExtendedVirtualCoin;
 }

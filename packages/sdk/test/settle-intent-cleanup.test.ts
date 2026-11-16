@@ -128,7 +128,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
             const state = lostAck ? "waiting_to_submit" : "waiting_for_batch";
             const [persisted] = await collectIntents(repository);
             expect(persisted.state).toBe(state);
-            expect(persisted.intentId).toBe(lostAck ? undefined : "server-intent");
+            expect(persisted.registrationId).toBe(lostAck ? undefined : "server-intent");
             expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
 
             db.close();

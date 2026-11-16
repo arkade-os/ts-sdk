@@ -154,6 +154,23 @@ export interface ArkadeSegment {
     asm: AsmToken[];
     /** The arkade-script witness stack (e.g. an output index). */
     witness?: WitnessRef[];
+    /**
+     * Where each statement's tokens in `asm` came from, read from the compiler's debug file.
+     * ponytail: in memory only; stringifyArtifact does not write it, so a restored contract has
+     * none. Persist it if apps need source positions after a restore.
+     */
+    sourceMap?: SourceRange[];
+}
+
+/** One statement's tokens in a covenant's `asm` and its place in the entry file. */
+export interface SourceRange {
+    /** Half-open `[start, end)` indexes into the covenant's `asm`. */
+    asm: [number, number];
+    /** 1-based `[line, column]` in the entry file, with UTF-16 columns. */
+    start: [number, number];
+    end: [number, number];
+    /** The `require()` message, when it has one. */
+    message?: string;
 }
 
 /** One named spending path. */
@@ -297,6 +314,21 @@ export function witnessRefToBytes(
     const v = ref.startsWith("$") ? bindValue(programArgs, ref.slice(1)) : bindValue(callArgs, ref);
     if (v instanceof Uint8Array) return v;
     return MinimalScriptNum.encode(BigInt(v));
+}
+
+/**
+ * Resolve a witness stack without call arguments: literals and `$param` references resolve,
+ * function-input references exist only at call time, so a stack naming one yields `null`.
+ */
+export function staticWitness(
+    refs: readonly WitnessRef[] | undefined,
+    programArgs: Record<string, ArkadeParamValue>,
+): Uint8Array[] | null {
+    try {
+        return (refs ?? []).map((ref) => witnessRefToBytes(ref, {}, programArgs));
+    } catch {
+        return null;
+    }
 }
 
 /**

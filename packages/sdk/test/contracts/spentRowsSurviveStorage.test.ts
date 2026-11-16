@@ -44,7 +44,7 @@ const spentDeposit = (): ExtendedVirtualCoin => ({
     arkTxId: ARK_TX,
     script: TEST_DEFAULT_SCRIPT,
     forfeitTapLeafScript: tapLeaf(),
-    intentTapLeafScript: tapLeaf(),
+    proofTapLeafScript: tapLeaf(),
     tapTree: new Uint8Array(32).fill(3),
 });
 
