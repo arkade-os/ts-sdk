@@ -214,6 +214,9 @@ describe("NativeExecutionJournal receipts", () => {
         f.indexer.getVirtualTxs.mockClear();
         await expect(f.journal.getReceipt({ ...source, vout: 99 })).rejects.toThrow();
         await expect(f.journal.reconcile({ ...source, vout: 99 }, f.indexer)).rejects.toThrow();
+        await expect(f.journal.admit(source, f.request)).rejects.toThrow(
+            kind === "orphan" ? "orphan" : undefined,
+        );
         expect(f.indexer.getVtxos).not.toHaveBeenCalled();
         expect(f.indexer.getVirtualTxs).not.toHaveBeenCalled();
         expect(await f.repo.getWalletState()).toEqual(state);
@@ -470,6 +473,8 @@ describe("NativeExecutionJournal observation", () => {
                     ...(next === undefined ? {} : { next }),
                 })),
                 { current: 0, next: 1, total: 1 },
+                { current: 0, next: 0, total: 1 },
+                { current: 0, next: 0, total: 0 },
                 { current: 99, next: 0, total: 1 },
                 { current: 1, next: 2, total: 2 },
             ];

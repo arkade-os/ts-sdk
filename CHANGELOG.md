@@ -599,6 +599,13 @@ style and have not been backfilled.
   availability retries for 429/5xx, while terminal status errors keep the bounded
   read failure. Response byte limits and legacy defaults are unchanged.
 
+- **Native journal admission rejects an orphan receipt; observation requires a
+  1-based page.** `admit()` checked only the prepared slot, so a stored receipt
+  without a record admitted a new proposal and let it dispatch, after which every
+  read rejected it as conflicting. Admission now validates the receipt snapshot
+  first. Observation pagination must now be `{current: 1, total: 1}` with `next`
+  0 or 1; zero-based headers no longer reconcile.
+
 - **Native execution preserves its imported payout and delegation binding.**
   Mutating a handle's destination no longer changes its spend. Remote watches
   must match the captured template, artifact and variables; restored handles

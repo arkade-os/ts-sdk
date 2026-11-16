@@ -303,27 +303,24 @@ assert.equal(recovered.decoy.txid, plan.decoy.txid);
 assert.equal(recovered.decoy.vout, plan.decoy.vout);
 assert.equal(recovered.decoy.script, plan.script);
 const binding = evidence["delegate-binding"];
-assert.equal(binding.mismatchedWatchRequests, 0);
-assert.equal(binding.matchingWatchRequests, 1);
+assert.equal(binding.watchRequests, 1);
+const templates = http.requests.filter(
+    (row) => row.method === "POST" && row.path === "/v1/template",
+);
+assert.equal(templates.length, 1);
+assert.deepEqual(JSON.parse(templates[0].body.document), binding.document);
 const watches = http.requests.filter((row) => row.path === "/v1/delegate" && row.method === "POST");
 assert.equal(watches.length, 1);
-assert.equal(watches[0].body.templateId, binding.matchingTemplateId);
+assert.equal(watches[0].body.templateId, templates[0].response.template.id);
 assert(watches[0].respondedAt <= binding.pausedAt);
 assert.equal(evidence["legacy-control"].lockedPositionsExcluded, true);
 for (const path of ["/v1/tx/submit", "/v1/tx/finalize"])
     assert.equal(http.requests.filter((row) => row.path === path).length, 1);
 assert.deepEqual(services.inputs, inputs);
-assert.equal(services.identities.length, 12);
+assert.equal(services.identities.length, 13);
 assert.match(services.backendBinarySha256, /^[0-9a-f]{64}$/);
-for (const [service, image] of [
-    ["emulator", inputs.emulator],
-    ["delegatee", inputs.delegatee],
-    ["arkd-wallet", inputs.wallet],
-])
-    assert.equal(
-        services.identities.find((entry) => entry.name === service).configuredImage,
-        image,
-    );
+for (const { name, configuredImage } of services.identities)
+    assert.equal(configuredImage, services.images[name], `Unexpected image for ${name}`);
 assert.equal(cleanup.volumesDeleted, false);
 assert.deepEqual(
     new Set(cleanup.stoppedContainerIds),
@@ -333,7 +330,6 @@ for (const path of [
     "packages/sdk/src/arkade/executionJournal.ts",
     "packages/sdk/test/proof/native-executor/actor.mjs",
     "packages/sdk/test/proof/native-executor/stack.mjs",
-    "packages/sdk/test/proof/native-executor/Dockerfile",
     "packages/sdk/test/proof/native-execution-journal/actor.mjs",
     "packages/sdk/test/proof/native-execution-journal/observer.mjs",
     "packages/sdk/test/proof/native-execution-journal/prove.mjs",

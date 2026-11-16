@@ -66,7 +66,8 @@ export class NativeExecutionJournal {
     ): Promise<NativeExecutionRecord> {
         const record = prepare(source, proposal);
         await this.atomic.update((state) => {
-            if (readSlot(state) !== undefined)
+            // Snapshot read so an orphan receipt rejects before anything is dispatched.
+            if (readReceiptSnapshot(state).record !== undefined)
                 throw new Error("native execution journal is occupied");
             return { ...state, settings: { ...state.settings, [SLOT]: record } };
         });
@@ -239,21 +240,12 @@ function assertCompleteReply(reply: unknown, field: "vtxos" | "txs"): void {
         utf8.decode(JSON.stringify(value)).length > MAX_REQUEST_BYTES
     )
         throw new Error("invalid or oversized observation reply");
+    // The indexer pages from 1; a terminal page reports next as 0 or its own index.
     const page = value.page;
     if (
         page !== undefined &&
         page !== null &&
-        (!page ||
-            !Number.isInteger(page.current) ||
-            page.current < 0 ||
-            page.current > page.total ||
-            !Number.isInteger(page.next) ||
-            page.next < 0 ||
-            page.next > page.total ||
-            (page.next !== 0 && page.current < page.total) ||
-            !Number.isInteger(page.total) ||
-            page.total < 0 ||
-            page.total > 1)
+        (!page || page.current !== 1 || page.total !== 1 || (page.next !== 0 && page.next !== 1))
     )
         throw new Error("incomplete observation reply");
 }
