@@ -185,17 +185,20 @@ type SegmentArgs<S> = S extends { inputs: infer I extends readonly InputDef[] }
 
 type WitnessSegment = "tapscript" | "arkadeScript";
 
-/** A function's call argument: one key for each segment that declares `inputs`. */
+/** A function's call argument: one key for each segment that declares non-empty `inputs`. */
 type CallArgs<F extends ArkadeFunction> = {
-    [K in WitnessSegment as F[K] extends { inputs: object } ? K : never]: SegmentArgs<F[K]>;
+    [K in WitnessSegment as SegmentArgs<F[K]> extends readonly [] ? never : K]: SegmentArgs<F[K]>;
 };
+
+/** The call argument of a function of a widened {@link Program}. */
+type LooseCallArgs = Partial<Record<WitnessSegment, readonly ArkadeNestedValue[]>>;
 
 /** The call signature arguments for one function: nullary when no segment declares inputs. */
 type FnArgs<F extends ArkadeFunction> = keyof CallArgs<F> extends never ? [] : [args: CallArgs<F>];
 
 /** A contract's functions returning `R`: typed per function for a literal program, else loose. */
 type FunctionMap<P extends Program, R> = string extends keyof P["functions"]
-    ? Record<string, (...args: ArkadeNestedValue[]) => R>
+    ? Record<string, (args?: LooseCallArgs) => R>
     : {
           [K in keyof P["functions"]]: (...args: FnArgs<P["functions"][K]>) => R;
       };
@@ -282,10 +285,7 @@ export interface ArkadeSpendResult {
 }
 
 /** The callable spending paths of a contract. */
-export type CallableFunctions = Record<
-    string,
-    (...args: ArkadeNestedValue[]) => ArkadeTransactionBuilder
->;
+export type CallableFunctions = Record<string, (args?: LooseCallArgs) => ArkadeTransactionBuilder>;
 
 // --- Arkade client ---------------------------------------------------------
 
@@ -746,7 +746,7 @@ export class ArkadeContract<P extends Program = Program> {
     get functions(): ContractFunctions<P> {
         const out: CallableFunctions = Object.create(null);
         for (const fn of this.compiled) {
-            out[fn.name] = (...callArgs: ArkadeNestedValue[]) =>
+            out[fn.name] = (...callArgs: unknown[]) =>
                 new ArkadeTransactionBuilder(this.client, {
                     contract: this,
                     fn,
@@ -758,10 +758,9 @@ export class ArkadeContract<P extends Program = Program> {
 
     /** Spending paths bound to their arguments, for `.from(coins, contract.unlock.<name>(...))`. */
     get unlock(): ContractUnlockers<P> {
-        const out: Record<string, (...args: ArkadeNestedValue[]) => ArkadeUnlocker> =
-            Object.create(null);
+        const out: Record<string, (...args: unknown[]) => ArkadeUnlocker> = Object.create(null);
         for (const fn of this.compiled) {
-            out[fn.name] = (...callArgs: ArkadeNestedValue[]) => ({
+            out[fn.name] = (...callArgs: unknown[]) => ({
                 contract: this,
                 fn,
                 args: bindCall(fn, callArgs),
@@ -1467,11 +1466,24 @@ function flattenValue(
 /** Bind a call's `{ tapscript, arkadeScript }` arguments to each segment's declared inputs. */
 function bindCall(
     { name, def }: CompiledProgramFunction,
-    [args]: ArkadeNestedValue[],
+    callArgs: unknown[],
 ): ArkadeUnlocker["args"] {
-    const { tapscript = [], arkadeScript = [] } = (args ?? {}) as Partial<
-        Record<WitnessSegment, ArkadeNestedValue[]>
-    >;
+    const [args = {}] = callArgs;
+    const proto = typeof args === "object" && args !== null && Object.getPrototypeOf(args);
+    if (
+        callArgs.length > 1 ||
+        (proto !== Object.prototype && proto !== null) ||
+        Object.entries(args as object).some(
+            ([key, value]) =>
+                (key !== "tapscript" && key !== "arkadeScript") ||
+                (value !== undefined && !Array.isArray(value)),
+        )
+    ) {
+        throw new Error(
+            `${name}: expected one { arkadeScript?: [...], tapscript?: [...] } argument`,
+        );
+    }
+    const { tapscript = [], arkadeScript = [] } = args as LooseCallArgs;
     return {
         arkadeScript: bindInputs(
             `${name} arkadeScript`,
@@ -1489,7 +1501,7 @@ function bindCall(
 function bindInputs(
     label: string,
     inputs: readonly InputDef[],
-    callArgs: ArkadeNestedValue[],
+    callArgs: readonly ArkadeNestedValue[],
 ): Record<string, ArkadeArgValue> {
     const declared = new Set<string>();
     for (const def of inputs) {

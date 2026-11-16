@@ -123,3 +123,27 @@ it("accepts nested values when satisfies Program widens input names", () => {
         Parameters<ContractFunctions<typeof program>["spend"]>[0]["tapscript"]
     >().toEqualTypeOf<ArkadeNestedValue[]>();
 });
+
+it("keeps a function nullary when its segments declare empty inputs", () => {
+    const program = {
+        version: 1,
+        functions: {
+            refund: {
+                tapscript: { signers: [], inputs: [] as const },
+                arkadeScript: { asm: [], inputs: [] as const },
+            },
+        },
+    } satisfies Program;
+    expectTypeOf<Parameters<ContractFunctions<typeof program>["refund"]>>().toEqualTypeOf<[]>();
+});
+
+it("types a widened program's calls by segment, not positionally", () => {
+    expectTypeOf<Parameters<ContractFunctions<Program>[string]>>().toEqualTypeOf<
+        [
+            args?: {
+                tapscript?: readonly ArkadeNestedValue[];
+                arkadeScript?: readonly ArkadeNestedValue[];
+            },
+        ]
+    >();
+});

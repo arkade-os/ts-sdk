@@ -41,7 +41,7 @@ const payTo = [
 // `satisfies arkade.Program` (not `: arkade.Program`) preserves the literal
 // type, and `inputs: [...] as const` keeps it a tuple — so the contract's
 // `functions.claim` is typed `({ tapscript: [preimage: Uint8Array] }) => ...`
-// with exact arity, rather than falling back to the loose `(...args: ArkadeArgValue[])`.
+// with exact arity, rather than falling back to the loose `({ tapscript?, arkadeScript? })`.
 function htlcProgram() {
     return {
         version: 1,
@@ -283,6 +283,27 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const { ark } = await connect();
         const contract = ark.contract(htlcProgram(), args);
         expect(() => (contract.functions.claim as any)()).toThrow(/expected 1 argument/);
+    });
+
+    it("rejects a call argument that is not one segment-keyed object", async () => {
+        const { ark } = await connect();
+        const contract = ark.contract(htlcProgram(), args);
+        const claim = contract.functions.claim as (...a: unknown[]) => unknown;
+        const preimage = new Uint8Array(32);
+        for (const call of [
+            [preimage],
+            [{ tapscript: preimage }],
+            [{ tapscrpt: [preimage] }],
+            [{ tapscript: [preimage] }, preimage],
+            [null],
+        ]) {
+            expect(() => claim(...call)).toThrow(/expected one \{ arkadeScript\?/);
+        }
+        const exit = ark.contract(exitProgram(), { user: xOnly() });
+        expect(() => (exit.functions.exit as (...a: unknown[]) => unknown)(1n)).toThrow(
+            /expected one \{ arkadeScript\?/,
+        );
+        expect(() => contract.functions.claim({ tapscript: [preimage] })).not.toThrow();
     });
 
     it("defaults declared 'server'/'user' params to the client keys", async () => {
