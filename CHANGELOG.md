@@ -111,6 +111,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Canonical BTC market IDs retain dust validation.** The shared swap protocol now recognizes CAIP BTC identifiers as well as legacy `btc` when checking deposit and receive amounts, so direct consumers receive the same dust guard as the swap client.
+
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's
   `notifyIncomingFunds` returns. When that function threw after the funds

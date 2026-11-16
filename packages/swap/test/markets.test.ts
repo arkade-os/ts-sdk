@@ -608,6 +608,37 @@ describe("validatePlan", () => {
         expect(validatePlan(p, BigInt(1_000), BigInt(330))).toBeUndefined();
     });
 
+    it.each([
+        "btc",
+        "arkade:bitcoin/slip44:0",
+        "arkade:mutinynet/slip44:1",
+        "arkade:regtest/slip44:1",
+    ])("checks BTC dust for %s on either side", (id) => {
+        const market = { ...btcUsd, base_asset: { ...btcUsd.base_asset, id } };
+        for (const give of ["base", "quote"] as const) {
+            const p = planOffer({
+                market,
+                give,
+                feedValue: 100000,
+                giveAmount: 10_000n,
+                safetyBps: 0,
+            });
+            const btcAmount = give === "base" ? p.deposit.atomic : p.receive.atomic;
+            expect(validatePlan(p, 20_000n, btcAmount + 1n)).toBe("below-dust");
+            expect(validatePlan(p, 20_000n, 330n)).toBeUndefined();
+        }
+    });
+
+    it("keeps canonical asset quantities independent of Bitcoin dust", () => {
+        const market = {
+            ...xauUsd,
+            base_asset: { ...xauUsd.base_asset, id: `arkade:mutinynet/asset:${XAU_ID}` },
+            quote_asset: { ...xauUsd.quote_asset, id: `arkade:mutinynet/asset:${USD_ID}` },
+        };
+        const p = planOffer({ market, give: "base", feedValue: 1, giveAmount: 200n, safetyBps: 0 });
+        expect(validatePlan(p, 1_000n, 330n)).toBeUndefined();
+    });
+
     it("skips the dust check when neither leg is BTC (#857)", () => {
         // both atomic sides sit under the sat dust number, but neither is sats:
         // asset deposits and fills ride the SDK's own dust carriers, so there is
