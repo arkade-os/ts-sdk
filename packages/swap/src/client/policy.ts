@@ -5,23 +5,19 @@
  * policy that could only reject a quote after it arrived would be a preference.
  */
 import type { MarketCandidate } from "./market";
-import type { RankedBid } from "./quote";
 import type { FeeCeiling } from "./verbs";
 import type { SolverRoutingPolicy } from "./solverRouting";
 
 /**
  * A published-RFQ auction's parameters (§10, Q9).
  *
- * Reserved and inert: nothing reads it. Shaped after ts-sdk #777's draft so the name isn't taken
- * by something narrower meanwhile.
+ * Defaults for explicit openRfq calls. Ordinary quote() remains addressed.
  */
 export interface RfqAuctionPolicy {
     /** How long to hold the bid window open, in ms. */
     readonly windowMs: number;
-    /** Relays to publish the open request on. Unioned across the pair's cards. */
+    /** Default relays for explicit openRfq calls; absent means the current cards or public defaults. */
     readonly relays?: readonly string[];
-    /** §4.6's SHOULD: a fresh transport key per open, so bids are unlinkable. */
-    readonly freshTransportKey?: boolean;
 }
 
 /**
@@ -91,12 +87,7 @@ export interface SwapPolicy {
     readonly maxRefundWindowSeconds?: number;
 
     /**
-     * §10, reserved and inert: the published-RFQ auction's parameters.
+     * Defaults for explicit openRfq calls; never makes quote() public.
      */
     readonly rfq?: RfqAuctionPolicy;
-
-    /**
-     * §10, reserved and inert: which bid to close a published auction with.
-     */
-    readonly selectBid?: (bids: readonly RankedBid[]) => RankedBid | undefined;
 }
