@@ -398,7 +398,10 @@ describe("ContractManager.syncOnchain", () => {
         const [row] = await collectScriptVtxos(walletRepository, boarding.script);
         expect(row.spentBy).toBe(spender);
         expect(Object.keys(await pendingOf(walletRepository))).toEqual([`${coin.txid}:1`]);
-        expect(String(warn.mock.calls[0][0])).toContain(`${"ff".repeat(32)}:0`);
+        // Search, don't index: the previous test's in-flight background sync can warn into this spy.
+        expect(warn.mock.calls.map(([m]) => String(m))).toContainEqual(
+            expect.stringContaining(`${"ff".repeat(32)}:0`),
+        );
         warn.mockRestore();
         manager.dispose();
     });
