@@ -37,6 +37,7 @@ export type { CorridorOverrides } from "./client/corridors/deps";
 export type { DriveMode, RfqAuctionPolicy, SwapPolicy } from "./client/policy";
 export { DEFAULT_MAX_REFUND_WINDOW_SECONDS } from "./client/policy";
 export type { RfqTransportFactory } from "./client/transport";
+export type { OpenRfqAuction, OpenRfqOffer, OpenRfqOptions } from "./client/openRfq";
 export {
     completedSolverUsage,
     SolverRoutesUnavailable,
@@ -90,7 +91,6 @@ export type {
     VerifiedCarrierTerms,
     RecordedAssetPayment,
     AssetRef,
-    AuctionMarketRef,
     AuctionProvenance,
     CardMarketRef,
     MarketBackend,

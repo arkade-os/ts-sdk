@@ -81,10 +81,10 @@ export interface SnapshotRef {
 }
 
 /**
- * Which card priced a quote, and from which registry. A union because an auction-closed quote
- * (§10) has a market key and no card, and a restored record has neither.
+ * Which card priced a quote, and its source. quoteBid retains the verified card and records
+ * auction evidence separately; legacy auction references and restored records remain readable.
  */
-export type MarketRef = CardMarketRef | AuctionMarketRef | RestoredMarketRef;
+export type MarketRef = CardMarketRef | RestoredMarketRef;
 
 export interface CardMarketRef {
     readonly kind: "card";
@@ -105,13 +105,6 @@ export interface CardMarketRef {
     /** The card's display label, e.g. `BTC/lightning:BTC`. Display only. */
     readonly pair: string;
     readonly snapshot: SnapshotRef;
-}
-
-/** §10, reserved: a quote closed out of a published auction has no card. */
-export interface AuctionMarketRef {
-    readonly kind: "auction";
-    readonly key: string;
-    readonly backend: "rfq";
 }
 
 /** A record rebuilt after a restore (from the funding tx, or a v1 corridor row): no card stands
@@ -135,8 +128,7 @@ export interface RankedBid {
 }
 
 /**
- * The auction a published-RFQ quote was closed out of (§10, Q9). Reserved and inert: `quote()`
- * never populates it.
+ * The open auction a quoteBid selection was closed out of. Ordinary quote() leaves it absent.
  */
 export interface AuctionProvenance {
     /** The market key the open request was tagged with. */
@@ -174,7 +166,7 @@ export interface Quote {
     readonly market: MarketRef;
     /** RFQ routes: the committed counterparty, from the quote's covenant role. */
     readonly solver?: Pubkey;
-    /** §10 only, and never populated today. */
+    /** Evidence for an explicit open-RFQ selection. */
     readonly auction?: AuctionProvenance;
     /** Unix seconds. Non-optional on both backends — a feed-priced quote has no
      * wire expiry to inherit, so the client mints one from the feed's freshness. */
