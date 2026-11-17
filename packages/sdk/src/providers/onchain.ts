@@ -447,15 +447,24 @@ export class EsploraProvider implements OnchainProvider {
          */
         const baseline = (async () => {
             const [history, tip] = await Promise.allSettled([getAllTxs(), this.getChainTip()]);
+            let failure: unknown;
             if (history.status === "fulfilled") {
-                for (const tx of history.value) seen.add(txKey(tx));
-                baselined = true;
-                return;
+                try {
+                    // Collect first so a malformed entry doesn't leave `seen` half-seeded.
+                    const keys = history.value.map(txKey);
+                    for (const key of keys) seen.add(key);
+                    baselined = true;
+                    return;
+                } catch (error) {
+                    failure = error;
+                }
+            } else {
+                failure = history.reason;
             }
 
             console.warn(
                 "Could not baseline watched addresses; the first poll pass will establish it instead:",
-                history.reason,
+                failure,
             );
             if (tip.status === "fulfilled") anchorHeight = tip.value.height;
         })();

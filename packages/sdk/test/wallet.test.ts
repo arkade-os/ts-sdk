@@ -232,6 +232,9 @@ describe("Wallet", () => {
                 if (target.includes("subscribe")) {
                     return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
                 }
+                if (target.includes("/address/") && target.endsWith("/txs")) {
+                    return Promise.resolve(jsonResponse([]));
+                }
                 if (target.includes("/address/")) {
                     return Promise.resolve(jsonResponse(mockUTXOs));
                 }
@@ -835,6 +838,9 @@ describe("Wallet", () => {
                 }
                 if (url.includes("/script/subscribe")) {
                     return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
+                }
+                if (url.includes("/address/") && url.endsWith("/txs")) {
+                    return Promise.resolve(jsonResponse([]));
                 }
                 if (url.includes("/address/") && url.includes("/utxo")) {
                     return Promise.resolve(jsonResponse(mockUTXOs));
@@ -1959,6 +1965,9 @@ describe("ReadonlyWallet", () => {
             }
             if (url.includes("/script/subscribe")) {
                 return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
+            }
+            if (url.includes("/address/") && url.endsWith("/txs")) {
+                return Promise.resolve(jsonResponse([]));
             }
             if (url.includes("/address/") && url.includes("/utxo")) {
                 return Promise.resolve(jsonResponse(mockUTXOs));
