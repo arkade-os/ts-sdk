@@ -32,7 +32,7 @@ style and have not been backfilled.
   output i. A one-deposit fill is unchanged: the deposit stays input 0 and the
   payout stays output 0. A newly derived offer address does not change by
   default: an offer is derived on the previous tree unless the solver negotiates
-  `asset-swap-v3` over RFQ (`generation: "current"` opts in directly). An offer
+  `asset-swap-v3` over RFQ (`contractVersion: "asset-swap-v3"` opts in directly). An offer
   that carries a `swapPkScript` compiles whichever tree matches it, so cancel,
   fill, classify and restore keep rebuilding the address it was funded at. v0
   offer rows migrate onto the previous tree. The deprecated `swapPrograms`

@@ -582,7 +582,7 @@ export const arkadeAssetAnswer = (
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
         },
         OPERATOR_PUBKEY,
-        version === ASSET_SWAP_V3 ? "current" : "previous",
+        version === ASSET_SWAP_V3 ? "asset-swap-v3" : "asset-swap-v2",
     );
     return {
         v: 1,

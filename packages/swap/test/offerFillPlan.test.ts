@@ -170,7 +170,7 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
             "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
         ),
     };
-    const planScript = offerVtxoScript(planOffer, SERVER_KEY, "current");
+    const planScript = offerVtxoScript(planOffer, SERVER_KEY, "asset-swap-v3");
     const planOfferHex = hex.encode(
         encodeOffer({ ...planOffer, swapPkScript: planScript.pkScript }),
     );

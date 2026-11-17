@@ -389,7 +389,7 @@ const quoteArkadeAsset = async (
     const {
         quote: wire,
         rfqId,
-        generation,
+        contractVersion,
     } = await requestVersionedQuote(
         input.transport,
         {
@@ -475,7 +475,7 @@ const quoteArkadeAsset = async (
         maker,
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         info: input.info,
-        generation,
+        contractVersion,
     });
     // Compare-only, and never the other way round: the address the trader funds
     // is the one the trader derived, and a solver naming another one is refused

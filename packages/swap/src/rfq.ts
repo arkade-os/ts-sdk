@@ -70,7 +70,12 @@ import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
-import { ASSET_SWAP_CONTRACT_VERSIONS, ASSET_SWAP_V2, offerGenerationFor } from "./program";
+import {
+    ASSET_SWAP_BASELINE,
+    ASSET_SWAP_CONTRACT_VERSIONS,
+    type AssetSwapContractVersion,
+    assetSwapContractVersion,
+} from "./program";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -751,7 +756,14 @@ export const requestVersionedQuote = async (
     transport: RfqTransport,
     request: Record<string, unknown> & { rfq_id: string },
     advertised: readonly string[],
-): Promise<{ quote: RfqQuote; rfqId: string; generation: "current" | "previous" }> => {
+): Promise<{
+    quote: RfqQuote;
+    rfqId: string;
+    contractVersion: AssetSwapContractVersion;
+}> => {
+    if (advertised.length === 0) {
+        throw new Error("contractVersions is empty: advertise at least one contract version");
+    }
     let sent: Record<string, unknown> & { rfq_id: string } = request;
     let quote: RfqQuote;
     try {
@@ -761,7 +773,7 @@ export const requestVersionedQuote = async (
             !(error instanceof SwapRefusal) ||
             error.reason !== "unsupported_payload" ||
             error.errorCode !== undefined ||
-            !advertised.includes(ASSET_SWAP_V2)
+            !advertised.includes(ASSET_SWAP_BASELINE)
         ) {
             throw error;
         }
@@ -774,13 +786,13 @@ export const requestVersionedQuote = async (
             `solver chose contract version ${quote.contract_version}, but none was advertised`,
         );
     }
-    const version = quote.contract_version ?? ASSET_SWAP_V2;
+    const version = quote.contract_version ?? ASSET_SWAP_BASELINE;
     if (!advertised.includes(version)) {
         throw new Error(
             `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
         );
     }
-    return { quote, rfqId: sent.rfq_id, generation: offerGenerationFor(version) };
+    return { quote, rfqId: sent.rfq_id, contractVersion: assetSwapContractVersion(version) };
 };
 
 /** The pair of a request we built, when it named one. */
@@ -1445,6 +1457,8 @@ export async function requestArkadeSwap(
          * so asserting it proves nothing and an unbounded caller funds what it is asked. */
         maxFromAmount?: bigint | number | string;
         minToAmount?: bigint | number | string;
+        /** A retry without `contract_versions` goes out under a fresh rfq_id, so the
+         * returned `rfqId` can differ from this one. */
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
@@ -1503,7 +1517,7 @@ export async function requestArkadeSwap(
     );
     // A copy: the request and the check of the reply must see the same list.
     const contractVersions = [...(params.contractVersions ?? ASSET_SWAP_CONTRACT_VERSIONS)];
-    const { quote, rfqId, generation } = await requestVersionedQuote(
+    const { quote, rfqId, contractVersion } = await requestVersionedQuote(
         transport,
         arkadeSwapRequest({
             rfqId: params.rfqId ?? newRfqId(),
@@ -1557,7 +1571,7 @@ export async function requestArkadeSwap(
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
-        generation,
+        contractVersion,
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);

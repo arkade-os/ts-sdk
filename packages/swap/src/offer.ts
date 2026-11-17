@@ -28,7 +28,14 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
-import { legacySwapPrograms, swapPrograms } from "./program";
+import {
+    ASSET_SWAP_BASELINE,
+    ASSET_SWAP_CONTRACTS,
+    ASSET_SWAP_CONTRACT_VERSIONS,
+    type AssetSwapContractVersion,
+    legacySwapPrograms,
+    swapPrograms,
+} from "./program";
 import {
     promoteOfferContract,
     RETIRABLE,
@@ -120,13 +127,13 @@ export function withExitClosure(
 
 /** Exported for the asset-id vector tests (the args are the only place both asset-id forms are
  * visible). Deliberately absent from the package index -- not public API.
- * A carried `swapPkScript` selects the tree that compiles to it; without one, `generation` picks.
- * Defaults to `previous`: the tree every solver fills unless both sides negotiated `asset-swap-v3`.
+ * A carried `swapPkScript` selects the version that compiles to it; without one,
+ * `contractVersion` picks, defaulting to {@link ASSET_SWAP_BASELINE}.
  */
 export function swapProgramBinding(
     offer: Omit<Offer, "swapPkScript"> & { swapPkScript?: Uint8Array },
     operatorPubkey: Uint8Array,
-    generation: "current" | "previous" = "previous",
+    contractVersion: AssetSwapContractVersion = ASSET_SWAP_BASELINE,
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
@@ -134,48 +141,42 @@ export function swapProgramBinding(
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
     const expected = offer.swapPkScript;
-    // A fresh derivation has no funded script to match, so it takes the requested generation.
-    if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, generation === "previous");
-    const current = bindSwapProgram(offer, operatorPubkey, false);
-    if (pkOf(current) === hex.encode(expected)) return current;
-    const previous = bindSwapProgram(offer, operatorPubkey, true);
-    if (pkOf(previous) === hex.encode(expected)) return previous;
-    // Neither matches (usually a rotated operator key): callers throw with that diagnosis.
-    return generation === "previous" ? previous : current;
+    if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, contractVersion);
+    const funded = hex.encode(expected);
+    // Baseline first: nearly every funded offer is on it, so the common case compiles once.
+    const order: AssetSwapContractVersion[] = [
+        ASSET_SWAP_BASELINE,
+        ...ASSET_SWAP_CONTRACT_VERSIONS.filter((v) => v !== ASSET_SWAP_BASELINE),
+    ];
+    for (const version of order) {
+        const binding = bindSwapProgram(offer, operatorPubkey, version);
+        if (pkOf(binding) === funded) return binding;
+    }
+    // None matches (usually a rotated operator key): callers throw with that diagnosis.
+    return bindSwapProgram(offer, operatorPubkey, contractVersion);
 }
 
 function bindSwapProgram(
     offer: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
-    previous: boolean,
+    contractVersion: AssetSwapContractVersion,
 ): SwapProgramBinding {
-    const receiver = offer.makerPkScript.subarray(2);
+    const { programs, args } = ASSET_SWAP_CONTRACTS[contractVersion];
     const user = offer.makerPublicKey;
     const assetId = offer.wantAsset;
-    const programs = previous ? legacySwapPrograms : swapPrograms;
-    // internal byte order
-    const txid = assetId?.txid.slice().reverse();
     return {
         program: withExitClosure(assetId ? programs.wantAsset : programs.wantBtc, offer.exitDelay),
-        args: {
-            ...(previous
-                ? {
-                      makerWP: receiver,
-                      wantAmount: offer.wantAmount,
-                      ...(assetId && {
-                          wantAssetTxid: txid,
-                          wantAssetGroupIndex: assetId.groupIndex,
-                      }),
-                  }
-                : {
-                      receiver,
-                      amount: offer.wantAmount,
-                      ...(assetId && { assetTxid: txid, assetGroupIndex: assetId.groupIndex }),
-                  }),
+        args: args({
+            receiver: offer.makerPkScript.subarray(2),
+            amount: offer.wantAmount,
+            // internal byte order
+            ...(assetId && {
+                asset: { txid: assetId.txid.slice().reverse(), groupIndex: assetId.groupIndex },
+            }),
             user,
             server: operatorPubkey,
             ...(offer.exitDelay && { exitDelay: offer.exitDelay.value }),
-        },
+        }),
         keys: {
             serverKey: operatorPubkey,
             userKey: user,
@@ -208,9 +209,9 @@ function pkOf(binding: SwapProgramBinding): string {
 export function offerContract(
     offer: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
-    generation?: "current" | "previous",
+    contractVersion?: AssetSwapContractVersion,
 ): InstanceType<typeof arkade.ArkadeProgramScript> {
-    return compileSwapBinding(swapProgramBinding(offer, operatorPubkey, generation));
+    return compileSwapBinding(swapProgramBinding(offer, operatorPubkey, contractVersion));
 }
 
 // ── Offer wire format ────────────────────────────────────────────────────────
@@ -673,7 +674,8 @@ export interface OfferParams {
      * rotation between the two reads derive a covenant the solver never quoted.
      */
     maker?: { pkScript: Uint8Array; publicKey: Uint8Array };
-    generation?: "current" | "previous";
+    /** Defaults to {@link ASSET_SWAP_BASELINE}. */
+    contractVersion?: AssetSwapContractVersion;
 }
 
 /**
@@ -774,7 +776,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
               ? assertExitDelay(params.exitDelay)
               : serverExitDelay(info.unilateralExitDelay),
     });
-    const script = offerContract(binding, operatorPubKey, params.generation);
+    const script = offerContract(binding, operatorPubKey, params.contractVersion);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
     const payload = encodeOffer(offer);
     // frozen because `SwapClient.preparationOf` hands this very value out, and `accept()` registers it

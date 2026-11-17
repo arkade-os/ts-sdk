@@ -58,7 +58,7 @@ const ESPLORA_API_URL = "http://localhost:3000/api";
 const SOLVER_HTTP_URL = "http://localhost:7091";
 const PRICEFEED_URL = "http://localhost:8088";
 // solverd v0.0.7 only fills the previous tree; offerFill.test.ts fills both trees with the SDK itself.
-const SOLVERD_GENERATION = "previous";
+const SOLVERD_CONTRACT_VERSION = "asset-swap-v2";
 const arkdExec = "docker exec -t arkd";
 
 const FAUCET_SATS = 30_000;
@@ -760,7 +760,7 @@ const offerBtcForAsset = async (
     const offer = await createOffer(wallet, {
         wantAmount,
         wantAsset: asset.AssetId.fromString(assetLeg.id),
-        generation: SOLVERD_GENERATION,
+        contractVersion: SOLVERD_CONTRACT_VERSION,
     });
     const fundingTxid = await wallet.send({
         address: offer.address,
@@ -796,7 +796,7 @@ const offerAssetForBtc = async (
     const offer = await createOffer(wallet, {
         wantAmount: wantSats,
         offerAsset: asset.AssetId.fromString(assetLeg.id),
-        generation: SOLVERD_GENERATION,
+        contractVersion: SOLVERD_CONTRACT_VERSION,
     });
     const fundingTxid = await wallet.send({
         address: offer.address,

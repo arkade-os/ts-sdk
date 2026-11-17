@@ -121,14 +121,14 @@ const setup = async (): Promise<void> => {
 };
 
 describe("filling an offer (regtest)", () => {
-    it.each(["previous", "current"] as const)(
+    it.each(["asset-swap-v2", "asset-swap-v3"] as const)(
         "spends the deposit through the %s tree's fulfill leaf and pays the maker",
-        async (generation) => {
+        async (contractVersion) => {
             await setup();
             const offer = await createOffer(maker, {
                 wantAmount: WANT_SATS,
                 offerAsset: asset.AssetId.fromString(assetId),
-                generation,
+                contractVersion,
             });
             // No `amount`: an asset deposit rides the SDK's dust-sat carrier.
             const fundingTxid = await maker.send({

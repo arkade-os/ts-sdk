@@ -27,7 +27,7 @@ import {
     UnsupportedRoute,
 } from "../../src/client/errors";
 import { deriveOffer, OFFER_PACKET_TYPE, offerContract } from "../../src/offer";
-import { ASSET_SWAP_V2, ASSET_SWAP_V3 } from "../../src/program";
+import { ASSET_SWAP_V2, ASSET_SWAP_V3, type AssetSwapContractVersion } from "../../src/program";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
 import { quoteIdOfSwapId, type OfferSwapRecord } from "../../src/client/record";
@@ -233,18 +233,18 @@ describe("quote() on a negotiated asset market", () => {
             const preparation = client.preparationOf(id);
             if (!preparation || !("offer" in preparation)) throw new Error("no offer preparation");
             const { binding, operatorPubkey, swapPkScript } = preparation.offer;
-            const pk = (g: "current" | "previous") =>
+            const pk = (g: AssetSwapContractVersion) =>
                 hex.encode(offerContract(binding, operatorPubkey, g).pkScript);
             const script = hex.encode(swapPkScript);
-            if (script === pk("current")) return "current";
-            if (script === pk("previous")) return "previous";
+            if (script === pk("asset-swap-v3")) return "asset-swap-v3";
+            if (script === pk("asset-swap-v2")) return "asset-swap-v2";
             throw new Error("the offer matches neither tree");
         };
 
         it("derives the current tree when the solver echoes asset-swap-v3", async () => {
             const { client } = await setup();
             const quote = await client.quote(buy());
-            expect(treeOf(client, quote.id)).toBe("current");
+            expect(treeOf(client, quote.id)).toBe("asset-swap-v3");
         });
 
         it("derives the previous tree when the solver picks asset-swap-v2", async () => {
@@ -253,7 +253,7 @@ describe("quote() on a negotiated asset market", () => {
                     arkadeAssetAnswer({ ...payload, contract_versions: [ASSET_SWAP_V2] }, CLOCK),
             });
             const quote = await client.quote(buy());
-            expect(treeOf(client, quote.id)).toBe("previous");
+            expect(treeOf(client, quote.id)).toBe("asset-swap-v2");
         });
 
         it("derives the previous tree when the solver names no contract version", async () => {
@@ -261,7 +261,7 @@ describe("quote() on a negotiated asset market", () => {
                 answer: ({ contract_versions: _, ...payload }) => arkadeAssetAnswer(payload, CLOCK),
             });
             const quote = await client.quote(buy());
-            expect(treeOf(client, quote.id)).toBe("previous");
+            expect(treeOf(client, quote.id)).toBe("asset-swap-v2");
         });
 
         it("refuses a contract version it did not advertise", async () => {
@@ -291,7 +291,7 @@ describe("quote() on a negotiated asset market", () => {
             expect(client.preparationOf(quote.id)).toMatchObject({
                 rfqId: transport.sent[1]?.rfq_id,
             });
-            expect(treeOf(client, quote.id)).toBe("previous");
+            expect(treeOf(client, quote.id)).toBe("asset-swap-v2");
         });
 
         it.each([
@@ -671,7 +671,8 @@ describe("accept() on a negotiated asset market", () => {
         expect(stored.offerHex).toBe(derived?.offerHex);
         // the fixture solver negotiates asset-swap-v3, so accept must keep that tree
         expect(derived?.swapPkScript).toEqual(
-            derived && offerContract(derived.binding, derived.operatorPubkey, "current").pkScript,
+            derived &&
+                offerContract(derived.binding, derived.operatorPubkey, "asset-swap-v3").pkScript,
         );
         expect(wallet.contracts[0]?.script).toBe(
             hex.encode(derived?.swapPkScript ?? new Uint8Array()),

@@ -200,7 +200,7 @@ const offer = {
 };
 
 const contract = offerContract(offer, operatorPubkey);
-const current = offerContract(offer, operatorPubkey, "current");
+const current = offerContract(offer, operatorPubkey, "asset-swap-v3");
 offer.swapPkScript = contract.pkScript;
 const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
 const currentAddress = new ArkAddress(operatorPubkey, current.tweakedPublicKey, "tark").encode();
