@@ -110,10 +110,10 @@ style and have not been backfilled.
 
 ### Features
 
-- **`@arkade-os/swap`: asset RFQ negotiates the covenant version.**
-  `requestArkadeSwap` and the `SwapClient` asset quote send `covenant_versions`
-  (by default `ASSET_SWAP_COVENANT_VERSIONS`, `asset-swap-v3` first); the
-  quote's `covenant_version` picks the tree the offer is derived on. A quote
+- **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
+  `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
+  (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the
+  quote's `contract_version` picks the tree the offer is derived on. A quote
   naming none is the baseline `asset-swap-v2`. A solver that refuses the field
   with a bare `unsupported_payload` is asked once more without it, under a fresh
   `rfq_id`. A choice outside the advertised list, or a version this build cannot

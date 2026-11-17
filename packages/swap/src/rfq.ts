@@ -70,7 +70,7 @@ import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
-import { ASSET_SWAP_COVENANT_VERSIONS, ASSET_SWAP_V2, offerGenerationFor } from "./program";
+import { ASSET_SWAP_CONTRACT_VERSIONS, ASSET_SWAP_V2, offerGenerationFor } from "./program";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -148,7 +148,7 @@ export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded",
 
 export const RFQ_REFUSAL_ERROR_CODES = [
     "amount_side_unsupported",
-    "covenant_version_unsupported",
+    "contract_version_unsupported",
     "exact_out_unsupported",
     "invalid_amount",
     "invalid_payout_address",
@@ -292,8 +292,8 @@ export interface RfqQuote {
     carrier_sats?: number | string;
     solver_pubkey: string;
     valid_until: number;
-    /** Covenant the solver chose; echoed only when the request advertised `covenant_versions`. */
-    covenant_version?: string;
+    /** Contract version the solver chose; echoed only when the request advertised `contract_versions`. */
+    contract_version?: string;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
     refund_locktime?: number;
     profile: {
@@ -366,7 +366,7 @@ export const arkadeSwapRequest = (input: {
      * `cancel` path's `user` signer. */
     makerPublicKey: Uint8Array | string;
     /** Covenants the trader can settle, most preferred first; omit for the baseline. */
-    covenantVersions?: readonly string[];
+    contractVersions?: readonly string[];
 }): Record<string, unknown> => {
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
@@ -386,8 +386,8 @@ export const arkadeSwapRequest = (input: {
         pair,
         amount_side: input.amountSide ?? "from",
         amount: canonicalAssetAmount(input.amount),
-        ...(input.covenantVersions && input.covenantVersions.length > 0
-            ? { covenant_versions: [...input.covenantVersions] }
+        ...(input.contractVersions && input.contractVersions.length > 0
+            ? { contract_versions: [...input.contractVersions] }
             : {}),
         // The solver's `.strict()` schema refuses any undeclared key as `unsupported_payload`.
         profile: {
@@ -742,12 +742,12 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
 };
 
 /**
- * Ask for an arkade↔arkade quote advertising `covenant_versions`, and read the tree to derive.
- * No `covenant_version` in the quote is `asset-swap-v2`, the covenant every solver serves.
+ * Ask for an arkade↔arkade quote advertising `contract_versions`, and read the tree to derive.
+ * No `contract_version` in the quote is `asset-swap-v2`, the version every solver serves.
  * A pre-negotiation solver's strict schema refuses the list with a bare `unsupported_payload`;
  * it is asked once more without it, under a fresh rfq_id.
  */
-export const requestCovenantQuote = async (
+export const requestVersionedQuote = async (
     transport: RfqTransport,
     request: Record<string, unknown>,
     advertised: readonly string[],
@@ -765,18 +765,22 @@ export const requestCovenantQuote = async (
         ) {
             throw error;
         }
-        const { covenant_versions: _, ...baseline } = request;
+        const { contract_versions: _, ...baseline } = request;
         sent = { ...baseline, rfq_id: newRfqId() };
         quote = await transport.requestQuote(sent);
     }
-    if (sent !== request && quote.covenant_version !== undefined) {
-        throw new Error(`solver chose covenant ${quote.covenant_version}, but none was advertised`);
+    if (sent !== request && quote.contract_version !== undefined) {
+        throw new Error(
+            `solver chose contract version ${quote.contract_version}, but none was advertised`,
+        );
     }
-    const covenant = quote.covenant_version ?? ASSET_SWAP_V2;
-    if (!advertised.includes(covenant)) {
-        throw new Error(`solver chose covenant ${covenant}, not one of ${advertised.join(", ")}`);
+    const version = quote.contract_version ?? ASSET_SWAP_V2;
+    if (!advertised.includes(version)) {
+        throw new Error(
+            `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
+        );
     }
-    return { quote, rfqId: String(sent.rfq_id), generation: offerGenerationFor(covenant) };
+    return { quote, rfqId: String(sent.rfq_id), generation: offerGenerationFor(version) };
 };
 
 /** The pair of a request we built, when it named one. */
@@ -1446,9 +1450,9 @@ export async function requestArkadeSwap(
         emulatorPubkey?: string;
         /** Canonical Arkade payout destination; the maker signing key stays this wallet's. */
         receiveAddress?: string;
-        /** Covenants to advertise, most preferred first; the quote's choice must be one of them.
+        /** Contract versions to advertise, most preferred first; the quote's choice must be one of them.
          * Defaults to every covenant this build derives. */
-        covenantVersions?: readonly string[];
+        contractVersions?: readonly string[];
         now?: number;
     },
 ): Promise<{
@@ -1497,8 +1501,8 @@ export async function requestArkadeSwap(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
     );
-    const covenantVersions = params.covenantVersions ?? ASSET_SWAP_COVENANT_VERSIONS;
-    const { quote, rfqId, generation } = await requestCovenantQuote(
+    const contractVersions = params.contractVersions ?? ASSET_SWAP_CONTRACT_VERSIONS;
+    const { quote, rfqId, generation } = await requestVersionedQuote(
         transport,
         arkadeSwapRequest({
             rfqId: params.rfqId ?? newRfqId(),
@@ -1508,9 +1512,9 @@ export async function requestArkadeSwap(
             amountSide,
             makerPkScript,
             makerPublicKey,
-            covenantVersions,
+            contractVersions,
         }),
-        covenantVersions,
+        contractVersions,
     );
     if (quote.pair !== pair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);

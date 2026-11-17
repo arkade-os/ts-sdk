@@ -153,7 +153,7 @@ describe("quote() on a negotiated asset market", () => {
             // one.
             amount_side: "from",
             amount: "10000",
-            covenant_versions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
+            contract_versions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
             profile: {
                 maker_pk_script: expect.stringMatching(/^5120[0-9a-f]{64}$/),
                 maker_public_key: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -228,7 +228,7 @@ describe("quote() on a negotiated asset market", () => {
         expect(quote.take.amount).toBe(898_017_765_697_677n);
     });
 
-    describe("covenant negotiation", () => {
+    describe("contract version negotiation", () => {
         const treeOf = (client: Awaited<ReturnType<typeof setup>>["client"], id: string) => {
             const preparation = client.preparationOf(id);
             if (!preparation || !("offer" in preparation)) throw new Error("no offer preparation");
@@ -249,43 +249,43 @@ describe("quote() on a negotiated asset market", () => {
         it("derives the previous tree when the solver picks asset-swap-v2", async () => {
             const { client } = await setup({
                 answer: (payload) =>
-                    arkadeAssetAnswer({ ...payload, covenant_versions: [ASSET_SWAP_V2] }, CLOCK),
+                    arkadeAssetAnswer({ ...payload, contract_versions: [ASSET_SWAP_V2] }, CLOCK),
             });
             const quote = await client.quote(buy());
             expect(treeOf(client, quote.id)).toBe("previous");
         });
 
-        it("derives the previous tree when the solver names no covenant", async () => {
+        it("derives the previous tree when the solver names no contract version", async () => {
             const { client } = await setup({
-                answer: ({ covenant_versions: _, ...payload }) => arkadeAssetAnswer(payload, CLOCK),
+                answer: ({ contract_versions: _, ...payload }) => arkadeAssetAnswer(payload, CLOCK),
             });
             const quote = await client.quote(buy());
             expect(treeOf(client, quote.id)).toBe("previous");
         });
 
-        it("refuses a covenant it did not advertise", async () => {
+        it("refuses a contract version it did not advertise", async () => {
             const { client } = await setup({
                 answer: (payload) => ({
                     ...arkadeAssetAnswer(payload, CLOCK),
-                    covenant_version: "asset-swap-v9",
+                    contract_version: "asset-swap-v9",
                 }),
             });
             await expect(client.quote(buy())).rejects.toThrow(
-                "solver chose covenant asset-swap-v9",
+                "solver chose contract version asset-swap-v9",
             );
         });
 
         it("asks a solver that refuses the list once more without it, on the previous tree", async () => {
             const { client, transport } = await setup({
                 answer: (payload) => {
-                    if ("covenant_versions" in payload)
+                    if ("contract_versions" in payload)
                         throw new SwapRefusal("unsupported_payload");
                     return arkadeAssetAnswer(payload, CLOCK);
                 },
             });
             const quote = await client.quote(buy());
             expect(transport.sent).toHaveLength(2);
-            expect(transport.sent[1]).not.toHaveProperty("covenant_versions");
+            expect(transport.sent[1]).not.toHaveProperty("contract_versions");
             expect(transport.sent[1]?.rfq_id).not.toBe(transport.sent[0]?.rfq_id);
             expect(client.preparationOf(quote.id)).toMatchObject({
                 rfqId: transport.sent[1]?.rfq_id,
@@ -294,7 +294,7 @@ describe("quote() on a negotiated asset market", () => {
         });
 
         it.each([
-            ["covenant_version_unsupported", "unsupported_payload"],
+            ["contract_version_unsupported", "unsupported_payload"],
             [undefined, "no_liquidity"],
         ] as const)("does not retry a refusal with code %s, reason %s", async (code, reason) => {
             const { client, transport } = await setup({

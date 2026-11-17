@@ -97,7 +97,7 @@
         "arkadeSwapRequest",
         "assertArkadeFundable",
         "ASSET_CARRIER_SATS",
-        "ASSET_SWAP_COVENANT_VERSIONS",
+        "ASSET_SWAP_CONTRACT_VERSIONS",
         "AssetSwapStatus",
         "AvailableRfqSwapManagerCallbacks",
         "awaitOnchainFill",

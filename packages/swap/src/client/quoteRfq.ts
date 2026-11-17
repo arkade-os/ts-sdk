@@ -27,7 +27,7 @@ import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
-import { ASSET_SWAP_COVENANT_VERSIONS } from "../program";
+import { ASSET_SWAP_CONTRACT_VERSIONS } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
@@ -50,7 +50,7 @@ import {
     offerTermsFromQuote,
     onchainReceiveRequest,
     onchainSendRequest,
-    requestCovenantQuote,
+    requestVersionedQuote,
     unilateralClaimDelay,
     verifyOfferAddress,
     type LightningReceiveContractParams,
@@ -384,13 +384,13 @@ const quoteArkadeAsset = async (
         amountSide: toRfqAmountSide(pinned.on),
         makerPkScript: receivePkScript,
         makerPublicKey: maker.publicKey,
-        covenantVersions: ASSET_SWAP_COVENANT_VERSIONS,
+        contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
     });
     const {
         quote: wire,
         rfqId,
         generation,
-    } = await requestCovenantQuote(
+    } = await requestVersionedQuote(
         input.transport,
         {
             ...request,
@@ -401,7 +401,7 @@ const quoteArkadeAsset = async (
                     : { carrier: encodeCarrierRequest(carrierRequest) }),
             },
         },
-        ASSET_SWAP_COVENANT_VERSIONS,
+        ASSET_SWAP_CONTRACT_VERSIONS,
     );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);

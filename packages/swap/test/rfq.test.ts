@@ -522,7 +522,7 @@ describe("requests", () => {
         });
     });
 
-    it("adds covenant_versions only when the trader advertises them", () => {
+    it("adds contract_versions only when the trader advertises them", () => {
         const base = {
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID),
@@ -531,21 +531,21 @@ describe("requests", () => {
             makerPublicKey: key(1),
         };
         const plain = arkadeSwapRequest(base) as Record<string, unknown>;
-        expect("covenant_versions" in plain).toBe(false);
+        expect("contract_versions" in plain).toBe(false);
         const advertised = arkadeSwapRequest({
             ...base,
-            covenantVersions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
+            contractVersions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
         }) as Record<string, unknown>;
-        expect(advertised.covenant_versions).toEqual([ASSET_SWAP_V3, ASSET_SWAP_V2]);
+        expect(advertised.contract_versions).toEqual([ASSET_SWAP_V3, ASSET_SWAP_V2]);
         expect(advertised.profile).toEqual(plain.profile);
     });
 
-    it("maps a negotiated covenant to a generation, defaulting to the previous tree", () => {
+    it("maps a negotiated contract version to a generation, defaulting to the previous tree", () => {
         expect(offerGenerationFor(ASSET_SWAP_V3)).toBe("current");
         expect(offerGenerationFor(ASSET_SWAP_V2)).toBe("previous");
         expect(offerGenerationFor(undefined)).toBe("previous");
         expect(() => offerGenerationFor("asset-swap-v999")).toThrow(
-            "unknown covenant asset-swap-v999",
+            "unknown contract version asset-swap-v999",
         );
     });
 

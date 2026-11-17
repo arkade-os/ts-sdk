@@ -87,7 +87,7 @@ export {
     OfferCovenantMismatchError,
     swapPrograms,
 } from "./offer";
-export { ASSET_SWAP_COVENANT_VERSIONS, offerGenerationFor } from "./program";
+export { ASSET_SWAP_CONTRACT_VERSIONS, offerGenerationFor } from "./program";
 export {
     awaitOnchainFill,
     buildHtlcClaim,
