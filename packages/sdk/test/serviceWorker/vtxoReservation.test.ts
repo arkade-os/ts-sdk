@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
-import { fundedWallet, stallSubmits } from "../concurrentSpendingFixture";
+import { BTC_ADDR, fundedWallet, parkSettle, stallSubmits } from "../concurrentSpendingFixture";
 import { IndexedDBVtxoReservationRepository } from "../../src/repositories/indexedDB/vtxoReservationRepository";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
@@ -16,10 +16,11 @@ async function setup(
     dbName = `vtxo-reservations-${crypto.randomUUID()}`,
     operatorUrl = "https://ark.example/ark/",
     identity?: SingleKey,
+    concurrentSpending = true,
 ) {
     const repository = new IndexedDBVtxoReservationRepository(dbName);
     const fixture = await fundedWallet({
-        concurrentSpending: true,
+        concurrentSpending,
         vtxoReservationRepository: repository,
     });
     const handler = new WalletMessageHandler() as any;
@@ -87,6 +88,57 @@ describe("service-worker VTXO reservations", () => {
 
         await reservation.release();
         expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[0]);
+    });
+
+    it("commits a hold and its release while a settle holds the wallet lock", async () => {
+        const { wallet, arkProvider, coins, outpoints, proxy, repository } = await setup(
+            undefined,
+            undefined,
+            undefined,
+            false,
+        );
+        const batch = parkSettle(wallet, arkProvider);
+        const settling = wallet.settle({
+            inputs: [coins[0]],
+            outputs: [{ address: BTC_ADDR, amount: 9_000n }],
+        });
+        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+
+        const hold = await proxy.reserveVtxos([coins[1]], "taxi-transfer");
+        expect(await repository.getReservations()).toHaveLength(1);
+        await hold.release();
+        expect(await repository.getReservations()).toEqual([]);
+        expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[1]);
+
+        batch.open();
+        await expect(settling).rejects.toThrow();
+    });
+
+    it("lets a settle's last check refuse a hold taken while it was preparing", async () => {
+        const { wallet, arkProvider, coins, proxy } = await setup(
+            undefined,
+            undefined,
+            undefined,
+            false,
+        );
+        parkSettle(wallet, arkProvider);
+        let signing!: () => void;
+        const signed = new Promise<void>((resolve) => (signing = resolve));
+        const contractManager = await wallet.getContractManager();
+        const annotatable = contractManager.assertAnnotatable.bind(contractManager);
+        vi.spyOn(contractManager, "assertAnnotatable").mockImplementation(async (vtxos) => {
+            await signed;
+            return annotatable(vtxos);
+        });
+        const settling = wallet.settle({
+            inputs: [coins[0]],
+            outputs: [{ address: BTC_ADDR, amount: 9_000n }],
+        });
+        await vi.waitFor(() => expect(contractManager.assertAnnotatable).toHaveBeenCalled());
+        await proxy.reserveVtxos([coins[0]], "taxi-transfer");
+        signing();
+        await expect(settling).rejects.toMatchObject({ name: "VtxoReservedError" });
+        expect(arkProvider.registerIntent).not.toHaveBeenCalled();
     });
 
     it("rejects an in-flight input without reserving the rest of the selection", async () => {

@@ -3369,9 +3369,13 @@ export class Wallet
     private persistentReservations = new Map<string, VtxoReservation>();
     private persistentReservedOutpoints = new Set<string>();
     private reservationWrites = new Set<Promise<void>>();
+    // Own queue, not the tx lock: a settle holds that for a whole batch round. The pending and
+    // held sets already order a hold against a spend.
+    private reservationQueue: Promise<void> = Promise.resolve();
 
     private withReservationWrite(fn: () => Promise<void>): Promise<void> {
-        const run = this._withTxLock(fn);
+        const run = this.reservationQueue.then(fn);
+        this.reservationQueue = run.catch(() => undefined);
         this.reservationWrites.add(run);
         void run.finally(() => this.reservationWrites.delete(run)).catch(() => undefined);
         return run;
@@ -3399,11 +3403,12 @@ export class Wallet
                 }
                 return;
             }
-            await assertNoIntentLockedInputs(snapshot, this.intentRepository);
+            // Hold before the first await, so a settle's last check sees it.
             const hold = this.reserveVtxos(snapshot);
             for (const { txid, vout } of snapshot)
                 this.persistentReservedOutpoints.add(`${txid}:${vout}`);
             try {
+                await assertNoIntentLockedInputs(snapshot, this.intentRepository);
                 await this.reservationRepository!.saveReservation({ id, outpoints: snapshot });
                 this.persistentReservations.set(id, hold);
             } catch (error) {
