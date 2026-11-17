@@ -96,6 +96,41 @@ describe("reserveVtxos", () => {
         await wallet.dispose();
     });
 
+    it("leaves a held coin out of recovery and recovers the rest", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, coins, outpoints } = await fundedWallet();
+        const swept = coins.slice(0, 2).map((coin) => ({ ...coin, isSwept: true }));
+        await wallet.walletRepository.saveVtxos(await wallet.getAddress(), swept);
+        const hold = wallet.reserveVtxos([coins[0]]);
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovered");
+        const manager = await wallet.getVtxoManager();
+
+        expect(await manager.recoverVtxos()).toBe("recovered");
+        expect(settle.mock.calls[0][0]!.inputs!.map((input) => key(input as any))).toEqual([
+            outpoints[1],
+        ]);
+
+        hold.release();
+        await wallet.dispose();
+    });
+
+    it("refuses a recovery whose every candidate is held, naming the hold", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, coins } = await fundedWallet();
+        await wallet.walletRepository.saveVtxos(await wallet.getAddress(), [
+            { ...coins[0], isSwept: true },
+        ]);
+        const hold = wallet.reserveVtxos([coins[0]]);
+        const settle = vi.spyOn(wallet, "settle");
+        const manager = await wallet.getVtxoManager();
+
+        await expect(manager.recoverVtxos()).rejects.toThrow(/held by reserveVtxos/);
+        expect(settle).not.toHaveBeenCalled();
+
+        hold.release();
+        await wallet.dispose();
+    });
+
     it("accepts an empty or repeated list", async () => {
         const { wallet, coins } = await fundedWallet();
         wallet.reserveVtxos([]).release();
