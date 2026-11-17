@@ -150,6 +150,7 @@ style and have not been backfilled.
   other template ids, and `defaultTemplates()` refuses it. `DefaultVtxo.Script`
   takes extra leaves after forfeit and exit.
 
+- **Arkade Cash status, claim correlation, and activity through service-worker wallets.** Add public voucher issue/status records, expose create, inspect, and claim operations alongside existing wallet primitives, and resolve their funding and sweep transactions into arkade-cash activities without exposing bearer tokens. Records and status reports list `issues` and `claims` as `{ txid, amount }` (`ArkadeCashTx`), so a voucher's share of a shared funding transaction or a multi-sweep claim is exact. `ArkadeCashClaimResult.claims` has the same shape and includes sweeps finalized from previously pending claims. `addArkadeCashRecord` merges into an existing record through the exported `mergeArkadeCashRecord` (transactions unioned by txid, a claim outranks an issue), so a worker's recovery record no longer overwrites the page's record for the same voucher. Recording a recovered voucher's settlement runs inside the serialized wallet-state update, so concurrent recoveries keep each other's records and a failed state read can no longer wipe them. Issuing and reclaiming one voucher resolve to two activities (`arkade-cash:<id>:issued` and `:claimed`) instead of collapsing into one. An issue correlates only with a sent row and a claim only with a received row, so the same txid in a history of the other direction (a claimer's received funding row, an issuer's sent fee row) is never labelled. A claim recorded under a batch commitment, as a recovery settlement is, correlates only with the received row of exactly its amount, and boarding rows never correlate, so the other rows of that round are neither counted into the claim nor labelled "Cash claimed". Status reports list a coin spent by a batch settlement as a claim under the settlement's commitment txid, so an issuer sees the claim of a recovered voucher too; the amount is the coin's value before intent fees. Through a service worker, `create` and `claim` run with no message deadline on either side, so a slow multi-sweep claim or funded create still returns its result instead of a timeout. A funded-but-failed `create` rejects on the page with a real `ArkadeCashCreateError` whose `.cash` holds the recovery token, exactly as an in-process `Wallet.createCash` does.
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.
@@ -572,6 +573,8 @@ style and have not been backfilled.
   `--experimental-eventsource`.
 
 ### Bug Fixes
+
+- **Transaction history leaves out recovery-only coins, as the balance does.** `ReadonlyWallet.getTransactionHistory` and the service worker's history both counted the coins of a claimed, server-swept Arkade Cash voucher as the wallet's own while their recovery contract was held. Each swept coin showed as a received row under the voucher's funding txid before any sats arrived, and the recovery settlement, which spends one of those coins and pays the wallet in the same commitment, netted to a refresh: no row when fee-free, a sent "exit" row of the fee otherwise. When the contract was purged the rows rewrote themselves. Both paths now skip recovery-only contracts, so nothing shows while recovery is pending and the recovered output then appears as one received batch row. The worker's `includeRecoveryOnly` option, which only the history read used, is removed.
 
 - **`createArkadeBatchHandler` writes an input's condition witness on its
   forfeit.** arkd evaluates a condition leaf against the forfeit's
@@ -1545,6 +1548,36 @@ style and have not been backfilled.
   it benefits too: a settled output cost three or four sequential Electrum
   round trips, plus a fetch of every other transaction at an address that
   received more than one deposit. Output is unchanged.
+
+### Internal
+
+- **Dev-tooling dependency overrides raised past every high and critical
+  advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
+  development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and
+  `async-storage` peer installs, never in the SDK's runtime `dependencies`.
+  The `pnpm-workspace.yaml` overrides for `@xmldom/xmldom`, `node-forge`,
+  `vite`, `brace-expansion`, `shell-quote`, `js-yaml` and `markdown-it` now
+  sit at the patched floors, and new ones cover `tinypool` (prototype-pollution
+  RCE gadget, pulled in by `vitest`), `image-size`, `browserslist`,
+  `compression`, `zod`, `nanoid` and `source-map-js`. `pnpm audit --audit-level high` now
+  reports none. Published packages are unchanged.
+- **`vitest` and `@vitest/coverage-v8` move to 4.1.12.** Two moderate
+  advisories on `vitest` and `@vitest/mocker` (path traversal and code injection
+  through an unauthenticated manual mock) are fixed only from 4.1.11 on. The
+  move also retires the `tinypool` override, since 4.x no longer depends on
+  `tinypool`. One `syncOnchain` test now searches the `console.warn` calls
+  instead of reading the first, because a background sync left over from the
+  previous test can warn into the same spy, and six test files have type
+  annotations adjusted for vitest 4's stricter mock typings. No source change.
+- **Overrides cleaned up and an audit gate added to CI.** `markdown-it` is
+  capped below 15, because the `>=14.3.3` floor resolved to 15, which
+  needs `linkify-it` 6 and crashed `typedoc`. `minimatch` moves to 11 for every
+  consumer except `typedoc`, which calls `matchOne`, removed in 11, so it keeps
+  10.x. That leaves one moderate advisory on `minimatch` with no fix reachable
+  through `typedoc`. `glob` 13 moves to 14. The `zod` override is scoped to
+  `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
+  audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
+  high` and fails on any new high or critical advisory.
 
 ## [0.4.77] - 2026-09-30
 

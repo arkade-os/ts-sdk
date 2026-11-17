@@ -1,5 +1,5 @@
 import { collectScriptVtxos } from "../src/repositories/walletRepository";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
 import {
     DEFAULT_MESSAGE_TAG,
@@ -444,12 +444,6 @@ describe("WalletMessageHandler handleMessage", () => {
         // Default (balance / VTXOS / coin selection): recovery-only excluded.
         const excluded = await (updater as any).getVtxosFromRepo();
         expect(excluded.map((v: any) => v.script)).toEqual([SCRIPT_NORMAL]);
-
-        // History opt-in: recovery-only included (parity with non-worker).
-        const included = await (updater as any).getVtxosFromRepo({ includeRecoveryOnly: true });
-        expect(included.map((v: any) => v.script).sort()).toEqual(
-            [SCRIPT_NORMAL, SCRIPT_RECOVERY].sort(),
-        );
     });
 
     it("handles GET_BOARDING_UTXOS messages by asking the provider", async () => {
@@ -1650,6 +1644,22 @@ describe("WalletMessageHandler handleMessage", () => {
                 payload: {},
             } as any),
         ).toBe(true);
+    });
+
+    it.each([
+        ["create", true, { action: "create", amount: 5000 }],
+        ["claim", true, { action: "claim", token: "t" }],
+        ["get", false, { action: "get", token: "t" }],
+        ["activities", false, { action: "activities", records: [] }],
+        ["reveal", false, { action: "reveal", token: "t" }],
+    ])("isLongRunning for ARKADE_CASH %s is %s", (_name, expected, payload) => {
+        expect(
+            updater.isLongRunning({
+                ...baseMessage(),
+                type: "ARKADE_CASH",
+                payload,
+            } as any),
+        ).toBe(expected);
     });
 
     it("eagerly starts VtxoManager on wallet initialization", async () => {
@@ -3050,7 +3060,7 @@ describe("WalletMessageHandler event-push generations", () => {
 
     let updater: WalletMessageHandler;
     let repository: InMemoryWalletRepository;
-    let broadcast: ReturnType<typeof vi.fn>;
+    let broadcast: Mock<(response: any) => void>;
 
     const attach = (wallet: any) => {
         (updater as any).readonlyWallet = wallet;

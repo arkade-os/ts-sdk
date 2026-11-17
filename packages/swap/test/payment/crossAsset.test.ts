@@ -4,7 +4,7 @@
  * otherwise leak into the router are the two-asset quote, the drop when no
  * corridor exists, and paying the recipient only after the fill.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
 import type { DiscoveredMarket, OfferPlan, Side } from "@arkade-os/solver-discovery";
 import { PaymentRouter, type Asset, type RouterContext } from "@arkade-os/sdk";
 import {
@@ -516,7 +516,7 @@ describe("the record says which side of the fill the route is on", () => {
     it("a recovery pass over a completed swap sends nothing", async () => {
         const resendIfOwed = async (
             swap: CrossAssetSwap,
-            wallet: { send: ReturnType<typeof vi.fn> },
+            wallet: { send: Mock<(...args: any[]) => any> },
         ) => {
             if (swap.phase !== "filled") return;
             await wallet.send({
@@ -538,7 +538,7 @@ describe("the record says which side of the fill the route is on", () => {
     it("a recovery pass BEFORE the payout still sends, so the guard is not blanket", async () => {
         const resendIfOwed = async (
             swap: CrossAssetSwap,
-            wallet: { send: ReturnType<typeof vi.fn> },
+            wallet: { send: Mock<(...args: any[]) => any> },
         ) => {
             if (swap.phase !== "filled") return;
             await wallet.send({ address: swap.payTo, amount: 330, assets: [swap.asset] });
