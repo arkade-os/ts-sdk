@@ -7,6 +7,7 @@ import { ExecutorManagerImpl, watchExecutorContracts } from "../src/wallet/execu
 import { rateGate } from "../src/providers/rateGate";
 import { ContractManager, InMemoryContractRepository, InMemoryWalletRepository } from "../src";
 import { ArkAddress } from "../src/script/address";
+import { REGTEST_EMULATOR_PUBKEY } from "../src/networks";
 import { createMockIndexerProvider, createMockVtxo } from "./contracts/helpers";
 import vectors from "./fixtures/executor/vectors.json";
 
@@ -173,6 +174,9 @@ describe("RestExecutorProvider", () => {
 });
 
 describe("ExecutorManagerImpl.register", () => {
+    // the vectors' emulator is not regtest's pinned one
+    const trusted = { emulatorPubkey: vectors.emulatorPubkey };
+
     beforeEach(() => {
         contractManager.createContract.mockClear();
         contractManager.updateContract.mockClear();
@@ -182,7 +186,9 @@ describe("ExecutorManagerImpl.register", () => {
         const provider = makeProvider({ expiresAt: 9 });
         const manager = new ExecutorManagerImpl(provider, wallet);
 
-        await expect(manager.registerBoarding(params, { expiresAt: 9 })).resolves.toEqual({
+        await expect(
+            manager.registerBoarding(params, { expiresAt: 9, ...trusted }),
+        ).resolves.toEqual({
             address: vectors.boarding.address,
             templateId: BOARDING_ID,
             variables: vectors.boarding.variables,
@@ -223,10 +229,10 @@ describe("ExecutorManagerImpl.register", () => {
     it("defaults the exit delays to the operator's", async () => {
         const provider = makeProvider();
         const manager = new ExecutorManagerImpl(provider, wallet);
-        await manager.registerBoarding({
-            renewalWindow: params.renewalWindow,
-            maxFee: params.maxFee,
-        });
+        await manager.registerBoarding(
+            { renewalWindow: params.renewalWindow, maxFee: params.maxFee },
+            trusted,
+        );
         expect(provider.registerDelegation).toHaveBeenCalledWith(
             BOARDING_ID,
             vectors.boarding.variables,
@@ -247,7 +253,7 @@ describe("ExecutorManagerImpl.register", () => {
             state: "active",
             createdAt: 0,
         }));
-        await new ExecutorManagerImpl(makeProvider(), wallet).registerBoarding(params);
+        await new ExecutorManagerImpl(makeProvider(), wallet).registerBoarding(params, trusted);
         expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
             metadata: {
                 note: "kept",
@@ -259,7 +265,7 @@ describe("ExecutorManagerImpl.register", () => {
 
     it("refuses a watch the service returns as no longer active", async () => {
         const manager = new ExecutorManagerImpl(makeProvider({ status: "expired" }), wallet);
-        await expect(manager.registerBoarding(params)).rejects.toThrow(
+        await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
             `Executor watch ${vectors.boarding.address} is expired`,
         );
         // the row carries what the service said, so the wallet stops advertising the address
@@ -276,7 +282,7 @@ describe("ExecutorManagerImpl.register", () => {
             makeProvider({ address: "bcrt1pother", status: "cancelled" }),
             wallet,
         );
-        await expect(manager.registerBoarding(params)).rejects.toThrow(
+        await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
             `Executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
         );
         expect(contractManager.createContract).not.toHaveBeenCalled();
@@ -287,7 +293,9 @@ describe("ExecutorManagerImpl.register", () => {
         const provider = makeProvider();
         provider.getInfo.mockResolvedValue({ ...makeInfo(), serverPubkey: vectors.owner });
         const manager = new ExecutorManagerImpl(provider, wallet);
-        await expect(manager.registerBoarding(params)).rejects.toThrow("wallet's operator");
+        await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
+            "wallet's operator",
+        );
         expect(provider.registerDelegation).not.toHaveBeenCalled();
     });
 
@@ -298,13 +306,22 @@ describe("ExecutorManagerImpl.register", () => {
             ...wallet,
             getOperatorInfo: async () => operator,
         });
-        await expect(manager.registerRenewal(params)).rejects.toThrow(
+        await expect(manager.registerRenewal(params, trusted)).rejects.toThrow(
             "renewalWindow 86400s must be shorter than the operator's VTXO expiry of 86400s",
         );
         expect(provider.registerDelegation).not.toHaveBeenCalled();
         // a block-typed expiry has no duration to compare against
         operator.vtxoTreeExpiry = 144n;
-        await expect(manager.registerBoarding(params)).resolves.toBeDefined();
+        await expect(manager.registerBoarding(params, trusted)).resolves.toBeDefined();
+    });
+
+    it("refuses an emulator key other than the network's pinned one", async () => {
+        const provider = makeProvider();
+        const manager = new ExecutorManagerImpl(provider, wallet);
+        await expect(manager.registerBoarding(params)).rejects.toThrow(
+            `Executor's emulator key ${vectors.emulatorPubkey} is not the trusted ${REGTEST_EMULATOR_PUBKEY}`,
+        );
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
     });
 
     it("refuses a service on another network than the wallet's operator", async () => {
@@ -314,7 +331,7 @@ describe("ExecutorManagerImpl.register", () => {
             network: "bitcoin",
         });
         const manager = new ExecutorManagerImpl(provider, wallet);
-        await expect(manager.registerBoarding(params)).rejects.toThrow(
+        await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
             "Executor runs on bitcoin, the wallet's operator on regtest",
         );
         expect(provider.registerDelegation).not.toHaveBeenCalled();

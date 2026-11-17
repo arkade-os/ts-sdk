@@ -538,6 +538,7 @@ import {
     ExecutorWatchMetadata,
     ExecutorWatchRegistration,
     IExecutorManager,
+    RegistrationOptions,
     watchExecutorContracts,
 } from "./wallet/executor";
 
@@ -1251,6 +1252,7 @@ export type {
     DelegationOptions,
     ExecutorWatchMetadata,
     ExecutorWatchRegistration,
+    RegistrationOptions,
     // Repositories
     ManagedConnection,
     WalletRepository,

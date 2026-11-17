@@ -179,6 +179,7 @@ import { contractHandlers } from "../contracts/handlers";
 import { migrateLegacyUtxos, offchainSnapshot, onchainRows } from "../contracts/onchainCoins";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { ExecutorContractHandler } from "../contracts/handlers/executor";
+import { scopeOf } from "../contracts/scope";
 import {
     DELEGATION_EXPIRES_KEY,
     DELEGATION_STATUS_KEY,
@@ -1058,8 +1059,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Fired after boarding rotation so a live {@link notifyIncomingFunds} watcher re-subscribes
-     * to the fresh address in-session instead of missing deposits until its next re-init.
+     * Fired after boarding rotation, or a new onchain contract such as an Executor boarding watch,
+     * so a live {@link notifyIncomingFunds} watcher re-subscribes to the fresh address in-session
+     * instead of missing deposits until its next re-init.
      */
     private readonly _boardingRotationListeners = new Set<() => void>();
 
@@ -1395,7 +1397,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** Encoded tap trees of the live boarding watches, whose deposits the Executor boards. */
-    private async liveDelegatedBoardingTrees(): Promise<Set<string>> {
+    protected async liveDelegatedBoardingTrees(): Promise<Set<string>> {
         return new Set(
             (await this.delegatedBoardingContracts())
                 .filter((c) => c.live)
@@ -2236,6 +2238,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         let indexerStopFunc: (() => void) | undefined;
         let boardingRotationStopFunc: (() => void) | undefined;
         let stopped = false;
+        let watchedSet: string | undefined;
 
         // (Re)subscribe to the CURRENT boarding-address set, serialized on one chain so a burst of
         // rotations can't interleave teardown/setup and leak a watcher.
@@ -2248,6 +2251,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     const boardingAddresses = await this.getBoardingAddresses();
                     if (boardingAddresses.length === 0) return;
                     const boardingAddressSet = new Set(boardingAddresses);
+                    // a rotation is announced twice: by the contract it saves, then the wallet
+                    const setKey = [...boardingAddressSet].sort().join(",");
+                    if (setKey === watchedSet) return;
 
                     // Subscribe-then-swap: a throw leaves the old watcher live (stale set, not
                     // none), and there's no blind window where a deposit could be seeded as
@@ -2291,6 +2297,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
                     // Brief overlap is fine: at worst a duplicate notification, never a miss.
                     onchainStopFunc = stop;
+                    watchedSet = setKey;
                     previousStop?.();
                 })
                 .catch((e) => {
@@ -2319,6 +2326,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     return;
                 }
                 if (!WALLET_CONTRACT_TYPES.includes(event.contract.type)) {
+                    return;
+                }
+                // its coins are UTXOs, reported by the boarding watcher above
+                if (scopeOf(event.contract) === "onchain") {
                     return;
                 }
 
@@ -2546,6 +2557,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             },
             onchainProvider: this.onchainProvider,
             network: this.network,
+            onOnchainContractCreated: () => this.notifyBoardingRotation(),
         });
         try {
             // Baseline always-active contracts: `walletContractTimelocks` × {default, delegate}, bound
@@ -4933,15 +4945,20 @@ export class Wallet
         } else if (sync) {
             await manager.syncOnchain();
         }
-        const [tip, locked] = await Promise.all([
+        const [tip, locked, delegated] = await Promise.all([
             this.onchainProvider.getChainTip(),
             this.lockedOutpoints(),
+            this.liveDelegatedBoardingTrees(),
         ]);
         const dropped = new Map<string, string>();
         const candidates = (await this.onchainCoins(manager))
-            .filter(({ coin, contract }) => {
+            .filter(({ coin, contract, script }) => {
                 if (named) return named.has(vtxoOutpoint(coin));
-                return isContractGenericallySpendable(contract);
+                // a live watch's deposits are the Executor's to board
+                return (
+                    isContractGenericallySpendable(contract) &&
+                    !delegated.has(hex.encode(script.encode()))
+                );
             })
             .filter(({ coin, contract }) => {
                 const key = vtxoOutpoint(coin);

@@ -177,8 +177,8 @@ describe("delegated boarding address", () => {
         expect(await wallet.getWalletScripts()).toContain(renewal.contract.script);
     });
 
-    it("reports boarded coins to incoming-funds subscribers", async () => {
-        const { wallet, renewal } = await walletWith({ executor: true, rows: true });
+    it("reports boarded coins to incoming-funds subscribers, and deposits only as UTXOs", async () => {
+        const { wallet, renewal, boarding } = await walletWith({ executor: true, rows: true });
         let emit: (event: unknown) => void = () => {};
         vi.spyOn(wallet, "getContractManager").mockResolvedValue({
             onContractEvent: (handler: (event: unknown) => void) => {
@@ -197,6 +197,14 @@ describe("delegated boarding address", () => {
             value: 5000,
             script: renewal.contract.script,
         };
+        // the onchain sync's row of a deposit, which the boarding watcher reports
+        emit({
+            type: "vtxo_received",
+            contractScript: boarding.contract.script,
+            contract: { ...boarding.contract, scope: "onchain" },
+            vtxos: [{ ...vtxo, txid: "bb".repeat(32), script: boarding.contract.script }],
+            timestamp: 0,
+        });
         emit({
             type: "vtxo_received",
             contractScript: renewal.contract.script,
@@ -211,8 +219,10 @@ describe("delegated boarding address", () => {
             vtxos: [vtxo],
             timestamp: 0,
         });
-        await vi.waitFor(() => expect(funds).toHaveBeenCalledTimes(1));
-        expect(funds).toHaveBeenCalledWith({ type: "vtxo", newVtxos: [vtxo], spentVtxos: [] });
+        await vi.waitFor(() =>
+            expect(funds).toHaveBeenCalledWith({ type: "vtxo", newVtxos: [vtxo], spentVtxos: [] }),
+        );
+        expect(funds).toHaveBeenCalledTimes(1);
         stop();
     });
 

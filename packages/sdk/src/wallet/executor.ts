@@ -8,7 +8,7 @@ import type {
 } from "../providers/executor";
 import type { Contract } from "../contracts/types";
 import { ExecutorContractHandler } from "../contracts/handlers/executor";
-import { getNetwork, type NetworkName } from "../networks";
+import { networkFromOperatorInfo, resolveEmulatorPubkey } from "../networks";
 import { ArkAddress } from "../script/address";
 import {
     DEFAULT_TEMPLATE_IDS,
@@ -61,6 +61,16 @@ export interface ExecutorWatchRegistration {
 export type DelegationOptions = Pick<DelegationParams, "renewalWindow" | "maxFee"> &
     Partial<Pick<DelegationParams, "exitDelay" | "boardingExitDelay">>;
 
+export interface RegistrationOptions {
+    /** The watch's expiry, in unix seconds. */
+    expiresAt?: number;
+    /**
+     * The emulator key to accept in place of the network's pinned one, for a private emulator or
+     * a network with none. Its holder, with the operator, can move the delegated coins.
+     */
+    emulatorPubkey?: string;
+}
+
 /** What the manager needs of a wallet: its key, its operator and its contracts. */
 export type DelegatedWallet = Pick<
     IWallet,
@@ -101,6 +111,8 @@ export async function watchExecutorContracts(
                 params: serialized,
                 script: hex.encode(script.pkScript),
                 address: script.address(hrp, serverPubKey).encode(),
+                // boarding deposits are onchain coins, stored by the onchain sync
+                scope: template === "boarding" ? "onchain" : "offchain",
                 label: template === "renewal" ? "Delegated renewal" : "Delegated boarding",
                 metadata: metadataFor(template, registered),
             }),
@@ -167,7 +179,7 @@ export interface IExecutorManager {
     /** Watch the renewal address of this wallet's key, and make the wallet watch it too. */
     registerRenewal(
         params: DelegationOptions,
-        options?: { expiresAt?: number },
+        options?: RegistrationOptions,
     ): Promise<ExecutorWatchRegistration>;
     /**
      * Watch the boarding address of this wallet's key: the Executor boards every deposit there
@@ -177,7 +189,7 @@ export interface IExecutorManager {
      */
     registerBoarding(
         params: DelegationOptions,
-        options?: { expiresAt?: number },
+        options?: RegistrationOptions,
     ): Promise<ExecutorWatchRegistration>;
 }
 
@@ -207,14 +219,14 @@ export class ExecutorManagerImpl implements IExecutorManager {
 
     registerRenewal(
         params: DelegationOptions,
-        options: { expiresAt?: number } = {},
+        options: RegistrationOptions = {},
     ): Promise<ExecutorWatchRegistration> {
         return this.register("renewal", params, options);
     }
 
     registerBoarding(
         params: DelegationOptions,
-        options: { expiresAt?: number } = {},
+        options: RegistrationOptions = {},
     ): Promise<ExecutorWatchRegistration> {
         return this.register("boarding", params, options);
     }
@@ -222,7 +234,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
     private async register(
         kind: ExecutorDefault,
         options: DelegationOptions,
-        { expiresAt }: { expiresAt?: number },
+        { expiresAt, emulatorPubkey }: RegistrationOptions,
     ): Promise<ExecutorWatchRegistration> {
         const [info, operator, address, owner] = await Promise.all([
             this.executorProvider.getInfo(),
@@ -241,6 +253,15 @@ export class ExecutorManagerImpl implements IExecutorManager {
         if (info.serverPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
                 `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${server}`,
+            );
+        }
+        const network = networkFromOperatorInfo(operator);
+        // Pinned, as in Arkade.connect: holding the emulator key, the Executor could sign the
+        // emulator-enforced leaf itself, past its covenant. Matching addresses cannot show it.
+        const emulator = resolveEmulatorPubkey(network, emulatorPubkey);
+        if (info.emulatorPubkey.toLowerCase() !== emulator) {
+            throw new Error(
+                `Executor's emulator key ${info.emulatorPubkey} is not the trusted ${emulator}`,
             );
         }
         // A window as long as the coin's life makes every renewed coin due again at once, each
@@ -273,7 +294,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         );
         const watchAddress =
             kind === "boarding"
-                ? script.onchainAddress(getNetwork(operator.network as NetworkName))
+                ? script.onchainAddress(network)
                 : script.address(hrp, serverPubKey).encode();
         const templateId = DEFAULT_TEMPLATE_IDS[kind];
         // Registration is idempotent on the service: repeating it returns the existing watch.

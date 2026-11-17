@@ -24,7 +24,11 @@ const options = { renewalWindow: 256, maxFee: 100 };
 const reachable = await fetch(`${EXECUTOR_URL}/v1/info`)
     .then((r) => r.ok)
     .catch(() => false);
-if (!reachable) console.warn(`Executor e2e skipped: no Executor at ${EXECUTOR_URL}`);
+if (!reachable) {
+    // the sdk-executor stack runs one: only a local run may skip
+    if (process.env.CI) throw new Error(`no Executor at ${EXECUTOR_URL}`);
+    console.warn(`Executor e2e skipped: no Executor at ${EXECUTOR_URL}`);
+}
 
 const createWallet = (identity = SingleKey.fromRandomBytes()) =>
     Wallet.create({

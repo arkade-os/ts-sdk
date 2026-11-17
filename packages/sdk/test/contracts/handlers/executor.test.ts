@@ -9,6 +9,8 @@ import {
     type ExecutorDefault,
 } from "../../../src";
 import { resolveUnilateralPath } from "../../../src/wallet/exit/path";
+import { exitCsvOf } from "../../../src/contracts/onchainSpend";
+import { sequenceToTimelock } from "../../../src/utils/timelock";
 import { defaultVariables, instantiate } from "../../../src/script/executor/executorTemplate";
 import { ArkadeScript } from "../../../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../../../src/arkade/tweak";
@@ -192,6 +194,13 @@ describe("ExecutorContractHandler", () => {
         const path = ExecutorContractHandler.selectPath(s, contract, at(600));
         expect(path && script(path.leaf)).toEqual(leaves("renewal")[1]);
         expect(path?.sequence).toBe(delegation.exitDelay);
+    });
+
+    it("gives the onchain cosign preflight each template's exit CSV", () => {
+        expect(exitCsvOf(contractOf("renewal"))).toEqual(sequenceToTimelock(delegation.exitDelay));
+        expect(exitCsvOf(contractOf("boarding"))).toEqual(
+            sequenceToTimelock(delegation.boardingExitDelay),
+        );
     });
 
     it("pre-signs an unroll of a delegated coin through the owner exit", async () => {

@@ -659,6 +659,8 @@ export interface ContractManagerConfig {
     /** Enables onchain coin discovery and watching; needs `network` too. */
     onchainProvider?: OnchainProvider;
     network?: Network;
+    /** Fired after a new onchain-scoped contract is saved: the onchain address set changed. */
+    onOnchainContractCreated?: () => void;
 }
 
 /**
@@ -1432,6 +1434,7 @@ export class ContractManager implements IContractManager {
         };
 
         await this.config.contractRepository.saveContract(contract);
+        if (isOnchainScoped(contract)) this.config.onOnchainContractCreated?.();
         return { contract, persisted: true };
     }
 
