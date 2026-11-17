@@ -1581,6 +1581,11 @@ export class RfqSwapManager {
             const due =
                 this.reportsConfirmations &&
                 this.config.now() - (swap.claimBroadcastAt ?? 0) >= ONCHAIN_CLAIM_BUMP_SECONDS;
+            // Off the pinned fill only when it was replaced: a claim that never propagated
+            // leaves `P` private, so a smaller output there must not be the one to publish it.
+            const pinned = swap.funding;
+            const moved = pinned?.txid !== phase.utxo.txid || pinned?.vout !== phase.utxo.vout;
+            if (moved && !(Number(phase.utxo.amount) >= swap.expectedAmount)) return "continue";
             if (due || (await this.claimVanished(swap.claimTxid))) {
                 await this.pushOnchainClaim(swap, phase.utxo, due);
             }
