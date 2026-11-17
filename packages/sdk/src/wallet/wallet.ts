@@ -119,6 +119,12 @@ import {
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { ArkadeCash } from "../arkadeCash";
+import {
+    isArkadeCashRecord,
+    mergeArkadeCashRecord,
+    type ArkadeCashRecord,
+    type ArkadeCashTx,
+} from "../arkadeCash/tracker";
 import { Intent, Proof } from "../proof";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
@@ -679,6 +685,11 @@ export interface ArkadeCashUnclaimedVtxo extends ArkadeCashVtxoRef {
  * non-sweepable states become claimable.
  */
 export interface ArkadeCashClaimResult {
+    /**
+     * The Arkade transactions registered by successful sweeps, each with the sats it paid this
+     * wallet.
+     */
+    claims?: ArkadeCashTx[];
     /** Satoshis swept to this wallet instantly (the thin single-key sweep). */
     swept: number;
     /**
@@ -1613,10 +1624,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return wallet transaction history derived from Arkade state and boarding transactions.
      */
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const [snapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+        const [fullSnapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
             this.contractSnapshot(),
             this.getBoardingTxs(),
         ]);
+        // Recovery-only coins are escrowed for their own isolated settlement, as in the balance.
+        // Counting them here would show swept voucher coins as received before any sats arrive,
+        // and hide the settlement that recovers them behind a refresh-shaped net of zero.
+        const snapshot = fullSnapshot.filter(({ contract }) => !isRecoveryOnlyContract(contract));
         const allVtxos = snapshot.flatMap((_) => _.vtxos);
 
         // Best-effort: a retryable indexer failure yields a partial map, not a
@@ -5379,7 +5394,7 @@ export class Wallet
         const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
         let { spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos);
         let swept = 0;
-
+        const claims: ArkadeCashTx[] = [];
         // Drain a previously registered but unfinalized sweep, keyed to the cash key so
         // finalizePendingTxs can't reach it. Not gated on `spendable`: a registered sweep marks
         // its input `already-spent`. Subdust is excluded (the proof's P2TR pkScript would be a lie
@@ -5388,7 +5403,12 @@ export class Wallet
             (vtxo) => !isSubdust(vtxo, this.dustAmount) && !vtxo.isUnrolled,
         );
         if (drainable.length > 0) {
-            let drained = { count: 0, swept: 0, claimed: new Set<string>() };
+            let drained = {
+                count: 0,
+                swept: 0,
+                claimed: new Set<string>(),
+                claims: [] as ArkadeCashTx[],
+            };
             try {
                 drained = await this.finalizePendingCashTxs(
                     cash,
@@ -5400,6 +5420,7 @@ export class Wallet
                 // Must not sink a claim that can still sweep; held VTXOs fail and are reported.
                 console.error("Failed to drain pending arkadeCash txs:", error);
             }
+            claims.push(...drained.claims);
             if (drained.count > 0) {
                 // Re-read, or we'd re-sweep an outpoint the drain just spent.
                 vtxos = await this.fetchAllVtxos(scripts);
@@ -5425,7 +5446,7 @@ export class Wallet
             // within the operator's per-output ceiling.
             for (const vtxo of spendable) {
                 try {
-                    await signAndSubmitOffchainTx({
+                    const registeredTxid = await signAndSubmitOffchainTx({
                         identity: cash.identity,
                         provider: this.arkProvider,
                         inputs: [
@@ -5441,6 +5462,7 @@ export class Wallet
                         serverUnrollScript,
                         oneShot: this.oneShotSubmit,
                     });
+                    claims.push({ txid: registeredTxid, amount: vtxo.value });
                     swept += vtxo.value;
                 } catch (error) {
                     console.error(
@@ -5484,6 +5506,7 @@ export class Wallet
         }
 
         return {
+            claims,
             swept,
             recovering: {
                 amount: recovering.reduce((total, vtxo) => total + vtxo.value, 0),
@@ -5630,6 +5653,46 @@ export class Wallet
     }
 
     /**
+     * Correlate an imported voucher's settlement with the voucher record. This
+     * is deliberately kept on wallet state rather than being inferred from the
+     * generic recovery row, which has no safe public correlation key. The
+     * imported contract carries no cash id, so its script is the join key:
+     * the script is the voucher id.
+     */
+    async correlateArkadeCashRecovery(
+        cashId: string,
+        txid: string,
+        amount: number,
+        outcome = "recovered",
+    ): Promise<void> {
+        // The whole read-modify-write runs inside the state update, which
+        // serializes it across callers and contexts. A failure propagates to
+        // the recovery pass, which logs it; it must never write a snapshot.
+        await updateWalletState(this.walletRepository, (state) => {
+            const raw = state.settings?.arkadeCashRecovery;
+            const entries: unknown[] = Array.isArray(raw) ? raw : [];
+            const index = entries.findIndex(
+                (entry) => isArkadeCashRecord(entry) && entry.id === cashId,
+            );
+            const previous = index >= 0 ? (entries[index] as ArkadeCashRecord) : undefined;
+            if (previous?.claims.some((claim) => claim.txid === txid)) return state;
+            const next = mergeArkadeCashRecord(previous, {
+                id: cashId,
+                action: "claimed",
+                outcome,
+                createdAt: Math.floor(Date.now() / 1000),
+                issues: [],
+                claims: [{ txid, amount }],
+            });
+            // Entries that aren't records of this shape are left as they are.
+            const updated = [...entries];
+            if (index >= 0) updated[index] = next;
+            else updated.push(next);
+            return { ...state, settings: { ...state.settings, arkadeCashRecovery: updated } };
+        });
+    }
+
+    /**
      * Split the VTXOs at an arkadeCash address into three buckets: the ones the
      * thin sweep can move (`spendable`), the operator-swept ones that must go
      * through a recovery settlement (`recoverable`), and the ones that can
@@ -5714,8 +5777,13 @@ export class Wallet
         vtxos: VirtualCoin[],
         cashScript: DefaultVtxo.Script,
         myPkScript: Bytes,
-    ): Promise<{ count: number; swept: number; claimed: Set<string> }> {
-        const result = { count: 0, swept: 0, claimed: new Set<string>() };
+    ): Promise<{ count: number; swept: number; claimed: Set<string>; claims: ArkadeCashTx[] }> {
+        const result = {
+            count: 0,
+            swept: 0,
+            claimed: new Set<string>(),
+            claims: [] as ArkadeCashTx[],
+        };
 
         const inputs = vtxos.map((vtxo) => ({
             ...vtxo,
@@ -5785,6 +5853,7 @@ export class Wallet
 
                 const paidToMe = this.arkTxAmountPaidTo(pendingTx.finalArkTx, myPkScriptHex);
                 if (paidToMe === 0) continue;
+                result.claims.push({ txid: pendingTx.arkTxid, amount: paidToMe });
 
                 // The ark tx spends the checkpoints; the cash VTXOs are the checkpoints' inputs.
                 result.swept += paidToMe;

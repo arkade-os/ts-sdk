@@ -26,7 +26,7 @@ const DEFAULT_MAX_CONCURRENT = 6;
 const DEFAULT_COOLDOWN_MS = 5_000;
 
 /** Ceiling on a single cooldown, so a bogus `Retry-After` can't wedge the wallet. */
-const MAX_COOLDOWN_MS = 60_000;
+export const MAX_COOLDOWN_MS = 60_000;
 
 /** Upper bound of the random delay decorrelating waiters released together. */
 const DEFAULT_JITTER_MS = 500;

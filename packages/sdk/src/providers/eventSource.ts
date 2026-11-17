@@ -9,6 +9,7 @@
  */
 
 import { baseFetch } from "../utils/fetch";
+import { HttpResponseError } from "./errors";
 import { readSseFrames } from "./sseFrames";
 
 /**
@@ -103,13 +104,23 @@ export function resolveEventSource(override?: EventSourceFactory): EventSourceFa
     return factory;
 }
 
+/** An `error` listener has no other channel to read a refusal's status from. */
+function errorEvent(error: unknown): Event {
+    const event = new Event("error") as Event & { status?: number; retryAfterMs?: number };
+    if (error instanceof HttpResponseError) {
+        event.status = error.status;
+        event.retryAfterMs = error.retryAfterMs;
+    }
+    return event;
+}
+
 export class FetchEventSource implements EventSourceLike {
     private readonly events = new EventTarget();
     private readonly controller = new AbortController();
 
     constructor(url: string, headers: Record<string, string> = {}) {
-        this.read(url, headers).catch(() => {
-            if (!this.controller.signal.aborted) this.events.dispatchEvent(new Event("error"));
+        this.read(url, headers).catch((error) => {
+            if (!this.controller.signal.aborted) this.events.dispatchEvent(errorEvent(error));
         });
     }
 
@@ -142,8 +153,8 @@ export class FetchEventSource implements EventSourceLike {
             !response.body ||
             !/^text\/event-stream\s*(;|$)/i.test(type)
         ) {
-            await response.body?.cancel();
-            throw new Error(`SSE response ${response.status} ${type}`);
+            await response.body?.cancel().catch(() => {});
+            throw new HttpResponseError("SSE response", response, type);
         }
         for await (const { event, data } of readSseFrames(response.body)) {
             this.events.dispatchEvent(new MessageEvent(event, { data }));

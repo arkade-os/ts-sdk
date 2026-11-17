@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { excludeLockedOutpoints, spendableVtxosExcludingLocked } from "../src/wallet/wallet";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 
 describe("excludeLockedOutpoints", () => {
     it("drops vtxos locked by non-terminal intents", () => {
@@ -56,8 +56,8 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
     it("hides a batch_in_progress intent's VTXO end-to-end (real repo lock logic)", async () => {
         // Pins the deliberate divergence from NArk EF storage: batch_in_progress
         // is non-terminal, so its inputs stay out of spendable balance.
-        const repo = new InMemoryIntentRepository();
-        const base: Omit<ArkIntent, "state" | "proofInputs"> = {
+        const repo = new InMemoryBatchRegistrationRepository();
+        const base: Omit<BatchRegistration, "state" | "proofInputs"> = {
             proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,

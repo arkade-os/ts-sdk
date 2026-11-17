@@ -42,9 +42,9 @@ export class MockEventSource {
         this.emit("failure", { data });
     }
 
-    emitError(readyState: number) {
+    emitError(readyState: number, detail?: { status?: number; retryAfterMs?: number }) {
         this.readyState = readyState;
-        this.emit("error", new Event("error"));
+        this.emit("error", Object.assign(new Event("error"), detail));
     }
 
     private emit(type: string, event: unknown) {
