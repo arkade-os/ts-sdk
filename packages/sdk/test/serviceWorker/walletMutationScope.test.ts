@@ -408,6 +408,75 @@ describe("wallet request scope", () => {
         expect(handler.isLongRunning(request("SEND"))).toBe(false);
     });
 
+    const scoped = (ctx: Awaited<ReturnType<typeof setup>>, type: string, payload: unknown = {}) =>
+        ctx.handler.handleMessage({
+            id: type,
+            tag: ctx.handler.messageTag,
+            type: "SCOPED_WALLET_REQUEST_V1",
+            payload: {
+                binding: ctx.binding,
+                request: { id: type, tag: ctx.handler.messageTag, type, payload },
+            },
+        });
+
+    it("disposes without waiting for a settlement in its batch round", async () => {
+        const original = await setup();
+        const round = deferred<string>();
+        const settle = vi.fn(() => round.promise);
+        Object.assign(original.wallet, { settle });
+        const settling = scoped(original, "SETTLE", {});
+        await vi.waitFor(() => expect(settle).toHaveBeenCalledOnce());
+        await original.handler.stop();
+        expect(original.dispose).toHaveBeenCalledOnce();
+        round.resolve("txid");
+        await settling;
+    });
+
+    it("bounds the drain of finite work before disposing", async () => {
+        const original = await setup();
+        original.handler.drainBudgetMs = 20;
+        const never = deferred<string>();
+        original.send.mockImplementation(() => never.promise);
+        void original.proxy.send({ address: "recipient", amount: 1_000 }).catch(() => undefined);
+        await vi.waitFor(() => expect(original.send).toHaveBeenCalledOnce());
+        await original.handler.stop();
+        expect(original.dispose).toHaveBeenCalledOnce();
+    });
+
+    it("refuses CLEAR during a settlement without revoking the wallet", async () => {
+        const original = await setup();
+        const clear = vi.fn().mockResolvedValue(undefined);
+        const round = deferred<string>();
+        const settle = vi.fn(() => round.promise);
+        Object.assign(original.wallet, { settle, clear });
+        const settling = scoped(original, "SETTLE", {});
+        await vi.waitFor(() => expect(settle).toHaveBeenCalledOnce());
+        await expect(original.proxy.clear()).rejects.toThrow(/settlement is in progress/);
+        expect(original.handler.walletRequestBinding).toEqual(original.binding);
+        await expect(original.proxy.send({ address: "recipient", amount: 1_000 })).resolves.toBe(
+            "funded",
+        );
+        round.resolve("txid");
+        await settling;
+        expect(clear).not.toHaveBeenCalled();
+    });
+
+    it("fails CLEAR without wiping when its drain outlasts the budget", async () => {
+        const original = await setup();
+        original.handler.drainBudgetMs = 20;
+        const clear = vi.fn().mockResolvedValue(undefined);
+        Object.assign(original.wallet, { clear });
+        const finish = deferred<string>();
+        original.send.mockImplementation(() => finish.promise);
+        const sending = original.proxy.send({ address: "recipient", amount: 1_000 });
+        await vi.waitFor(() => expect(original.send).toHaveBeenCalledOnce());
+        await expect(original.proxy.clear()).rejects.toThrow(/not cleared/);
+        finish.resolve("original-tx");
+        await sending;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(clear).not.toHaveBeenCalled();
+    });
+
     it("revokes incoming-funds callbacks while CLEAR drains an admitted send", async () => {
         const original = await setup();
         let incoming!: (event: unknown) => Promise<void>;

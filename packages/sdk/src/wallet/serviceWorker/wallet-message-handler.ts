@@ -440,6 +440,19 @@ export type ResponseGetStoredContractsWithVtxos = ResponseEnvelope & {
     payload: { contracts: ContractWithVtxos[] };
 };
 
+/** Whether every operation settled within `ms`. */
+async function settledWithin(operations: Iterable<Promise<unknown>>, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+    });
+    try {
+        return await Promise.race([Promise.allSettled([...operations]).then(() => true), expired]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 function unsupportedByManager(method: string): Error {
     return new Error(`Contract manager does not support ${method}`);
 }
@@ -1192,6 +1205,10 @@ export class WalletMessageHandler
     private readonlyWallet: ReadonlyWallet | undefined;
     private walletRequestBinding: WalletRequestBinding | undefined;
     private readonly inFlightOperations = new Set<Promise<unknown>>();
+    // A batch round can outlast any drain: neither `stop()` nor CLEAR waits for these.
+    private readonly longRunningOperations = new Set<Promise<unknown>>();
+    /** Under the page's re-init retries (~9s) and CLEAR's 10s timeout. */
+    private drainBudgetMs = 5_000;
 
     private arkProvider: OperatorProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
@@ -1270,7 +1287,7 @@ export class WalletMessageHandler
             this.contractEventsSubscription = undefined;
         }
 
-        await Promise.allSettled([...this.inFlightOperations]);
+        await settledWithin(this.inFlightOperations, this.drainBudgetMs);
         // Dispose the wallet to stop VtxoManager background tasks
         // (auto-renewal, boarding input polling) and ContractWatcher.
         try {
@@ -1478,6 +1495,11 @@ export class WalletMessageHandler
                     throw new Error("Invalid scoped wallet request");
                 }
                 const context = this.captureRequestContext(message.payload.binding);
+                if (request.type === "CLEAR" && this.longRunningOperations.size > 0) {
+                    throw new Error(
+                        "Cannot clear the wallet while a long-running operation such as a settlement is in progress",
+                    );
+                }
                 const pending = request.type === "CLEAR" ? [...this.inFlightOperations] : undefined;
                 if (pending) {
                     this.walletRequestBinding = undefined;
@@ -1489,17 +1511,27 @@ export class WalletMessageHandler
                     this.onNextTick = [];
                 }
                 const execution = pending
-                    ? Promise.allSettled(pending).then(() =>
-                          this.dispatchOperation(request, context),
-                      )
+                    ? settledWithin(pending, this.drainBudgetMs).then((drained) => {
+                          // Fail rather than wipe after the page's timeout has reported failure.
+                          // The binding stays revoked: callbacks are already fenced off.
+                          if (!drained) {
+                              throw new Error(
+                                  "Wallet not cleared: in-flight operations did not finish; reinitialize and retry",
+                              );
+                          }
+                          return this.dispatchOperation(request, context);
+                      })
                     : this.dispatchOperation(request, context);
                 // Subscription setup is epoch-revoked; its finite writes admit separately.
                 if (request.type === "INIT_WALLET") return await execution;
-                this.inFlightOperations.add(execution);
+                const operations = this.isLongRunning(message)
+                    ? this.longRunningOperations
+                    : this.inFlightOperations;
+                operations.add(execution);
                 try {
                     return await execution;
                 } finally {
-                    this.inFlightOperations.delete(execution);
+                    operations.delete(execution);
                 }
             } catch (error) {
                 return this.tagged({ id: message.id, error: error as Error });
