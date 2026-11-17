@@ -108,9 +108,11 @@ style and have not been backfilled.
   `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
   helper. Type-level only, non-breaking.
 
-- **`PrfUnavailable` says why.** Its new `reason` is `"unsupported"` when the
-  browser or authenticator reported no PRF as the passkey was made (or there is
-  no WebAuthn), `"no-secret"` when a use returned no PRF secret,
+- **`PrfUnavailable` says why.** Its new `reason` is `"unsupported"` when PRF
+  was reported off (`enabled: false`) as the passkey was made, or there is no
+  WebAuthn; `"unknown"` when the browser returned no PRF output at all, so
+  another browser may still get a secret from it; `"no-secret"` when a use
+  returned no PRF secret,
   `"secret-changed"` when the next use gave another one, `"malformed"` when the
   secret was not 32 usable bytes, and `"unconfirmed"` on `PasskeyUnconfirmed`.
   Only `"unsupported"` means the passkey never gives a key. An app that falls

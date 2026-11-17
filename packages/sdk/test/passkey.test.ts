@@ -342,4 +342,24 @@ describe("PRF passkeys", () => {
         expect(await reason(make(new FakeAuthenticator({ result: "empty" })))).toBe("malformed");
         expect(await reason(make(new FakeAuthenticator({ getFails: true })))).toBe("unconfirmed");
     });
+
+    it("calls PRF support unknown when the browser ignored it at creation, since the passkey may still give a secret", async () => {
+        const client = new FakeAuthenticator();
+        const create = client.create.bind(client);
+        client.create = async (o) =>
+            ({
+                ...(await create(o)),
+                getClientExtensionResults: () => ({}),
+            }) as unknown as Credential;
+
+        const error = (await make(client).catch((e: unknown) => e)) as PrfUnavailable;
+        expect(error.reason).toBe("unknown");
+        const later = await evaluatePrf({
+            rpId: rp.id,
+            salt,
+            credentialIds: [error.credentialId!],
+            client,
+        });
+        expect(later.prf).toHaveLength(32);
+    });
 });

@@ -7,10 +7,11 @@ export interface WebAuthnClient {
     get(options: CredentialRequestOptions): Promise<Credential | null>;
 }
 
-/** Only `"unsupported"` (no PRF when the passkey was made, or no WebAuthn) means a passkey never gives a key;
- *  after the others it may still give one elsewhere, so a fallback tied to it can meet another wallet. */
+/** Only `"unsupported"` (PRF reported off when the passkey was made, or no WebAuthn) means a passkey never gives
+ *  a key; after the others it may still give one elsewhere, so a fallback tied to it can meet another wallet. */
 export type PrfUnavailableReason =
     | "unsupported"
+    | "unknown"
     | "no-secret"
     | "secret-changed"
     | "malformed"
@@ -182,8 +183,11 @@ async function confirmPrf(
     client: WebAuthnClient,
 ): Promise<Uint8Array> {
     const out = prfOf(cred);
-    // No prf entry at all means the browser ignored the extension: a second prompt would fail the same way.
-    if (!out?.results?.first && (!out || out.enabled === false))
+    // No prf entry at all means the browser ignored the extension: a second prompt would fail the same way,
+    // but another browser may still get a secret from this passkey, so that is not "unsupported".
+    if (!out)
+        throw new PrfUnavailable("This browser returned no PRF result.", { reason: "unknown" });
+    if (!out.results?.first && out.enabled === false)
         throw new PrfUnavailable("This passkey cannot derive a key.", { reason: "unsupported" });
     // Copied before the next ceremony: a client may reuse the buffer for its result.
     const made = out.results?.first ? secret(out.results.first) : null;
