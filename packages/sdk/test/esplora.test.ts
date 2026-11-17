@@ -169,6 +169,23 @@ describe("EsploraProvider", () => {
                 "Failed to fetch fee rate: Service Unavailable",
             );
         });
+
+        it("keeps the status when cancelling the error body fails", async () => {
+            const refused = new Response("", {
+                status: 429,
+                statusText: "Too Many Requests",
+                headers: { "retry-after": "5" },
+            });
+            vi.spyOn(refused.body!, "cancel").mockRejectedValue(new TypeError("body errored"));
+            mockFetch.mockResolvedValueOnce(refused);
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getFeeRate().catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(429);
+            expect(error.retryAfterMs).toBe(5_000);
+        });
     });
 
     describe("broadcastTransaction", () => {

@@ -120,7 +120,8 @@ style and have not been backfilled.
   multiplied into app-wide syncs. The delay is now jittered (equal jitter) and
   capped at 60 seconds, the attempt counter resets only once a connection has
   stayed up for 30 seconds (or the cap, if lower) and was not a refused open, and a `429`/`503` that carries `Retry-After` is
-  waited out (clamped to the rate gate's own 60-second ceiling). Recovery after
+  waited out (clamped to the rate gate's own 60-second ceiling), then spread
+  over half that again so the refused clients don't return together. Recovery after
   a brief restart is unchanged in practice: the first retries are still
   sub-second, and the 20-second failsafe poll, not the ladder, is what bounds
   it. `maxReconnectAttempts` keeps counting consecutive failures, and every
@@ -137,7 +138,9 @@ style and have not been backfilled.
   `statusText` with no prefix at all; it now reads
   `Failed to get transaction <txid>: …`. A refused SSE stream carries its status
   the same way, through the `error` event to the `EventSourceError` the watcher
-  backs off on.
+  backs off on; on `ExpoIndexerProvider` the stream throws the `HttpResponseError`
+  itself, now reading `Unexpected status when fetching SSE stream: … (<status>)`.
+  A body that fails to cancel no longer masks the error in `getFeeRate`.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's

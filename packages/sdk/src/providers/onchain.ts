@@ -222,17 +222,17 @@ export class EsploraProvider implements OnchainProvider {
         // transport and service errors must still reach the caller.
         if (response.status === 404) {
             // Release the connection before issuing another request to this host.
-            await response.body?.cancel();
+            await response.body?.cancel().catch(() => {});
             url = `${this.baseUrl}/v1/fees/recommended`;
             key = "fastestFee";
             response = await baseFetch(url);
         }
         if (response.status === 404) {
-            await response.body?.cancel();
+            await response.body?.cancel().catch(() => {});
             return undefined;
         }
         if (!response.ok) {
-            await response.body?.cancel();
+            await response.body?.cancel().catch(() => {});
             throw new HttpResponseError("Failed to fetch fee rate", response);
         }
         const mediaType = response.headers
@@ -241,7 +241,7 @@ export class EsploraProvider implements OnchainProvider {
             .trim()
             .toLowerCase();
         if (mediaType === "text/html") {
-            await response.body?.cancel();
+            await response.body?.cancel().catch(() => {});
             throw new Error(`Invalid fee estimate from ${url}: received HTML`);
         }
         const fees: unknown = await response.json();

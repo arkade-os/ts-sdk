@@ -553,7 +553,8 @@ export class ContractWatcher {
     /**
      * Equal jitter over the exponential backoff, never shorter than a `Retry-After` the server
      * asked for (clamped like the rate gate's own cooldown, so a bogus header cannot park the
-     * stream). Without jitter the clients one restart dropped all return in the same instant.
+     * stream). Without jitter the clients one restart dropped all return in the same instant, so
+     * a dominant `Retry-After` is spread over half its own length too.
      */
     private nextReconnectDelay(failure?: unknown): number {
         const capped = computeReconnectDelay(
@@ -561,9 +562,10 @@ export class ContractWatcher {
             this.config.reconnectDelayMs,
             this.config.maxReconnectDelayMs,
         );
-        const jittered = capped / 2 + Math.random() * (capped / 2);
         const askedFor = Math.min(retryAfterMsFromError(failure) ?? 0, MAX_COOLDOWN_MS);
-        return Math.max(jittered, askedFor);
+        const floor = Math.max(capped / 2, askedFor);
+        const ceiling = Math.max(capped, askedFor * 1.5);
+        return floor + Math.random() * (ceiling - floor);
     }
 
     /** Replays repository state — only what a sync stored; watch-only scripts poll the indexer. */

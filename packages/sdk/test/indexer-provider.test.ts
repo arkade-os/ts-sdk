@@ -638,11 +638,36 @@ describe("RestIndexerProvider", () => {
                 new AbortController().signal,
             );
 
-            await expect(subscription.next()).rejects.toThrow(/Unexpected status 500/);
+            await expect(subscription.next()).rejects.toThrow(
+                /Unexpected status when fetching SSE stream.*\(500\)/,
+            );
             const url = new URL(mockFetch.mock.calls[0][0] as string);
             expect(url.pathname).toBe("/v1/indexer/subscription");
             expect(url.searchParams.getAll("filter.expressions")).toEqual([PACKET_4]);
             expect(MockEventSource.instances).toHaveLength(0);
+            for (const spy of quiet) spy.mockRestore();
+            vi.doUnmock("expo/fetch");
+        });
+
+        it("carries an Expo refusal's status and Retry-After to the watcher", async () => {
+            vi.doMock("expo/fetch", () => {
+                throw new Error("expo/fetch unavailable");
+            });
+            const quiet = (["warn", "error"] as const).map((level) =>
+                vi.spyOn(console, level).mockImplementation(() => undefined),
+            );
+            mockFetch.mockResolvedValueOnce(
+                new Response(null, { status: 429, headers: { "retry-after": "7" } }),
+            );
+            const { ExpoIndexerProvider } = await import("../src/providers/expoIndexer");
+            const provider = new ExpoIndexerProvider("http://localhost:7070");
+
+            const error = await provider
+                .getSubscription("sub-1", new AbortController().signal)
+                .next()
+                .catch((e: unknown) => e);
+
+            expect(error).toMatchObject({ status: 429, retryAfterMs: 7_000 });
             for (const spy of quiet) spy.mockRestore();
             vi.doUnmock("expo/fetch");
         });

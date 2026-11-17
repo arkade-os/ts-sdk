@@ -191,6 +191,21 @@ describe("ContractWatcher stream reconnect", () => {
         expect(listen).toHaveBeenCalledTimes(2);
     });
 
+    it("still jitters a reconnect that Retry-After dominates", async () => {
+        // A fixed Retry-After would otherwise bring every refused client back in the same instant.
+        vi.spyOn(Math, "random").mockReturnValue(1);
+        const { listen, drop } = await setup({
+            reconnectDelayMs: 1_000,
+            maxReconnectDelayMs: 4_000,
+        });
+
+        await drop(refused(429, 10_000));
+        await vi.advanceTimersByTimeAsync(14_999);
+        expect(listen).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(listen).toHaveBeenCalledTimes(2);
+    });
+
     it("stops after the configured attempt limit", async () => {
         vi.spyOn(Math, "random").mockReturnValue(0);
         const { listen, drop } = await setup({
