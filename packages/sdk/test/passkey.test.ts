@@ -326,4 +326,20 @@ describe("PRF passkeys", () => {
         }).catch((e: unknown) => e);
         expect((error as PrfUnavailable).credentialId).toBeUndefined();
     });
+
+    it("says why a passkey gives no key, so an app falls back only for one that never will", async () => {
+        const reason = (p: Promise<unknown>) =>
+            p.then(
+                () => "no error",
+                (e: unknown) => (e as PrfUnavailable).reason,
+            );
+        expect(await reason(make(new FakeAuthenticator({ prf: false })))).toBe("unsupported");
+        expect(await reason(evaluatePrf({ rpId: rp.id, salt }))).toBe("unsupported");
+        expect(await reason(evaluatePrf({ rpId: rp.id, salt, client: answering(undefined) }))).toBe(
+            "no-secret",
+        );
+        expect(await reason(make(new FakeAuthenticator({ drift: true })))).toBe("secret-changed");
+        expect(await reason(make(new FakeAuthenticator({ result: "empty" })))).toBe("malformed");
+        expect(await reason(make(new FakeAuthenticator({ getFails: true })))).toBe("unconfirmed");
+    });
 });
