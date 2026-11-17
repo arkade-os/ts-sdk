@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computeOffchainBalance } from "../src/wallet/balance";
-import { fundedWallet, stallSubmits } from "./concurrentSpendingFixture";
+import { BTC_ADDR, fundedWallet, stallSubmits } from "./concurrentSpendingFixture";
+import { IndexedDBVtxoReservationRepository } from "../src/repositories/indexedDB/vtxoReservationRepository";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -177,5 +178,75 @@ describe("computeOffchainBalance reserved bucket", () => {
             balance.reserved,
             balance.available,
         ]).toEqual([1, 10, 100, 1_000]);
+    });
+});
+
+describe("durable reservations on a direct wallet", () => {
+    const store = () =>
+        new IndexedDBVtxoReservationRepository(`vtxo-reservations-${crypto.randomUUID()}`);
+
+    it("persists an id-keyed hold when a reservation repository is configured", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = store();
+        const { wallet, coins, outpoints } = await fundedWallet({
+            vtxoReservationRepository: repository,
+        });
+        const hold = await wallet.reserveVtxos([coins[0]], "taxi-transfer");
+        expect(await repository.getReservations()).toEqual([
+            { id: "taxi-transfer", outpoints: [{ txid: coins[0].txid, vout: 0 }] },
+        ]);
+        await expect(
+            wallet.settle({ inputs: [coins[0]], outputs: [{ address: BTC_ADDR, amount: 9_000n }] }),
+        ).rejects.toMatchObject({ name: "VtxoReservedError" });
+        await wallet.dispose();
+
+        const restarted = await fundedWallet({ vtxoReservationRepository: repository });
+        expect((await restarted.wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[0]);
+        await hold.release();
+        expect(await repository.getReservations()).toEqual([]);
+        await restarted.wallet.dispose();
+    });
+
+    it("keeps an id-keyed hold local without a reservation repository", async () => {
+        const { wallet, coins, outpoints } = await fundedWallet();
+        const hold = await wallet.reserveVtxos([coins[0]], "taxi-transfer");
+        expect((await wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[0]);
+        await hold.release();
+        expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[0]);
+        await wallet.dispose();
+    });
+
+    it("drops durable holds when the wallet is cleared", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = store();
+        const { wallet, coins, outpoints } = await fundedWallet({
+            vtxoReservationRepository: repository,
+        });
+        await wallet.reserveVtxosPersistently([coins[0]], "taxi-transfer");
+        expect(await repository.getReservations()).toHaveLength(1);
+        await wallet.clear();
+        expect(await repository.getReservations()).toEqual([]);
+
+        const restored = await fundedWallet({ vtxoReservationRepository: repository });
+        expect((await restored.wallet.getSpendableVtxos()).map(key)).toContain(outpoints[0]);
+        await restored.wallet.dispose();
+    });
+
+    it("starts despite overlapping stored holds, and the skipped one still releases", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = store();
+        const [a, b] = ["aa", "bb"].map((fill) => ({ txid: fill.repeat(32), vout: 0 }));
+        await repository.saveReservation({ id: "first", outpoints: [a] });
+        await repository.saveReservation({ id: "second", outpoints: [a, b] });
+
+        const { wallet, outpoints } = await fundedWallet({ vtxoReservationRepository: repository });
+        const spendable = (await wallet.getSpendableVtxos()).map(key);
+        expect(spendable).not.toContain(outpoints[0]);
+        expect(spendable).toContain(outpoints[1]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("second"));
+
+        await wallet.releaseVtxoReservation("second");
+        expect((await repository.getReservations()).map(({ id }) => id)).toEqual(["first"]);
+        await wallet.dispose();
     });
 });

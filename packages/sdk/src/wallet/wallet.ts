@@ -3343,11 +3343,31 @@ export class Wallet
     }
 
     /**
-     * Hold VTXOs so no SDK-chosen spend picks them; the holder still spends them by naming them.
+     * Hold VTXOs so no SDK-chosen spend picks them.
      * All-or-nothing: throws {@link VtxoReservedError} if any is held or already being spent.
-     * In-memory, for this `Wallet` instance only.
+     *
+     * Without `reservationId`: in-memory, for this instance only, and the holder still spends
+     * them by naming them. With it and a `vtxoReservationRepository`: durable, as in the worker
+     * (see {@link reserveVtxosPersistently}); without a repository it stays in-memory.
      */
-    reserveVtxos(outpoints: readonly Outpoint[]): VtxoReservation {
+    reserveVtxos(outpoints: readonly Outpoint[]): VtxoReservation;
+    reserveVtxos(outpoints: readonly Outpoint[], reservationId: string): Promise<VtxoReservation>;
+    reserveVtxos(
+        outpoints: readonly Outpoint[],
+        reservationId?: string,
+    ): VtxoReservation | Promise<VtxoReservation> {
+        if (reservationId === undefined) return this.holdVtxos(outpoints);
+        if (!this.reservationRepository) {
+            return new Promise((resolve) => resolve(this.holdVtxos(outpoints)));
+        }
+        const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
+        return this.reserveVtxosPersistently(snapshot, reservationId).then(() => ({
+            outpoints: snapshot,
+            release: () => this.releaseVtxoReservation(reservationId),
+        }));
+    }
+
+    private holdVtxos(outpoints: readonly Outpoint[]): VtxoReservation {
         const keys = outpoints.map((o) => `${o.txid}:${o.vout}`);
         const inFlight = keys.filter((k) => this._pendingSpendOutpoints.has(k));
         if (inFlight.length > 0) throw new VtxoReservedError(inFlight, "in-flight");
@@ -3404,7 +3424,7 @@ export class Wallet
                 return;
             }
             // Hold before the first await, so a settle's last check sees it.
-            const hold = this.reserveVtxos(snapshot);
+            const hold = this.holdVtxos(snapshot);
             for (const { txid, vout } of snapshot)
                 this.persistentReservedOutpoints.add(`${txid}:${vout}`);
             try {
@@ -3737,6 +3757,18 @@ export class Wallet
         }
     }
 
+    /** Also drops durable holds: a cleared wallet's holds would outlive their owner. */
+    override async clear(): Promise<void> {
+        try {
+            await super.clear();
+        } finally {
+            const repository = this.reservationRepository;
+            for (const { id } of (await repository?.getReservations()) ?? []) {
+                await repository!.deleteReservation(id);
+            }
+        }
+    }
+
     override async dispose(): Promise<void> {
         await Promise.allSettled([...this.reservationWrites]);
         // Drain an in-flight restore so it can't hit torn-down managers (deadlock-free:
@@ -3957,9 +3989,20 @@ export class Wallet
         try {
             for (const reservation of (await wallet.reservationRepository?.getReservations()) ??
                 []) {
+                // Only two wallets sharing one store can write an overlap. Skip it rather than
+                // fail every start: releasing it by id still works.
+                const overlap = reservation.outpoints.some(({ txid, vout }) =>
+                    wallet._heldOutpoints.has(`${txid}:${vout}`),
+                );
+                if (overlap) {
+                    console.warn(
+                        `Reservation ${reservation.id} overlaps another and was not restored`,
+                    );
+                    continue;
+                }
                 wallet.persistentReservations.set(
                     reservation.id,
-                    wallet.reserveVtxos(reservation.outpoints),
+                    wallet.holdVtxos(reservation.outpoints),
                 );
                 for (const { txid, vout } of reservation.outpoints) {
                     wallet.persistentReservedOutpoints.add(`${txid}:${vout}`);

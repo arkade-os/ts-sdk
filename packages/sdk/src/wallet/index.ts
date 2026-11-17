@@ -1030,7 +1030,10 @@ export interface IWallet extends IReadonlyWallet {
      */
     identity: Identity;
 
-    /** Direct holds are local; worker holds require a caller-persisted id until awaited release. */
+    /**
+     * Durable when the wallet has a reservation repository (always in the worker), else local to
+     * this instance. A durable hold needs a caller-persisted id until its release resolves.
+     */
     reserveVtxos?(
         outpoints: readonly Outpoint[],
         reservationId: string,
