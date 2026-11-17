@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
     ArkAddress,
-    arkade,
     ContractManager,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    arkade,
     asset,
     type Contract,
     type IndexerProvider,
@@ -15,12 +15,11 @@ import {
 import { migrateV0OfferRows } from "../src/migrateOfferRows";
 import {
     encodeOffer,
-    swapProgramBinding,
-    withExitClosure,
+    legacySwapPrograms,
     restoreOfferCoverage,
+    withExitClosure,
     type Offer,
 } from "../src/offer";
-import { legacySwapPrograms } from "../src/legacy/offerPrograms";
 import type { AssetSwap } from "../src/store";
 import wantAssetV0 from "../src/legacy/swap-want-asset.program.v0.json";
 import wantBtcV0 from "../src/legacy/swap-want-btc.program.v0.json";
@@ -102,7 +101,25 @@ const makeOffer = (wantAsset: boolean, exitDelay?: RelativeTimelock): Offer => {
         emulatorPubkey: EMULATOR_KEY,
         ...(exitDelay && { exitDelay }),
     };
-    const { args, keys } = swapProgramBinding(binding, hex.decode(SERVER_KEY));
+    // A v0 row's script is the previous leaf. Its constructor names are that leaf's.
+    const serverKey = hex.decode(SERVER_KEY);
+    const deposited = wantAsset ? asset.AssetId.fromString("aa".repeat(32) + "0000") : undefined;
+    const args = {
+        makerWP: binding.makerPkScript.subarray(2),
+        wantAmount: binding.wantAmount,
+        server: serverKey,
+        user: binding.makerPublicKey,
+        ...(deposited && {
+            wantAssetTxid: deposited.txid.slice().reverse(),
+            wantAssetGroupIndex: deposited.groupIndex,
+        }),
+        ...(exitDelay && { exitDelay: exitDelay.value }),
+    };
+    const keys = {
+        serverKey,
+        userKey: binding.makerPublicKey,
+        emulatorKey: binding.emulatorPubkey,
+    };
     const program = withExitClosure(
         wantAsset ? legacySwapPrograms.wantAsset : legacySwapPrograms.wantBtc,
         exitDelay,
@@ -307,7 +324,9 @@ describe("migrateV0OfferRows", () => {
         await manager.dispose();
     });
 
-    it("targets the frozen legacy program files", () => {
+    // A failure here means the pre-pairing v1 files changed: migration's target
+    // has to stay the tree a v0 row's script was compiled from.
+    it("targets the pre-pairing v1 programs", () => {
         const patch = (v0: typeof wantAssetV0) => ({
             ...v0,
             version: 1,

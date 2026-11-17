@@ -266,4 +266,3 @@ table, including the names that have no floor and why.
 
 - [MIGRATION.md](./MIGRATION.md) — every rename, every removal, and where each v1 name went.
 - [V2_API.md](./V2_API.md) — the developer UX note on the client surface.
-- [Offer contracts](./contracts/README.md) — canonical source, compiler pin and artifact regeneration.

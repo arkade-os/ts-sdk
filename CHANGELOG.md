@@ -16,8 +16,6 @@ style and have not been backfilled.
 
 - **Swap funding requires atomic repository creation.** `AssetSwapRepository` is version 6 and requires `createSwapRecordIfAbsent(record)`, which returns true only after durably inserting an absent quote ID. Only that caller may fund; existing unstamped records remain pending and reconcile positive funding evidence, including after a lost reply or restart. The four built-in repositories implement native atomic creation without a data migration; custom repositories must provide the same guarantee. Existing funded records and recovery readers remain compatible.
 
-- **New swap offers use compiler-generated covenants.** Want-BTC and want-asset offers now load artifacts generated from canonical `.ark` sources with pinned compiler `e264d5e6`. Numeric witness-version equality changes new offer addresses. Existing encoded offers and stored contracts retain their exact legacy programs for filling, cancellation and recovery; leaf order, required signers and the public offer/fill APIs are unchanged.
-
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
 - **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
   `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
@@ -29,6 +27,18 @@ style and have not been backfilled.
   key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
   keep the old key on disk.
 
+- **`@arkade-os/swap`: a new settlement leaf, used only when negotiated.** The
+  leaf is now the compiler artifact `asset-swap` or `sats-swap`
+  (`contracts/*.ark`). `fulfill` pays `receiver` on the output at the spending
+  input's index, so the same leaf can sit in a batch where input i is paid at
+  output i. A one-deposit fill is unchanged: the deposit stays input 0 and the
+  payout stays output 0. A newly derived offer address does not change by
+  default: an offer is derived on the previous tree unless the solver negotiates
+  `asset-swap-v3` over RFQ (`generation: "current"` opts in directly). An offer
+  that carries a `swapPkScript` compiles whichever tree matches it, so cancel,
+  fill, classify and restore keep rebuilding the address it was funded at. v0
+  offer rows migrate onto the previous tree. The deprecated `swapPrograms`
+  export of `@arkade-os/swap/protocol` now holds the new programs.
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already
@@ -101,6 +111,15 @@ style and have not been backfilled.
   `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
 ### Features
+
+- **`@arkade-os/swap`: asset RFQ negotiates the covenant version.**
+  `requestArkadeSwap` and the `SwapClient` asset quote send `covenant_versions`
+  (by default `ASSET_SWAP_COVENANT_VERSIONS`, `asset-swap-v3` first); the
+  quote's `covenant_version` picks the tree the offer is derived on. A quote
+  naming none is the baseline `asset-swap-v2`. A solver that refuses the field
+  with a bare `unsupported_payload` is asked once more without it, under a fresh
+  `rfq_id`. A choice outside the advertised list, or a version this build cannot
+  derive, is refused before funding.
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.

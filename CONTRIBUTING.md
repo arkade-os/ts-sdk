@@ -28,10 +28,6 @@ block-typed for offers, seconds-typed for RFQ — and one arkd cannot serve both
 its own stack. They share ports, so only one can be up at a time locally; CI runs them as separate
 matrix jobs.
 
-The offer profile pins a Go solver image in `packages/swap/.env.regtest` that
-supports the same compiler artifacts as the swap client, in both local runs
-and CI. Set `SOLVER_IMAGE` explicitly to use a different compatible image.
-
 ### Per-package stack control
 
 Replace `:sdk` with `:swap` or `:swap-rfq` for the other packages.

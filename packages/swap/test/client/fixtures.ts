@@ -29,6 +29,7 @@ import {
     type TransportCard,
 } from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
+import { ASSET_SWAP_V2, ASSET_SWAP_V3 } from "../../src/program";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -566,6 +567,10 @@ export const arkadeAssetAnswer = (
     });
     const to = over.toAmount ?? plan.receive.atomic;
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
+    // As the solver negotiates: first advertised covenant it serves, echoed only when asked.
+    const covenant = (payload.covenant_versions as string[] | undefined)?.find(
+        (v) => v === ASSET_SWAP_V3 || v === ASSET_SWAP_V2,
+    );
     const script = offerContract(
         {
             // The covenant binds what the fill must DELIVER, so the wanted
@@ -578,6 +583,7 @@ export const arkadeAssetAnswer = (
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
         },
         OPERATOR_PUBKEY,
+        covenant === ASSET_SWAP_V3 ? "current" : "previous",
     );
     return {
         v: 1,
@@ -590,6 +596,7 @@ export const arkadeAssetAnswer = (
         to_amount: to.toString(),
         solver_pubkey: hex.encode(SOLVER_PUBKEY),
         valid_until: clock.validUntil,
+        ...(covenant === undefined ? {} : { covenant_version: covenant }),
         // No `refund_locktime`: an offer covenant carries no timelock, so
         // `valid_until` is this route's only clock.
         profile: {

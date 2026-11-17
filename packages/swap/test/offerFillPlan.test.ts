@@ -9,19 +9,11 @@ import {
     MultisigTapscript,
     Transaction,
     VtxoScript,
-    arkade,
     asset,
     type IWallet,
 } from "@arkade-os/sdk";
 import { digestJointGraph } from "../src/jointGraph";
-import {
-    encodeOffer,
-    fillOffer,
-    offerContract as offerVtxoScript,
-    swapProgramBinding,
-    type Offer,
-} from "../src/offer";
-import { legacySwapPrograms } from "../src/legacy/offerPrograms";
+import { encodeOffer, fillOffer, offerContract as offerVtxoScript, type Offer } from "../src/offer";
 import { OFFER_FILL_TEMPLATE, buildOfferFillPlan, verifyOfferFillPlan } from "../src/offerFillPlan";
 
 type FundCoin = {
@@ -178,7 +170,7 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
             "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
         ),
     };
-    const planScript = offerVtxoScript(planOffer, SERVER_KEY);
+    const planScript = offerVtxoScript(planOffer, SERVER_KEY, "current");
     const planOfferHex = hex.encode(
         encodeOffer({ ...planOffer, swapPkScript: planScript.pkScript }),
     );
@@ -200,9 +192,8 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
             changeScript?: Uint8Array;
             fund?: FundCoin[];
         } = {},
-        encodedOffer = planOfferHex,
     ) =>
-        buildOfferFillPlan(wallet, "http://ark", encodedOffer, {
+        buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
             fund: [solver] as never,
             payoutScript: SOLVER_PAYOUT,
             assetCarrierSats: BigInt(330),
@@ -219,22 +210,13 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
             },
         });
 
-    it("rebuilds the hand-checked legacy joint graph", async () => {
+    it("builds the hand-checked joint graph", async () => {
         reset();
         const deposit = satsDeposit();
         const solver = solverCoin();
         const taxi = taxiCoin();
         state.vtxos = [deposit];
-        const binding = swapProgramBinding(planOffer, SERVER_KEY);
-        const legacyPkScript = new arkade.ArkadeProgramScript(
-            legacySwapPrograms.wantAsset,
-            binding.args,
-            binding.keys,
-        ).pkScript;
-        const encodedOffer = hex.encode(
-            encodeOffer({ ...planOffer, swapPkScript: legacyPkScript }),
-        );
-        const plan = await sponsored(deposit, solver, taxi, {}, encodedOffer);
+        const plan = await sponsored(deposit, solver, taxi);
         expect(plan).toEqual(originalPlan);
         expect(Object.isFrozen(plan)).toBe(true);
         expect(Object.isFrozen(plan.checkpoints)).toBe(true);
