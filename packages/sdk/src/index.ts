@@ -453,6 +453,7 @@ import type {
 import {
     ArkError,
     ArkErrorName,
+    HttpResponseError,
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
@@ -917,6 +918,7 @@ export {
     maybeArkError,
     OnchainCosignPreflightError,
     isCosignFallback,
+    HttpResponseError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
