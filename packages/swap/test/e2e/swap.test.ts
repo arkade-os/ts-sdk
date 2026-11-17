@@ -57,7 +57,7 @@ const ESPLORA_API_URL = "http://localhost:3000/api";
 // solverd's HTTP API and the mock price feed, on their host-published ports
 const SOLVER_HTTP_URL = "http://localhost:7091";
 const PRICEFEED_URL = "http://localhost:8088";
-// solverd v0.0.7 only fills the previous tree; the current one is filled in offerFill.test.ts.
+// solverd v0.0.7 only fills the previous tree; offerFill.test.ts fills both trees with the SDK itself.
 const SOLVERD_GENERATION = "previous";
 const arkdExec = "docker exec -t arkd";
 

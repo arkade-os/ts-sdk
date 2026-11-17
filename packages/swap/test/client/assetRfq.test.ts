@@ -235,9 +235,10 @@ describe("quote() on a negotiated asset market", () => {
             const { binding, operatorPubkey, swapPkScript } = preparation.offer;
             const pk = (g: "current" | "previous") =>
                 hex.encode(offerContract(binding, operatorPubkey, g).pkScript);
-            return [pk("current"), pk("previous")].indexOf(hex.encode(swapPkScript)) === 0
-                ? "current"
-                : "previous";
+            const script = hex.encode(swapPkScript);
+            if (script === pk("current")) return "current";
+            if (script === pk("previous")) return "previous";
+            throw new Error("the offer matches neither tree");
         };
 
         it("derives the current tree when the solver echoes asset-swap-v3", async () => {

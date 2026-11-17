@@ -367,7 +367,7 @@ export const arkadeSwapRequest = (input: {
     makerPublicKey: Uint8Array | string;
     /** Covenants the trader can settle, most preferred first; omit for the baseline. */
     contractVersions?: readonly string[];
-}): Record<string, unknown> => {
+}): Record<string, unknown> & { rfq_id: string } => {
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
             "set at least one of wantAsset or offerAsset — " +
@@ -749,10 +749,10 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
  */
 export const requestVersionedQuote = async (
     transport: RfqTransport,
-    request: Record<string, unknown>,
+    request: Record<string, unknown> & { rfq_id: string },
     advertised: readonly string[],
 ): Promise<{ quote: RfqQuote; rfqId: string; generation: "current" | "previous" }> => {
-    let sent: Record<string, unknown> = request;
+    let sent: Record<string, unknown> & { rfq_id: string } = request;
     let quote: RfqQuote;
     try {
         quote = await transport.requestQuote(request);
@@ -780,7 +780,7 @@ export const requestVersionedQuote = async (
             `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
         );
     }
-    return { quote, rfqId: String(sent.rfq_id), generation: offerGenerationFor(version) };
+    return { quote, rfqId: sent.rfq_id, generation: offerGenerationFor(version) };
 };
 
 /** The pair of a request we built, when it named one. */
@@ -1501,7 +1501,8 @@ export async function requestArkadeSwap(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
     );
-    const contractVersions = params.contractVersions ?? ASSET_SWAP_CONTRACT_VERSIONS;
+    // A copy: the request and the check of the reply must see the same list.
+    const contractVersions = [...(params.contractVersions ?? ASSET_SWAP_CONTRACT_VERSIONS)];
     const { quote, rfqId, generation } = await requestVersionedQuote(
         transport,
         arkadeSwapRequest({
