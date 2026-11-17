@@ -73,7 +73,8 @@ export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventS
         }
     };
 
-    const errorHandler = () => rejectWith(eventSourceError("EventSource error"));
+    const errorHandler = (event: MessageEvent) =>
+        rejectWith(eventSourceError("EventSource error", event));
 
     // arkd sends a refused stream's status (a filter it cannot compile, say) as a
     // named `failure` event before closing; the bare `error` after it says nothing.
@@ -131,9 +132,20 @@ export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventS
     return managed;
 }
 
-function eventSourceError(message: string): Error {
-    const error = new Error(message);
+function eventSourceError(message: string, refusal?: unknown): Error {
+    const { status, retryAfterMs } = (refusal ?? {}) as {
+        status?: number;
+        retryAfterMs?: number;
+    };
+    const error = new Error(status ? `${message} (${status})` : message) as Error & {
+        status?: number;
+        retryAfterMs?: number;
+    };
     error.name = "EventSourceError";
+    if (status !== undefined) {
+        error.status = status;
+        error.retryAfterMs = retryAfterMs;
+    }
     return error;
 }
 

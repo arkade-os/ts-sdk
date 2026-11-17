@@ -6,6 +6,8 @@ import { WalletRepository } from "../repositories/walletRepository";
 import { Contract, ContractVtxo, ContractEvent, WatchedScript, isWatchedContract } from "./types";
 import { isEventSourceError } from "../providers/utils";
 import { isEventSourceUnavailableError } from "../providers/eventSource";
+import { retryAfterMsFromError } from "../providers/errors";
+import { MAX_COOLDOWN_MS } from "../providers/rateGate";
 import { getVtxosForContract } from "./vtxoOwnership";
 import { assertTimerMs } from "../utils/time";
 
@@ -14,14 +16,18 @@ export function computeReconnectDelay(attempt: number, baseMs: number, maxMs: nu
     return Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
 }
 
+/** Up this long, a connection was healthy even if a proxy's idle timeout ends it before the cap. */
+const STABLE_CONNECTION_MS = 30_000;
+
 /**
- * Default tunables for {@link ContractWatcher}. Kept low so a wallet re-syncs promptly after its
- * subscription drops (e.g. a server restart for an operator signer rotation).
+ * Default tunables for {@link ContractWatcher}. The first retries are quick, so a dropped
+ * subscription re-syncs promptly; the cap is long enough to leave a refusing server or CDN alone,
+ * since the failsafe poll, not the ladder, is what bounds recovery.
  */
 export const DEFAULT_CONTRACT_WATCHER_CONFIG = {
     failsafePollIntervalMs: 20_000,
     reconnectDelayMs: 1_000,
-    maxReconnectDelayMs: 5_000,
+    maxReconnectDelayMs: 60_000,
     maxReconnectAttempts: 0, // unlimited
     subscriptionRequestTimeoutMs: 30_000,
 };
@@ -61,9 +67,10 @@ export interface ContractWatcherConfig {
     reconnectDelayMs?: number;
 
     /**
-     * Maximum delay for reconnection and subscription update retries (ms).
+     * Maximum delay for reconnection and subscription update retries (ms). Also the window a
+     * connection must stay up before the reconnect ladder starts over.
      *
-     * @defaultValue `5_000` (5 seconds)
+     * @defaultValue `60_000` (60 seconds)
      */
     maxReconnectDelayMs?: number;
 
@@ -154,6 +161,7 @@ export class ContractWatcher {
     private eventCallback?: ContractWatcherEventCallback;
     private connectionState: ConnectionState = "disconnected";
     private reconnectAttempts = 0;
+    private connectedAt?: number;
     private reconnectTimeoutId?: ReturnType<typeof setTimeout>;
     private failsafePollIntervalId?: ReturnType<typeof setInterval>;
     /** See {@link withCoalescedSubscription}. */
@@ -455,7 +463,7 @@ export class ContractWatcher {
             if (!this.isWatching || signal?.aborted) return;
 
             this.connectionState = "connected";
-            this.reconnectAttempts = 0;
+            this.connectedAt = Date.now();
 
             // Not awaited, or `connect()` would never return; errors here must still reconnect.
             this.listenLoop().catch((e) => {
@@ -468,7 +476,7 @@ export class ContractWatcher {
                 this.connectionState = "disconnected";
                 if (this.reportEventSourceUnavailable(e)) return;
                 this.emitConnectionReset();
-                this.scheduleReconnect();
+                this.scheduleReconnect(e);
             });
         } catch (error) {
             if (!this.isWatching || signal?.aborted) return;
@@ -478,7 +486,7 @@ export class ContractWatcher {
             this.connectionState = "disconnected";
             if (this.reportEventSourceUnavailable(error)) return;
             this.emitConnectionReset();
-            this.scheduleReconnect();
+            this.scheduleReconnect(error);
         }
     }
 
@@ -502,11 +510,20 @@ export class ContractWatcher {
         return true;
     }
 
-    private scheduleReconnect(): void {
+    private scheduleReconnect(failure?: unknown): void {
         if (!this.isWatching) return;
         // Reconnect sends the latest scripts itself. Keep the pending catch-up
         // so success still reconciles activity missed before the repair.
         this.cancelSubscriptionRetry();
+
+        // Starting over on every open keeps a server that accepts and immediately drops at the
+        // base delay forever.
+        const wasStable =
+            this.connectedAt !== undefined &&
+            Date.now() - this.connectedAt >=
+                Math.min(this.config.maxReconnectDelayMs, STABLE_CONNECTION_MS);
+        if (wasStable) this.reconnectAttempts = 0;
+        this.connectedAt = undefined;
 
         if (
             this.config.maxReconnectAttempts > 0 &&
@@ -521,16 +538,26 @@ export class ContractWatcher {
         this.connectionState = "reconnecting";
         this.reconnectAttempts++;
 
-        const delay = computeReconnectDelay(
+        this.reconnectTimeoutId = setTimeout(() => {
+            this.reconnectTimeoutId = undefined;
+            this.connect();
+        }, this.nextReconnectDelay(failure));
+    }
+
+    /**
+     * Equal jitter over the exponential backoff, never shorter than a `Retry-After` the server
+     * asked for (clamped like the rate gate's own cooldown, so a bogus header cannot park the
+     * stream). Without jitter the clients one restart dropped all return in the same instant.
+     */
+    private nextReconnectDelay(failure?: unknown): number {
+        const capped = computeReconnectDelay(
             this.reconnectAttempts,
             this.config.reconnectDelayMs,
             this.config.maxReconnectDelayMs,
         );
-
-        this.reconnectTimeoutId = setTimeout(() => {
-            this.reconnectTimeoutId = undefined;
-            this.connect();
-        }, delay);
+        const jittered = capped / 2 + Math.random() * (capped / 2);
+        const askedFor = Math.min(retryAfterMsFromError(failure) ?? 0, MAX_COOLDOWN_MS);
+        return Math.max(jittered, askedFor);
     }
 
     /** Replays repository state — only what a sync stored; watch-only scripts poll the indexer. */

@@ -1,4 +1,5 @@
 import { FetchError } from "../utils/fetch";
+import { parseRetryAfterMs } from "./rateGate";
 
 export class ArkError extends Error {
     constructor(
@@ -68,6 +69,42 @@ export class ProviderUnavailableError extends Error {
         super(message, { cause: options?.cause });
         this.name = "ProviderUnavailableError";
     }
+}
+
+/**
+ * A non-2xx response from a plain HTTP provider (Esplora, an SSE stream), carrying what a caller
+ * needs to back off: the numeric `status` and any `Retry-After` in milliseconds. The status is in
+ * the message too — `statusText` is empty over HTTP/2, and own-properties do not survive the
+ * service-worker boundary (see {@link ProviderKind}) — as `<prefix>: <detail> (<status>)`, so a
+ * caller matching on the prefix still matches.
+ */
+export class HttpResponseError extends Error {
+    readonly status: number;
+    readonly retryAfterMs?: number;
+
+    /** @param detail - Replaces `statusText`, for a route that reads the body instead. */
+    constructor(prefix: string, response: Response, detail?: string) {
+        const status = response.status;
+        const described = [(detail ?? response.statusText)?.trim(), status && `(${status})`]
+            .filter(Boolean)
+            .join(" ");
+        super(described ? `${prefix}: ${described}` : prefix);
+        this.name = "HttpResponseError";
+        this.status = status;
+        this.retryAfterMs = parseRetryAfterMs(response.headers?.get("retry-after"));
+    }
+}
+
+/**
+ * How long a server asked a caller to wait; `undefined` unless the error is a `429`/`503` with a
+ * usable `Retry-After`. Structural, so an `EventSourceError` carrying a refusal's status answers
+ * as well as an {@link HttpResponseError}.
+ */
+export function retryAfterMsFromError(error: unknown): number | undefined {
+    if (!(error instanceof Error)) return undefined;
+    const { status, retryAfterMs } = error as { status?: unknown; retryAfterMs?: unknown };
+    if (status !== 429 && status !== 503) return undefined;
+    return typeof retryAfterMs === "number" && retryAfterMs > 0 ? retryAfterMs : undefined;
 }
 
 /**

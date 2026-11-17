@@ -110,6 +110,35 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`ContractWatcher` no longer reconnects hard enough to hold a client over a
+  rate limit.** Against a server or CDN refusing the subscription stream, the
+  watcher retried every 5 seconds forever, with no jitter, and reset its ladder
+  on every accepted connection — so a server that accepted and immediately
+  dropped kept it at the 1-second base delay, and every client dropped by one
+  restart came back in the same instant. Each attempt also emits
+  `connection_reset`, which wallets read as "resync now", so the retries
+  multiplied into app-wide syncs. The delay is now jittered (equal jitter) and
+  capped at 60 seconds, the attempt counter resets only once a connection has
+  stayed up for a full cap, and a `429`/`503` that carries `Retry-After` is
+  waited out (clamped to the rate gate's own 60-second ceiling). Recovery after
+  a brief restart is unchanged in practice: the first retries are still
+  sub-second, and the 20-second failsafe poll, not the ladder, is what bounds
+  it. `maxReconnectAttempts` keeps counting consecutive failures, and every
+  config override still applies.
+
+- **Esplora failures carry their HTTP status and `Retry-After`.** Every non-2xx
+  response from `EsploraProvider` threw a bare `Error` built from
+  `response.statusText`, which HTTP/2 leaves empty — so a caller got
+  "Failed to fetch UTXOs: " and could not tell a `429` from a `500`, let alone
+  back off for as long as the server asked. These now throw the new exported
+  `HttpResponseError`, carrying `status` and the parsed `retryAfterMs`, with the
+  status added to the message and the existing prefix kept so string matching
+  still works. `getTxStatus`'s first request previously threw the bare
+  `statusText` with no prefix at all; it now reads
+  `Failed to get transaction <txid>: …`. A refused SSE stream carries its status
+  the same way, through the `error` event to the `EventSourceError` the watcher
+  backs off on.
+
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's
   `notifyIncomingFunds` returns. When that function threw after the funds

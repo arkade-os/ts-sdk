@@ -88,6 +88,16 @@ describe("FetchEventSource", () => {
         expect(errors).toHaveLength(1);
     });
 
+    it("puts a refusal's status and Retry-After on the error event", async () => {
+        stubFetch(() => new Response("", { status: 429, headers: { "retry-after": "20" } }));
+        const source = new FetchEventSource("http://ark/v1/txs");
+        const errors = collect(source, "error");
+
+        await settle();
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatchObject({ status: 429, retryAfterMs: 20_000 });
+    });
+
     it.each([
         ["a Content-Type other than text/event-stream", { status: 200, type: "text/html" }],
         ["a status other than 200", { status: 201, type: "text/event-stream" }],

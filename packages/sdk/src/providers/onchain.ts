@@ -2,6 +2,7 @@ import { DEFAULT_NETWORK_NAME, type NetworkName } from "../networks";
 import { Coin } from "../wallet";
 import { hex } from "@scure/base";
 import { baseFetch } from "../utils/fetch";
+import { HttpResponseError } from "./errors";
 
 /**
  * The default base URLs for esplora API providers: Ark Labs–operated mempool deployments, except
@@ -207,7 +208,7 @@ export class EsploraProvider implements OnchainProvider {
     async getCoins(address: string): Promise<Coin[]> {
         const response = await baseFetch(`${this.baseUrl}/address/${address}/utxo`);
         if (!response.ok) {
-            throw new Error(`Failed to fetch UTXOs: ${response.statusText}`);
+            throw new HttpResponseError("Failed to fetch UTXOs", response);
         }
         return response.json();
     }
@@ -232,7 +233,7 @@ export class EsploraProvider implements OnchainProvider {
         }
         if (!response.ok) {
             await response.body?.cancel();
-            throw new Error(`Failed to fetch fee rate: ${response.statusText}`);
+            throw new HttpResponseError("Failed to fetch fee rate", response);
         }
         const mediaType = response.headers
             .get("content-type")
@@ -270,7 +271,7 @@ export class EsploraProvider implements OnchainProvider {
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/outspends`);
         if (!response.ok) {
             const error = await response.text();
-            throw new Error(`Failed to get transaction outspends: ${error}`);
+            throw new HttpResponseError("Failed to get transaction outspends", response, error);
         }
 
         return response.json();
@@ -280,7 +281,7 @@ export class EsploraProvider implements OnchainProvider {
         const response = await baseFetch(`${this.baseUrl}/address/${address}/txs`);
         if (!response.ok) {
             const error = await response.text();
-            throw new Error(`Failed to get transactions: ${error}`);
+            throw new HttpResponseError("Failed to get transactions", response, error);
         }
 
         return response.json();
@@ -290,7 +291,7 @@ export class EsploraProvider implements OnchainProvider {
     private async getAddressStats(address: string): Promise<AddressStats> {
         const response = await baseFetch(`${this.baseUrl}/address/${address}`);
         if (!response.ok) {
-            throw new Error(`Failed to get address stats: ${response.statusText}`);
+            throw new HttpResponseError("Failed to get address stats", response);
         }
 
         return response.json();
@@ -300,7 +301,7 @@ export class EsploraProvider implements OnchainProvider {
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/hex`);
         if (!response.ok) {
             const error = await response.text();
-            throw new Error(`Failed to get raw transaction ${txid}: ${error}`);
+            throw new HttpResponseError(`Failed to get raw transaction ${txid}`, response, error);
         }
         return hex.decode((await response.text()).trim());
     }
@@ -318,7 +319,7 @@ export class EsploraProvider implements OnchainProvider {
         // make sure tx exists in mempool or in block
         const txresponse = await baseFetch(`${this.baseUrl}/tx/${txid}`);
         if (!txresponse.ok) {
-            throw new Error(txresponse.statusText);
+            throw new HttpResponseError(`Failed to get transaction ${txid}`, txresponse);
         }
 
         const tx = await txresponse.json();
@@ -328,7 +329,7 @@ export class EsploraProvider implements OnchainProvider {
 
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/status`);
         if (!response.ok) {
-            throw new Error(`Failed to get transaction status: ${response.statusText}`);
+            throw new HttpResponseError("Failed to get transaction status", response);
         }
 
         const data = await response.json();
@@ -748,7 +749,7 @@ export class EsploraProvider implements OnchainProvider {
             tipBlocks = await baseFetch(`${this.baseUrl}/v1/blocks`);
         }
         if (!tipBlocks.ok) {
-            throw new Error(`Failed to get chain tip: ${tipBlocks.statusText}`);
+            throw new HttpResponseError("Failed to get chain tip", tipBlocks);
         }
 
         const tip = await tipBlocks.json();
@@ -775,8 +776,9 @@ export class EsploraProvider implements OnchainProvider {
         }
         const hashResponse = await baseFetch(`${this.baseUrl}/block-height/${height}`);
         if (!hashResponse.ok) {
-            throw new Error(
-                `Failed to get block hash at height ${height}: ${hashResponse.statusText}`,
+            throw new HttpResponseError(
+                `Failed to get block hash at height ${height}`,
+                hashResponse,
             );
         }
         const hash = (await hashResponse.text()).trim();
@@ -784,7 +786,7 @@ export class EsploraProvider implements OnchainProvider {
 
         const blockResponse = await baseFetch(`${this.baseUrl}/block/${hash}`);
         if (!blockResponse.ok) {
-            throw new Error(`Failed to get block ${hash}: ${blockResponse.statusText}`);
+            throw new HttpResponseError(`Failed to get block ${hash}`, blockResponse);
         }
         const block = await blockResponse.json();
         if (
@@ -809,7 +811,7 @@ export class EsploraProvider implements OnchainProvider {
 
         if (!response.ok) {
             const error = await response.text();
-            throw new Error(`Failed to broadcast package: ${error}`);
+            throw new HttpResponseError("Failed to broadcast package", response, error);
         }
 
         // `/txs/package` proxies Core's `submitpackage`, which answers 200 even when every tx was
@@ -832,7 +834,7 @@ export class EsploraProvider implements OnchainProvider {
 
         if (!response.ok) {
             const error = await response.text();
-            throw new Error(`Failed to broadcast transaction: ${error}`);
+            throw new HttpResponseError("Failed to broadcast transaction", response, error);
         }
 
         return response.text();
