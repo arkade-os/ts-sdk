@@ -11,7 +11,7 @@ import {
     type OnchainProvider,
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
-import type { IntentRepository } from "../src/repositories/intentRepository";
+import type { BatchRegistrationRepository } from "../src/repositories/intentRepository";
 import { SingleKey } from "../src/identity/singleKey";
 
 const SERVER_KEY = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -56,7 +56,7 @@ const outpoint = (coin: { txid: string; vout: number }) => `${coin.txid}:${coin.
 
 /** Three 10,000-sat VTXOs on the wallet's own script, expiring 10h, 20h and 30h out. */
 export async function fundedWallet(
-    opts: { concurrentSpending?: boolean; intentRepository?: IntentRepository } = {},
+    opts: { concurrentSpending?: boolean; intentRepository?: BatchRegistrationRepository } = {},
 ) {
     const walletRepository = new InMemoryWalletRepository();
     const arkProvider = {
