@@ -322,6 +322,7 @@ describe("claimCash drain-pending accounting", () => {
 
         expect(finalizeTx).toHaveBeenCalledOnce();
         expect(result.swept).toBe(CASH_VALUE);
+        expect(result.claims).toEqual([{ txid: "b".repeat(64), amount: CASH_VALUE }]);
         expect(result.unclaimed.amount).toBe(0);
         expect(result.unclaimed.vtxos).toEqual([]);
     });
@@ -857,6 +858,42 @@ describe("claimCash import-for-recovery", () => {
         expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
     });
 
+    it("still purges when the correlation write throws", async () => {
+        const cash = makeCash();
+        const { wallet, manager, kick, cashPkScript } = await claimSwept(cash);
+        kick.mockRestore();
+
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        vi.spyOn(wallet, "correlateArkadeCashRecovery").mockRejectedValue(
+            new Error("write failed"),
+        );
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+        await manager.recoverImportedContracts();
+
+        expect(settle).toHaveBeenCalledOnce();
+        const cm = await wallet.getContractManager();
+        expect(await cm.getContracts({ script: cashPkScript })).toEqual([]);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
+        expect(logged).toHaveBeenCalled();
+        logged.mockRestore();
+    });
+
+    it("settles and purges when the wallet has no correlation method", async () => {
+        const cash = makeCash();
+        const { wallet, manager, kick, cashPkScript } = await claimSwept(cash);
+        kick.mockRestore();
+
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        (wallet as { correlateArkadeCashRecovery?: unknown }).correlateArkadeCashRecovery =
+            undefined;
+        await manager.recoverImportedContracts();
+
+        expect(settle).toHaveBeenCalledOnce();
+        const cm = await wallet.getContractManager();
+        expect(await cm.getContracts({ script: cashPkScript })).toEqual([]);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
+    });
+
     it("settles net of intent fees", async () => {
         const cash = makeCash();
         const { wallet, manager, kick } = await claimSwept(cash);
@@ -1102,5 +1139,59 @@ describe("claimCash import-for-recovery", () => {
         } finally {
             vi.unstubAllGlobals();
         }
+    });
+});
+
+describe("correlateArkadeCashRecovery", () => {
+    const wallet = () => makeWallet(cashIndexer("00", []), {});
+    const stored = async (w: Wallet) =>
+        (await w.walletRepository.getWalletState())?.settings?.arkadeCashRecovery as
+            | { id: string; claims: { txid: string; amount: number }[] }[]
+            | undefined;
+
+    it("keeps both records when two vouchers correlate concurrently", async () => {
+        const w = await wallet();
+        await Promise.all([
+            w.correlateArkadeCashRecovery("a", "t-a", 1_000),
+            w.correlateArkadeCashRecovery("b", "t-b", 2_000),
+        ]);
+        const records = await stored(w);
+        expect(records?.map((record) => record.id).sort()).toEqual(["a", "b"]);
+    });
+
+    it("does not wipe stored records when a state read fails", async () => {
+        const w = await wallet();
+        await w.correlateArkadeCashRecovery("a", "t-a", 1_000);
+        vi.spyOn(w.walletRepository, "getWalletState").mockRejectedValue(new Error("read failed"));
+        await w.correlateArkadeCashRecovery("b", "t-b", 2_000);
+        vi.restoreAllMocks();
+        expect((await stored(w))?.map((record) => record.id)).toEqual(["a", "b"]);
+    });
+
+    it("records each batch of one voucher with its own amount, once", async () => {
+        const w = await wallet();
+        await w.correlateArkadeCashRecovery("v", "t1", 3_000);
+        await w.correlateArkadeCashRecovery("v", "t2", 2_000);
+        await w.correlateArkadeCashRecovery("v", "t1", 3_000);
+        expect(await stored(w)).toEqual([
+            expect.objectContaining({
+                id: "v",
+                claims: [
+                    { txid: "t1", amount: 3_000 },
+                    { txid: "t2", amount: 2_000 },
+                ],
+            }),
+        ]);
+    });
+
+    it("leaves entries of another shape alone", async () => {
+        const w = await wallet();
+        await w.walletRepository.saveWalletState({
+            settings: { arkadeCashRecovery: [{ legacy: true }, "junk"] },
+        });
+        await w.correlateArkadeCashRecovery("v", "t1", 3_000);
+        const records = (await stored(w)) as unknown[];
+        expect(records.slice(0, 2)).toEqual([{ legacy: true }, "junk"]);
+        expect(records).toHaveLength(3);
     });
 });

@@ -882,6 +882,8 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
  */
 interface RecoveryContractCapableWallet {
     removeRecoveryContract(script: string): Promise<void>;
+    /** Optional bookkeeping: its absence or failure never gates or aborts recovery. */
+    correlateArkadeCashRecovery?(script: string, txid: string, amount: number): Promise<void>;
 }
 
 /** Return whether a wallet can purge its imported recovery contracts. */
@@ -1539,10 +1541,24 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const totalAmount = deductOffchainOutputFee(subtotal, estimator, arkAddress);
             if (totalAmount < dustAmount) return;
 
-            await wallet.settle({
+            const settledTxid = await wallet.settle({
                 inputs: batch,
                 outputs: [{ address: arkAddress, amount: totalAmount }],
             });
+            // Bookkeeping only: the settle already succeeded, so a failed
+            // write must not skip the purge below.
+            try {
+                await wallet.correlateArkadeCashRecovery?.(
+                    contract.script,
+                    settledTxid,
+                    Number(totalAmount),
+                );
+            } catch (error) {
+                console.error(
+                    `Failed to record arkcash recovery ${settledTxid} for ${contract.script}:`,
+                    error,
+                );
+            }
         }
 
         // Purge only on AUTHORITATIVE evidence the funds are gone — never on an

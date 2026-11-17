@@ -52,6 +52,7 @@ import {
     type NormalizedVtxoPage,
 } from "../vtxo";
 import {
+    ArkadeCashCreateError,
     filterFlatVtxos,
     ReadonlyWallet,
     spendableVtxosExcludingLocked,
@@ -85,6 +86,15 @@ import {
 } from "../../contracts/vtxoOwnership";
 import { offchainRows } from "../../contracts/onchainCoins";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
+import { ArkadeCash } from "../../arkadeCash";
+import { readArkadeCash } from "../../arkadeCash/status";
+import {
+    addArkadeCashRecord,
+    arkadeCashActivity,
+    arkadeCashId,
+    createArkadeCashTracker,
+    isArkadeCashRecord,
+} from "../../arkadeCash/tracker";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -134,6 +144,59 @@ export function deserializeAggregateError(payload: SerializedAggregateError): Ag
         return err;
     });
     return new AggregateError(errs, payload.message);
+}
+
+/**
+ * Wire envelope for an {@link ArkadeCashCreateError}. A raw `Error` loses its
+ * `cash` field to structured clone, and the token is the only way to recover
+ * the funded output, so it travels as a plain object instead.
+ */
+export type SerializedArkadeCashCreateError = {
+    name: "ArkadeCashCreateError";
+    message: string;
+    cash: string;
+    cause: { name: string; message: string };
+};
+
+/** Page-side guard for a {@link SerializedArkadeCashCreateError} that survived the clone. */
+export function isSerializedArkadeCashCreateError(
+    value: unknown,
+): value is SerializedArkadeCashCreateError {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Partial<SerializedArkadeCashCreateError>;
+    return (
+        v.name === "ArkadeCashCreateError" &&
+        typeof v.message === "string" &&
+        typeof v.cash === "string" &&
+        !!v.cause &&
+        typeof v.cause.name === "string" &&
+        typeof v.cause.message === "string"
+    );
+}
+
+/** Worker-side serializer for a real {@link ArkadeCashCreateError}. */
+export function serializeArkadeCashCreateError(
+    error: ArkadeCashCreateError,
+): SerializedArkadeCashCreateError {
+    const cause = error.cause;
+    return {
+        name: "ArkadeCashCreateError",
+        message: error.message,
+        cash: error.cash,
+        cause:
+            cause instanceof Error
+                ? { name: cause.name, message: cause.message }
+                : { name: "Error", message: String(cause) },
+    };
+}
+
+/** Page-side reconstructor: rebuild an {@link ArkadeCashCreateError} from the wire form. */
+export function deserializeArkadeCashCreateError(
+    payload: SerializedArkadeCashCreateError,
+): ArkadeCashCreateError {
+    const cause = new Error(payload.cause.message);
+    cause.name = payload.cause.name;
+    return new ArkadeCashCreateError(payload.cash, cause);
 }
 
 export class ReadonlyWalletError extends Error {
@@ -270,6 +333,20 @@ export type ResponseGetSpendableVtxos = ResponseEnvelope & {
 export type RequestGetBoardingUtxos = RequestEnvelope & {
     type: "GET_BOARDING_UTXOS";
 };
+
+export type RequestArkadeCash = RequestEnvelope & {
+    type: "ARKADE_CASH";
+    payload: import("../../arkadeCash/messages").ArkadeCashRequest;
+};
+export type ResponseArkadeCash = ResponseEnvelope & {
+    type: "ARKADE_CASH";
+    payload?: import("../../arkadeCash/messages").ArkadeCashResponse;
+};
+
+/** Cash actions that run sends or sweeps: no bus deadline on either side. */
+export const isLongRunningCashAction = (
+    request: import("../../arkadeCash/messages").ArkadeCashRequest,
+) => request.action === "create" || request.action === "claim";
 export type ResponseGetBoardingUtxos = ResponseEnvelope & {
     type: "BOARDING_UTXOS";
     payload: { utxos: ExtendedCoin[] };
@@ -984,7 +1061,8 @@ export type WalletUpdaterRequest =
     | RequestSendOnchain
     | RequestMigrateDeprecatedSignerVtxos
     | RequestGetDeprecatedSignerStatus
-    | RequestRestoreWallet;
+    | RequestRestoreWallet
+    | RequestArkadeCash;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
     (
@@ -1055,6 +1133,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseMigrateDeprecatedSignerVtxosEvent
         | ResponseGetDeprecatedSignerStatus
         | ResponseRestoreWallet
+        | ResponseArkadeCash
     );
 
 /**
@@ -1276,6 +1355,10 @@ export class WalletMessageHandler
             // step until it hits gapLimit consecutive unused indices. The bus
             // deadline must not race the scan; liveness stays covered by PING.
             message.type === "RESTORE_WALLET" ||
+            // `create` and `claim` run sends and sweeps. A bus deadline would
+            // answer with a timeout error and drop the token or txids that the
+            // finished handler could still deliver.
+            (message.type === "ARKADE_CASH" && isLongRunningCashAction(message.payload)) ||
             message.type === "COSIGN_ONCHAIN_TX" ||
             message.type === "SEND_ONCHAIN"
         );
@@ -1324,6 +1407,86 @@ export class WalletMessageHandler
                         type: "BOARDING_ADDRESS",
                         payload: { address },
                     });
+                }
+                case "ARKADE_CASH": {
+                    const request = message.payload;
+                    switch (request.action) {
+                        case "get": {
+                            const cash = ArkadeCash.fromString(request.token);
+                            const report = await readArkadeCash(
+                                request.token,
+                                this.readonlyWallet.indexerProvider,
+                                await this.readonlyWallet.getArkadeInfo(),
+                                this.readonlyWallet.onchainProvider,
+                            );
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "get", cashId: arkadeCashId(cash), ...report },
+                            });
+                        }
+                        case "create": {
+                            try {
+                                const token = await this.requireWallet().createCash(request.amount);
+                                return this.tagged({
+                                    id,
+                                    type: "ARKADE_CASH",
+                                    payload: { action: "create", token },
+                                });
+                            } catch (error) {
+                                // A funded-but-failed create must hand its token
+                                // back: a raw Error would lose `cash` in the clone.
+                                if (!(error instanceof ArkadeCashCreateError)) throw error;
+                                return this.tagged({
+                                    id,
+                                    error: serializeArkadeCashCreateError(
+                                        error,
+                                    ) as unknown as Error,
+                                });
+                            }
+                        }
+                        case "activities": {
+                            const records = createArkadeCashTracker();
+                            request.records.forEach((record) =>
+                                addArkadeCashRecord(records, record),
+                            );
+                            const state = await this.walletRepository?.getWalletState();
+                            const recovered = state?.settings?.arkadeCashRecovery;
+                            if (Array.isArray(recovered)) {
+                                recovered
+                                    .filter(isArkadeCashRecord)
+                                    .forEach((record) => addArkadeCashRecord(records, record));
+                            }
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: {
+                                    action: "activities",
+                                    activities: await arkadeCashActivity(
+                                        records,
+                                        (await this.buildTransactionHistoryFromCache()) ?? [],
+                                    ),
+                                },
+                            });
+                        }
+                        case "claim": {
+                            const result = await this.requireWallet().claimCash(request.token);
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "claim", ...result },
+                            });
+                        }
+                        case "reveal": {
+                            const record = ArkadeCash.fromString(request.token);
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "reveal", cashId: arkadeCashId(record) },
+                            });
+                        }
+                    }
+                    return this.tagged({ id, error: new Error("Unknown Arkade Cash action") });
                 }
                 case "GET_OPERATOR_INFO":
                 case "GET_ARKADE_INFO": {
@@ -2445,13 +2608,11 @@ export class WalletMessageHandler
      * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
      * they are settled in their own isolated intent and must stay out of the
      * wallet's balance / VTXO / coin-selection / pending-tx views that read this.
-     * The transaction-history caller opts back in via `includeRecoveryOnly` to
-     * match the non-worker `getTransactionHistory`, which reads contracts
-     * directly and does include them.
+     * Transaction history excludes them too, as does the non-worker
+     * `getTransactionHistory`.
      */
     private async getVtxosFromRepo(options?: {
         unspentOnly?: boolean;
-        includeRecoveryOnly?: boolean;
     }): Promise<NormalizedExtendedVirtualCoin[]> {
         return (await this.repoSnapshot(options)).vtxos;
     }
@@ -2469,12 +2630,9 @@ export class WalletMessageHandler
      * what it knows is closed — so the coins of a just-registered escrowed
      * contract would count as available until the next poll.
      *
-     * Recovery-only contracts are skipped unless `includeRecoveryOnly` (see
-     * {@link getVtxosFromRepo}).
+     * Recovery-only contracts are skipped (see {@link getVtxosFromRepo}).
      */
-    private async repoSnapshot(
-        options: { unspentOnly?: boolean; includeRecoveryOnly?: boolean } = {},
-    ): Promise<{
+    private async repoSnapshot(options: { unspentOnly?: boolean } = {}): Promise<{
         // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
         // and the gate and signer classification only read `contract`/`vtxos`.
         snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
@@ -2507,9 +2665,7 @@ export class WalletMessageHandler
         void addressPromise.catch(() => undefined);
         const manager = await wallet.getContractManager();
         const contracts = await manager.getContracts();
-        const eligible = contracts.filter(
-            (contract) => options.includeRecoveryOnly || !isRecoveryOnlyContract(contract),
-        );
+        const eligible = contracts.filter((contract) => !isRecoveryOnlyContract(contract));
         // One read per contract. Merge in repository order so the first row still wins a
         // duplicate outpoint; folding the lists as they resolve would let a later contract claim it.
         const listsPromise = Promise.all(
@@ -2574,7 +2730,7 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) return null;
 
         const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
-            this.repoSnapshot({ includeRecoveryOnly: true }),
+            this.repoSnapshot(),
             this.readonlyWallet.getBoardingTxs(),
         ]);
 
