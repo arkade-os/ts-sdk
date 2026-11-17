@@ -68,8 +68,8 @@ export interface ContractWatcherConfig {
 
     /**
      * Maximum delay for reconnection and subscription update retries (ms). The reconnect ladder
-     * starts over once a stream has delivered events or heartbeats for 30 seconds, or this long
-     * if lower.
+     * starts over once a connection has stayed up for 30 seconds, or this long if lower; a stream
+     * the server refused never counts.
      *
      * @defaultValue `60_000` (60 seconds)
      */
@@ -466,6 +466,7 @@ export class ContractWatcher {
             if (!this.isWatching || signal?.aborted) return;
 
             this.connectionState = "connected";
+            this.connectedAt = Date.now();
 
             // Not awaited, or `connect()` would never return; errors here must still reconnect.
             this.listenLoop().catch((e) => {
@@ -519,8 +520,11 @@ export class ContractWatcher {
         this.cancelSubscriptionRetry();
 
         // Starting over on every open keeps a server that accepts and immediately drops at the
-        // base delay forever.
+        // base delay forever. A refused open carries an HTTP status and is never uptime, however
+        // long it took; the default indexer drops heartbeats, so silence alone cannot be the test.
+        const refused = typeof (failure as { status?: unknown } | undefined)?.status === "number";
         const wasStable =
+            !refused &&
             this.connectedAt !== undefined &&
             Date.now() - this.connectedAt >=
                 Math.min(this.config.maxReconnectDelayMs, STABLE_CONNECTION_MS);
@@ -947,8 +951,6 @@ export class ContractWatcher {
 
         for await (const update of subscription) {
             if (!this.isWatching) break;
-            // The first event or heartbeat, not the open attempt: a slow open that fails is not uptime.
-            this.connectedAt ??= Date.now();
             this.handleSubscriptionUpdate(update);
         }
 

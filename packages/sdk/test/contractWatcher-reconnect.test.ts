@@ -209,21 +209,38 @@ describe("ContractWatcher stream reconnect", () => {
         expect(listen).toHaveBeenCalledTimes(3); // the initial connect and two retries
     });
 
-    it("does not count a slow open that never delivers as uptime", async () => {
+    it("never counts a refused open as uptime, however long it took", async () => {
+        vi.spyOn(Math, "random").mockReturnValue(0);
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const { listen, drop } = await setup(
+            { reconnectDelayMs: 1_000, maxReconnectAttempts: 2 },
+            { opens: false },
+        );
+        const refusal = () => Object.assign(new Error("SSE response: (503)"), { status: 503 });
+
+        for (const delay of [500, 1_000]) {
+            await vi.advanceTimersByTimeAsync(31_000);
+            await drop(refusal());
+            await vi.advanceTimersByTimeAsync(delay);
+        }
+        await vi.advanceTimersByTimeAsync(31_000);
+        await drop(refusal());
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(listen).toHaveBeenCalledTimes(3);
+    });
+
+    it("counts a quiet open stream as uptime, since the indexer drops heartbeats", async () => {
         vi.spyOn(Math, "random").mockReturnValue(0);
         const { listen, drop } = await setup(
             { reconnectDelayMs: 1_000, maxReconnectAttempts: 2 },
             { opens: false },
         );
 
-        for (const delay of [500, 1_000]) {
-            await vi.advanceTimersByTimeAsync(31_000);
+        for (let calls = 2; calls <= 5; calls++) {
+            await vi.advanceTimersByTimeAsync(30_000);
             await drop();
-            await vi.advanceTimersByTimeAsync(delay);
+            await vi.advanceTimersByTimeAsync(500);
+            expect(listen).toHaveBeenCalledTimes(calls);
         }
-        await vi.advanceTimersByTimeAsync(31_000);
-        await drop();
-        await vi.advanceTimersByTimeAsync(60_000);
-        expect(listen).toHaveBeenCalledTimes(3);
     });
 });
