@@ -98,6 +98,20 @@ describe("FetchEventSource", () => {
         expect(errors[0]).toMatchObject({ status: 429, retryAfterMs: 20_000 });
     });
 
+    it("keeps a refusal's status when cancelling its body fails", async () => {
+        stubFetch(() => {
+            const refused = new Response("x", { status: 429, headers: { "retry-after": "20" } });
+            vi.spyOn(refused.body!, "cancel").mockRejectedValue(new TypeError("body errored"));
+            return refused;
+        });
+        const source = new FetchEventSource("http://ark/v1/txs");
+        const errors = collect(source, "error");
+
+        await settle();
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatchObject({ status: 429, retryAfterMs: 20_000 });
+    });
+
     it.each([
         ["a Content-Type other than text/event-stream", { status: 200, type: "text/html" }],
         ["a status other than 200", { status: 201, type: "text/event-stream" }],

@@ -81,6 +81,24 @@ describe("EsploraProvider", () => {
             expect(error.retryAfterMs).toBeUndefined();
             expect(error.message).toBe("Failed to fetch UTXOs: Internal Server Error (500)");
         });
+
+        it("keeps the status when the error body cannot be read", async () => {
+            const refused = new Response("", {
+                status: 429,
+                statusText: "Too Many Requests",
+                headers: { "retry-after": "5" },
+            });
+            vi.spyOn(refused, "text").mockRejectedValue(new TypeError("body stream errored"));
+            mockFetch.mockResolvedValueOnce(refused);
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getTransactions("bc1qtest").catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(429);
+            expect(error.retryAfterMs).toBe(5_000);
+            expect(error.message).toBe("Failed to get transactions: Too Many Requests (429)");
+        });
     });
 
     describe("getTransactions", () => {

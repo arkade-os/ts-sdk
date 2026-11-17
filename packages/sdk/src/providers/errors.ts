@@ -85,7 +85,10 @@ export class HttpResponseError extends Error {
     /** @param detail - Replaces `statusText`, for a route that reads the body instead. */
     constructor(prefix: string, response: Response, detail?: string) {
         const status = response.status;
-        const described = [(detail ?? response.statusText)?.trim(), status && `(${status})`]
+        const described = [
+            (detail ?? response.statusText)?.trim(),
+            typeof status === "number" && `(${status})`,
+        ]
             .filter(Boolean)
             .join(" ");
         super(described ? `${prefix}: ${described}` : prefix);

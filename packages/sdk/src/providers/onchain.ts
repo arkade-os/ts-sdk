@@ -270,7 +270,7 @@ export class EsploraProvider implements OnchainProvider {
     async getTxOutspends(txid: string): Promise<{ spent: boolean; txid?: string }[]> {
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/outspends`);
         if (!response.ok) {
-            const error = await response.text();
+            const error = await response.text().catch(() => undefined);
             throw new HttpResponseError("Failed to get transaction outspends", response, error);
         }
 
@@ -280,7 +280,7 @@ export class EsploraProvider implements OnchainProvider {
     async getTransactions(address: string): Promise<ExplorerTransaction[]> {
         const response = await baseFetch(`${this.baseUrl}/address/${address}/txs`);
         if (!response.ok) {
-            const error = await response.text();
+            const error = await response.text().catch(() => undefined);
             throw new HttpResponseError("Failed to get transactions", response, error);
         }
 
@@ -300,7 +300,7 @@ export class EsploraProvider implements OnchainProvider {
     async getRawTransaction(txid: string): Promise<Uint8Array> {
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/hex`);
         if (!response.ok) {
-            const error = await response.text();
+            const error = await response.text().catch(() => undefined);
             throw new HttpResponseError(`Failed to get raw transaction ${txid}`, response, error);
         }
         return hex.decode((await response.text()).trim());
@@ -810,7 +810,7 @@ export class EsploraProvider implements OnchainProvider {
         });
 
         if (!response.ok) {
-            const error = await response.text();
+            const error = await response.text().catch(() => undefined);
             throw new HttpResponseError("Failed to broadcast package", response, error);
         }
 
@@ -833,7 +833,7 @@ export class EsploraProvider implements OnchainProvider {
         });
 
         if (!response.ok) {
-            const error = await response.text();
+            const error = await response.text().catch(() => undefined);
             throw new HttpResponseError("Failed to broadcast transaction", response, error);
         }
 

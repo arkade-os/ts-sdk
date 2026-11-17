@@ -153,7 +153,7 @@ export class FetchEventSource implements EventSourceLike {
             !response.body ||
             !/^text\/event-stream\s*(;|$)/i.test(type)
         ) {
-            await response.body?.cancel();
+            await response.body?.cancel().catch(() => {});
             throw new HttpResponseError("SSE response", response, type);
         }
         for await (const { event, data } of readSseFrames(response.body)) {

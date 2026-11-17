@@ -58,9 +58,10 @@ describe("ContractWatcher stream reconnect", () => {
         vi.useRealTimers();
     });
 
-    async function setup(overrides: Partial<ContractWatcherConfig>) {
+    async function setup(overrides: Partial<ContractWatcherConfig>, { opens = true } = {}) {
         let release: ((failure?: unknown) => void) | undefined;
         const listen = vi.fn(async function* (_id: string, signal: AbortSignal) {
+            if (opens) yield {};
             const failure = await new Promise<unknown>((resolve) => {
                 release = resolve;
                 if (signal.aborted) resolve(undefined);
@@ -206,5 +207,23 @@ describe("ContractWatcher stream reconnect", () => {
         await drop();
         await vi.advanceTimersByTimeAsync(5_000);
         expect(listen).toHaveBeenCalledTimes(3); // the initial connect and two retries
+    });
+
+    it("does not count a slow open that never delivers as uptime", async () => {
+        vi.spyOn(Math, "random").mockReturnValue(0);
+        const { listen, drop } = await setup(
+            { reconnectDelayMs: 1_000, maxReconnectAttempts: 2 },
+            { opens: false },
+        );
+
+        for (const delay of [500, 1_000]) {
+            await vi.advanceTimersByTimeAsync(31_000);
+            await drop();
+            await vi.advanceTimersByTimeAsync(delay);
+        }
+        await vi.advanceTimersByTimeAsync(31_000);
+        await drop();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(listen).toHaveBeenCalledTimes(3);
     });
 });

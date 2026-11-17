@@ -118,8 +118,8 @@ style and have not been backfilled.
   restart came back in the same instant. Each attempt also emits
   `connection_reset`, which wallets read as "resync now", so the retries
   multiplied into app-wide syncs. The delay is now jittered (equal jitter) and
-  capped at 60 seconds, the attempt counter resets only once a connection has
-  stayed up for a full cap, and a `429`/`503` that carries `Retry-After` is
+  capped at 60 seconds, the attempt counter resets only once a stream has
+  delivered events or heartbeats for 30 seconds (or the cap, if lower), and a `429`/`503` that carries `Retry-After` is
   waited out (clamped to the rate gate's own 60-second ceiling). Recovery after
   a brief restart is unchanged in practice: the first retries are still
   sub-second, and the 20-second failsafe poll, not the ladder, is what bounds

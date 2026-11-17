@@ -67,8 +67,9 @@ export interface ContractWatcherConfig {
     reconnectDelayMs?: number;
 
     /**
-     * Maximum delay for reconnection and subscription update retries (ms). Also the window a
-     * connection must stay up before the reconnect ladder starts over.
+     * Maximum delay for reconnection and subscription update retries (ms). The reconnect ladder
+     * starts over once a stream has delivered events or heartbeats for 30 seconds, or this long
+     * if lower.
      *
      * @defaultValue `60_000` (60 seconds)
      */
@@ -392,6 +393,7 @@ export class ContractWatcher {
         const session = new AbortController();
         this.abortController = session;
         this.reconnectAttempts = 0;
+        this.connectedAt = undefined;
         // A provider may ignore cancellation; old requests must not block a new session.
         this.subscriptionUpdate = Promise.resolve();
 
@@ -406,6 +408,7 @@ export class ContractWatcher {
     async stopWatching(): Promise<void> {
         this.isWatching = false;
         this.connectionState = "disconnected";
+        this.connectedAt = undefined;
         this.abortController?.abort();
         this.cancelSubscriptionRetry();
         this.subscriptionRetryAttempts = 0;
@@ -463,7 +466,6 @@ export class ContractWatcher {
             if (!this.isWatching || signal?.aborted) return;
 
             this.connectionState = "connected";
-            this.connectedAt = Date.now();
 
             // Not awaited, or `connect()` would never return; errors here must still reconnect.
             this.listenLoop().catch((e) => {
@@ -945,6 +947,8 @@ export class ContractWatcher {
 
         for await (const update of subscription) {
             if (!this.isWatching) break;
+            // The first event or heartbeat, not the open attempt: a slow open that fails is not uptime.
+            this.connectedAt ??= Date.now();
             this.handleSubscriptionUpdate(update);
         }
 
