@@ -442,7 +442,9 @@ style and have not been backfilled.
   a claim stuck past `htlcLocktime` could be replaced by the solver's refund
   after `P` was public. It now reads the recorded funding's spend first, and
   `RfqSwapManager` pins `funding` to the outpoint its claim spent rather than
-  the first output it saw, which a replaced fill left stale.
+  the first output it saw, which a replaced fill left stale. A claim re-published
+  after its fill vanished moves to another output only if that output pays the
+  agreed amount.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's

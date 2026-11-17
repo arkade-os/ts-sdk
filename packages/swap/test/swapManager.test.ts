@@ -1579,21 +1579,37 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
             claimTxid: claim.txid,
             claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS,
         });
-        const m = manager({
-            chain: fakeChain({
-                utxos: [{ txid: "22".repeat(32), vout: 0, ...decoy }],
-                spend: { txHex: claim.txHex },
-                status: { [claim.txid]: false },
-            }),
-            now: SAFE_NOW,
-            spies: s,
+        const chain = fakeChain({
+            utxos: [{ txid: "22".repeat(32), vout: 0, ...decoy }],
+            status: { [claim.txid]: false },
         });
+        chain.getSpendingTx = async (txid: string) =>
+            txid === FILL.txid ? { txHex: claim.txHex } : null;
+        const m = manager({ chain, now: SAFE_NOW, spies: s });
         await m.addSwap(swap);
         await m.poll();
 
         expect(s.claims).toHaveLength(1);
         expect(s.claims[0].options).toEqual({ bump: true });
         expect(s.claims[0].utxo).toMatchObject({ txid: FILL.txid, vout: FILL.vout });
+    });
+
+    it.each([
+        ["re-claims a full replacement", BigInt(100_000), 1],
+        ["never moves its claim onto a smaller output", BigInt(400), 0],
+    ])("with its pinned fill gone and unspent, %s", async (_case, amount, claims) => {
+        const s = spies();
+        const replacement = { txid: "55".repeat(32), vout: 0, amount, confirmations: 3 };
+        const m = manager({
+            chain: fakeChain({ utxos: [replacement], status: {} }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(claimedSwap({ claimTxid: "ee".repeat(32) }));
+        await m.poll();
+
+        expect(s.claims).toHaveLength(claims);
+        if (claims) expect(s.claims[0].utxo).toMatchObject({ txid: replacement.txid });
     });
 
     it("claims the solver's fill, not dust paid to the HTLC before it", async () => {
