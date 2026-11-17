@@ -116,7 +116,9 @@ describe.each([
      * passing because no request was ever made.
      */
     async function requestFrom(stream: AsyncIterableIterator<unknown>): Promise<RequestInit> {
-        await expect(stream.next()).rejects.toThrow(/Unexpected status 500/);
+        await expect(stream.next()).rejects.toThrow(
+            /Unexpected status when fetching SSE stream.*\(500\)/,
+        );
         const requests = transport.requests();
         expect(requests).toHaveLength(1);
         return requests[0];
@@ -252,7 +254,9 @@ describe("getExpoFetch", () => {
         it("still falls back outside React Native", async () => {
             vi.stubGlobal("navigator", { product: "Gecko" });
 
-            await expect(subscribe()).rejects.toThrow(/Unexpected status 500/);
+            await expect(subscribe()).rejects.toThrow(
+                /Unexpected status when fetching SSE stream.*\(500\)/,
+            );
         });
     });
 });
