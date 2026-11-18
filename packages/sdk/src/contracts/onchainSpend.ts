@@ -162,14 +162,18 @@ export function assertCosignable(
 }
 
 /**
- * A boarding script: a `boarding` contract, or the `default` row an equal-delay boarding script
- * coalesced onto (widened to `both`). Scope alone does not qualify: any contract type may be
- * onchain-scoped, and its coins are not the wallet's to re-board. A `default` row's CSV must match
- * the boarding CSV, which makes its script byte-identical to that key's boarding script.
+ * A boarding script: a `boarding` contract, an Executor boarding watch, or the `default` row an
+ * equal-delay boarding script coalesced onto (widened to `both`). Scope alone does not qualify: any
+ * contract type may be onchain-scoped, and its coins are not the wallet's to re-board. A `default`
+ * row's CSV must match the boarding CSV, which makes its script byte-identical to that key's
+ * boarding script.
  */
 function isBoardingContract(contract: Contract, boardingCsv: RelativeTimelock): boolean {
     if (!isOnchainScoped(contract)) return false;
     if (contract.type === "boarding") return true;
+    if (contract.type === ExecutorContractHandler.type) {
+        return contract.params.template === "boarding";
+    }
     if (contract.type !== "default" || scopeOf(contract) !== "both") return false;
     return exitSequence(contract) === timelockToSequence(boardingCsv);
 }

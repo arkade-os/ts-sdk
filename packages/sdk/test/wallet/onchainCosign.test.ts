@@ -507,6 +507,17 @@ describe("deposits at a delegated boarding address", () => {
         expect(inputTxids(Transaction.fromPSBT(base64.decode(psbt[0])))).toEqual([deposit.txid]);
     });
 
+    it("renews one the Executor left unboarded through the cosign sweep, near its cut-off", async () => {
+        const { wallet, onchainProvider } = await withDeposit();
+        // 144-block CSV from height 100: a 36-block window above the 6-block margin
+        onchainProvider.getChainTip.mockResolvedValue(tipAt(201));
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([]);
+        onchainProvider.getChainTip.mockResolvedValue(tipAt(230));
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([
+            { txid: deposit.txid, vout: deposit.vout },
+        ]);
+    });
+
     it("watches for them when the watch is registered after subscribing", async () => {
         const ctx = await makeWallet();
         const stop = await ctx.wallet.notifyIncomingFunds(() => {});

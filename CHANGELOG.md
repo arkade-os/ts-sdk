@@ -137,8 +137,9 @@ style and have not been backfilled.
   `onchain`-scoped, so the onchain sync stores its coins. While its watch is
   active and unexpired, `settle()`, the periodic settle and `sendOnchain`
   without named inputs leave it to the Executor; once the watch ends, the wallet
-  boards or cosigns it itself through the owner's forfeit leaf. The boarding
-  sweep exits it after its CSV either way, and both boarding sweeps send to the
+  boards or cosigns it itself through the owner's forfeit leaf. Either way, one
+  still unboarded near its cosign cut-off is renewed by the automatic cosign
+  sweep, and the boarding sweep exits it after its CSV; both send to the
   wallet's own boarding address, never back to the delegated one.
 
 - **The Executor's delegated contracts are a built-in contract type.**
