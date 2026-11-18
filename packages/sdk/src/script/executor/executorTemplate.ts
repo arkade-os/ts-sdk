@@ -1,9 +1,7 @@
 import { hex } from "@scure/base";
 import { ScriptNum } from "@scure/btc-signer";
-import { concatBytes } from "@scure/btc-signer/utils.js";
-import { getOpcodeValue } from "../../arkade/opcodes";
-import { ArkadeScript } from "../../arkade/script";
-import { computeArkadeScriptPublicKey } from "../../arkade/tweak";
+import { type ContractArtifact, programFromArtifact } from "../../arkade/artifact";
+import { ArkadeProgramScript } from "../../arkade/program";
 import { VtxoScript } from "../base";
 import boardDocument from "./board.json";
 import delegatedBoarding from "./delegated_boarding.json";
@@ -33,13 +31,13 @@ export interface DelegationParams {
 export type ExecutorDefault = "renewal" | "boarding";
 
 /** The default templates, as the service's templates/ ships them: renew.json and board.json. */
-const EXECUTOR_DEFAULTS: Record<ExecutorDefault, object> = {
+const EXECUTOR_TEMPLATES: Record<ExecutorDefault, object> = {
     renewal: renewDocument,
     boarding: boardDocument,
 };
 
 /** The artifacts the default templates reference, by the id the service computes for them. */
-const EXECUTOR_ARTIFACTS: Record<string, object> = {
+const EXECUTOR_ARTIFACTS: Record<string, ContractArtifact> = {
     faa3249b8a28e999963994e4020e832285351eb7ce3b4821bcb3b4498f5b8ef3: delegatedVtxo,
     e3c0fa053fbb529a252a1025e3453a41f01949f4e49d50de7dfe5d3510470ed3: delegatedBoarding,
 };
@@ -50,13 +48,8 @@ export const DEFAULT_TEMPLATE_IDS: Readonly<Record<ExecutorDefault, string>> = {
     boarding: "2f8b8761c3d98230cbb170814643f591c29f737c0cf68f600f81920024dccbf8",
 };
 
-type Field = { name: string; type: string };
-export type Definition = {
-    constructorInputs: Field[];
-    functions: { name: string; arkade?: { asm: string[] }; leaves: { asm: string[] }[] }[];
-};
 export type Construction = {
-    definition: Definition | { artifact: string };
+    definition: ContractArtifact | { artifact: string };
     arguments: Record<string, string | { program: string }>;
 };
 export type Template = {
@@ -110,14 +103,14 @@ export function defaultContract(
     owner: Uint8Array,
     params: DelegationParams,
 ): VtxoScript {
-    const doc = EXECUTOR_DEFAULTS[kind] as Template;
+    const doc = EXECUTOR_TEMPLATES[kind] as Template;
     return instantiate(doc, doc.inputs[0].contract, variablesOf(kind, owner, params), keys);
 }
 
 /**
  * Build a bundled contract: arguments bind `<variable>`s or `{"program": output}`, the witness
- * program of an output locked to another contract. A pubkey is x-only in a leaf and in an Arkade
- * script alike; `COSIGNER_KEY` in an Arkade script is the hex the proof message spells it in.
+ * program of an output locked to another contract. Pubkey bindings are converted to x-only
+ * before the shared Arkade compiler derives the scripts.
  */
 export function instantiate(
     doc: Template,
@@ -125,76 +118,34 @@ export function instantiate(
     variables: Record<string, Value>,
     keys: ExecutorContractKeys,
 ): VtxoScript {
-    const def = (
+    const def =
         "artifact" in construction.definition
             ? EXECUTOR_ARTIFACTS[construction.definition.artifact]
-            : construction.definition
-    ) as Definition | undefined;
+            : construction.definition;
     if (!def)
         throw new Error(
             `unknown artifact ${(construction.definition as { artifact: string }).artifact}`,
         );
-    const args = new Map<string, Value>();
+    const serverKey = hex.decode(keys.serverPubkey).subarray(1);
+    const args: Record<string, Value> = { server: serverKey };
     for (const [field, binding] of Object.entries(construction.arguments)) {
         if (typeof binding === "string") {
-            args.set(field, variables[binding.slice(1, -1)]);
+            const value = variables[binding.slice(1, -1)];
+            if (value === undefined) throw new Error(`missing constructor value ${field}`);
+            args[field] = value;
         } else {
             const output = doc.outputs.find((o) => o.name === binding.program)?.locking.contract;
             if (!output) throw new Error(`program ${binding.program} names no contract output`);
-            args.set(field, instantiate(doc, output, variables, keys).pkScript.subarray(2));
+            args[field] = instantiate(doc, output, variables, keys).pkScript.subarray(2);
         }
     }
-    const pubkeys = new Set(
-        def.constructorInputs.filter((f) => f.type === "pubkey").map((f) => f.name),
-    );
-    const arg = (name: string): Value => {
-        const value = args.get(name);
-        if (value === undefined) throw new Error(`missing constructor value ${name}`);
-        return pubkeys.has(name) ? (value as Uint8Array).subarray(1) : value;
-    };
-
-    const covenants = new Map<string, Uint8Array>();
-    for (const fn of def.functions) {
-        if (!fn.arkade) continue;
-        const script = assemble(fn.arkade.asm, (name) =>
-            name === "COSIGNER_KEY"
-                ? // copied: under jsdom, TextEncoder returns another realm's Uint8Array
-                  new Uint8Array(new TextEncoder().encode(keys.cosignerPubkey.toLowerCase()))
-                : arg(name),
-        );
-        covenants.set(fn.name, script);
+    for (const field of def.constructorInputs) {
+        const value = args[field.name];
+        if (value === undefined) throw new Error(`missing constructor value ${field.name}`);
+        if (field.type === "pubkey") args[field.name] = (value as Uint8Array).subarray(1);
     }
-    const server = hex.decode(keys.serverPubkey);
-    const emulator = hex.decode(keys.emulatorPubkey);
-    const leafValue = (name: string): Value => {
-        if (name === "SERVER_KEY") return server.subarray(1);
-        if (name.startsWith("EMULATOR_KEY:")) {
-            const covenant = covenants.get(name.slice("EMULATOR_KEY:".length));
-            if (!covenant) throw new Error(`${name} names no covenant`);
-            return computeArkadeScriptPublicKey(emulator, covenant);
-        }
-        return arg(name);
-    };
-
-    const tapscripts = def.functions.flatMap((fn) =>
-        fn.leaves.map((leaf) => assemble(leaf.asm, leafValue)),
-    );
-    return new VtxoScript(tapscripts);
-}
-
-function assemble(tokens: string[], lookup: (name: string) => Value): Uint8Array {
-    const push = (value: Value) =>
-        ArkadeScript.encode([typeof value === "number" ? BigInt(value) : value]);
-    return concatBytes(
-        ...tokens.map((token) => {
-            if (token.startsWith("OP_")) {
-                const op = getOpcodeValue(token);
-                if (op === undefined) throw new Error(`unknown opcode ${token}`);
-                return new Uint8Array([op]);
-            }
-            if (token.startsWith("0x")) return push(hex.decode(token.slice(2)));
-            if (token.startsWith("<")) return push(lookup(token.slice(1, -1)));
-            return push(Number(token));
-        }),
-    );
+    return new ArkadeProgramScript(programFromArtifact(def), args, {
+        serverKey,
+        emulatorKey: hex.decode(keys.emulatorPubkey),
+    });
 }

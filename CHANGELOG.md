@@ -1568,6 +1568,12 @@ style and have not been backfilled.
 
 ### Internal
 
+- **Executor contracts reuse the SDK compiler and spending paths.** The
+  Executor's duplicate artifact assembler and forfeit/exit selection could
+  drift from the core implementation. Template bindings now feed
+  `programFromArtifact` and `ArkadeProgramScript`, and the existing path
+  helpers share the Executor CSV lookup with onchain preflight.
+
 - **Dev-tooling dependency overrides raised past every high and critical
   advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
   development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and

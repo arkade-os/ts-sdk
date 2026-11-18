@@ -2,9 +2,9 @@ import { hex } from "@scure/base";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { DefaultVtxo } from "../../script/default";
 import { defaultContract, type ExecutorDefault } from "../../script/executor/executorTemplate";
-import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
+import { sequenceToTimelock } from "../../utils/timelock";
 import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
-import { isCsvSpendable } from "./helpers";
+import { selectForfeitOrExitPath, forfeitExitAllPaths, forfeitExitSpendablePaths } from "./helpers";
 
 /**
  * Typed parameters for delegated contracts: a default template's variables and the Executor's
@@ -37,20 +37,6 @@ function integer(value: string | undefined, name: string): number {
         throw new Error(`${name} must be a non-negative integer`);
     }
     return n;
-}
-
-/** The emulator-enforced leaf is the Executor's to use; it is never offered. */
-function paths(
-    script: DefaultVtxo.Script,
-    context: PathContext,
-    checkTimelocks: boolean,
-): PathSelection[] {
-    const out: PathSelection[] = context.collaborative ? [{ leaf: script.forfeit() }] : [];
-    const sequence = Number(timelockToSequence(script.options.csvTimelock));
-    if (!checkTimelocks || isCsvSpendable(context, sequence)) {
-        out.push({ leaf: script.exit(), sequence });
-    }
-    return out;
 }
 
 /**
@@ -134,26 +120,26 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
 
         selectPath(
             script: DefaultVtxo.Script,
-            _contract: Contract,
+            contract: Contract,
             context: PathContext,
         ): PathSelection | null {
-            return paths(script, context, true)[0] ?? null;
+            return selectForfeitOrExitPath(script, contract, context);
         },
 
         getAllSpendingPaths(
             script: DefaultVtxo.Script,
-            _contract: Contract,
+            contract: Contract,
             context: PathContext,
         ): PathSelection[] {
-            return paths(script, context, false);
+            return forfeitExitAllPaths(script, contract, context);
         },
 
         getSpendablePaths(
             script: DefaultVtxo.Script,
-            _contract: Contract,
+            contract: Contract,
             context: PathContext,
         ): PathSelection[] {
-            return paths(script, context, true);
+            return forfeitExitSpendablePaths(script, contract, context);
         },
 
         /** The wallet's own money, renewed by the service. */
