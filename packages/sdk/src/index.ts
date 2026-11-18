@@ -10,7 +10,7 @@ export {
     PasskeyCancelled,
     PasskeyUnconfirmed,
 } from "./identity/passkey";
-export type { WebAuthnClient } from "./identity/passkey";
+export type { WebAuthnClient, PrfUnavailableReason } from "./identity/passkey";
 export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
 export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
@@ -459,6 +459,7 @@ import type {
 import {
     ArkError,
     ArkErrorName,
+    HttpResponseError,
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
@@ -935,6 +936,7 @@ export {
     maybeArkError,
     OnchainCosignPreflightError,
     isCosignFallback,
+    HttpResponseError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,

@@ -17,7 +17,7 @@ import {
     type EventSourceFactory,
 } from "../../src";
 import { FetchEventSource } from "../../src/providers/eventSource";
-import { ARKADE_VERSION_HEADERS } from "../../src/utils/fetch";
+import { ARKADE_VERSION_HEADERS, sdkVersion } from "../../src/utils/fetch";
 
 /** A factory that records its calls and returns something inert. */
 const fakeFactory = (): EventSourceFactory & {
@@ -167,7 +167,7 @@ describe("providers take a factory", () => {
         const pending = iterator.next();
         await Promise.resolve();
         expect(factory.urls).toEqual(["http://ark/v1/indexer/script/subscription/sub-1"]);
-        expect(factory.headers).toEqual([undefined]);
+        expect(factory.headers).toEqual([{ "X-SDK-VERSION": sdkVersion }]);
 
         await iterator.return?.(undefined);
         await pending.catch(() => {});

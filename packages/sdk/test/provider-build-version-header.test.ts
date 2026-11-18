@@ -17,10 +17,9 @@ function captureHeaders(json: () => any = async () => []): Headers[] {
     return seen;
 }
 
-// X-Build-Version and X-SDK-VERSION are arkd-only custom headers. The Esplora
-// and indexer services run on different origins whose CORS preflight rejects
-// unknown request headers, so these providers must use the header-less baseFetch
-// (not the header-adding fetch wrapper).
+// Esplora and the indexer may run on origins whose CORS preflight rejects unknown
+// request headers. X-Build-Version never leaves arkd; the indexer gets X-SDK-VERSION
+// only where no preflight happens.
 describe("non-ark providers omit arkd-only headers (CORS)", () => {
     it("EsploraProvider does not send X-Build-Version or X-SDK-VERSION", async () => {
         const seen = captureHeaders();
@@ -30,14 +29,26 @@ describe("non-ark providers omit arkd-only headers (CORS)", () => {
         expect(seen[0].has("X-SDK-VERSION")).toBe(false);
     });
 
-    it("RestIndexerProvider does not send X-Build-Version or X-SDK-VERSION", async () => {
+    const indexerHeaders = async (): Promise<Headers> => {
         const seen = captureHeaders();
         await new RestIndexerProvider("https://indexer.test")
             .getVtxoTree({ txid: "aa".repeat(32), vout: 0 })
             .catch(() => undefined);
         expect(seen.length).toBeGreaterThan(0);
-        expect(seen[0].has("X-Build-Version")).toBe(false);
-        expect(seen[0].has("X-SDK-VERSION")).toBe(false);
+        return seen[0];
+    };
+
+    it("RestIndexerProvider identifies the SDK to the indexer outside a browser", async () => {
+        const headers = await indexerHeaders();
+        expect(headers.get("X-SDK-VERSION")).toBe(`ts-sdk/${sdkVersion}`);
+        expect(headers.has("X-Build-Version")).toBe(false);
+    });
+
+    it("RestIndexerProvider sends no custom header from a page origin", async () => {
+        vi.stubGlobal("location", { origin: "https://wallet.test" });
+        const headers = await indexerHeaders();
+        expect(headers.has("X-SDK-VERSION")).toBe(false);
+        expect(headers.has("X-Build-Version")).toBe(false);
     });
 });
 

@@ -7,11 +7,26 @@ export interface WebAuthnClient {
     get(options: CredentialRequestOptions): Promise<Credential | null>;
 }
 
+/** Only `"unsupported"` (PRF reported off when the passkey was made, or no WebAuthn) means a passkey never gives
+ *  a key; after the others it may still give one elsewhere, so a fallback tied to it can meet another wallet. */
+export type PrfUnavailableReason =
+    | "unsupported"
+    | "unknown"
+    | "no-secret"
+    | "secret-changed"
+    | "malformed"
+    | "unconfirmed";
+
 /** The browser or the authenticator cannot return a PRF secret, so this passkey cannot derive a key. */
 export class PrfUnavailable extends Error {
     name = "PrfUnavailable";
-    /** Set when the passkey was created before this failure, so an app can still use it some other way. */
+    /** Set when the passkey was created before this failure; check `reason` before using it some other way. */
     credentialId?: Uint8Array;
+    readonly reason?: PrfUnavailableReason;
+    constructor(message?: string, options?: ErrorOptions & { reason?: PrfUnavailableReason }) {
+        super(message, options);
+        this.reason = options?.reason;
+    }
 }
 
 /** The user dismissed the passkey prompt. */
@@ -28,6 +43,7 @@ export class PasskeyCancelled extends Error {
  */
 export class PasskeyUnconfirmed extends PrfUnavailable {
     name = "PasskeyUnconfirmed";
+    override readonly reason = "unconfirmed";
 }
 
 /** The label of a passkey's first wallet, as in Breez's seedless-restore implementation. */
@@ -44,11 +60,11 @@ function bytes(x: Bytes): Uint8Array<ArrayBuffer> {
         return new Uint8Array((x as ArrayBuffer).slice(0));
     if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength).slice();
     // Uint8Array.from reads holes, nulls and out-of-range values as bytes, so a broken bridge's output could become a fixed, public secret.
-    if (!Array.isArray(x)) throw new PrfUnavailable(UNUSABLE);
+    if (!Array.isArray(x)) throw new PrfUnavailable(UNUSABLE, { reason: "malformed" });
     for (let i = 0; i < x.length; i++) {
         const v: unknown = x[i];
         if (!(i in x) || !Number.isInteger(v) || (v as number) < 0 || (v as number) > 255)
-            throw new PrfUnavailable(UNUSABLE);
+            throw new PrfUnavailable(UNUSABLE, { reason: "malformed" });
     }
     return Uint8Array.from(x as number[]);
 }
@@ -56,7 +72,7 @@ function bytes(x: Bytes): Uint8Array<ArrayBuffer> {
 // A PRF output is exactly 32 bytes; anything else (a bridge's hex string, an empty buffer) is refused, never stretched into a key.
 function secret(x: unknown): Uint8Array {
     const b = typeof x === "object" && x !== null ? bytes(x as Bytes) : null;
-    if (!b || b.length !== 32) throw new PrfUnavailable(UNUSABLE);
+    if (!b || b.length !== 32) throw new PrfUnavailable(UNUSABLE, { reason: "malformed" });
     return b;
 }
 
@@ -72,7 +88,7 @@ const prfOf = (c: Credential) =>
 
 function browser(): WebAuthnClient {
     if (typeof navigator === "undefined" || !navigator.credentials) {
-        throw new PrfUnavailable("No WebAuthn here; pass a client.");
+        throw new PrfUnavailable("No WebAuthn here; pass a client.", { reason: "unsupported" });
     }
     return navigator.credentials;
 }
@@ -114,7 +130,7 @@ export async function prfSupport(): Promise<"yes" | "no" | "unknown"> {
  * creation returns no PRF result there is nothing to compare that use against, so an authenticator
  * that changes its secret later is not caught here; it derives other words on the next sign-in.
  *
- * @throws PrfUnavailable when the authenticator cannot do PRF or gives another secret on reuse
+ * @throws PrfUnavailable when the authenticator cannot do PRF or gives another secret on reuse; `reason` says which
  * @throws PasskeyUnconfirmed when the passkey fails its first use right after creation, for any
  *   reason (`cause` holds the error); this and PrfUnavailable carry the new passkey's
  *   `credentialId`, since the passkey exists by then
@@ -167,9 +183,12 @@ async function confirmPrf(
     client: WebAuthnClient,
 ): Promise<Uint8Array> {
     const out = prfOf(cred);
-    // No prf entry at all means the browser ignored the extension: a second prompt would fail the same way.
-    if (!out?.results?.first && (!out || out.enabled === false))
-        throw new PrfUnavailable("This passkey cannot derive a key.");
+    // No prf entry at all means the browser ignored the extension: a second prompt would fail the same way,
+    // but another browser may still get a secret from this passkey, so that is not "unsupported".
+    if (!out)
+        throw new PrfUnavailable("This browser returned no PRF result.", { reason: "unknown" });
+    if (!out.results?.first && out.enabled === false)
+        throw new PrfUnavailable("This passkey cannot derive a key.", { reason: "unsupported" });
     // Copied before the next ceremony: a client may reuse the buffer for its result.
     const made = out.results?.first ? secret(out.results.first) : null;
     const { prf: used } = await evaluatePrf({
@@ -179,7 +198,9 @@ async function confirmPrf(
         client,
     });
     if (made && !same(made, used)) {
-        throw new PrfUnavailable("This passkey gave a different secret on its next use.");
+        throw new PrfUnavailable("This passkey gave a different secret on its next use.", {
+            reason: "secret-changed",
+        });
     }
     return used;
 }
@@ -210,7 +231,8 @@ export async function evaluatePrf(o: {
         }),
     );
     const first = prfOf(cred)?.results?.first;
-    if (first === undefined) throw new PrfUnavailable("This passkey cannot derive a key.");
+    if (first === undefined)
+        throw new PrfUnavailable("This passkey cannot derive a key.", { reason: "no-secret" });
     const handle = ((cred as PublicKeyCredential).response as AuthenticatorAssertionResponse)
         .userHandle;
     return {

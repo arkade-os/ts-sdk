@@ -15,6 +15,7 @@ style and have not been backfilled.
 ### Breaking Changes
 
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
+- **Arkade contract calls group their arguments by witness.** `contract.functions.<name>({ arkadeScript: [...], tapscript: [...] })` replaces the positional call, and programs declare inputs on the segment that uses them (`arkadeScript.inputs`, `tapscript.inputs`) instead of on the function. Widened programs are typed the same way, so a positional call no longer type-checks, and any call other than one such object (or none) is rejected at runtime. `ArkadeUnlocker.args` holds one map per segment. Compiled scripts are unchanged: a stored contract with function-level `inputs` still syncs, but its functions that take arguments fail until the program is re-created with those inputs moved onto its segments.
 - **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
   `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
   writes the old key keeps working: a coin that sets `intentTapLeafScript` signs
@@ -25,6 +26,18 @@ style and have not been backfilled.
   key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
   keep the old key on disk.
 
+- **`@arkade-os/swap`: a new settlement leaf, used only when negotiated.** The
+  leaf is now the compiler artifact `asset-swap` or `sats-swap`
+  (`contracts/*.ark`). `fulfill` pays `receiver` on the output at the spending
+  input's index, so the same leaf can sit in a batch where input i is paid at
+  output i. A one-deposit fill is unchanged: the deposit stays input 0 and the
+  payout stays output 0. A newly derived offer address does not change by
+  default: an offer is derived on the previous tree unless the solver negotiates
+  `asset-swap-v3` over RFQ (`contractVersion: "asset-swap-v3"` opts in directly). An offer
+  that carries a `swapPkScript` compiles whichever tree matches it, so cancel,
+  fill, classify and restore keep rebuilding the address it was funded at. v0
+  offer rows migrate onto the previous tree. The deprecated `swapPrograms`
+  export of `@arkade-os/swap/protocol` now holds the new programs.
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already
@@ -158,6 +171,27 @@ style and have not been backfilled.
   other template ids, and `defaultTemplates()` refuses it. `DefaultVtxo.Script`
   takes extra leaves after forfeit and exit.
 
+- **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
+  can import the negotiation field names, refusal code, and asset contract IDs
+  without loading the client or contract builders. Existing `/protocol` exports
+  keep their names and values.
+
+- **The indexer can tell SDK callers apart.** `RestIndexerProvider` and
+  `ExpoIndexerProvider` send `X-SDK-VERSION` on REST calls and subscriptions
+  from runtimes with no page or worker origin, such as Node and React Native.
+  Browsers and workers send nothing new: a custom header there needs a CORS
+  preflight an indexer on its own origin may refuse. `X-Build-Version` stays
+  arkd-only.
+
+- **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
+  `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
+  (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the
+  quote's `contract_version` picks the tree the offer is derived on. A quote
+  naming none is the baseline `asset-swap-v2`. A solver that refuses the field
+  with a bare `unsupported_payload` is asked once more without it, under a fresh
+  `rfq_id`. A choice outside the advertised list, or a version this build cannot
+  derive, is refused before funding.
+
 - **Arkade Cash status, claim correlation, and activity through service-worker wallets.** Add public voucher issue/status records, expose create, inspect, and claim operations alongside existing wallet primitives, and resolve their funding and sweep transactions into arkade-cash activities without exposing bearer tokens. Records and status reports list `issues` and `claims` as `{ txid, amount }` (`ArkadeCashTx`), so a voucher's share of a shared funding transaction or a multi-sweep claim is exact. `ArkadeCashClaimResult.claims` has the same shape and includes sweeps finalized from previously pending claims. `addArkadeCashRecord` merges into an existing record through the exported `mergeArkadeCashRecord` (transactions unioned by txid, a claim outranks an issue), so a worker's recovery record no longer overwrites the page's record for the same voucher. Recording a recovered voucher's settlement runs inside the serialized wallet-state update, so concurrent recoveries keep each other's records and a failed state read can no longer wipe them. Issuing and reclaiming one voucher resolve to two activities (`arkade-cash:<id>:issued` and `:claimed`) instead of collapsing into one. An issue correlates only with a sent row and a claim only with a received row, so the same txid in a history of the other direction (a claimer's received funding row, an issuer's sent fee row) is never labelled. A claim recorded under a batch commitment, as a recovery settlement is, correlates only with the received row of exactly its amount, and boarding rows never correlate, so the other rows of that round are neither counted into the claim nor labelled "Cash claimed". Status reports list a coin spent by a batch settlement as a claim under the settlement's commitment txid, so an issuer sees the claim of a recovered voucher too; the amount is the coin's value before intent fees. Through a service worker, `create` and `claim` run with no message deadline on either side, so a slow multi-sweep claim or funded create still returns its result instead of a timeout. A funded-but-failed `create` rejects on the page with a real `ArkadeCashCreateError` whose `.cash` holds the recovery token, exactly as an in-process `Wallet.createCash` does.
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
@@ -167,6 +201,20 @@ style and have not been backfilled.
   of the `Wallet` class.** The new exported interface declares only
   `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
   helper. Type-level only, non-breaking.
+
+- **`PrfUnavailable` says why.** Its new `reason` is `"unsupported"` when PRF
+  was reported off (`enabled: false`) as the passkey was made, or there is no
+  WebAuthn; `"unknown"` when the browser returned no PRF output at all, so
+  another browser may still get a secret from it; `"no-secret"` when a use
+  returned no PRF secret,
+  `"secret-changed"` when the next use gave another one, `"malformed"` when the
+  secret was not 32 usable bytes, and `"unconfirmed"` on `PasskeyUnconfirmed`.
+  Only `"unsupported"` means the passkey never gives a key. An app that falls
+  back to another scheme for a passkey with a `credentialId` should do so only
+  for that reason: after the others the same passkey may still derive words
+  elsewhere, and a passkey login there would open a different wallet. The type
+  is exported as `PrfUnavailableReason`; a `PrfUnavailable` built without one
+  has no `reason`. Non-breaking.
 
 ### Bug Fixes
 
@@ -178,6 +226,38 @@ style and have not been backfilled.
   periodic settle (`settlementConfig: false`) nothing ran one, and stored
   balances missed its deposits. Both now sync the new onchain-scoped contracts
   before returning, best-effort like the indexer hydration.
+
+- **`ContractWatcher` no longer reconnects hard enough to hold a client over a
+  rate limit.** Against a server or CDN refusing the subscription stream, the
+  watcher retried every 5 seconds forever, with no jitter, and reset its ladder
+  on every accepted connection — so a server that accepted and immediately
+  dropped kept it at the 1-second base delay, and every client dropped by one
+  restart came back in the same instant. Each attempt also emits
+  `connection_reset`, which wallets read as "resync now", so the retries
+  multiplied into app-wide syncs. The delay is now jittered (equal jitter) and
+  capped at 60 seconds, the attempt counter resets only once a connection has
+  stayed up for 30 seconds (or the cap, if lower) and was not a refused open, and a `429`/`503` that carries `Retry-After` is
+  waited out (clamped to the rate gate's own 60-second ceiling), then spread
+  over half that again so the refused clients don't return together. Recovery after
+  a brief restart is unchanged in practice: the first retries are still
+  sub-second, and the 20-second failsafe poll, not the ladder, is what bounds
+  it. `maxReconnectAttempts` keeps counting consecutive failures, and every
+  config override still applies.
+
+- **Esplora failures carry their HTTP status and `Retry-After`.** Every non-2xx
+  response from `EsploraProvider` threw a bare `Error` built from
+  `response.statusText`, which HTTP/2 leaves empty — so a caller got
+  "Failed to fetch UTXOs: " and could not tell a `429` from a `500`, let alone
+  back off for as long as the server asked. These now throw the new exported
+  `HttpResponseError`, carrying `status` and the parsed `retryAfterMs`, with the
+  status added to the message and the existing prefix kept so string matching
+  still works. `getTxStatus`'s first request previously threw the bare
+  `statusText` with no prefix at all; it now reads
+  `Failed to get transaction <txid>: …`. A refused SSE stream carries its status
+  the same way, through the `error` event to the `EventSourceError` the watcher
+  backs off on; on `ExpoIndexerProvider` the stream throws the `HttpResponseError`
+  itself, now reading `Unexpected status when fetching SSE stream: … (<status>)`.
+  A body that fails to cancel no longer masks the error in `getFeeRate`.
 
 - **A malformed explorer history no longer leaves the address watch's baseline as an unhandled rejection.** The baseline guarded the history fetch but not the loop that keys its entries, so an entry without `status` threw `Cannot read properties of undefined (reading 'block_time')` out of a floating promise. Seeding now sits inside the same failure handling as the fetch, so a bad response takes the existing "first poll pass establishes the baseline" fallback.
 
