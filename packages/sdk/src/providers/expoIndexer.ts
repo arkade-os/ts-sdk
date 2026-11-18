@@ -7,6 +7,7 @@ import {
 import { isFetchTimeoutError } from "./ark";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
+import { sdkVersionHeaders } from "../utils/sdkVersionHeaders";
 
 /**
  * Expo-compatible Indexer provider implementation using expo/fetch for streaming support.
@@ -52,7 +53,7 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                     url,
                     abortSignal,
                     expoFetch,
-                    { "Content-Type": "application/json" },
+                    { "Content-Type": "application/json", ...sdkVersionHeaders() },
                     toSubscriptionMessage,
                 );
             } catch (error) {

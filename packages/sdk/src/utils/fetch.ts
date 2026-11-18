@@ -1,9 +1,8 @@
-import { version } from "../../package.json";
+import { sdkVersion } from "./sdkVersionHeaders";
+
+export { sdkVersion };
 
 export const buildVersion = "0.9.9";
-
-/** The SDK's own version string, sourced from package.json */
-export const sdkVersion = `ts-sdk/${version}`;
 
 /**
  * The version headers arkd's compatibility guard reads, as data ({@link fetch} sets exactly
