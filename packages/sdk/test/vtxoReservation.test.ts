@@ -249,4 +249,20 @@ describe("durable reservations on a direct wallet", () => {
         expect((await repository.getReservations()).map(({ id }) => id)).toEqual(["first"]);
         await wallet.dispose();
     });
+
+    it("refuses a durable hold on an input a direct build is submitting", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, coins } = await fundedWallet({ vtxoReservationRepository: store() });
+        const submits = stallSubmits(wallet);
+        const building = wallet.buildAndSubmitOffchainTx([coins[0]], []);
+        await vi.waitFor(() => expect(submits).toHaveLength(1));
+
+        await expect(wallet.reserveVtxos([coins[0]], "taxi-transfer")).rejects.toMatchObject({
+            holder: "in-flight",
+        });
+        submits[0].finish();
+        await building;
+        await (await wallet.reserveVtxos([coins[0]], "taxi-transfer")).release();
+        await wallet.dispose();
+    });
 });

@@ -6648,9 +6648,21 @@ export class Wallet
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
         const validUntil = captureSendDeadline(options?.validUntil);
         assertSendDeadline(validUntil);
-        return this._withTxLock(() =>
-            this._buildAndSubmitOffchainTx(inputs, outputs, serverUnrollScript, { validUntil }),
-        );
+        return this._withTxLock(async () => {
+            // Reservation writes don't take the tx lock, so mark the inputs in-flight for a hold
+            // to refuse. Inputs a caller already claimed (withSpendLock) stay its own.
+            const claimed = inputs.filter(
+                ({ txid, vout }) => !this._pendingSpendOutpoints.has(`${txid}:${vout}`),
+            );
+            this._addPendingSpends(claimed);
+            try {
+                return await this._buildAndSubmitOffchainTx(inputs, outputs, serverUnrollScript, {
+                    validUntil,
+                });
+            } finally {
+                this._removePendingSpends(claimed);
+            }
+        });
     }
 
     private async _buildAndSubmitOffchainTx(
