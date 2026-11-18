@@ -197,6 +197,7 @@ describe("ExecutorManagerImpl.register", () => {
                 serverPubkey: vectors.serverPubkey,
                 emulatorPubkey: vectors.emulatorPubkey,
             },
+            params,
             delegation: expect.objectContaining({ address: vectors.boarding.address }),
         });
         expect(provider.registerDelegation).toHaveBeenCalledWith(
@@ -229,7 +230,7 @@ describe("ExecutorManagerImpl.register", () => {
     it("defaults the exit delays to the operator's", async () => {
         const provider = makeProvider();
         const manager = new ExecutorManagerImpl(provider, wallet);
-        await manager.registerBoarding(
+        const registration = await manager.registerBoarding(
             { renewalWindow: params.renewalWindow, maxFee: params.maxFee },
             trusted,
         );
@@ -239,6 +240,8 @@ describe("ExecutorManagerImpl.register", () => {
             { expiresAt: undefined },
         );
         expect(wallet.getOperatorInfo).toHaveBeenCalledWith({ requireLive: true });
+        // resolved, so watchExecutorContracts restores the watch without the operator
+        expect(registration.params).toEqual(params);
     });
 
     it("drops a stale expiry when the service answers without one", async () => {

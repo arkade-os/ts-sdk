@@ -115,10 +115,14 @@ style and have not been backfilled.
   `getBoardingAddress()` answers the delegated boarding address: the Executor
   boards every deposit there into the wallet's renewal contract while the wallet
   is offline. A boarded coin is the wallet's own: it counts, spends and renews
-  like any other, migrates off a deprecated operator signer, incoming-funds
-  subscribers hear of it, and the wallet finds it from the key alone by
-  registering again, which returns the existing watch. `getAddress()` does not
-  change. A watch registered without `expiresAt` does not expire, and
+  like any other, migrates off a deprecated operator signer, and incoming-funds
+  subscribers hear of it. A restored wallet finds it by registering again with
+  the same parameters, which returns the existing watch, but only while the
+  operator's exit delays and the Executor's keys are unchanged: the address
+  derives from them. The registration returns its resolved `params`, which with
+  its `keys` restore the watch through `watchExecutorContracts` regardless.
+  `getAddress()` does not change. A watch registered without `expiresAt` does
+  not expire, and
   registering again does not change its expiry. A subscription started before
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new

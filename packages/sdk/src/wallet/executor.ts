@@ -51,6 +51,8 @@ export interface ExecutorWatchRegistration {
     variables: Record<string, string>;
     /** The Executor's keys the wallet's delegated contracts are derived from. */
     keys: ExecutorContractKeys;
+    /** The parameters the contracts were derived from, exit delays resolved. */
+    params: DelegationParams;
     delegation: ExecutorDelegation;
 }
 
@@ -186,6 +188,11 @@ export interface IExecutorManager {
      * into the wallet's renewal contract, a virtual output the wallet spends and renews as its
      * own. The wallet watches both contracts. Without `expiresAt` the watch does not expire;
      * registering again returns the existing watch unchanged.
+     *
+     * The address derives from the key, `params`, the operator's exit delays when `params` omits
+     * them, and the Executor's keys: registering again on a restored wallet finds the same watch
+     * only while none of them changed. The returned `keys` and `params` restore it regardless,
+     * through {@link watchExecutorContracts}.
      */
     registerBoarding(
         params: DelegationOptions,
@@ -333,6 +340,6 @@ export class ExecutorManagerImpl implements IExecutorManager {
         if (delegation.status !== "active") {
             throw new Error(`Executor watch ${delegation.address} is ${delegation.status}`);
         }
-        return { address: watchAddress, templateId, variables, keys, delegation };
+        return { address: watchAddress, templateId, variables, keys, params, delegation };
     }
 }
