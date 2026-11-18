@@ -13,7 +13,7 @@
  * output layout, the tweaked co-signer key — is asserted by arkd accepting the
  * spend, which no unit test can stand in for.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { execSync } from "child_process";
 import { base64, hex } from "@scure/base";
 import {
@@ -102,7 +102,8 @@ let taker: Wallet;
 let operatorPubkey: Uint8Array;
 let assetId: string;
 
-beforeAll(async () => {
+// Fresh wallets per run: each fill spends the whole issuance and the taker's float.
+const setup = async (): Promise<void> => {
     maker = await newWallet();
     taker = await newWallet();
     await faucet(maker, FAUCET_SATS);
@@ -117,90 +118,96 @@ beforeAll(async () => {
     );
 
     operatorPubkey = ArkAddress.decode(await maker.getAddress()).serverPubKey;
-}, 300_000);
+};
 
 describe("filling an offer (regtest)", () => {
-    it("spends the deposit through the fulfill leaf and pays the maker", async () => {
-        const offer = await createOffer(maker, {
-            wantAmount: WANT_SATS,
-            offerAsset: asset.AssetId.fromString(assetId),
-        });
-        // No `amount`: an asset deposit rides the SDK's dust-sat carrier.
-        const fundingTxid = await maker.send({
-            address: offer.address,
-            assets: [{ assetId, amount: ISSUE_UNITS }],
-            extensions: [offer.extension],
-        });
-        const script = hex.encode(offer.swapPkScript);
-        await waitFor(async () => {
-            const { vtxos } = await indexer.getVtxos({ scripts: [script] });
-            return vtxos.some((v) => v.txid === fundingTxid);
-        });
-
-        const coins = await taker.getVtxos();
-        const fillTxid = await fillOffer(taker, OPERATOR_URL, offer.offerHex, {
-            fund: coins.map((c) => ({
-                txid: c.txid,
-                vout: c.vout,
-                value: c.value,
-                tapLeafScript: c.forfeitTapLeafScript,
-                tapTree: c.tapTree,
-            })),
-            fundingTxid,
-            emulator: EMULATOR_URL,
-        });
-        expect(fillTxid).toHaveLength(64);
-
-        // The deposit is gone from the covenant, which only the emulator
-        // co-signing the fulfill leaf can achieve.
-        await waitFor(async () => {
-            const { vtxos } = await indexer.getVtxos({ scripts: [script] });
-            return vtxos.every((v) => v.txid !== fundingTxid || v.isSpent === true);
-        });
-
-        // WHICH leaf, read off the spend rather than inferred from the outcome:
-        // a cancel also empties the covenant and would pay the maker nothing.
-        //
-        // BOTH txids, via `classifyDepositSpend`. A spend is two linked
-        // transactions and only the CHECKPOINT takes the deposit outpoint; hand
-        // it the ark tx alone and every real spend reads `indeterminate`.
-        const { vtxos } = await indexer.getVtxos({ scripts: [script] });
-        const deposit = vtxos.find((v) => v.txid === fundingTxid)!;
-        const candidates = spendTxidsOf(deposit);
-        expect(candidates.length).toBeGreaterThan(0);
-        const { txs } = await indexer.getVirtualTxs(candidates);
-
-        expect(
-            classifyDepositSpend(
-                decodeOffer(hex.decode(offer.offerHex)),
-                operatorPubkey,
-                // decoded, not the base64 the indexer returns
-                txs.map((psbt) => Transaction.fromPSBT(base64.decode(psbt))),
-                { txid: fundingTxid, vout: deposit.vout },
-            ),
-        ).toBe("fulfilled");
-
-        // WHAT it paid, read off the transaction rather than polled from a
-        // balance: output 0 carrying `wantAmount` to the maker's script is the
-        // covenant's actual obligation, and the emulator refuses anything else.
-        const decoded = decodeOffer(hex.decode(offer.offerHex));
-        const paid = txs
-            .map((psbt) => Transaction.fromPSBT(base64.decode(psbt)))
-            .some((tx) => {
-                const out = tx.getOutput(0);
-                return (
-                    out?.script !== undefined &&
-                    hex.encode(out.script) === hex.encode(decoded.makerPkScript) &&
-                    out.amount === WANT_SATS
-                );
+    it.each(["asset-swap-v2", "asset-swap-v3"] as const)(
+        "spends the deposit through the %s tree's fulfill leaf and pays the maker",
+        async (contractVersion) => {
+            await setup();
+            const offer = await createOffer(maker, {
+                wantAmount: WANT_SATS,
+                offerAsset: asset.AssetId.fromString(assetId),
+                contractVersion,
             });
-        expect(paid).toBe(true);
+            // No `amount`: an asset deposit rides the SDK's dust-sat carrier.
+            const fundingTxid = await maker.send({
+                address: offer.address,
+                assets: [{ assetId, amount: ISSUE_UNITS }],
+                extensions: [offer.extension],
+            });
+            const script = hex.encode(offer.swapPkScript);
+            await waitFor(async () => {
+                const { vtxos } = await indexer.getVtxos({ scripts: [script] });
+                return vtxos.some((v) => v.txid === fundingTxid);
+            });
 
-        // and the asset left with the taker — the other side of the trade
-        await waitFor(async () =>
-            (await taker.getBalance()).availableAssets.some(
-                (a) => a.assetId === assetId && a.amount === ISSUE_UNITS,
-            ),
-        );
-    }, 600_000);
+            const coins = await taker.getVtxos();
+            const fillTxid = await fillOffer(taker, OPERATOR_URL, offer.offerHex, {
+                fund: coins.map((c) => ({
+                    txid: c.txid,
+                    vout: c.vout,
+                    value: c.value,
+                    tapLeafScript: c.forfeitTapLeafScript,
+                    tapTree: c.tapTree,
+                })),
+                fundingTxid,
+                emulator: EMULATOR_URL,
+            });
+            expect(fillTxid).toHaveLength(64);
+
+            // The deposit is gone from the covenant, which only the emulator
+            // co-signing the fulfill leaf can achieve.
+            await waitFor(async () => {
+                const { vtxos } = await indexer.getVtxos({ scripts: [script] });
+                return vtxos.every((v) => v.txid !== fundingTxid || v.isSpent === true);
+            });
+
+            // WHICH leaf, read off the spend rather than inferred from the outcome:
+            // a cancel also empties the covenant and would pay the maker nothing.
+            //
+            // BOTH txids, via `classifyDepositSpend`. A spend is two linked
+            // transactions and only the CHECKPOINT takes the deposit outpoint; hand
+            // it the ark tx alone and every real spend reads `indeterminate`.
+            const { vtxos } = await indexer.getVtxos({ scripts: [script] });
+            const deposit = vtxos.find((v) => v.txid === fundingTxid)!;
+            const candidates = spendTxidsOf(deposit);
+            expect(candidates.length).toBeGreaterThan(0);
+            const { txs } = await indexer.getVirtualTxs(candidates);
+
+            expect(
+                classifyDepositSpend(
+                    decodeOffer(hex.decode(offer.offerHex)),
+                    operatorPubkey,
+                    // decoded, not the base64 the indexer returns
+                    txs.map((psbt) => Transaction.fromPSBT(base64.decode(psbt))),
+                    { txid: fundingTxid, vout: deposit.vout },
+                ),
+            ).toBe("fulfilled");
+
+            // WHAT it paid, read off the transaction rather than polled from a
+            // balance: output 0 carrying `wantAmount` to the maker's script is the
+            // covenant's actual obligation, and the emulator refuses anything else.
+            const decoded = decodeOffer(hex.decode(offer.offerHex));
+            const paid = txs
+                .map((psbt) => Transaction.fromPSBT(base64.decode(psbt)))
+                .some((tx) => {
+                    const out = tx.getOutput(0);
+                    return (
+                        out?.script !== undefined &&
+                        hex.encode(out.script) === hex.encode(decoded.makerPkScript) &&
+                        out.amount === WANT_SATS
+                    );
+                });
+            expect(paid).toBe(true);
+
+            // and the asset left with the taker — the other side of the trade
+            await waitFor(async () =>
+                (await taker.getBalance()).availableAssets.some(
+                    (a) => a.assetId === assetId && a.amount === ISSUE_UNITS,
+                ),
+            );
+        },
+        900_000,
+    );
 });

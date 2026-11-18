@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EsploraProvider, Coin, type ExplorerTransaction } from "../src";
+import { EsploraProvider, Coin, HttpResponseError, type ExplorerTransaction } from "../src";
 import { jsonResponse, textResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
@@ -51,6 +51,53 @@ describe("EsploraProvider", () => {
             await expect(provider.getCoins("bc1qtest")).rejects.toThrow(
                 "Failed to fetch UTXOs: Not Found",
             );
+        });
+
+        it("carries the status and Retry-After of a rate-limited response", async () => {
+            mockFetch.mockResolvedValueOnce(
+                new Response("rate limited", { status: 429, headers: { "retry-after": "30" } }),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getCoins("bc1qtest").catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(429);
+            expect(error.retryAfterMs).toBe(30_000);
+            // HTTP/2 leaves statusText empty, so the number has to be in the message.
+            expect(error.message).toBe("Failed to fetch UTXOs: (429)");
+        });
+
+        it("carries a server error with no Retry-After", async () => {
+            mockFetch.mockResolvedValueOnce(
+                new Response("boom", { status: 500, statusText: "Internal Server Error" }),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getCoins("bc1qtest").catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(500);
+            expect(error.retryAfterMs).toBeUndefined();
+            expect(error.message).toBe("Failed to fetch UTXOs: Internal Server Error (500)");
+        });
+
+        it("keeps the status when the error body cannot be read", async () => {
+            const refused = new Response("", {
+                status: 429,
+                statusText: "Too Many Requests",
+                headers: { "retry-after": "5" },
+            });
+            vi.spyOn(refused, "text").mockRejectedValue(new TypeError("body stream errored"));
+            mockFetch.mockResolvedValueOnce(refused);
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getTransactions("bc1qtest").catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(429);
+            expect(error.retryAfterMs).toBe(5_000);
+            expect(error.message).toBe("Failed to get transactions: Too Many Requests (429)");
         });
     });
 
@@ -121,6 +168,23 @@ describe("EsploraProvider", () => {
             await expect(provider.getFeeRate()).rejects.toThrow(
                 "Failed to fetch fee rate: Service Unavailable",
             );
+        });
+
+        it("keeps the status when cancelling the error body fails", async () => {
+            const refused = new Response("", {
+                status: 429,
+                statusText: "Too Many Requests",
+                headers: { "retry-after": "5" },
+            });
+            vi.spyOn(refused.body!, "cancel").mockRejectedValue(new TypeError("body errored"));
+            mockFetch.mockResolvedValueOnce(refused);
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getFeeRate().catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(429);
+            expect(error.retryAfterMs).toBe(5_000);
         });
     });
 

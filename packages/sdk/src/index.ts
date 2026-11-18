@@ -10,7 +10,7 @@ export {
     PasskeyCancelled,
     PasskeyUnconfirmed,
 } from "./identity/passkey";
-export type { WebAuthnClient } from "./identity/passkey";
+export type { WebAuthnClient, PrfUnavailableReason } from "./identity/passkey";
 export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
 export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
@@ -347,6 +347,17 @@ import { Intent, Proof, type IntentCoin, type ProofInput } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
+export type { ArkadeCashRequest, ArkadeCashResponse } from "./arkadeCash/messages";
+export type { ArkadeCashRecord, ArkadeCashAction, ArkadeCashTx } from "./arkadeCash/tracker";
+export type { ArkadeCashStatus, ArkadeCashStatusReport } from "./arkadeCash/status";
+export {
+    addArkadeCashRecord,
+    arkadeCashId,
+    arkadeCashResolver,
+    createArkadeCashTracker,
+    mergeArkadeCashRecord,
+} from "./arkadeCash/tracker";
+export { readArkadeCash } from "./arkadeCash/status";
 import {
     getNetwork,
     networkFromOperatorInfo,
@@ -438,6 +449,7 @@ import type {
 import {
     ArkError,
     ArkErrorName,
+    HttpResponseError,
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
@@ -892,6 +904,7 @@ export {
     maybeArkError,
     OnchainCosignPreflightError,
     isCosignFallback,
+    HttpResponseError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
