@@ -37,6 +37,7 @@ import {
 } from "./helpers/restoreWallet";
 import { jsonResponse } from "./helpers/response";
 import { registerWalletRestoreHook } from "../src/wallet/restoreHooks";
+import { AezeedIdentity } from "../src/identity/seedIdentity";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -1815,6 +1816,86 @@ describe("Wallet.restore", () => {
             unstub?.();
             await wallet.dispose();
         }
+    });
+
+    describe("aezeed birthday", () => {
+        const DAY = 86_400;
+        const now = () => Math.floor(Date.now() / 1000);
+        const bornToday = () =>
+            AezeedIdentity.fromEntropy(
+                {
+                    version: 0,
+                    birthday: new Date(),
+                    entropy: hex.decode("81b637d86359e6960de795e41e0b4cfd"),
+                },
+                { isMainnet: false },
+            );
+
+        // Funds a deprecated-signer VTXO at index 2, restores, and reports whether it was found.
+        const restoresDeprecatedHit = async (
+            cutoffDate: number,
+            restoreOpts: { ignoreBirthday?: boolean } = {},
+        ): Promise<boolean> => {
+            const deprecatedXOnly = "ab".repeat(32);
+            const { wallet, indexer, hdProvider, contractRepository } = await makeHdWalletForTest(
+                undefined,
+                undefined,
+                { identity: bornToday() },
+            );
+            let unstub: (() => void) | undefined;
+            try {
+                unstub = stubInfoWithDeprecated(
+                    hex.encode(wallet.offchainTapscript.options.serverPubKey),
+                    [{ cutoffDate, pubkey: "03" + deprecatedXOnly }],
+                );
+                const script = hex.encode(
+                    new DefaultVtxo.Script({
+                        pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(2)),
+                        serverPubKey: hex.decode(deprecatedXOnly),
+                        csvTimelock: wallet.walletContractTimelocks[0],
+                    }).pkScript,
+                );
+                indexer.usedScripts.add(script);
+                await wallet.restore({ gapLimit: 5, ...restoreOpts });
+                const rows = await collectContracts(contractRepository, { type: ["default"] });
+                return rows.some((c) => c.script === script);
+            } finally {
+                unstub?.();
+                await wallet.dispose();
+            }
+        };
+
+        it("skips a signer retired well before the wallet's birthday, unless told not to", async () => {
+            expect(await restoresDeprecatedHit(now() - 60 * DAY)).toBe(false);
+            expect(await restoresDeprecatedHit(now() - 60 * DAY, { ignoreBirthday: true })).toBe(
+                true,
+            );
+        });
+
+        it("still probes a signer with no cutoff, or one retired near the birthday", async () => {
+            expect(await restoresDeprecatedHit(0)).toBe(true);
+            expect(await restoresDeprecatedHit(now() - 10 * DAY)).toBe(true);
+        });
+
+        it("prunes the boot baseline and look-ahead signer set the same way", async () => {
+            const { wallet } = await makeHdWalletForTest(undefined, undefined, {
+                identity: bornToday(),
+            });
+            try {
+                wallet.refreshDeprecatedSigners({
+                    deprecatedSigners: [
+                        { pubkey: "bb".repeat(32), cutoffDate: BigInt(now() - 60 * DAY) },
+                        { pubkey: "cc".repeat(32), cutoffDate: 0n },
+                    ],
+                });
+                const signers = (
+                    wallet as unknown as { discoverableDeprecatedSigners(): Uint8Array[] }
+                ).discoverableDeprecatedSigners();
+                expect(signers.map((s) => hex.encode(s))).toEqual(["cc".repeat(32)]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
     });
 
     it("getBoardingUtxos unions funds across current + historical boarding addresses (plan §6-III.1)", async () => {

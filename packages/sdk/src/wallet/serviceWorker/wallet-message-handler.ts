@@ -981,7 +981,7 @@ export type ResponseGetDeprecatedSignerStatus = ResponseEnvelope & {
 
 export type RequestRestoreWallet = RequestEnvelope & {
     type: "RESTORE_WALLET";
-    payload: { gapLimit?: number };
+    payload: { gapLimit?: number; ignoreBirthday?: boolean };
 };
 export type ResponseRestoreWallet = ResponseEnvelope & {
     type: "RESTORE_WALLET_SUCCESS";

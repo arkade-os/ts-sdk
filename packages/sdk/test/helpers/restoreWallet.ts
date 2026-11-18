@@ -6,6 +6,7 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     RestOperatorProvider,
+    type SeedIdentity,
 } from "../../src";
 import type { IndexerProvider } from "../../src/providers/indexer";
 import type { OnchainProvider } from "../../src/providers/onchain";
@@ -318,14 +319,18 @@ export async function makeHdWalletForTest(
          * consumer holding imported keys would use.
          */
         wrapInKeyring?: boolean;
+        /** Replaces the test mnemonic, e.g. with an aezeed identity carrying a birthday. */
+        identity?: SeedIdentity;
     },
 ): Promise<HdRestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
-    const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-        isMainnet: false,
-    });
+    const identity =
+        opts?.identity ??
+        MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: false,
+        });
     const wallet = await Wallet.create({
         identity,
         walletMode: opts?.wrapInKeyring

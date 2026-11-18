@@ -2172,7 +2172,7 @@ export class ServiceWorkerWallet
      * long indexer-bound scan. AggregateError thrown by the worker is
      * reconstructed here so callers can inspect `.errors`.
      */
-    async restore(opts?: { gapLimit?: number }): Promise<void> {
+    async restore(opts?: RequestRestoreWallet["payload"]): Promise<void> {
         if (this._restoreInFlight) return this._restoreInFlight;
         this._restoreInFlight = (async () => {
             await this._restoreWorkerWallet(opts);
@@ -2183,7 +2183,7 @@ export class ServiceWorkerWallet
         return this._restoreInFlight;
     }
 
-    private async _restoreWorkerWallet(opts?: { gapLimit?: number }): Promise<void> {
+    private async _restoreWorkerWallet(opts?: RequestRestoreWallet["payload"]): Promise<void> {
         const message: RequestRestoreWallet = {
             id: getRandomId(),
             tag: this.messageTag,

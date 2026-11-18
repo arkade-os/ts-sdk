@@ -125,6 +125,14 @@ style and have not been backfilled.
   AEZ reference vectors and lnd's own output. `@noble/hashes` becomes a direct dependency.
   A service worker from an older SDK cannot hydrate the new `aezeed` envelope and throws,
   so ship page and worker together.
+- **Restore skips deprecated signers retired before an aezeed wallet existed.** For an
+  `AezeedIdentity` or its watch-only copy, three places no longer probe a deprecated
+  signer whose advertised cutoff passed more than 30 days before the wallet's birthday:
+  restore, the boot baseline and the look-ahead band. On mainnet today that halves the
+  candidate scripts per index. A signer with no advertised cutoff is always probed.
+  arkd enforces cutoffs only on spends, so an issuer sharing the xpub with stale operator
+  info could still mint under a retired signer. `restore({ ignoreBirthday: true })`
+  probes every signer, also through service-worker wallets.
 - **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
   `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
   (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the

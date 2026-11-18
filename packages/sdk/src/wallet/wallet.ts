@@ -37,6 +37,7 @@ import {
     validateBatchRecipientsWithoutTree,
 } from "./validation";
 import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
+import { AezeedIdentity, ReadonlyDescriptorIdentity } from "../identity/seedIdentity";
 import {
     canRecoverOnchain,
     canSpendOffchain,
@@ -90,7 +91,12 @@ import { assertSendDeadline, captureSendDeadline } from "./sendDeadline";
 import { captureInputExpiryFloor, meetsInputExpiryFloor } from "./sendInputExpiry";
 import { toBIP371TapTree, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
+import {
+    classifyAgainstSignerSet,
+    signerRetiredBefore,
+    signerSetFromInfo,
+    toXOnlySignerHex,
+} from "./signerRotation";
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
 import type { BatchExpiryPolicy } from "./batchExpiry";
 import { toTimelock } from "./timelockPolicy";
@@ -960,6 +966,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
         this._deprecatedSigners = next;
+    }
+
+    /** The aezeed birthday the identity carries, if any; discovery prunes signers against it. */
+    protected get identityBirthday(): Date | undefined {
+        const identity = this.identity;
+        return identity instanceof AezeedIdentity || identity instanceof ReadonlyDescriptorIdentity
+            ? identity.birthday
+            : undefined;
+    }
+
+    /** Deprecated signers (x-only) a receive script of this wallet could have been minted under. */
+    protected discoverableDeprecatedSigners(): Uint8Array[] {
+        const birthday = this.identityBirthday;
+        return [...this._deprecatedSigners]
+            .filter(([, cutoff]) => !signerRetiredBefore(cutoff, birthday))
+            .map(([signer]) => hex.decode(signer));
     }
 
     /** Boarding WATCH/HISTORY signer set: current ∪ deprecated (spend stays current-only). */
@@ -2456,7 +2478,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     : undefined;
             const baselineSigners = [
                 this.offchainTapscript.options.serverPubKey,
-                ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
+                ...this.discoverableDeprecatedSigners(),
             ];
             const seenBaselineScripts = new Set<string>();
             const baseline: CreateContractParams[] = [];
@@ -2765,7 +2787,7 @@ export class Wallet
         return {
             network: { hrp: this.network.hrp },
             serverPubKey: this.offchainTapscript.options.serverPubKey,
-            deprecatedSignerPubKeys: [...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
+            deprecatedSignerPubKeys: this.discoverableDeprecatedSigners(),
             csvTimelocks: this.walletContractTimelocks,
             delegatePubKey:
                 this.offchainTapscript instanceof DelegateVtxo.Script
@@ -3407,10 +3429,12 @@ export class Wallet
      *
      * @param opts.gapLimit - Consecutive-unused-index window. Default 20. A non-positive /
      * non-integer value throws synchronously.
+     * @param opts.ignoreBirthday - Probe every deprecated signer, including those an aezeed
+     * identity's birthday rules out (see `signerRetiredBefore`). For funds that look missing.
      *
-     * @note Concurrent calls coalesce onto the running scan; their `gapLimit` is ignored.
+     * @note Concurrent calls coalesce onto the running scan; their options are ignored.
      */
-    async restore(opts?: { gapLimit?: number }): Promise<void> {
+    async restore(opts?: { gapLimit?: number; ignoreBirthday?: boolean }): Promise<void> {
         // Coalesce FIRST so an ignored `gapLimit` never surfaces a misleading validation error.
         if (this._restoreInFlight) return this._restoreInFlight;
         const gapLimit = opts?.gapLimit ?? 20;
@@ -3420,7 +3444,7 @@ export class Wallet
             );
         }
         this._restoreInFlight = (async () => {
-            await this._runRestore(gapLimit);
+            await this._runRestore(gapLimit, opts?.ignoreBirthday === true);
             await runWalletRestoreHooks(this);
         })().finally(() => {
             this._restoreInFlight = undefined;
@@ -3428,7 +3452,7 @@ export class Wallet
         return this._restoreInFlight;
     }
 
-    private async _runRestore(gapLimit: number): Promise<void> {
+    private async _runRestore(gapLimit: number, ignoreBirthday: boolean): Promise<void> {
         // Keyring foreign keys sit outside the derivation tree the gap scan walks, so only the
         // unwrapped HD provider counts. `instanceof` (inside the getter), not duck-typing: a
         // non-HD provider exposing a same-named method would TypeError mid-scan.
@@ -3452,9 +3476,10 @@ export class Wallet
         // Current and deprecated signers from one fresh snapshot so they're mutually consistent
         // (NArk parity), rather than mixing a stale instance signer with fresh history.
         const currentSignerPubKey = toXOnly(hex.decode(arkInfo.signerPubkey), "ark signer key");
-        const deprecatedSignerPubKeys = arkInfo.deprecatedSigners.map((s) =>
-            toXOnly(hex.decode(s.pubkey), "deprecated signer key"),
-        );
+        const birthday = ignoreBirthday ? undefined : this.identityBirthday;
+        const deprecatedSignerPubKeys = arkInfo.deprecatedSigners
+            .filter((s) => !signerRetiredBefore(s.cutoffDate, birthday))
+            .map((s) => toXOnly(hex.decode(s.pubkey), "deprecated signer key"));
 
         const deps: DiscoveryDeps = {
             indexerProvider: this.indexerProvider,
