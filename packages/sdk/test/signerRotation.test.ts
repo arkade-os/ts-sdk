@@ -141,7 +141,7 @@ describe("signerRetiredBefore", () => {
     });
 
     it("fails open for a birthday in the future, minted under a wrong clock", () => {
-        expect(signerRetiredBefore(1n, new Date(Date.now() + 2 * DAY * 1000))).toBe(false);
+        expect(signerRetiredBefore(1n, new Date(Date.now() + 60_000))).toBe(false);
     });
 });
 

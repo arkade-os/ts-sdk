@@ -17,7 +17,13 @@ import type { SerializedSigningIdentity, SerializedReadonlyIdentity } from "./se
 import { DescriptorSigningRequest } from "./descriptorProvider";
 import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
-import { AEZEED_VERSION, decodeAezeed, encodeAezeed, type AezeedSeed } from "./aezeed";
+import {
+    AEZEED_VERSION,
+    assertAezeedVersion,
+    decodeAezeed,
+    encodeAezeed,
+    type AezeedSeed,
+} from "./aezeed";
 import {
     createPrfPasskey,
     DEFAULT_PASSKEY_LABEL,
@@ -468,15 +474,19 @@ export type AezeedOptions = SeedIdentityOptions & {
  */
 export class AezeedIdentity extends SeedIdentity {
     protected static override readonly seedLength = 16;
-    /** Day the phrase was minted (day resolution). */
-    readonly birthday: Date;
+    private readonly birthdayMs: number;
     /** aezeed internal version the phrase was minted under. */
     readonly aezeedVersion: number;
 
     private constructor(seed: AezeedSeed, opts: SeedIdentityOptions) {
         super(seed.entropy, opts);
-        this.birthday = seed.birthday;
+        this.birthdayMs = seed.birthday.getTime();
         this.aezeedVersion = seed.version;
+    }
+
+    /** Day the phrase was minted (day resolution); a fresh `Date` on every read. */
+    get birthday(): Date {
+        return new Date(this.birthdayMs);
     }
 
     /** Opens a phrase; throws on a bad word, checksum or passphrase, or a version this SDK lacks. */
@@ -488,24 +498,23 @@ export class AezeedIdentity extends SeedIdentity {
     static async generate(
         opts: AezeedOptions = {},
     ): Promise<{ identity: AezeedIdentity; mnemonic: string }> {
+        const options = { ...opts };
         const mnemonic = await encodeAezeed(
             {
                 version: AEZEED_VERSION,
                 birthday: new Date(),
                 entropy: crypto.getRandomValues(new Uint8Array(16)),
             },
-            { passphrase: opts.passphrase },
+            { passphrase: options.passphrase },
         );
         // Reopened, not built from the entropy: proves the words decode before anyone writes them
         // down, and truncates the birthday to the day they carry.
-        return { identity: await AezeedIdentity.fromMnemonic(mnemonic, opts), mnemonic };
+        return { identity: await AezeedIdentity.fromMnemonic(mnemonic, options), mnemonic };
     }
 
     /** @internal Service-worker hydrate: rebuilds from an envelope without re-running scrypt. */
     static fromEntropy(seed: AezeedSeed, opts: SeedIdentityOptions): AezeedIdentity {
-        if (!(seed.version >= 0 && seed.version <= AEZEED_VERSION)) {
-            throw new Error(`Unsupported aezeed version ${seed.version}`);
-        }
+        assertAezeedVersion(seed.version);
         return new AezeedIdentity(seed, opts);
     }
 
@@ -545,11 +554,12 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     private readonly indexZero: KeyInfo;
     /** Wildcard account-descriptor template (e.g. `tr([fp/86'/0'/0']xpub/0/*)`). */
     readonly descriptor: string;
+    private readonly birthdayMs?: number;
     /** Set when this watches an {@link AezeedIdentity}. */
-    readonly birthday?: Date;
     readonly aezeedVersion?: number;
 
     private constructor(descriptor: string, origin: AezeedOrigin = {}) {
+        if (origin.aezeedVersion !== undefined) assertAezeedVersion(origin.aezeedVersion);
         const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
         // Re-wrap the library's opaque non-ranged error (see SeedIdentity's constructor).
         let expansion;
@@ -571,8 +581,13 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
 
         this.descriptor = descriptor;
         this.indexZero = keyInfo;
-        this.birthday = origin.birthday;
+        this.birthdayMs = origin.birthday?.getTime();
         this.aezeedVersion = origin.aezeedVersion;
+    }
+
+    /** Set when this watches an {@link AezeedIdentity}; a fresh `Date` on every read. */
+    get birthday(): Date | undefined {
+        return this.birthdayMs === undefined ? undefined : new Date(this.birthdayMs);
     }
 
     /** @param descriptor - Wildcard-suffixed Taproot template (`tr([fp/path']xpub.../child/*)`). */

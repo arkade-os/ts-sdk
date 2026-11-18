@@ -29,7 +29,7 @@ export async function decodeAezeed(phrase: string, passphrase?: string): Promise
     const plain = aezDecrypt(key, NO_NONCE, [aezeedAd(salt)], TAU, raw.subarray(1, 24));
     if (!plain) throw new Error("Invalid aezeed passphrase");
     const version = plain[0];
-    if (version > AEZEED_VERSION) throw new Error(`Unsupported aezeed version ${version}`);
+    assertAezeedVersion(version);
     const days = (plain[1] << 8) | plain[2];
     return {
         version,
@@ -60,6 +60,13 @@ export async function encodeAezeed(
     raw.set(salt, 24);
     new DataView(raw.buffer).setUint32(29, crc32c(raw.subarray(0, 29)));
     return bytesToPhrase(raw);
+}
+
+/** @internal Throws for an internal version outside what this SDK opens. */
+export function assertAezeedVersion(version: number): void {
+    if (!(version >= 0 && version <= AEZEED_VERSION)) {
+        throw new Error(`Unsupported aezeed version ${version}`);
+    }
 }
 
 /** True when `phrase` is a well-formed aezeed (words, version byte, checksum). Needs no passphrase. */

@@ -2545,7 +2545,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // default one (degenerate equal delays) keeps that type and the manager widens its scope.
             const boardingCsvTimelock =
                 this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-            for (const serverPubKey of baselineSigners) {
+            const boardingSigners = [
+                this.offchainTapscript.options.serverPubKey,
+                ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
+            ];
+            for (const serverPubKey of boardingSigners) {
                 const baselineBoarding = new DefaultVtxo.Script({
                     pubKey: baselinePubkey,
                     serverPubKey,
@@ -3329,6 +3333,7 @@ export class Wallet
 
     /** Coalesces concurrent {@link restore} calls into one scan; cleared on settle. */
     private _restoreInFlight?: Promise<void>;
+    private _restoreIgnoresBirthday = false;
 
     private _addPendingSpends(inputs: readonly ExtendedCoin[]): void {
         for (const input of inputs) {
@@ -3432,24 +3437,30 @@ export class Wallet
      * @param opts.ignoreBirthday - Probe every deprecated signer, including those an aezeed
      * identity's birthday rules out (see `signerRetiredBefore`). For funds that look missing.
      *
-     * @note Concurrent calls coalesce onto the running scan; their options are ignored.
+     * @note Concurrent calls coalesce onto the running scan and their `gapLimit` is ignored,
+     * except that `ignoreBirthday` never joins a pruned scan: it runs once that one settles.
      */
     async restore(opts?: { gapLimit?: number; ignoreBirthday?: boolean }): Promise<void> {
+        const ignoreBirthday = opts?.ignoreBirthday === true;
+        const inFlight = this._restoreInFlight;
         // Coalesce FIRST so an ignored `gapLimit` never surfaces a misleading validation error.
-        if (this._restoreInFlight) return this._restoreInFlight;
+        if (inFlight && (this._restoreIgnoresBirthday || !ignoreBirthday)) return inFlight;
         const gapLimit = opts?.gapLimit ?? 20;
         if (!Number.isInteger(gapLimit) || gapLimit <= 0) {
             throw new Error(
                 `restore: gapLimit must be a positive integer (got ${String(opts?.gapLimit)})`,
             );
         }
-        this._restoreInFlight = (async () => {
-            await this._runRestore(gapLimit, opts?.ignoreBirthday === true);
+        const run: Promise<void> = (async () => {
+            await inFlight?.catch(() => undefined);
+            await this._runRestore(gapLimit, ignoreBirthday);
             await runWalletRestoreHooks(this);
         })().finally(() => {
-            this._restoreInFlight = undefined;
+            if (this._restoreInFlight === run) this._restoreInFlight = undefined;
         });
-        return this._restoreInFlight;
+        this._restoreInFlight = run;
+        this._restoreIgnoresBirthday = ignoreBirthday;
+        return run;
     }
 
     private async _runRestore(gapLimit: number, ignoreBirthday: boolean): Promise<void> {

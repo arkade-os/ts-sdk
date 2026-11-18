@@ -1148,6 +1148,30 @@ describe("ServiceWorkerWallet", () => {
         );
     });
 
+    it("restore() joins a pending scan, but sends a birthday bypass of its own", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            type: "RESTORE_WALLET_SUCCESS",
+        }));
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await Promise.all([
+            wallet.restore(),
+            wallet.restore(),
+            wallet.restore({ ignoreBirthday: true }),
+        ]);
+        const payloads = (serviceWorker.postMessage as ReturnType<typeof vi.fn>).mock.calls
+            .map(([message]) => message)
+            .filter((message) => message.type === "RESTORE_WALLET")
+            .map((message) => message.payload);
+        expect(payloads).toEqual([{}, { ignoreBirthday: true }]);
+    });
+
     it("restore() reconstructs a worker-side AggregateError on the page", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
             if (message.type !== "RESTORE_WALLET") return null;

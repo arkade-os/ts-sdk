@@ -1831,10 +1831,11 @@ describe("Wallet.restore", () => {
                 { isMainnet: false },
             );
 
-        // Funds a deprecated-signer VTXO at index 2, restores, and reports whether it was found.
+        // Funds a deprecated-signer VTXO at index 2, runs the restores concurrently, and reports
+        // whether it was found.
         const restoresDeprecatedHit = async (
             cutoffDate: number,
-            restoreOpts: { ignoreBirthday?: boolean } = {},
+            restores: { ignoreBirthday?: boolean }[] = [{}],
         ): Promise<boolean> => {
             const deprecatedXOnly = "ab".repeat(32);
             const { wallet, indexer, hdProvider, contractRepository } = await makeHdWalletForTest(
@@ -1856,7 +1857,7 @@ describe("Wallet.restore", () => {
                     }).pkScript,
                 );
                 indexer.usedScripts.add(script);
-                await wallet.restore({ gapLimit: 5, ...restoreOpts });
+                await Promise.all(restores.map((o) => wallet.restore({ gapLimit: 5, ...o })));
                 const rows = await collectContracts(contractRepository, { type: ["default"] });
                 return rows.some((c) => c.script === script);
             } finally {
@@ -1867,7 +1868,7 @@ describe("Wallet.restore", () => {
 
         it("skips a signer retired well before the wallet's birthday, unless told not to", async () => {
             expect(await restoresDeprecatedHit(now() - 60 * DAY)).toBe(false);
-            expect(await restoresDeprecatedHit(now() - 60 * DAY, { ignoreBirthday: true })).toBe(
+            expect(await restoresDeprecatedHit(now() - 60 * DAY, [{ ignoreBirthday: true }])).toBe(
                 true,
             );
         });
@@ -1877,22 +1878,46 @@ describe("Wallet.restore", () => {
             expect(await restoresDeprecatedHit(now() - 10 * DAY)).toBe(true);
         });
 
-        it("prunes the boot baseline and look-ahead signer set the same way", async () => {
-            const { wallet } = await makeHdWalletForTest(undefined, undefined, {
+        it("runs a bypass requested while a pruned restore is still in flight", async () => {
+            expect(
+                await restoresDeprecatedHit(now() - 60 * DAY, [{}, { ignoreBirthday: true }]),
+            ).toBe(true);
+        });
+
+        it("prunes the receive baseline and look-ahead at boot, not the boarding baseline", async () => {
+            // x-only 2G and 3G: valid points, distinct from the current signer (G).
+            const retired = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+            const kept = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+            const unstub = stubInfoWithDeprecated(
+                "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                [
+                    { cutoffDate: now() - 60 * DAY, pubkey: retired },
+                    { cutoffDate: 0, pubkey: kept },
+                ],
+            );
+            const { wallet, contractRepository } = await makeHdWalletForTest(undefined, undefined, {
                 identity: bornToday(),
             });
             try {
-                wallet.refreshDeprecatedSigners({
-                    deprecatedSigners: [
-                        { pubkey: "bb".repeat(32), cutoffDate: BigInt(now() - 60 * DAY) },
-                        { pubkey: "cc".repeat(32), cutoffDate: 0n },
-                    ],
-                });
-                const signers = (
-                    wallet as unknown as { discoverableDeprecatedSigners(): Uint8Array[] }
-                ).discoverableDeprecatedSigners();
-                expect(signers.map((s) => hex.encode(s))).toEqual(["cc".repeat(32)]);
+                await awaitWalletBooted(wallet);
+                const signersOf = async (type: string) =>
+                    (await collectContracts(contractRepository, { type: [type] })).map(
+                        (c) => c.params.serverPubKey,
+                    );
+                expect(await signersOf("default")).toContain(kept);
+                expect(await signersOf("default")).not.toContain(retired);
+                // Equal delays in this harness: a kept signer's boarding script is its default row.
+                expect(await signersOf("boarding")).toContain(retired);
+                const lookAhead = (
+                    wallet as unknown as {
+                        receiveCandidateDeps(): { deprecatedSignerPubKeys?: Uint8Array[] };
+                    }
+                ).receiveCandidateDeps();
+                expect(lookAhead.deprecatedSignerPubKeys?.map((k) => hex.encode(k))).toEqual([
+                    kept,
+                ]);
             } finally {
+                unstub();
                 await wallet.dispose();
             }
         });

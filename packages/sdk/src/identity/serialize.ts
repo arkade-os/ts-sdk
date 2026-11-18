@@ -199,6 +199,13 @@ function assertValidSerializedIdentity(s: { type: unknown }): asserts s is Seria
             bad(key, optional ? "integer | undefined" : "integer");
         }
     };
+    const asBirthday = (optional = false): void => {
+        asInt("birthday", optional);
+        const v = (s as Record<string, unknown>).birthday;
+        if (v !== undefined && Number.isNaN(new Date((v as number) * 1000).getTime())) {
+            bad("birthday", "Unix seconds within the Date range");
+        }
+    };
     switch (kind) {
         case "single-key":
             asStr("privateKey");
@@ -221,13 +228,13 @@ function assertValidSerializedIdentity(s: { type: unknown }): asserts s is Seria
         }
         case "aezeed":
             asStr("entropy");
-            asInt("birthday");
+            asBirthday();
             asInt("aezeedVersion");
             asStr("descriptor");
             return;
         case "readonly-descriptor":
             asStr("descriptor");
-            asInt("birthday", true);
+            asBirthday(true);
             asInt("aezeedVersion", true);
             return;
         default:

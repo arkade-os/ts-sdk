@@ -153,17 +153,16 @@ const identityWithDescriptorAndPassphrase = MnemonicIdentity.fromMnemonic(mnemon
 
 #### aezeed Phrases (Opt-In)
 
-lnd-format aezeed phrases are 24 words that also record the day the wallet was created. Opening one is async because of scrypt, and a wrong passphrase throws.
+See `AezeedIdentity` for the format and its birthday.
 
 ```typescript
 import { AezeedIdentity, isAezeedMnemonic } from '@arkade-os/sdk'
 
 const { identity, mnemonic } = await AezeedIdentity.generate({ passphrase: 'optional' })
 const restored = await AezeedIdentity.fromMnemonic(mnemonic, { passphrase: 'optional' })
-restored.birthday // day the words were minted
 
 // Both formats use the BIP39 wordlist; tell them apart before choosing a parser
-isAezeedMnemonic(words)
+isAezeedMnemonic(mnemonic) // true
 ```
 
 #### Watch-Only with ReadonlyDescriptorIdentity

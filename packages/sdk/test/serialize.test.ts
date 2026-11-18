@@ -361,11 +361,15 @@ describe("hydrateIdentity round-trip", () => {
         expect((rehydrated as ReadonlyDescriptorIdentity).aezeedVersion).toBe(0);
     });
 
-    it("refuses to hydrate an aezeed envelope with a version this SDK lacks", () => {
+    it("refuses to hydrate an aezeed envelope with a version this SDK lacks", async () => {
         const envelope = serializeSigningIdentity(aezeedIdentity());
+        const readonly = await serializeReadonlyIdentity(aezeedIdentity());
         for (const aezeedVersion of [1, -1]) {
             expect(() =>
                 hydrateIdentity({ ...envelope, aezeedVersion } as SerializedSigningIdentity),
+            ).toThrow(`Unsupported aezeed version ${aezeedVersion}`);
+            expect(() =>
+                hydrateIdentity({ ...readonly, aezeedVersion } as SerializedReadonlyIdentity),
             ).toThrow(`Unsupported aezeed version ${aezeedVersion}`);
         }
     });
@@ -465,6 +469,12 @@ describe("normalizeSerializedIdentity", () => {
                 aezeedVersion: 0.5,
             } as unknown as SerializedSigningIdentity),
         ).toThrow(/Malformed.*"aezeed".*"aezeedVersion"/);
+        expect(() =>
+            normalizeSerializedIdentity({
+                ...aezeed,
+                birthday: 8_640_000_000_001,
+            } as unknown as SerializedSigningIdentity),
+        ).toThrow(/Malformed.*"aezeed".*"birthday"/);
         expect(() =>
             normalizeSerializedIdentity({
                 type: "readonly-descriptor",

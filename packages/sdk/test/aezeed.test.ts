@@ -111,6 +111,7 @@ describe("AezeedIdentity", () => {
     });
 
     it("mints words that reopen to the same wallet, dated today", async () => {
+        const mintedAt = Date.now();
         const { identity, mnemonic } = await AezeedIdentity.generate({
             passphrase: "pw",
             isMainnet: false,
@@ -121,17 +122,22 @@ describe("AezeedIdentity", () => {
         });
         expect(reopened.descriptor).toBe(identity.descriptor);
         expect(await reopened.xOnlyPublicKey()).toEqual(await identity.xOnlyPublicKey());
-        const age = Date.now() - identity.birthday.getTime();
-        expect(age).toBeGreaterThanOrEqual(0);
+        const age = mintedAt - identity.birthday.getTime();
+        expect(age).toBeGreaterThanOrEqual(-1000);
         expect(age).toBeLessThan(86400 * 1000);
     });
 
-    it("keeps birthday and version on the watch-only copy", async () => {
+    it("keeps birthday and version on the watch-only copy, immune to mutation", async () => {
         const identity = await AezeedIdentity.fromMnemonic(LND_VECTORS[0].words);
         const readonly = await identity.toReadonly();
         expect(readonly.descriptor).toBe(identity.descriptor);
         expect(readonly.birthday).toEqual(identity.birthday);
         expect(readonly.aezeedVersion).toBe(0);
+
+        identity.birthday.setUTCFullYear(2099);
+        readonly.birthday!.setUTCFullYear(2099);
+        expect(identity.birthday.getTime()).toBe(birthdayMs(0));
+        expect(readonly.birthday!.getTime()).toBe(birthdayMs(0));
     });
 
     it("signs at a rotated index with the key BIP32 derives from the entropy", async () => {

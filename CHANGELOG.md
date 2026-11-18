@@ -128,13 +128,14 @@ style and have not been backfilled.
 - **Restore skips deprecated signers retired before an aezeed wallet existed.** For an
   `AezeedIdentity` or its watch-only copy, three places no longer probe a deprecated
   signer whose advertised cutoff passed more than 30 days before the wallet's birthday:
-  restore, the boot baseline and the look-ahead band. On mainnet today that halves the
-  candidate scripts per index. A signer with no advertised cutoff is always probed, and
-  so is every signer when the birthday lies in the future (a phrase minted under a wrong
-  clock).
+  restore, the boot-time receive baseline and the look-ahead band. Boarding rows still
+  cover every signer. On mainnet today that halves the candidate scripts per index. A
+  signer with no advertised cutoff is always probed, and so is every signer when the
+  birthday lies in the future (a phrase minted under a wrong clock).
   arkd enforces cutoffs only on spends, so an issuer sharing the xpub with stale operator
   info could still mint under a retired signer. `restore({ ignoreBirthday: true })`
-  probes every signer, also through service-worker wallets.
+  probes every signer, also through service-worker wallets, and runs after a restore
+  already in flight instead of joining it.
 - **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
   `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
   (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the
