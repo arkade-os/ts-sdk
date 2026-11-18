@@ -130,6 +130,20 @@ style and have not been backfilled.
   `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
   helper. Type-level only, non-breaking.
 
+- **`PrfUnavailable` says why.** Its new `reason` is `"unsupported"` when PRF
+  was reported off (`enabled: false`) as the passkey was made, or there is no
+  WebAuthn; `"unknown"` when the browser returned no PRF output at all, so
+  another browser may still get a secret from it; `"no-secret"` when a use
+  returned no PRF secret,
+  `"secret-changed"` when the next use gave another one, `"malformed"` when the
+  secret was not 32 usable bytes, and `"unconfirmed"` on `PasskeyUnconfirmed`.
+  Only `"unsupported"` means the passkey never gives a key. An app that falls
+  back to another scheme for a passkey with a `credentialId` should do so only
+  for that reason: after the others the same passkey may still derive words
+  elsewhere, and a passkey login there would open a different wallet. The type
+  is exported as `PrfUnavailableReason`; a `PrfUnavailable` built without one
+  has no `reason`. Non-breaking.
+
 ### Bug Fixes
 
 - **`ContractWatcher` no longer reconnects hard enough to hold a client over a
