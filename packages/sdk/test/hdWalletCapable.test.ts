@@ -5,6 +5,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     Wallet,
     MnemonicIdentity,
+    AezeedIdentity,
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
@@ -107,6 +108,33 @@ describe("HDWalletCapable", () => {
         await expect(wallet.signerForDescriptor("tr(deadbeef)")).rejects.toBeInstanceOf(
             ForeignDescriptorError,
         );
+        await wallet.dispose();
+    });
+
+    it("runs an aezeed identity as an HD wallet", async () => {
+        const identity = AezeedIdentity.fromEntropy(
+            {
+                version: 0,
+                birthday: new Date(),
+                entropy: hex.decode("81b637d86359e6960de795e41e0b4cfd"),
+            },
+            { isMainnet: false },
+        );
+        const wallet = await Wallet.create({
+            identity,
+            walletMode: "hd",
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+        const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+        expect(provider).toBeInstanceOf(HDDescriptorProvider);
+        const current = (await wallet.getCurrentSigningDescriptor())!;
+        expect(current).toBe(provider.materializeDescriptorAt(0));
+        const signer = await wallet.signerForDescriptor(current);
+        expect(await signer!.xOnlyPublicKey()).toEqual(deriveDescriptorLeafPubKey(current));
         await wallet.dispose();
     });
 

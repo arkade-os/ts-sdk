@@ -11,12 +11,19 @@ export {
     PasskeyUnconfirmed,
 } from "./identity/passkey";
 export type { WebAuthnClient, PrfUnavailableReason } from "./identity/passkey";
-export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
+export type {
+    PasskeySource,
+    PasskeyMnemonic,
+    AezeedOptions,
+    AezeedOrigin,
+} from "./identity/seedIdentity";
+export { isAezeedMnemonic } from "./identity/aezeed";
 export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,
     MnemonicIdentity,
+    AezeedIdentity,
     ReadonlyDescriptorIdentity,
 } from "./identity/seedIdentity";
 import type {
@@ -678,6 +685,7 @@ export {
     ReadonlySingleKey,
     SeedIdentity,
     MnemonicIdentity,
+    AezeedIdentity,
     ReadonlyDescriptorIdentity,
     isBatchSignable,
     DescriptorIdentity,

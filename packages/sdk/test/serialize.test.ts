@@ -5,6 +5,7 @@ import { SingleKey, ReadonlySingleKey } from "../src/identity/singleKey";
 import {
     SeedIdentity,
     MnemonicIdentity,
+    AezeedIdentity,
     ReadonlyDescriptorIdentity,
 } from "../src/identity/seedIdentity";
 import {
@@ -312,6 +313,62 @@ describe("hydrateIdentity round-trip", () => {
             Array.from(await signing.xOnlyPublicKey()),
         );
     });
+
+    const aezeedIdentity = () =>
+        AezeedIdentity.fromEntropy(
+            {
+                version: 0,
+                birthday: new Date(1_763_337_600_000),
+                entropy: hex.decode("81b637d86359e6960de795e41e0b4cfd"),
+            },
+            { isMainnet: true },
+        );
+
+    it("AezeedIdentity -> aezeed -> AezeedIdentity keeps keys, birthday and version", async () => {
+        const identity = aezeedIdentity();
+        const envelope = serializeSigningIdentity(identity);
+        expect(envelope).toEqual({
+            type: "aezeed",
+            entropy: "81b637d86359e6960de795e41e0b4cfd",
+            birthday: 1_763_337_600,
+            aezeedVersion: 0,
+            descriptor: identity.descriptor,
+        });
+        expect(isSigningSerialized(envelope)).toBe(true);
+
+        const rehydrated = hydrateIdentity(normalizeSerializedIdentity(envelope));
+        expect(rehydrated).toBeInstanceOf(AezeedIdentity);
+        const aezeed = rehydrated as AezeedIdentity;
+        expect(aezeed.descriptor).toBe(identity.descriptor);
+        expect(aezeed.birthday).toEqual(identity.birthday);
+        expect(aezeed.aezeedVersion).toBe(0);
+        expect(await aezeed.xOnlyPublicKey()).toEqual(await identity.xOnlyPublicKey());
+    });
+
+    it("AezeedIdentity readonly downgrade keeps birthday and version, not the entropy", async () => {
+        const envelope = await serializeReadonlyIdentity(aezeedIdentity());
+        expect(envelope).toEqual({
+            type: "readonly-descriptor",
+            descriptor: aezeedIdentity().descriptor,
+            birthday: 1_763_337_600,
+            aezeedVersion: 0,
+        });
+        const rehydrated = hydrateIdentity(normalizeSerializedIdentity(envelope));
+        expect(rehydrated).toBeInstanceOf(ReadonlyDescriptorIdentity);
+        expect((rehydrated as ReadonlyDescriptorIdentity).birthday).toEqual(
+            aezeedIdentity().birthday,
+        );
+        expect((rehydrated as ReadonlyDescriptorIdentity).aezeedVersion).toBe(0);
+    });
+
+    it("refuses to hydrate an aezeed envelope with a version this SDK lacks", () => {
+        const envelope = serializeSigningIdentity(aezeedIdentity());
+        for (const aezeedVersion of [1, -1]) {
+            expect(() =>
+                hydrateIdentity({ ...envelope, aezeedVersion } as SerializedSigningIdentity),
+            ).toThrow(`Unsupported aezeed version ${aezeedVersion}`);
+        }
+    });
 });
 
 describe("normalizeSerializedIdentity", () => {
@@ -382,6 +439,39 @@ describe("normalizeSerializedIdentity", () => {
                 type: "readonly-descriptor",
             } as unknown as SerializedReadonlyIdentity),
         ).toThrow(/Malformed.*"readonly-descriptor".*"descriptor"/);
+
+        const aezeed = {
+            type: "aezeed",
+            entropy: "00".repeat(16),
+            birthday: 1_763_337_600,
+            aezeedVersion: 0,
+            descriptor: "tr(...)",
+        };
+        expect(() =>
+            normalizeSerializedIdentity({
+                ...aezeed,
+                entropy: undefined,
+            } as unknown as SerializedSigningIdentity),
+        ).toThrow(/Malformed.*"aezeed".*"entropy"/);
+        expect(() =>
+            normalizeSerializedIdentity({
+                ...aezeed,
+                birthday: "2025-11-17",
+            } as unknown as SerializedSigningIdentity),
+        ).toThrow(/Malformed.*"aezeed".*"birthday"/);
+        expect(() =>
+            normalizeSerializedIdentity({
+                ...aezeed,
+                aezeedVersion: 0.5,
+            } as unknown as SerializedSigningIdentity),
+        ).toThrow(/Malformed.*"aezeed".*"aezeedVersion"/);
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "readonly-descriptor",
+                descriptor: "tr(...)",
+                birthday: "yesterday",
+            } as unknown as SerializedReadonlyIdentity),
+        ).toThrow(/Malformed.*"readonly-descriptor".*"birthday"/);
     });
 
     it("accepts a mnemonic envelope with undefined passphrase", () => {
@@ -462,6 +552,7 @@ describe("identity barrel public surface", () => {
         const barrel = await import("../src/identity");
         expect(barrel.SeedIdentity).toBe(SeedIdentity);
         expect(barrel.MnemonicIdentity).toBe(MnemonicIdentity);
+        expect(barrel.AezeedIdentity).toBe(AezeedIdentity);
         expect(barrel.ReadonlyDescriptorIdentity).toBe(ReadonlyDescriptorIdentity);
         expect(barrel.SingleKey).toBe(SingleKey);
         expect(barrel.ReadonlySingleKey).toBe(ReadonlySingleKey);

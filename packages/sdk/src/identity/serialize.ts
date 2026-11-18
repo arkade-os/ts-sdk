@@ -4,6 +4,7 @@ import { SingleKey, ReadonlySingleKey } from "./singleKey";
 import {
     SeedIdentity,
     MnemonicIdentity,
+    AezeedIdentity,
     ReadonlyDescriptorIdentity,
     serializeSeedOwnedSigningIdentity,
     serializeSeedOwnedReadonlyIdentity,
@@ -30,6 +31,15 @@ export type SerializedSigningIdentity =
           mnemonic: string;
           descriptor: string;
           passphrase?: string;
+      }
+    | {
+          // Deciphered entropy, not the words: hydrating must not re-run aezeed's scrypt.
+          type: "aezeed";
+          entropy: string;
+          /** Unix seconds. */
+          birthday: number;
+          aezeedVersion: number;
+          descriptor: string;
       };
 
 /**
@@ -40,13 +50,21 @@ export type SerializedSigningIdentity =
  */
 export type SerializedReadonlyIdentity =
     | { type: "readonly-single-key"; publicKey: string }
-    | { type: "readonly-descriptor"; descriptor: string };
+    | {
+          type: "readonly-descriptor";
+          descriptor: string;
+          /** Unix seconds; set for an aezeed-born wallet. Older workers ignore it. */
+          birthday?: number;
+          aezeedVersion?: number;
+      };
 
 export type SerializedIdentity = SerializedSigningIdentity | SerializedReadonlyIdentity;
 
 /** Type guard — true for signing envelopes, false for readonly envelopes. */
 export function isSigningSerialized(s: SerializedIdentity): s is SerializedSigningIdentity {
-    return s.type === "single-key" || s.type === "seed" || s.type === "mnemonic";
+    return (
+        s.type === "single-key" || s.type === "seed" || s.type === "mnemonic" || s.type === "aezeed"
+    );
 }
 
 /** Identity that can expose a raw 32-byte private key via `toHex()`. */
@@ -123,8 +141,20 @@ export function hydrateIdentity(s: SerializedIdentity): Identity | ReadonlyIdent
                 descriptor: s.descriptor,
                 passphrase: s.passphrase,
             });
+        case "aezeed":
+            return AezeedIdentity.fromEntropy(
+                {
+                    version: s.aezeedVersion,
+                    birthday: new Date(s.birthday * 1000),
+                    entropy: hex.decode(s.entropy),
+                },
+                { descriptor: s.descriptor },
+            );
         case "readonly-descriptor":
-            return ReadonlyDescriptorIdentity.fromDescriptor(s.descriptor);
+            return ReadonlyDescriptorIdentity.fromDescriptor(s.descriptor, {
+                birthday: s.birthday === undefined ? undefined : new Date(s.birthday * 1000),
+                aezeedVersion: s.aezeedVersion,
+            });
         default:
             // Belt-and-suspenders: `normalizeSerializedIdentity` already
             // rejects unknown `type` values at the wire boundary. Without
@@ -163,6 +193,12 @@ function assertValidSerializedIdentity(s: { type: unknown }): asserts s is Seria
         const v = (s as Record<string, unknown>)[key];
         return typeof v === "string" ? v : bad(key, "string");
     };
+    const asInt = (key: string, optional = false): void => {
+        const v = (s as Record<string, unknown>)[key];
+        if (!(optional && v === undefined) && !Number.isSafeInteger(v)) {
+            bad(key, optional ? "integer | undefined" : "integer");
+        }
+    };
     switch (kind) {
         case "single-key":
             asStr("privateKey");
@@ -183,8 +219,16 @@ function assertValidSerializedIdentity(s: { type: unknown }): asserts s is Seria
             }
             return;
         }
+        case "aezeed":
+            asStr("entropy");
+            asInt("birthday");
+            asInt("aezeedVersion");
+            asStr("descriptor");
+            return;
         case "readonly-descriptor":
             asStr("descriptor");
+            asInt("birthday", true);
+            asInt("aezeedVersion", true);
             return;
         default:
             throw new Error(`Unknown serialized identity type: ${String(kind)}`);

@@ -17,6 +17,7 @@ import type { SerializedSigningIdentity, SerializedReadonlyIdentity } from "./se
 import { DescriptorSigningRequest } from "./descriptorProvider";
 import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
+import { AEZEED_VERSION, decodeAezeed, encodeAezeed, type AezeedSeed } from "./aezeed";
 import {
     createPrfPasskey,
     DEFAULT_PASSKEY_LABEL,
@@ -114,6 +115,8 @@ export interface PasskeyMnemonic {
  * ```
  */
 export class SeedIdentity implements HDCapableIdentity {
+    /** BIP39 seeds are 64 bytes; {@link AezeedIdentity} passes its 16-byte entropy instead. */
+    protected static readonly seedLength: number = 64;
     private readonly derivedKey: Uint8Array;
     /** Wildcard account-descriptor template (e.g. `tr([fp/86'/0'/0']xpub/0/*)`). */
     readonly descriptor: string;
@@ -126,8 +129,9 @@ export class SeedIdentity implements HDCapableIdentity {
      * derivation path.
      */
     constructor(seed: Uint8Array, opts: SeedIdentityOptions = {}) {
-        if (seed.length !== 64) {
-            throw new Error("Seed must be 64 bytes");
+        const { seedLength } = new.target;
+        if (seed.length !== seedLength) {
+            throw new Error(`Seed must be ${seedLength} bytes`);
         }
 
         let descriptor: string;
@@ -444,6 +448,82 @@ export class MnemonicIdentity extends SeedIdentity {
     }
 }
 
+/** Used for an {@link AezeedIdentity}. */
+export type AezeedOptions = SeedIdentityOptions & {
+    /** The aezeed cipher passphrase. A wrong one is rejected rather than opening another wallet. */
+    passphrase?: string;
+};
+
+/**
+ * Identity from an lnd-format aezeed phrase: 24 words that also carry the day the wallet was
+ * created and a version. The 16-byte entropy is the BIP32 root, as in lnd; derivation then matches
+ * {@link SeedIdentity}. Opt-in: {@link MnemonicIdentity} (BIP39) stays the default.
+ *
+ * @example
+ * ```typescript
+ * const { identity, mnemonic } = await AezeedIdentity.generate({ isMainnet: true });
+ * const restored = await AezeedIdentity.fromMnemonic(mnemonic, { isMainnet: true });
+ * restored.birthday; // the day the words were minted
+ * ```
+ */
+export class AezeedIdentity extends SeedIdentity {
+    protected static override readonly seedLength = 16;
+    /** Day the phrase was minted (day resolution). */
+    readonly birthday: Date;
+    /** aezeed internal version the phrase was minted under. */
+    readonly aezeedVersion: number;
+
+    private constructor(seed: AezeedSeed, opts: SeedIdentityOptions) {
+        super(seed.entropy, opts);
+        this.birthday = seed.birthday;
+        this.aezeedVersion = seed.version;
+    }
+
+    /** Opens a phrase; throws on a bad word, checksum or passphrase, or a version this SDK lacks. */
+    static async fromMnemonic(phrase: string, opts: AezeedOptions = {}): Promise<AezeedIdentity> {
+        return new AezeedIdentity(await decodeAezeed(phrase, opts.passphrase), opts);
+    }
+
+    /** Mints a new phrase dated today; `mnemonic` is the user's backup. */
+    static async generate(
+        opts: AezeedOptions = {},
+    ): Promise<{ identity: AezeedIdentity; mnemonic: string }> {
+        const mnemonic = await encodeAezeed(
+            {
+                version: AEZEED_VERSION,
+                birthday: new Date(),
+                entropy: crypto.getRandomValues(new Uint8Array(16)),
+            },
+            { passphrase: opts.passphrase },
+        );
+        // Reopened, not built from the entropy: proves the words decode before anyone writes them
+        // down, and truncates the birthday to the day they carry.
+        return { identity: await AezeedIdentity.fromMnemonic(mnemonic, opts), mnemonic };
+    }
+
+    /** @internal Service-worker hydrate: rebuilds from an envelope without re-running scrypt. */
+    static fromEntropy(seed: AezeedSeed, opts: SeedIdentityOptions): AezeedIdentity {
+        if (!(seed.version >= 0 && seed.version <= AEZEED_VERSION)) {
+            throw new Error(`Unsupported aezeed version ${seed.version}`);
+        }
+        return new AezeedIdentity(seed, opts);
+    }
+
+    /** Watch-only copy that keeps the birthday and version. */
+    override async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
+        return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor, {
+            birthday: this.birthday,
+            aezeedVersion: this.aezeedVersion,
+        });
+    }
+}
+
+/** Where a watch-only identity came from, when it was an aezeed phrase. */
+export interface AezeedOrigin {
+    birthday?: Date;
+    aezeedVersion?: number;
+}
+
 /**
  * Watch-only HD identity from a wildcard descriptor template (e.g.
  * `tr([fp/86'/0'/0']xpub.../0/*)`): derives public keys and rotates HD indices, cannot sign.
@@ -465,8 +545,11 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     private readonly indexZero: KeyInfo;
     /** Wildcard account-descriptor template (e.g. `tr([fp/86'/0'/0']xpub/0/*)`). */
     readonly descriptor: string;
+    /** Set when this watches an {@link AezeedIdentity}. */
+    readonly birthday?: Date;
+    readonly aezeedVersion?: number;
 
-    private constructor(descriptor: string) {
+    private constructor(descriptor: string, origin: AezeedOrigin = {}) {
         const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
         // Re-wrap the library's opaque non-ranged error (see SeedIdentity's constructor).
         let expansion;
@@ -488,11 +571,13 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
 
         this.descriptor = descriptor;
         this.indexZero = keyInfo;
+        this.birthday = origin.birthday;
+        this.aezeedVersion = origin.aezeedVersion;
     }
 
     /** @param descriptor - Wildcard-suffixed Taproot template (`tr([fp/path']xpub.../child/*)`). */
-    static fromDescriptor(descriptor: string): ReadonlyDescriptorIdentity {
-        return new ReadonlyDescriptorIdentity(descriptor);
+    static fromDescriptor(descriptor: string, origin?: AezeedOrigin): ReadonlyDescriptorIdentity {
+        return new ReadonlyDescriptorIdentity(descriptor, origin);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
@@ -554,12 +639,23 @@ export function serializeSeedOwnedSigningIdentity(
             "SeedIdentity is missing internal secret state; was it constructed via SeedIdentity.fromSeed() or the class constructor?",
         );
     }
+    if (identity instanceof AezeedIdentity) {
+        return {
+            type: "aezeed",
+            entropy: hex.encode(seed),
+            birthday: toUnixSeconds(identity.birthday),
+            aezeedVersion: identity.aezeedVersion,
+            descriptor: identity.descriptor,
+        };
+    }
     return {
         type: "seed",
         seed: hex.encode(seed),
         descriptor: identity.descriptor,
     };
 }
+
+const toUnixSeconds = (date: Date) => Math.floor(date.getTime() / 1000);
 
 /**
  * Downgrade a seed- or descriptor-backed identity to a descriptor-only envelope; secret material
@@ -570,8 +666,14 @@ export function serializeSeedOwnedSigningIdentity(
 export function serializeSeedOwnedReadonlyIdentity(
     identity: SeedIdentity | ReadonlyDescriptorIdentity,
 ): SerializedReadonlyIdentity {
+    const origin: AezeedOrigin =
+        identity instanceof AezeedIdentity || identity instanceof ReadonlyDescriptorIdentity
+            ? identity
+            : {};
     return {
         type: "readonly-descriptor",
         descriptor: identity.descriptor,
+        ...(origin.birthday && { birthday: toUnixSeconds(origin.birthday) }),
+        ...(origin.aezeedVersion !== undefined && { aezeedVersion: origin.aezeedVersion }),
     };
 }

@@ -111,6 +111,20 @@ style and have not been backfilled.
 
 ### Features
 
+- **Opt-in aezeed recovery phrases.** `AezeedIdentity.generate()` mints, and
+  `AezeedIdentity.fromMnemonic()` opens, lnd-format 24-word aezeed phrases. Unlike BIP39,
+  the words carry the day the wallet was created and a version. The identity exposes them
+  as `birthday` and `aezeedVersion`, and keeps them through `toReadonly()` and
+  service-worker serialization. A wrong passphrase is rejected instead of opening an empty
+  wallet. A phrase whose internal version is newer than the SDK is refused, so a later
+  release can retire address variants by bumping the version. As in lnd, the 16-byte
+  entropy is the BIP32 root, followed by the usual BIP86 template.
+  `isAezeedMnemonic()` tells the two formats apart without the passphrase, since both use
+  the BIP39 English wordlist. `MnemonicIdentity` remains the default.
+  The AEZ cipher is a self-contained port with no `Buffer` dependency, checked against the
+  AEZ reference vectors and lnd's own output. `@noble/hashes` becomes a direct dependency.
+  A service worker from an older SDK cannot hydrate the new `aezeed` envelope and throws,
+  so ship page and worker together.
 - **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
   `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
   (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the
