@@ -43,10 +43,6 @@ export type ChainTip = { height: number; time: number };
 
 /** The contract's exit CSV; undefined means no CSV exit path (never cosignable). */
 export function exitCsvOf(contract: Contract): RelativeTimelock | undefined {
-    // its exit delay is a template variable, not a csvTimelock param
-    if (contract.type === ExecutorContractHandler.type) {
-        return ExecutorContractHandler.createScript(contract.params).options.csvTimelock;
-    }
     const sequence = exitSequence(contract);
     return sequence === undefined ? undefined : sequenceToTimelock(sequence);
 }

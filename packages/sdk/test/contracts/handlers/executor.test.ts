@@ -96,13 +96,15 @@ describe("ExecutorContractHandler", () => {
                 {
                     contract: {
                         definition: {
+                            contractName: "PubkeyCovenant",
                             constructorInputs: [{ name: "owner", type: "pubkey" }],
                             functions: [
                                 {
                                     name: "pay",
-                                    arkade: { asm: ["<owner>", "OP_DROP", "OP_1"] },
+                                    arkade: { inputs: [], asm: ["<owner>", "OP_DROP", "OP_1"] },
                                     leaves: [
                                         {
+                                            name: "pay",
                                             asm: [
                                                 "<SERVER_KEY>",
                                                 "OP_CHECKSIGVERIFY",
