@@ -111,13 +111,21 @@ style and have not been backfilled.
 
 ### Features
 
-- **Unreliable solvers lose quote priority temporarily.** Routing tracks repeated candidate-local failures per network and direction, moving cooling solvers behind healthy alternatives before preferred-first, usage or cost ordering. A verified quote restores priority; an injectable health store retains the advisory history across client lifetimes. Cancellation, request limits, acceptance and recovery do not penalize solvers.
-
-- **Prefer one solver before automatically ranked fallbacks.** Direction-scoped routing preferences accept `preferFirst`, placing an enabled solver ahead of usage or advertised-cost ordering while retaining quote failover. Pauses, explicit selection and issued-quote ownership remain authoritative.
-
-- **Solver pauses preserve cards and priorities.** Routing preferences accept disabled solver IDs, excluded before candidate enumeration, advertised-cost feeds and new quotes. Applications can combine global card pauses with direction-specific choices; issued quotes and accepted swaps keep their selected solver.
-
-- **Swap clients can prioritize solvers and fail over before acceptance.** Optional per-direction routing supports saved priority, successful usage and amount-aware advertised cost. Quote preparation tries another eligible solver after a candidate-local failure, preserves cancellation and closes its transports on disposal; accepted quotes, uncertain funding and recovery retain their original solver. Existing explicit selection and single-solver defaults remain compatible.
+- **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
+  `policy.solverRouting`, a direction's solvers are ordered by saved priority,
+  completed usage (`completedSolverUsage`) or amount-aware advertised cost, after
+  an optional `preferFirst` solver; paused solvers are left out.
+  `client.candidates()` returns that order without negotiating. When a solver
+  fails for a reason local to it (no reply, relay outage, invalid or expired
+  quote, unavailable feed, unsupported amount), `quote()` tries the next one and
+  throws `SolverRoutesUnavailable` once all have failed. Two consecutive
+  failures move a solver behind healthy ones for a minute, doubling up to
+  fifteen; a verified quote or thirty quiet minutes reset it
+  (`createSolverHealth`, in memory unless storage is passed). Failover ends at
+  the quote: issued quotes and accepted swaps keep their solver, and an explicit
+  `selectMarket` turns it off. Without `solverRouting` the client behaves as
+  before, except that nostr transport failures now throw `SolverUnavailable`
+  (`RelayUnavailable` extends it) and mismatched replies `SolverResponseInvalid`.
 
 - **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
   `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
@@ -850,11 +858,11 @@ style and have not been backfilled.
 
 ### Internal
 
-- **Solver routing defaults are documented at the API boundary.** `SolverRoutingPolicy` TSDoc specifies selection precedence, preference lookup, cost estimates and custom-transport failures; the README links to that contract. `selectMarket` receives discovery order before routing preferences, usage counting accepts the canonical direction key, and candidate feed requests and routed amount-error wrapping are explicit.
-- **Solver cost ranking accepts portable fetch adapters.** The vendored discovery snapshot uses the package's `FetchLike` interface, preserving minimal custom transports and global `fetch` callers without changing runtime code.
-- **Routing identity and disclosure boundaries are explicit.** Source comments identify canonical persisted asset IDs, independent responder checks and asset RFQ data already disclosed before reference-feed fallback.
-- **The routing policy describes repeated request disclosure.** Opt-in quote attempts can disclose an invoice or other request details to multiple solvers; each candidate still passes full verification before funding.
-- **Releases reject the temporary discovery archive before publishing any package.** Selecting swap, including through an SDK release, requires replacing its vendored discovery dependency with a published release before versions, tags or publication can change.
+- **Releases refuse swap while its discovery dependency is vendored.**
+  `@arkade-os/swap` depends on a `file:` snapshot of `@arkade-os/solver-discovery`
+  until the routing exports are published. `release.mjs` stops before changing
+  versions or tags when the selection includes swap and that dependency is still
+  a `file:` path.
 
 ### Breaking Changes
 
