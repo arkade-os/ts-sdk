@@ -51,9 +51,10 @@ describe("RestExecutorProvider", () => {
     });
 
     it("posts templateId and variables and unwraps the delegation", async () => {
+        const input = { name: "board", onchain: true, script: "51", address: "tark1new" };
         const delegation = {
             id: "7",
-            address: "tark1new",
+            inputs: [input],
             status: "active",
             templateId: "tpl-1",
             variables: { owner: "aa" },
@@ -65,7 +66,7 @@ describe("RestExecutorProvider", () => {
             }),
         ).resolves.toEqual({
             id: 7,
-            address: "tark1new",
+            inputs: [input],
             status: "active",
             templateId: "tpl-1",
             variables: { owner: "aa" },
@@ -81,7 +82,6 @@ describe("RestExecutorProvider", () => {
     it("includes expiresAt in the request when given, and omits it otherwise", async () => {
         const delegation = {
             id: "1",
-            address: "tark1x",
             status: "active",
             templateId: "tpl-1",
         };
@@ -107,7 +107,13 @@ describe("RestExecutorProvider", () => {
 
     it("parses a delegation's coins, rejecting an unknown status, bad variables and amounts", async () => {
         const provider = new RestExecutorProvider("https://executor.test");
-        const delegation = { id: "5", address: "tark1x", status: "active", templateId: "t" };
+        const input = { name: "board", script: "51", address: "tark1x" };
+        const delegation = {
+            id: "5",
+            inputs: [input],
+            status: "active",
+            templateId: "t",
+        };
         const coin = { outpoint: "aa:0", amount: "100000", due: "1699990000", status: "present" };
         const spent = { ...coin, outpoint: "bb:0", status: "spent" };
         const parsed = {
@@ -118,7 +124,14 @@ describe("RestExecutorProvider", () => {
         };
         respond({ delegation, coins: [coin, spent] });
         await expect(provider.getDelegation("tark1x")).resolves.toEqual({
-            delegation: { ...delegation, id: 5, variables: {}, expiresAt: undefined },
+            delegation: {
+                ...delegation,
+                id: 5,
+                // the gateway omits onchain: false
+                inputs: [{ ...input, onchain: false }],
+                variables: {},
+                expiresAt: undefined,
+            },
             coins: [
                 { ...parsed, outpoint: "aa:0", status: "present" },
                 { ...parsed, outpoint: "bb:0", status: "spent" },
@@ -131,6 +144,11 @@ describe("RestExecutorProvider", () => {
             [{ delegation: { ...delegation, status: "paused" } }, "unknown status paused"],
             [{ delegation: { ...delegation, variables: { a: 1 } } }, "variables are not strings"],
             [{ delegation: { ...delegation, id: "1.5" } }, "id is not an integer"],
+            [
+                { delegation: { ...delegation, inputs: [{ ...input, address: "" }] } },
+                "input: missing address",
+            ],
+            [{ delegation: { ...delegation, inputs: {} } }, "inputs is not an array"],
             [{ delegation, coins: [{ outpoint: "aa:0" }] }, "missing amount"],
             [{ delegation, coins: [{ ...coin, status: "gone" }] }, "coin status"],
             [{ delegation, coins: [{ outpoint: "aa:0", amount: -5 }] }, "amount is negative"],
@@ -138,6 +156,14 @@ describe("RestExecutorProvider", () => {
             respond(body);
             await expect(provider.getDelegation("tark1x")).rejects.toThrow(error);
         }
+    });
+
+    it("parses a delegation without inputs as having none", async () => {
+        respond({ delegation: { id: "5", status: "active", templateId: "t" } });
+        const { delegation } = await new RestExecutorProvider(
+            "https://executor.test",
+        ).getDelegation("tark1x");
+        expect(delegation.inputs).toEqual([]);
     });
 
     it("tells an unknown watch from an unrouted path, both 404", async () => {
@@ -198,7 +224,9 @@ describe("ExecutorManagerImpl.register", () => {
                 emulatorPubkey: vectors.emulatorPubkey,
             },
             params,
-            delegation: expect.objectContaining({ address: vectors.boarding.address }),
+            delegation: expect.objectContaining({
+                inputs: [expect.objectContaining({ address: vectors.boarding.address })],
+            }),
         });
         expect(provider.registerDelegation).toHaveBeenCalledWith(
             BOARDING_ID,
@@ -215,14 +243,12 @@ describe("ExecutorManagerImpl.register", () => {
             {
                 delegationStatus: "active",
                 delegationExpiresAt: 9,
-                delegationAddress: vectors.boarding.address,
             },
         ]);
         expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
             metadata: {
                 delegationStatus: "active",
                 delegationExpiresAt: 9,
-                delegationAddress: vectors.boarding.address,
             },
         });
     });
@@ -261,7 +287,6 @@ describe("ExecutorManagerImpl.register", () => {
             metadata: {
                 note: "kept",
                 delegationStatus: "active",
-                delegationAddress: vectors.boarding.address,
             },
         });
     });
@@ -275,19 +300,36 @@ describe("ExecutorManagerImpl.register", () => {
         expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
             metadata: {
                 delegationStatus: "expired",
-                delegationAddress: vectors.boarding.address,
             },
         });
     });
 
     it("refuses an address the service derived differently, persisting nothing", async () => {
         const manager = new ExecutorManagerImpl(
-            makeProvider({ address: "bcrt1pother", status: "cancelled" }),
+            makeProvider({
+                inputs: [{ ...boardingInput, address: "bcrt1pother" }],
+                status: "cancelled",
+            }),
             wallet,
         );
         await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
             `Executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
         );
+        expect(contractManager.createContract).not.toHaveBeenCalled();
+        expect(contractManager.updateContract).not.toHaveBeenCalled();
+    });
+
+    it("refuses a delegation without exactly one onchain input, persisting nothing", async () => {
+        for (const inputs of [
+            [boardingInput, { ...boardingInput, name: "other" }],
+            [{ ...boardingInput, onchain: false }],
+            [],
+        ]) {
+            const manager = new ExecutorManagerImpl(makeProvider({ inputs }), wallet);
+            await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
+                `has ${inputs.length} inputs, expected one onchain input`,
+            );
+        }
         expect(contractManager.createContract).not.toHaveBeenCalled();
         expect(contractManager.updateContract).not.toHaveBeenCalled();
     });
@@ -463,6 +505,13 @@ const wallet = {
     })),
 } as any;
 
+const boardingInput = {
+    name: "board",
+    onchain: true,
+    script: vectors.boarding.pkScript,
+    address: vectors.boarding.address,
+};
+
 function makeProvider(overrides: Record<string, unknown> = {}) {
     return {
         getInfo: vi.fn().mockResolvedValue({
@@ -473,7 +522,7 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
         }),
         registerDelegation: vi.fn().mockResolvedValue({
             id: 2,
-            address: vectors.boarding.address,
+            inputs: [boardingInput],
             status: "active",
             templateId: BOARDING_ID,
             variables: vectors.boarding.variables,

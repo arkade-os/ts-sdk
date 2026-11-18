@@ -22,8 +22,6 @@ import { timelockToSequence } from "../utils/timelock";
 export const DELEGATION_STATUS_KEY = "delegationStatus";
 /** Metadata key: the watch's expiry, in unix seconds; 0 or absent when it has none. */
 export const DELEGATION_EXPIRES_KEY = "delegationExpiresAt";
-/** Metadata key: the address the service knows the watch by. */
-export const DELEGATION_ADDRESS_KEY = "delegationAddress";
 /**
  * The status of a contract row the SDK watches but did not register with the service: the local
  * companion of a registration, such as the renewal contract a boarding watch boards into.
@@ -38,8 +36,6 @@ export interface ExecutorWatchMetadata {
     status: string;
     /** The watch's expiry, in unix seconds; 0 or absent when it has none. */
     expiresAt?: number;
-    /** The address the service knows the watch by. */
-    address?: string;
 }
 
 /** A watch both sides derived: the address to fund and what restores it. */
@@ -131,7 +127,7 @@ function metadataFor(
     if (registered.template !== template) {
         return { [DELEGATION_STATUS_KEY]: DELEGATION_LOCAL_STATUS };
     }
-    return statusMetadata({}, registered.status, registered.expiresAt, registered.address);
+    return statusMetadata({}, registered.status, registered.expiresAt);
 }
 
 /** `updateContract` replaces metadata, so the previous expiry must not outlive a status without one. */
@@ -139,14 +135,12 @@ function statusMetadata(
     metadata: Record<string, unknown>,
     status: string,
     expiresAt: number | undefined,
-    address: string | undefined,
 ): Record<string, string | number> {
     const { [DELEGATION_EXPIRES_KEY]: _stale, ...rest } = metadata;
     return {
         ...(rest as Record<string, string | number>),
         [DELEGATION_STATUS_KEY]: status,
         ...(expiresAt !== undefined ? { [DELEGATION_EXPIRES_KEY]: expiresAt } : {}),
-        ...(address !== undefined ? { [DELEGATION_ADDRESS_KEY]: address } : {}),
     };
 }
 
@@ -286,16 +280,21 @@ export class ExecutorManagerImpl implements IExecutorManager {
         });
         // The service fills <COSIGNER_KEY> with its key: the same address proves it is GetInfo's,
         // and commits to the same tapscripts. Checked before anything is persisted.
-        if (delegation.address !== watchAddress) {
+        const [input] = delegation.inputs;
+        if (delegation.inputs.length !== 1 || !input.onchain) {
             throw new Error(
-                `Executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
+                `Executor's boarding delegation has ${delegation.inputs.length} inputs, expected one onchain input`,
+            );
+        }
+        if (input.address !== watchAddress) {
+            throw new Error(
+                `Executor derived a different address: expected ${watchAddress}, got ${input.address}`,
             );
         }
         const registered: ExecutorWatchMetadata = {
             template: "boarding",
             status: delegation.status,
             expiresAt: delegation.expiresAt,
-            address: delegation.address,
         };
         const contracts = await watchExecutorContracts(this.wallet, keys, params, registered);
         // The row may predate this registration (the service is idempotent, the repository is
@@ -309,12 +308,11 @@ export class ExecutorManagerImpl implements IExecutorManager {
                     row.metadata ?? {},
                     delegation.status,
                     delegation.expiresAt,
-                    delegation.address,
                 ),
             });
         }
         if (delegation.status !== "active") {
-            throw new Error(`Executor watch ${delegation.address} is ${delegation.status}`);
+            throw new Error(`Executor watch ${watchAddress} is ${delegation.status}`);
         }
         return { address: watchAddress, templateId, variables, keys, params, delegation };
     }

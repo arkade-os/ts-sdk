@@ -539,7 +539,6 @@ import type {
 import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
 import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 import {
-    DELEGATION_ADDRESS_KEY,
     DELEGATION_EXPIRES_KEY,
     DELEGATION_LOCAL_STATUS,
     DELEGATION_STATUS_KEY,
@@ -750,7 +749,6 @@ export {
     RestDelegateProvider,
     ExecutorManagerImpl,
     watchExecutorContracts,
-    DELEGATION_ADDRESS_KEY,
     DELEGATION_EXPIRES_KEY,
     DELEGATION_LOCAL_STATUS,
     DELEGATION_STATUS_KEY,

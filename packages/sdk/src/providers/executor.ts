@@ -15,11 +15,17 @@ export interface ExecutorTemplate {
     status: string;
 }
 
+export interface ExecutorDelegationInput {
+    name: string;
+    onchain: boolean;
+    script: string;
+    address: string;
+}
+
 /** An instance of a template. */
 export interface ExecutorDelegation {
     id: number;
-    /** Slot 0's address for a watch, empty otherwise. */
-    address: string;
+    inputs: ExecutorDelegationInput[];
     status: "active" | "cancelled" | "expired" | "done";
     templateId: string;
     variables: Record<string, string>;
@@ -236,11 +242,31 @@ function parseDelegation(value: unknown): ExecutorDelegation {
     }
     return {
         id: parseInt64(value.id, "id"),
-        address: typeof value.address === "string" ? value.address : "",
+        inputs: optionalArray(value.inputs, "inputs").map(parseInput),
         status: oneOf(value.status, ["active", "cancelled", "expired", "done"], "status"),
         templateId,
         variables: parseVariables(value.variables),
         expiresAt: parseOptionalInt64(value.expiresAt, "expiresAt"),
+    };
+}
+
+function parseInput(value: unknown): ExecutorDelegationInput {
+    if (!isObject(value)) {
+        throw new Error("Invalid Executor delegation input");
+    }
+    const field = (key: string): string => {
+        const v = value[key];
+        if (typeof v !== "string" || v.length === 0) {
+            throw new Error(`Invalid Executor delegation input: missing ${key}`);
+        }
+        return v;
+    };
+    return {
+        name: field("name"),
+        // the gateway omits false
+        onchain: value.onchain === true,
+        script: field("script"),
+        address: field("address"),
     };
 }
 

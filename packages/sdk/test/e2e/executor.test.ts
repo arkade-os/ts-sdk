@@ -72,7 +72,9 @@ describe.skipIf(!reachable).sequential("Executor non-interactive boarding", () =
         watch = await manager.registerBoarding(options);
 
         const daemon = new RestExecutorProvider(EXECUTOR_URL);
-        expect((await daemon.getDelegation(watch.address)).delegation.address).toBe(watch.address);
+        expect((await daemon.getDelegation(watch.address)).delegation.inputs[0].address).toBe(
+            watch.address,
+        );
         expect(watch.delegation.status).toBe("active");
         expect(await alice.getBoardingAddress()).toBe(watch.address);
         // boarding only: receives stay at the wallet's own address
