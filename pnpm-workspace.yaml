@@ -36,3 +36,9 @@ onlyBuiltDependencies:
 ignoredBuiltDependencies:
   - canvas
   - esbuild
+
+auditConfig:
+  # No picomatch release fixes this ReDoS yet, and it reaches us only through build tooling
+  # (tsup, react-native's metro) matching our own globs. Drop it once a fix ships.
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf
