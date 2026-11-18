@@ -3372,7 +3372,8 @@ export class Wallet
         return this.reserveVtxosPersistently(snapshot, reservationId).then(() => {
             let releasing: Promise<void> | undefined;
             return {
-                outpoints: snapshot,
+                // Copies: a caller's edit must not change what release compares.
+                outpoints: snapshot.map((outpoint) => ({ ...outpoint })),
                 release: () =>
                     (releasing ??= this.releaseVtxoReservation(reservationId, snapshot).catch(
                         (error) => {

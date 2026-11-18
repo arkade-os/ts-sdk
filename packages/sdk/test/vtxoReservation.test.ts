@@ -297,6 +297,21 @@ describe("durable reservations on a direct wallet", () => {
         await wallet.dispose();
     });
 
+    it("releases a hold whose returned outpoints the caller changed", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = store();
+        const { wallet, coins, outpoints } = await fundedWallet({
+            vtxoReservationRepository: repository,
+        });
+        const hold = await wallet.reserveVtxos([coins[0]], "taxi-transfer");
+        hold.outpoints[0].vout = 9;
+
+        await hold.release();
+        expect(await repository.getReservations()).toEqual([]);
+        expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[0]);
+        await wallet.dispose();
+    });
+
     it("refuses a durable hold on an input a direct build is submitting", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const { wallet, coins } = await fundedWallet({ vtxoReservationRepository: store() });
