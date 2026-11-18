@@ -116,7 +116,9 @@ style and have not been backfilled.
   boards every deposit there into the wallet's renewal contract while the wallet
   is offline. A boarded coin is the wallet's own: it counts, spends and renews
   like any other, migrates off a deprecated operator signer, and incoming-funds
-  subscribers hear of it. A restored wallet finds it by registering again with
+  subscribers hear of it. The manager registers no renewal watch: the wallet
+  renews these coins to `getAddress()` itself, which would end one at its first
+  renewal. A restored wallet finds it by registering again with
   the same parameters, which returns the existing watch, but only while the
   operator's exit delays and the Executor's keys are unchanged: the address
   derives from them. The registration returns its resolved `params`, which with

@@ -44,7 +44,7 @@ export interface ExecutorWatchMetadata {
 
 /** A watch both sides derived: the address to fund and what restores it. */
 export interface ExecutorWatchRegistration {
-    /** An address for renewal, an onchain address for boarding. */
+    /** The delegated boarding address, onchain. */
     address: string;
     templateId: string;
     /** The template's variables, canonical hex. */
@@ -174,15 +174,14 @@ function delaySequence(delay: bigint): number {
     return Number(timelockToSequence({ value: delay, type: delay < 512n ? "blocks" : "seconds" }));
 }
 
+/**
+ * Registers boarding only: the wallet renews its renewal-contract coins itself, to `getAddress()`,
+ * which would end a renewal watch at its first renewal.
+ */
 export interface IExecutorManager {
     getInfo(): Promise<ExecutorInfo>;
     /** The default template ids; throws unless the service lists them as active. */
     defaultTemplates(): Promise<Record<ExecutorDefault, string>>;
-    /** Watch the renewal address of this wallet's key, and make the wallet watch it too. */
-    registerRenewal(
-        params: DelegationOptions,
-        options?: RegistrationOptions,
-    ): Promise<ExecutorWatchRegistration>;
     /**
      * Watch the boarding address of this wallet's key: the Executor boards every deposit there
      * into the wallet's renewal contract, a virtual output the wallet spends and renews as its
@@ -224,24 +223,9 @@ export class ExecutorManagerImpl implements IExecutorManager {
         return ids;
     }
 
-    registerRenewal(
-        params: DelegationOptions,
-        options: RegistrationOptions = {},
-    ): Promise<ExecutorWatchRegistration> {
-        return this.register("renewal", params, options);
-    }
-
-    registerBoarding(
-        params: DelegationOptions,
-        options: RegistrationOptions = {},
-    ): Promise<ExecutorWatchRegistration> {
-        return this.register("boarding", params, options);
-    }
-
-    private async register(
-        kind: ExecutorDefault,
+    async registerBoarding(
         options: DelegationOptions,
-        { expiresAt, emulatorPubkey }: RegistrationOptions,
+        { expiresAt, emulatorPubkey }: RegistrationOptions = {},
     ): Promise<ExecutorWatchRegistration> {
         const [info, operator, address, owner] = await Promise.all([
             this.executorProvider.getInfo(),
@@ -255,7 +239,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             );
         }
         // the watch address commits to the service's operator key, so it must be the wallet's
-        const { hrp, serverPubKey } = ArkAddress.decode(address);
+        const { serverPubKey } = ArkAddress.decode(address);
         const server = hex.encode(serverPubKey);
         if (info.serverPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
@@ -283,27 +267,19 @@ export class ExecutorManagerImpl implements IExecutorManager {
             renewalWindow: options.renewalWindow,
             maxFee: options.maxFee,
             exitDelay: options.exitDelay ?? delaySequence(operator.unilateralExitDelay),
-            ...(kind === "boarding"
-                ? {
-                      boardingExitDelay:
-                          options.boardingExitDelay ?? delaySequence(operator.boardingExitDelay),
-                  }
-                : {}),
+            boardingExitDelay:
+                options.boardingExitDelay ?? delaySequence(operator.boardingExitDelay),
         };
         const keys: ExecutorContractKeys = {
             cosignerPubkey: info.cosignerPubkey,
             serverPubkey: info.serverPubkey,
             emulatorPubkey: info.emulatorPubkey,
         };
-        const variables = defaultVariables(kind, owner, params);
-        const script = ExecutorContractHandler.createScript(
-            contractParams(kind, owner, keys, params),
-        );
-        const watchAddress =
-            kind === "boarding"
-                ? script.onchainAddress(network)
-                : script.address(hrp, serverPubKey).encode();
-        const templateId = DEFAULT_TEMPLATE_IDS[kind];
+        const variables = defaultVariables("boarding", owner, params);
+        const watchAddress = ExecutorContractHandler.createScript(
+            contractParams("boarding", owner, keys, params),
+        ).onchainAddress(network);
+        const templateId = DEFAULT_TEMPLATE_IDS.boarding;
         // Registration is idempotent on the service: repeating it returns the existing watch.
         const delegation = await this.executorProvider.registerDelegation(templateId, variables, {
             expiresAt,
@@ -316,7 +292,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             );
         }
         const registered: ExecutorWatchMetadata = {
-            template: kind,
+            template: "boarding",
             status: delegation.status,
             expiresAt: delegation.expiresAt,
             address: delegation.address,
@@ -325,7 +301,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // The row may predate this registration (the service is idempotent, the repository is
         // not): make it carry what the service just said, ended or not, so an ended watch stops
         // being advertised.
-        const row = contracts.find((c) => c.params.template === kind);
+        const row = contracts.find((c) => c.params.template === "boarding");
         if (row) {
             const manager = await this.wallet.getContractManager();
             await manager.updateContract(row.script, {

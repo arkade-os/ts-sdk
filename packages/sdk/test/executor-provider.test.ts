@@ -309,7 +309,7 @@ describe("ExecutorManagerImpl.register", () => {
             ...wallet,
             getOperatorInfo: async () => operator,
         });
-        await expect(manager.registerRenewal(params, trusted)).rejects.toThrow(
+        await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
             "renewalWindow 86400s must be shorter than the operator's VTXO expiry of 86400s",
         );
         expect(provider.registerDelegation).not.toHaveBeenCalled();
