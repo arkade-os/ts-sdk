@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { base64, hex } from "@scure/base";
 import { ArkError, Transaction, Wallet, type ExtendedVirtualCoin } from "../src";
-import { SQLiteIntentRepository, type SQLExecutor } from "../src/repositories/sqlite";
-import { collectIntents } from "../src/repositories/intentRepository";
+import { SQLiteBatchRegistrationRepository, type SQLExecutor } from "../src/repositories/sqlite";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
 import { reconcileIntents } from "../src/wallet/intentReconciliation";
 import { ContractManager } from "../src/contracts/contractManager";
 
@@ -30,7 +30,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
     const directory = mkdtempSync(join(tmpdir(), "ark-intent-cleanup-"));
     const file = join(directory, "wallet.sqlite");
     let db: DatabaseSync;
-    let repository: SQLiteIntentRepository;
+    let repository: SQLiteBatchRegistrationRepository;
 
     function open() {
         db = new DatabaseSync(file);
@@ -41,7 +41,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
             get: async (query, params) => db.prepare(query).get(...((params ?? []) as [])) as never,
             all: async (query, params) => db.prepare(query).all(...((params ?? []) as [])) as never,
         };
-        repository = new SQLiteIntentRepository(sql);
+        repository = new SQLiteBatchRegistrationRepository(sql);
     }
 
     beforeEach(() => {
@@ -127,7 +127,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
             expect(s.wallet._settlingOutpoints.size).toBe(0);
             expect(s.stream.return).toHaveBeenCalledOnce();
             const state = lostAck ? "waiting_to_submit" : "waiting_for_batch";
-            const [persisted] = await collectIntents(repository);
+            const [persisted] = await collectBatchRegistrations(repository);
             expect(persisted.state).toBe(state);
             expect(persisted.registrationId).toBe(lostAck ? undefined : "server-intent");
             expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
@@ -141,7 +141,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
                 deleteIntent,
             };
             await reconcileIntents(deps);
-            expect(await collectIntents(repository)).toEqual([persisted]);
+            expect(await collectBatchRegistrations(repository)).toEqual([persisted]);
             expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
             expect(deleteIntent).toHaveBeenCalledWith({
                 proof: persisted.deleteProof,
@@ -150,7 +150,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
 
             deleteIntent.mockResolvedValue(undefined);
             await reconcileIntents(deps);
-            expect((await collectIntents(repository))[0].state).toBe("cancelled");
+            expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
             expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
             expect(deleteIntent).toHaveBeenCalledTimes(2);
         },
@@ -164,7 +164,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         await expect(s.settle()).rejects.toBe(s.failure);
         expect(s.provider.registerIntent).not.toHaveBeenCalled();
         expect(s.provider.deleteIntent).not.toHaveBeenCalled();
-        expect((await collectIntents(repository))[0].state).toBe("cancelled");
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
         expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
         expect(s.wallet._settlingOutpoints.size).toBe(0);
     });
@@ -187,10 +187,10 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         const s = setup();
         s.provider.deleteIntent.mockResolvedValue(undefined);
         await expect(s.settle()).rejects.toBe(s.failure);
-        expect((await collectIntents(repository))[0].state).toBe("cancelled");
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
         s.provider.deleteIntent.mockRejectedValue(new Error("delete unavailable"));
         await expect(s.settle()).rejects.toBe(s.failure);
-        expect((await collectIntents(repository))[0].state).toBe("waiting_for_batch");
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("waiting_for_batch");
         expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
     });
 
@@ -200,7 +200,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         await expect(s.settle()).rejects.toMatchObject({ name: "VtxoReservedError" });
         expect(s.provider.registerIntent).toHaveBeenCalledOnce();
         expect(s.provider.deleteIntent).toHaveBeenCalledOnce();
-        expect((await collectIntents(repository))[0].state).toBe("waiting_to_submit");
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("waiting_to_submit");
         expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
     });
 
@@ -228,7 +228,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         s.wallet._settlingOutpoints.clear();
         await manager.reconcilePendingBatchRegistrations();
         expect(s.provider.deleteIntent).toHaveBeenCalledTimes(2);
-        expect((await collectIntents(repository))[0].state).toBe("cancelled");
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
         expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
     });
 
@@ -261,11 +261,11 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         });
         await new Promise((resolve) => setTimeout(resolve, 10));
         expect(disposed).toBe(false);
-        expect((await collectIntents(repository))[0].state).toBe("waiting_to_submit");
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("waiting_to_submit");
         finishRead({ vtxos: [input] });
         await Promise.all([pass, disposal]);
         expect(disposed).toBe(true);
-        expect((await collectIntents(repository))[0].state).toBe("cancelled");
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
         await manager.reconcilePendingBatchRegistrations();
         expect(getVtxos).toHaveBeenCalledOnce();
     });
@@ -277,7 +277,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
             if (reply) s.provider.deleteIntent.mockRejectedValue(reply);
             else s.provider.deleteIntent.mockResolvedValue(undefined);
             await expect(s.settle()).rejects.toBe(s.failure);
-            expect((await collectIntents(repository))[0].state).toBe("cancelled");
+            expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
             expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
         },
     );

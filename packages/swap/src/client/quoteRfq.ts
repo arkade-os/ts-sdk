@@ -27,6 +27,7 @@ import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
+import { ASSET_SWAP_CONTRACT_VERSIONS } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
@@ -49,6 +50,7 @@ import {
     offerTermsFromQuote,
     onchainReceiveRequest,
     onchainSendRequest,
+    requestVersionedQuote,
     unilateralClaimDelay,
     verifyOfferAddress,
     type LightningReceiveContractParams,
@@ -344,7 +346,6 @@ const quoteArkadeAsset = async (
         );
     }
     const pair = rfqPairFor(input.legs.give, input.legs.take);
-    const rfqId = newRfqId();
     // One read, shared by the request and the derivation below: the profile
     // commits to this script and this key, and a second read across a rotation
     // would derive a covenant the solver never quoted.
@@ -377,22 +378,31 @@ const quoteArkadeAsset = async (
             throw new Error("carrier quote expired before RFQ");
     }
     const request = arkadeSwapRequest({
-        rfqId,
+        rfqId: newRfqId(),
         ...sides,
         amount: pinned.value,
         amountSide: toRfqAmountSide(pinned.on),
         makerPkScript: receivePkScript,
         makerPublicKey: maker.publicKey,
+        contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
     });
-    const wire = await input.transport.requestQuote({
-        ...request,
-        profile: {
-            ...(request.profile as Record<string, unknown>),
-            ...(carrierRequest === undefined
-                ? {}
-                : { carrier: encodeCarrierRequest(carrierRequest) }),
+    const {
+        quote: wire,
+        rfqId,
+        contractVersion,
+    } = await requestVersionedQuote(
+        input.transport,
+        {
+            ...request,
+            profile: {
+                ...(request.profile as Record<string, unknown>),
+                ...(carrierRequest === undefined
+                    ? {}
+                    : { carrier: encodeCarrierRequest(carrierRequest) }),
+            },
         },
-    });
+        ASSET_SWAP_CONTRACT_VERSIONS,
+    );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);
     verifyCrossAssetAmount({ pair, pinned, give: parsed.give, take: parsed.take });
@@ -465,6 +475,7 @@ const quoteArkadeAsset = async (
         maker,
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         info: input.info,
+        contractVersion,
     });
     // Compare-only, and never the other way round: the address the trader funds
     // is the one the trader derived, and a solver naming another one is refused

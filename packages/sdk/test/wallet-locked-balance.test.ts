@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { excludeLockedOutpoints, spendableVtxosExcludingLocked } from "../src/wallet/wallet";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 import { fundedWallet } from "./concurrentSpendingFixture";
 
 describe("excludeLockedOutpoints", () => {
@@ -57,8 +57,8 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
     it("hides a batch_in_progress intent's VTXO end-to-end (real repo lock logic)", async () => {
         // Pins the deliberate divergence from NArk EF storage: batch_in_progress
         // is non-terminal, so its inputs stay out of spendable balance.
-        const repo = new InMemoryIntentRepository();
-        const base: Omit<ArkIntent, "state" | "proofInputs"> = {
+        const repo = new InMemoryBatchRegistrationRepository();
+        const base: Omit<BatchRegistration, "state" | "proofInputs"> = {
             proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
@@ -83,7 +83,7 @@ describe("intent-store failures before spending", () => {
     it.each(["selection", "send", "selected send", "settle", "selected settle"] as const)(
         "refuses %s when lock ownership cannot be read",
         async (operation) => {
-            const repository = new InMemoryIntentRepository();
+            const repository = new InMemoryBatchRegistrationRepository();
             const { wallet, coins, arkProvider } = await fundedWallet({
                 intentRepository: repository,
             });

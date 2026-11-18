@@ -11,7 +11,7 @@ import {
     type OnchainProvider,
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
-import type { IntentRepository } from "../src/repositories/intentRepository";
+import type { BatchRegistrationRepository } from "../src/repositories/intentRepository";
 import type { VtxoReservationRepository } from "../src/repositories/vtxoReservationRepository";
 import { SingleKey } from "../src/identity/singleKey";
 
@@ -59,7 +59,7 @@ const outpoint = (coin: { txid: string; vout: number }) => `${coin.txid}:${coin.
 export async function fundedWallet(
     opts: {
         concurrentSpending?: boolean;
-        intentRepository?: IntentRepository;
+        intentRepository?: BatchRegistrationRepository;
         vtxoReservationRepository?: VtxoReservationRepository;
     } = {},
 ) {

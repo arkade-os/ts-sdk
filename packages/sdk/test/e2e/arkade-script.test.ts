@@ -128,10 +128,10 @@ const hashlockProgram = {
     ],
     functions: {
         claim: {
-            inputs: [{ name: "preimage", type: "bytes" }],
             tapscript: {
                 signers: ["$server"],
                 asm: ["HASH160", "$hash", "EQUAL"],
+                inputs: [{ name: "preimage", type: "bytes" }],
                 witness: ["preimage"],
             },
             arkadeScript: {
@@ -152,10 +152,10 @@ const tapscriptProgram = {
     functions: {
         cooperative: { tapscript: { signers: ["$user", "$server"] } },
         reveal: {
-            inputs: [{ name: "preimage", type: "bytes" }],
             tapscript: {
                 signers: ["$user", "$server"],
                 asm: ["HASH160", "$hash", "EQUAL"],
+                inputs: [{ name: "preimage", type: "bytes" }],
                 witness: ["preimage"],
             },
         },
@@ -461,7 +461,7 @@ describe("arkade", () => {
         const { signedArkTx } = await ark
             .transaction()
             .from(await send.getUtxos(), send.unlock.send())
-            .from(await claim.getUtxos(), claim.unlock.claim(preimage))
+            .from(await claim.getUtxos(), claim.unlock.claim({ tapscript: [preimage] }))
             .to([
                 { script: alicePkScript, amount: 10000n },
                 { script: alicePkScript, amount: 5000n },
@@ -487,7 +487,7 @@ describe("arkade", () => {
         const { signedArkTx } = await contract.functions
             .cooperative()
             .from(first)
-            .from(second, contract.unlock.reveal(preimage))
+            .from(second, contract.unlock.reveal({ tapscript: [preimage] }))
             .to(ArkAddress.decode(await alice.wallet.getAddress()).pkScript, 15000n)
             .send();
         expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);

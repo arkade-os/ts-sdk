@@ -89,7 +89,7 @@ const wantBtc: Omit<Offer, "swapPkScript"> = {
     makerPublicKey: hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1"),
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
-const btcScript = offerContract(wantBtc, fundedServerKey);
+const btcScript = offerContract(wantBtc, fundedServerKey, "asset-swap-v3");
 const wantBtcHex = hex.encode(encodeOffer({ ...wantBtc, swapPkScript: btcScript.pkScript }));
 const fundedAddress = new ArkAddress(fundedServerKey, btcScript.tweakedPublicKey, "tark").encode();
 
@@ -100,7 +100,7 @@ const wantAsset: Omit<Offer, "swapPkScript"> = {
     offerAsset: undefined,
     wantAsset: asset.AssetId.fromString("bb".repeat(32) + "0000"),
 };
-const assetScript = offerContract(wantAsset, fundedServerKey);
+const assetScript = offerContract(wantAsset, fundedServerKey, "asset-swap-v3");
 const wantAssetHex = hex.encode(encodeOffer({ ...wantAsset, swapPkScript: assetScript.pkScript }));
 
 /** The asset each offer names, plus one nothing asked for — the case that turns
@@ -208,9 +208,9 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         ).rejects.toThrow(/no spendable VTXO at the swap address/);
     });
 
-    // `offerAsset` is a TLV claim about a deposit the covenant never inspects:
-    // it gates output 0 only. A fill against an unbacked deposit succeeds
-    // on-chain and pays wantAmount for nothing.
+    // `offerAsset` is a TLV claim about a deposit the covenant never inspects.
+    // A fill against an unbacked deposit succeeds on-chain and pays wantAmount
+    // for nothing.
     it.each([
         ["carrying nothing", undefined],
         ["carrying a different asset", [{ assetId: STRAY_ASSET, amount: 9 }]],
@@ -236,9 +236,8 @@ describe("fillOffer builds the spend the covenant inspects", () => {
         });
         expect(txid).toBe("ff".repeat(32));
 
-        // `to` is called exactly once, so the maker's output is index 0. The
-        // covenant's asm is `0 INSPECTOUTPUTVALUE ... 0 INSPECTOUTPUTSCRIPTPUBKEY`
-        // — it inspects output 0 specifically, so a second `to` before this one
+        // `to` is called exactly once and the deposit is input 0, so the maker's
+        // output is the index fulfill reads. A second `to` ahead of this one
         // would build a spend the server refuses to co-sign.
         const to = callsOf("to");
         expect(to).toHaveLength(1);
