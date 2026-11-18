@@ -25,6 +25,18 @@ style and have not been backfilled.
   key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
   keep the old key on disk.
 
+- **`@arkade-os/swap`: a new settlement leaf, used only when negotiated.** The
+  leaf is now the compiler artifact `asset-swap` or `sats-swap`
+  (`contracts/*.ark`). `fulfill` pays `receiver` on the output at the spending
+  input's index, so the same leaf can sit in a batch where input i is paid at
+  output i. A one-deposit fill is unchanged: the deposit stays input 0 and the
+  payout stays output 0. A newly derived offer address does not change by
+  default: an offer is derived on the previous tree unless the solver negotiates
+  `asset-swap-v3` over RFQ (`contractVersion: "asset-swap-v3"` opts in directly). An offer
+  that carries a `swapPkScript` compiles whichever tree matches it, so cancel,
+  fill, classify and restore keep rebuilding the address it was funded at. v0
+  offer rows migrate onto the previous tree. The deprecated `swapPrograms`
+  export of `@arkade-os/swap/protocol` now holds the new programs.
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already
@@ -97,6 +109,15 @@ style and have not been backfilled.
   `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
 ### Features
+
+- **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
+  `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
+  (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the
+  quote's `contract_version` picks the tree the offer is derived on. A quote
+  naming none is the baseline `asset-swap-v2`. A solver that refuses the field
+  with a bare `unsupported_payload` is asked once more without it, under a fresh
+  `rfq_id`. A choice outside the advertised list, or a version this build cannot
+  derive, is refused before funding.
 
 - **Arkade Cash status, claim correlation, and activity through service-worker wallets.** Add public voucher issue/status records, expose create, inspect, and claim operations alongside existing wallet primitives, and resolve their funding and sweep transactions into arkade-cash activities without exposing bearer tokens. Records and status reports list `issues` and `claims` as `{ txid, amount }` (`ArkadeCashTx`), so a voucher's share of a shared funding transaction or a multi-sweep claim is exact. `ArkadeCashClaimResult.claims` has the same shape and includes sweeps finalized from previously pending claims. `addArkadeCashRecord` merges into an existing record through the exported `mergeArkadeCashRecord` (transactions unioned by txid, a claim outranks an issue), so a worker's recovery record no longer overwrites the page's record for the same voucher. Recording a recovered voucher's settlement runs inside the serialized wallet-state update, so concurrent recoveries keep each other's records and a failed state read can no longer wipe them. Issuing and reclaiming one voucher resolve to two activities (`arkade-cash:<id>:issued` and `:claimed`) instead of collapsing into one. An issue correlates only with a sent row and a claim only with a received row, so the same txid in a history of the other direction (a claimer's received funding row, an issuer's sent fee row) is never labelled. A claim recorded under a batch commitment, as a recovery settlement is, correlates only with the received row of exactly its amount, and boarding rows never correlate, so the other rows of that round are neither counted into the claim nor labelled "Cash claimed". Status reports list a coin spent by a batch settlement as a claim under the settlement's commitment txid, so an issuer sees the claim of a recovered voucher too; the amount is the coin's value before intent fees. Through a service worker, `create` and `claim` run with no message deadline on either side, so a slow multi-sweep claim or funded create still returns its result instead of a timeout. A funded-but-failed `create` rejects on the page with a real `ArkadeCashCreateError` whose `.cash` holds the recovery token, exactly as an in-process `Wallet.createCash` does.
 - **Export `TreeSignerSession` for custom identities.** External `Identity`

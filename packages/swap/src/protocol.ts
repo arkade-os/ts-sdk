@@ -88,6 +88,14 @@ export {
     swapPrograms,
 } from "./offer";
 export {
+    ASSET_SWAP_BASELINE,
+    ASSET_SWAP_CONTRACT_VERSIONS,
+    ASSET_SWAP_V2,
+    ASSET_SWAP_V3,
+    type AssetSwapContractVersion,
+    assetSwapContractVersion,
+} from "./program";
+export {
     awaitOnchainFill,
     buildHtlcClaim,
     buildHtlcRefund,
