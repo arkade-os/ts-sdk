@@ -200,8 +200,10 @@ const offer = {
 };
 
 const contract = offerContract(offer, operatorPubkey);
+const current = offerContract(offer, operatorPubkey, "asset-swap-v3");
 offer.swapPkScript = contract.pkScript;
 const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
+const currentAddress = new ArkAddress(operatorPubkey, current.tweakedPublicKey, "tark").encode();
 
 const payload = encodeOffer(offer);
 const roundtripped = encodeOffer(decodeOffer(payload));
@@ -211,5 +213,8 @@ if (hex.encode(payload) !== hex.encode(roundtripped)) {
 const golden =
     "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2";
 if (address !== golden) throw new Error(`address drift: ${address}`);
+const currentGolden =
+    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65p9nuw7ax6smcyx0cu5ftrgttu7qw7c7s9af0nrm7ga504ph6qs4c4p7zf";
+if (currentAddress !== currentGolden) throw new Error(`current address drift: ${currentAddress}`);
 
-console.log("smoke OK:", payload.length, "byte payload,", address);
+console.log("smoke OK:", payload.length, "byte payload,", address, currentAddress);

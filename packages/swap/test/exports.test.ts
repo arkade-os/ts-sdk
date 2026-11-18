@@ -535,6 +535,12 @@ describe("the @deprecated pointers", () => {
     const declaredIn = moduleOf(PROTOCOL_ENTRY);
     const intentionallyUntagged = new Set([
         "AddressMismatch",
+        "ASSET_SWAP_BASELINE",
+        "ASSET_SWAP_CONTRACT_VERSIONS",
+        "ASSET_SWAP_V2",
+        "ASSET_SWAP_V3",
+        "AssetSwapContractVersion",
+        "assetSwapContractVersion",
         "ARKADE_BTC",
         "arkadeAssetLeg",
         "ArkadeRefunderDeps",
