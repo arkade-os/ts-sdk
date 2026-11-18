@@ -573,6 +573,14 @@ function coinKeys(inputs: readonly ExtendedCoin[]): string[] {
         .map((input) => `${input.txid}:${input.vout}`);
 }
 
+/** Order-independent key of an outpoint set, to compare what two holds name. */
+function outpointSetKey(outpoints: readonly Outpoint[]): string {
+    return outpoints
+        .map(({ txid, vout }) => `${txid}:${vout}`)
+        .sort()
+        .join("|");
+}
+
 function assertNoPersistentReservation(
     inputs: readonly ExtendedCoin[],
     reservations?: ReadonlySet<string>,
@@ -3362,15 +3370,16 @@ export class Wallet
         }
         const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
         return this.reserveVtxosPersistently(snapshot, reservationId).then(() => {
-            // Per handle: once this one is released, the id may name a newer hold.
             let releasing: Promise<void> | undefined;
             return {
                 outpoints: snapshot,
                 release: () =>
-                    (releasing ??= this.releaseVtxoReservation(reservationId).catch((error) => {
-                        releasing = undefined;
-                        throw error;
-                    })),
+                    (releasing ??= this.releaseVtxoReservation(reservationId, snapshot).catch(
+                        (error) => {
+                            releasing = undefined;
+                            throw error;
+                        },
+                    )),
             };
         });
     }
@@ -3422,12 +3431,7 @@ export class Wallet
         await this.withReservationWrite(async () => {
             const existing = this.persistentReservations.get(id);
             if (existing) {
-                const keys = (inputs: readonly Outpoint[]) =>
-                    inputs
-                        .map(({ txid, vout }) => `${txid}:${vout}`)
-                        .sort()
-                        .join("|");
-                if (keys(existing) !== keys(snapshot)) {
+                if (outpointSetKey(existing) !== outpointSetKey(snapshot)) {
                     throw new Error("Reservation id already holds different inputs");
                 }
                 return;
@@ -3449,12 +3453,17 @@ export class Wallet
         });
     }
 
-    /** The owner must establish settlement or non-submission before releasing a durable hold. */
-    async releaseVtxoReservation(id: string): Promise<void> {
+    /**
+     * The owner must establish settlement or non-submission before releasing a durable hold.
+     * With `expected`, releases only while `id` still names those inputs: a stale handle leaves a
+     * newer hold under its id alone.
+     */
+    async releaseVtxoReservation(id: string, expected?: readonly Outpoint[]): Promise<void> {
         if (!this.reservationRepository) throw new Error("VTXO reservation repository is required");
         await this.withReservationWrite(async () => {
-            await this.reservationRepository!.deleteReservation(id);
             const outpoints = this.persistentReservations.get(id) ?? [];
+            if (expected && outpointSetKey(outpoints) !== outpointSetKey(expected)) return;
+            await this.reservationRepository!.deleteReservation(id);
             this.persistentReservations.delete(id);
             const stillNamed = new Set(
                 [...this.persistentReservations.values()]

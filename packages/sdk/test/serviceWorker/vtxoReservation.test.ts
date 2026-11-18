@@ -182,6 +182,20 @@ describe("service-worker VTXO reservations", () => {
         expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[0]);
     });
 
+    it("lets a resumed id's stale handle leave a newer hold under its id alone", async () => {
+        const { wallet, coins, outpoints, proxy, repository } = await setup();
+        const first = await proxy.reserveVtxos([coins[0]], "taxi-transfer");
+        const resumed = await proxy.reserveVtxos([coins[0]], "taxi-transfer");
+        await first.release();
+        await proxy.reserveVtxos([coins[1]], "taxi-transfer");
+
+        await resumed.release();
+        expect(await repository.getReservations()).toEqual([
+            { id: "taxi-transfer", outpoints: [{ txid: coins[1].txid, vout: coins[1].vout }] },
+        ]);
+        expect((await wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[1]);
+    });
+
     it.each([undefined, "", null])(
         "requires a recoverable operation id before acquiring: %s",
         async (id) => {

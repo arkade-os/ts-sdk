@@ -2307,7 +2307,7 @@ export class ServiceWorkerWallet
                     tag: this.messageTag,
                     type: "RELEASE_SCOPED_VTXOS",
                     id: getRandomId(),
-                    payload: { reservationId, scope },
+                    payload: { reservationId, scope, outpoints: snapshot },
                 };
                 await this.sendMessage(request);
                 released = true;

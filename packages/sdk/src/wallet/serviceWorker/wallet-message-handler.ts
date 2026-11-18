@@ -676,7 +676,8 @@ export type ResponseReserveVtxos = ResponseEnvelope & {
 };
 export type RequestReleaseVtxos = RequestEnvelope & {
     type: "RELEASE_SCOPED_VTXOS";
-    payload: { reservationId: string; scope: string };
+    /** With `outpoints`, a no-op once the id names other inputs. */
+    payload: { reservationId: string; scope: string; outpoints?: Outpoint[] };
 };
 export type ResponseReleaseVtxos = ResponseEnvelope & {
     type: "VTXOS_RELEASED";
@@ -2081,9 +2082,10 @@ export class WalletMessageHandler
                     return this.tagged({ id, type: "VTXOS_RESERVED" });
                 }
                 case "RELEASE_SCOPED_VTXOS": {
-                    const { reservationId, scope } = message.payload;
+                    const { reservationId, scope, outpoints } = message.payload;
                     await this.requireReservationWallet(scope, context).releaseVtxoReservation(
                         reservationId,
+                        outpoints,
                     );
                     return this.tagged({ id, type: "VTXOS_RELEASED" });
                 }

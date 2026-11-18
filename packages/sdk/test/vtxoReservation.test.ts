@@ -278,6 +278,25 @@ describe("durable reservations on a direct wallet", () => {
         await wallet.dispose();
     });
 
+    it("lets a resumed id's stale handle leave a newer hold under its id alone", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = store();
+        const { wallet, coins, outpoints } = await fundedWallet({
+            vtxoReservationRepository: repository,
+        });
+        const first = await wallet.reserveVtxos([coins[0]], "taxi-transfer");
+        const resumed = await wallet.reserveVtxos([coins[0]], "taxi-transfer");
+        await first.release();
+        await wallet.reserveVtxos([coins[1]], "taxi-transfer");
+
+        await resumed.release();
+        expect(await repository.getReservations()).toEqual([
+            { id: "taxi-transfer", outpoints: [{ txid: coins[1].txid, vout: 0 }] },
+        ]);
+        expect((await wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[1]);
+        await wallet.dispose();
+    });
+
     it("refuses a durable hold on an input a direct build is submitting", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const { wallet, coins } = await fundedWallet({ vtxoReservationRepository: store() });
