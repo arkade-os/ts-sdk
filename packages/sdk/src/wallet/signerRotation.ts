@@ -118,3 +118,18 @@ export function classifyContractSigner(
 export function isCooperativelyMigratable(status: SignerStatus): boolean {
     return status === "MIGRATABLE" || status === "DUE_NOW";
 }
+
+// Absorbs device clock skew at seed creation and a modestly backdated cutoff.
+const BIRTHDAY_MARGIN_SECONDS = 30 * 86_400;
+
+/**
+ * True when a deprecated signer's cutoff (Unix seconds) passed over 30 days before the wallet's
+ * birthday: rotated out before the wallet existed, so discovery can skip it. Fails open (false)
+ * without an advertised cutoff, and for a birthday that is missing, invalid or in the future.
+ */
+export function signerRetiredBefore(cutoffDate: bigint, birthday: Date | undefined): boolean {
+    const cutoff = Number(cutoffDate);
+    const birth = (birthday?.getTime() ?? Number.NaN) / 1000;
+    if (!(cutoff > 0) || !(birth <= Date.now() / 1000)) return false;
+    return cutoff + BIRTHDAY_MARGIN_SECONDS < birth;
+}

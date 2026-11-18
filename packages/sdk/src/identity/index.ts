@@ -64,10 +64,18 @@ export type {
     DescriptorOptions,
     SeedIdentityOptions,
     MnemonicOptions,
+    AezeedOptions,
+    AezeedOrigin,
     PasskeySource,
     PasskeyMnemonic,
 } from "./seedIdentity";
-export { SeedIdentity, MnemonicIdentity, ReadonlyDescriptorIdentity } from "./seedIdentity";
+export {
+    SeedIdentity,
+    MnemonicIdentity,
+    AezeedIdentity,
+    ReadonlyDescriptorIdentity,
+} from "./seedIdentity";
+export { isAezeedMnemonic } from "./aezeed";
 export * from "./serialize";
 export * from "./passkey";
 

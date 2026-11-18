@@ -151,6 +151,20 @@ const identityWithDescriptorAndPassphrase = MnemonicIdentity.fromMnemonic(mnemon
 })
 ```
 
+#### aezeed Phrases (Opt-In)
+
+See `AezeedIdentity` for the format and its birthday.
+
+```typescript
+import { AezeedIdentity, isAezeedMnemonic } from '@arkade-os/sdk'
+
+const { identity, mnemonic } = await AezeedIdentity.generate({ passphrase: 'optional' })
+const restored = await AezeedIdentity.fromMnemonic(mnemonic, { passphrase: 'optional' })
+
+// Both formats use the BIP39 wordlist; tell them apart before choosing a parser
+isAezeedMnemonic(mnemonic) // true
+```
+
 #### Watch-Only with ReadonlyDescriptorIdentity
 
 Create watch-only wallets from an account-descriptor template:

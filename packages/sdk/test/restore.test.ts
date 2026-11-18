@@ -37,6 +37,7 @@ import {
 } from "./helpers/restoreWallet";
 import { jsonResponse } from "./helpers/response";
 import { registerWalletRestoreHook } from "../src/wallet/restoreHooks";
+import { AezeedIdentity } from "../src/identity/seedIdentity";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -1815,6 +1816,111 @@ describe("Wallet.restore", () => {
             unstub?.();
             await wallet.dispose();
         }
+    });
+
+    describe("aezeed birthday", () => {
+        const DAY = 86_400;
+        const now = () => Math.floor(Date.now() / 1000);
+        const bornToday = () =>
+            AezeedIdentity.fromEntropy(
+                {
+                    version: 0,
+                    birthday: new Date(),
+                    entropy: hex.decode("81b637d86359e6960de795e41e0b4cfd"),
+                },
+                { isMainnet: false },
+            );
+
+        // Funds a deprecated-signer VTXO at index 2, runs the restores concurrently, and reports
+        // whether it was found.
+        const restoresDeprecatedHit = async (
+            cutoffDate: number,
+            restores: { ignoreBirthday?: boolean }[] = [{}],
+        ): Promise<boolean> => {
+            const deprecatedXOnly = "ab".repeat(32);
+            const { wallet, indexer, hdProvider, contractRepository } = await makeHdWalletForTest(
+                undefined,
+                undefined,
+                { identity: bornToday() },
+            );
+            let unstub: (() => void) | undefined;
+            try {
+                unstub = stubInfoWithDeprecated(
+                    hex.encode(wallet.offchainTapscript.options.serverPubKey),
+                    [{ cutoffDate, pubkey: "03" + deprecatedXOnly }],
+                );
+                const script = hex.encode(
+                    new DefaultVtxo.Script({
+                        pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(2)),
+                        serverPubKey: hex.decode(deprecatedXOnly),
+                        csvTimelock: wallet.walletContractTimelocks[0],
+                    }).pkScript,
+                );
+                indexer.usedScripts.add(script);
+                await Promise.all(restores.map((o) => wallet.restore({ gapLimit: 5, ...o })));
+                const rows = await collectContracts(contractRepository, { type: ["default"] });
+                return rows.some((c) => c.script === script);
+            } finally {
+                unstub?.();
+                await wallet.dispose();
+            }
+        };
+
+        it("skips a signer retired well before the wallet's birthday, unless told not to", async () => {
+            expect(await restoresDeprecatedHit(now() - 60 * DAY)).toBe(false);
+            expect(await restoresDeprecatedHit(now() - 60 * DAY, [{ ignoreBirthday: true }])).toBe(
+                true,
+            );
+        });
+
+        it("still probes a signer with no cutoff, or one retired near the birthday", async () => {
+            expect(await restoresDeprecatedHit(0)).toBe(true);
+            expect(await restoresDeprecatedHit(now() - 10 * DAY)).toBe(true);
+        });
+
+        it("runs a bypass requested while a pruned restore is still in flight", async () => {
+            expect(
+                await restoresDeprecatedHit(now() - 60 * DAY, [{}, { ignoreBirthday: true }]),
+            ).toBe(true);
+        });
+
+        it("prunes the receive baseline and look-ahead at boot, not the boarding baseline", async () => {
+            // x-only 2G and 3G: valid points, distinct from the current signer (G).
+            const retired = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+            const kept = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+            const unstub = stubInfoWithDeprecated(
+                "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                [
+                    { cutoffDate: now() - 60 * DAY, pubkey: retired },
+                    { cutoffDate: 0, pubkey: kept },
+                ],
+            );
+            const { wallet, contractRepository } = await makeHdWalletForTest(undefined, undefined, {
+                identity: bornToday(),
+            });
+            try {
+                await awaitWalletBooted(wallet);
+                const signersOf = async (type: string) =>
+                    (await collectContracts(contractRepository, { type: [type] })).map(
+                        (c) => c.params.serverPubKey,
+                    );
+                expect(await signersOf("default")).toContain(kept);
+                expect(await signersOf("default")).not.toContain(retired);
+                // Equal delays in this harness: a kept signer's boarding script is its default row.
+                expect(await signersOf("boarding")).toContain(retired);
+                const lookAhead = (
+                    wallet as unknown as {
+                        receiveCandidateDeps(): { deprecatedSignerPubKeys?: Uint8Array[] };
+                    }
+                ).receiveCandidateDeps();
+                expect(lookAhead.deprecatedSignerPubKeys?.map((k) => hex.encode(k))).toEqual([
+                    kept,
+                ]);
+            } finally {
+                unstub();
+                await wallet.dispose();
+            }
+        });
     });
 
     it("getBoardingUtxos unions funds across current + historical boarding addresses (plan §6-III.1)", async () => {

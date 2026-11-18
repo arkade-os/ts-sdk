@@ -1098,7 +1098,7 @@ describe("ServiceWorkerWallet", () => {
         expect(isCosignFallback(err)).toBe(false);
     });
 
-    it("restore() forwards gapLimit and resolves on RESTORE_WALLET_SUCCESS", async () => {
+    it("restore() forwards its options and resolves on RESTORE_WALLET_SUCCESS", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
             if (message.type === "RESTORE_WALLET") {
                 return {
@@ -1115,12 +1115,14 @@ describe("ServiceWorkerWallet", () => {
         } as any);
 
         const wallet = createSWWallet(serviceWorker as any, messageTag);
-        await expect(wallet.restore({ gapLimit: 30 })).resolves.toBeUndefined();
+        await expect(
+            wallet.restore({ gapLimit: 30, ignoreBirthday: true }),
+        ).resolves.toBeUndefined();
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 tag: messageTag,
                 type: "RESTORE_WALLET",
-                payload: { gapLimit: 30 },
+                payload: { gapLimit: 30, ignoreBirthday: true },
             }),
         );
     });
@@ -1144,6 +1146,30 @@ describe("ServiceWorkerWallet", () => {
                 payload: {},
             }),
         );
+    });
+
+    it("restore() joins a pending scan, but sends a birthday bypass of its own", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            type: "RESTORE_WALLET_SUCCESS",
+        }));
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await Promise.all([
+            wallet.restore(),
+            wallet.restore(),
+            wallet.restore({ ignoreBirthday: true }),
+        ]);
+        const payloads = (serviceWorker.postMessage as ReturnType<typeof vi.fn>).mock.calls
+            .map(([message]) => message)
+            .filter((message) => message.type === "RESTORE_WALLET")
+            .map((message) => message.payload);
+        expect(payloads).toEqual([{}, { ignoreBirthday: true }]);
     });
 
     it("restore() reconstructs a worker-side AggregateError on the page", async () => {
