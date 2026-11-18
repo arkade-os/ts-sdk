@@ -121,11 +121,12 @@ describe("signerRotation - classification", () => {
 
 describe("signerRetiredBefore", () => {
     const DAY = 86_400;
-    const BORN = 1_800_000_000;
+    const BORN = 1_700_000_000;
     const birthday = new Date(BORN * 1000);
 
     it("retires a signer whose cutoff passed over 30 days before the birthday", () => {
         expect(signerRetiredBefore(BigInt(BORN - 31 * DAY), birthday)).toBe(true);
+        expect(signerRetiredBefore((BORN - 31 * DAY) as unknown as bigint, birthday)).toBe(true);
     });
 
     it("keeps a signer whose cutoff falls within 30 days of the birthday, or after it", () => {
@@ -137,6 +138,10 @@ describe("signerRetiredBefore", () => {
         expect(signerRetiredBefore(0n, birthday)).toBe(false);
         expect(signerRetiredBefore(1n, undefined)).toBe(false);
         expect(signerRetiredBefore(1n, new Date(Number.NaN))).toBe(false);
+    });
+
+    it("fails open for a birthday in the future, minted under a wrong clock", () => {
+        expect(signerRetiredBefore(1n, new Date(Date.now() + 2 * DAY * 1000))).toBe(false);
     });
 });
 

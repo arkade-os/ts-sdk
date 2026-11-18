@@ -1098,7 +1098,7 @@ describe("ServiceWorkerWallet", () => {
         expect(isCosignFallback(err)).toBe(false);
     });
 
-    it("restore() forwards gapLimit and resolves on RESTORE_WALLET_SUCCESS", async () => {
+    it("restore() forwards its options and resolves on RESTORE_WALLET_SUCCESS", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
             if (message.type === "RESTORE_WALLET") {
                 return {
@@ -1115,12 +1115,14 @@ describe("ServiceWorkerWallet", () => {
         } as any);
 
         const wallet = createSWWallet(serviceWorker as any, messageTag);
-        await expect(wallet.restore({ gapLimit: 30 })).resolves.toBeUndefined();
+        await expect(
+            wallet.restore({ gapLimit: 30, ignoreBirthday: true }),
+        ).resolves.toBeUndefined();
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 tag: messageTag,
                 type: "RESTORE_WALLET",
-                payload: { gapLimit: 30 },
+                payload: { gapLimit: 30, ignoreBirthday: true },
             }),
         );
     });
