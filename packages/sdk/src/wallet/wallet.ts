@@ -3361,10 +3361,18 @@ export class Wallet
             return new Promise((resolve) => resolve(this.holdVtxos(outpoints)));
         }
         const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
-        return this.reserveVtxosPersistently(snapshot, reservationId).then(() => ({
-            outpoints: snapshot,
-            release: () => this.releaseVtxoReservation(reservationId),
-        }));
+        return this.reserveVtxosPersistently(snapshot, reservationId).then(() => {
+            // Per handle: once this one is released, the id may name a newer hold.
+            let releasing: Promise<void> | undefined;
+            return {
+                outpoints: snapshot,
+                release: () =>
+                    (releasing ??= this.releaseVtxoReservation(reservationId).catch((error) => {
+                        releasing = undefined;
+                        throw error;
+                    })),
+            };
+        });
     }
 
     private holdVtxos(outpoints: readonly Outpoint[]): VtxoReservation {
@@ -3386,7 +3394,8 @@ export class Wallet
     }
 
     private reservationRepository?: VtxoReservationRepository;
-    private persistentReservations = new Map<string, VtxoReservation>();
+    /** By id. Two ids name one outpoint only when restored from a store two wallets shared. */
+    private persistentReservations = new Map<string, readonly Outpoint[]>();
     private persistentReservedOutpoints = new Set<string>();
     private reservationWrites = new Set<Promise<void>>();
     // Own queue, not the tx lock: a settle holds that for a whole batch round. The pending and
@@ -3418,7 +3427,7 @@ export class Wallet
                         .map(({ txid, vout }) => `${txid}:${vout}`)
                         .sort()
                         .join("|");
-                if (keys(existing.outpoints) !== keys(snapshot)) {
+                if (keys(existing) !== keys(snapshot)) {
                     throw new Error("Reservation id already holds different inputs");
                 }
                 return;
@@ -3430,9 +3439,9 @@ export class Wallet
             try {
                 await assertNoIntentLockedInputs(snapshot, this.intentRepository);
                 await this.reservationRepository!.saveReservation({ id, outpoints: snapshot });
-                this.persistentReservations.set(id, hold);
+                this.persistentReservations.set(id, snapshot);
             } catch (error) {
-                await hold.release();
+                hold.release();
                 for (const { txid, vout } of snapshot)
                     this.persistentReservedOutpoints.delete(`${txid}:${vout}`);
                 throw error;
@@ -3445,12 +3454,19 @@ export class Wallet
         if (!this.reservationRepository) throw new Error("VTXO reservation repository is required");
         await this.withReservationWrite(async () => {
             await this.reservationRepository!.deleteReservation(id);
-            const hold = this.persistentReservations.get(id);
-            await hold?.release();
-            for (const { txid, vout } of hold?.outpoints ?? []) {
-                this.persistentReservedOutpoints.delete(`${txid}:${vout}`);
-            }
+            const outpoints = this.persistentReservations.get(id) ?? [];
             this.persistentReservations.delete(id);
+            const stillNamed = new Set(
+                [...this.persistentReservations.values()]
+                    .flat()
+                    .map(({ txid, vout }) => `${txid}:${vout}`),
+            );
+            for (const { txid, vout } of outpoints) {
+                const key = `${txid}:${vout}`;
+                if (stillNamed.has(key)) continue;
+                this._heldOutpoints.delete(key);
+                this.persistentReservedOutpoints.delete(key);
+            }
         });
     }
 
@@ -3989,23 +4005,19 @@ export class Wallet
         try {
             for (const reservation of (await wallet.reservationRepository?.getReservations()) ??
                 []) {
-                // Only two wallets sharing one store can write an overlap. Skip it rather than
-                // fail every start: releasing it by id still works.
-                const overlap = reservation.outpoints.some(({ txid, vout }) =>
-                    wallet._heldOutpoints.has(`${txid}:${vout}`),
-                );
-                if (overlap) {
-                    console.warn(
-                        `Reservation ${reservation.id} overlaps another and was not restored`,
-                    );
-                    continue;
+                // Only two wallets sharing one store can write an overlap. Hold the union rather
+                // than fail every start; a shared outpoint frees when its last owner releases.
+                const keys = reservation.outpoints.map(({ txid, vout }) => `${txid}:${vout}`);
+                if (keys.some((key) => wallet._heldOutpoints.has(key))) {
+                    console.warn(`Reservation ${reservation.id} overlaps another`);
                 }
                 wallet.persistentReservations.set(
                     reservation.id,
-                    wallet.holdVtxos(reservation.outpoints),
+                    reservation.outpoints.map(({ txid, vout }) => ({ txid, vout })),
                 );
-                for (const { txid, vout } of reservation.outpoints) {
-                    wallet.persistentReservedOutpoints.add(`${txid}:${vout}`);
+                for (const key of keys) {
+                    wallet._heldOutpoints.add(key);
+                    wallet.persistentReservedOutpoints.add(key);
                 }
             }
         } catch (error) {

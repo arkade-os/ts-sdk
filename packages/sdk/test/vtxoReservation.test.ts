@@ -232,21 +232,49 @@ describe("durable reservations on a direct wallet", () => {
         await restored.wallet.dispose();
     });
 
-    it("starts despite overlapping stored holds, and the skipped one still releases", async () => {
+    it("starts despite overlapping stored holds, holding each until its last owner releases", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const repository = store();
         const [a, b] = ["aa", "bb"].map((fill) => ({ txid: fill.repeat(32), vout: 0 }));
         await repository.saveReservation({ id: "first", outpoints: [a] });
         await repository.saveReservation({ id: "second", outpoints: [a, b] });
 
-        const { wallet, outpoints } = await fundedWallet({ vtxoReservationRepository: repository });
-        const spendable = (await wallet.getSpendableVtxos()).map(key);
-        expect(spendable).not.toContain(outpoints[0]);
-        expect(spendable).toContain(outpoints[1]);
+        const { wallet, coins, outpoints } = await fundedWallet({
+            vtxoReservationRepository: repository,
+        });
+        const spendable = async () => (await wallet.getSpendableVtxos()).map(key);
+        expect(await spendable()).not.toContain(outpoints[0]);
+        expect(await spendable()).not.toContain(outpoints[1]);
+        await expect(
+            wallet.settle({ inputs: [coins[1]], outputs: [{ address: BTC_ADDR, amount: 9_000n }] }),
+        ).rejects.toMatchObject({ name: "VtxoReservedError" });
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("second"));
 
         await wallet.releaseVtxoReservation("second");
         expect((await repository.getReservations()).map(({ id }) => id)).toEqual(["first"]);
+        expect(await spendable()).not.toContain(outpoints[0]);
+        expect(await spendable()).toContain(outpoints[1]);
+
+        await wallet.releaseVtxoReservation("first");
+        expect(await spendable()).toContain(outpoints[0]);
+        await wallet.dispose();
+    });
+
+    it("lets a released handle's repeat release leave a newer hold under its id alone", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = store();
+        const { wallet, coins, outpoints } = await fundedWallet({
+            vtxoReservationRepository: repository,
+        });
+        const first = await wallet.reserveVtxos([coins[0]], "taxi-transfer");
+        await first.release();
+        await wallet.reserveVtxos([coins[1]], "taxi-transfer");
+
+        await first.release();
+        expect(await repository.getReservations()).toEqual([
+            { id: "taxi-transfer", outpoints: [{ txid: coins[1].txid, vout: 0 }] },
+        ]);
+        expect((await wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[1]);
         await wallet.dispose();
     });
 
