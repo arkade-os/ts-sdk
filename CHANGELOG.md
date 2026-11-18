@@ -111,6 +111,11 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
+  can import the negotiation field names, refusal code, and asset contract IDs
+  without loading the client or contract builders. Existing `/protocol` exports
+  keep their names and values.
+
 - **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
   `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
   (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the
