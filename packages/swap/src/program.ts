@@ -4,6 +4,9 @@ import assetSwapArtifact from "./contracts/asset-swap.json";
 import satsSwapArtifact from "./contracts/sats-swap.json";
 import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
 import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
+import { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_V3 } from "./rfq-contract";
+
+export { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_V3 } from "./rfq-contract";
 
 // json imports widen "type": "pubkey" to string; the parsers validate at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -26,15 +29,6 @@ export const legacySwapPrograms: typeof swapPrograms = {
     wantAsset: arkade.parseArtifact(wantAssetProgramV1 as Artifact),
     wantBtc: arkade.parseArtifact(wantBtcProgramV1 as Artifact),
 };
-
-/** Contract version ids for the arkade↔arkade corridor; mirror the solver's RFQ vocabulary.
- * One id covers both trees: `asset-swap` and `sats-swap` move between versions together. */
-export const ASSET_SWAP_V3 = "asset-swap-v3";
-export const ASSET_SWAP_V2 = "asset-swap-v2";
-
-/** The version used when none is named or negotiated: a solver that did not negotiate (it
- * predates the field, or was asked without the list) fills only this tree. */
-export const ASSET_SWAP_BASELINE = ASSET_SWAP_V2;
 
 export type AssetSwapContractVersion = typeof ASSET_SWAP_V2 | typeof ASSET_SWAP_V3;
 
