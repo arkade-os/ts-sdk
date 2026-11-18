@@ -921,3 +921,29 @@ describe("ContractManager.syncOnchain", () => {
         }
     });
 });
+
+describe("ContractManager.createContract", () => {
+    it("stores a new onchain contract's coins and watches its address", async () => {
+        const { manager, walletRepository, onchainProvider } = await setup(async () => [coin]);
+        const later = { type: "blocks", value: 145n } as const;
+        const rotated = new DefaultVtxo.Script({ pubKey, serverPubKey, csvTimelock: later });
+        const rotatedScript = hex.encode(rotated.pkScript);
+
+        await manager.createContract({
+            type: "boarding",
+            params: { ...boarding.params, csvTimelock: timelockToSequence(later).toString() },
+            script: rotatedScript,
+            address: rotated.address(networks.regtest.hrp, serverPubKey).encode(),
+        });
+
+        expect(await collectScriptVtxos(walletRepository, rotatedScript)).toHaveLength(1);
+        expect(onchainProvider.watchAddresses).toHaveBeenLastCalledWith(
+            expect.arrayContaining([
+                script.onchainAddress(networks.regtest),
+                rotated.onchainAddress(networks.regtest),
+            ]),
+            expect.any(Function),
+        );
+        manager.dispose();
+    });
+});

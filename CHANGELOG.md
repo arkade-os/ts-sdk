@@ -168,6 +168,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **A new onchain contract is synced when it is created.** `createContract`
+  and `createContracts` hydrated a new contract from the indexer only, so the
+  coins of an onchain-scoped one, such as a rotated boarding address or an
+  Executor boarding watch, stayed out of the stored boarding coins, and its
+  address out of the onchain watch, until the next `syncOnchain`. Without a
+  periodic settle (`settlementConfig: false`) nothing ran one, and stored
+  balances missed its deposits. Both now sync the new onchain-scoped contracts
+  before returning, best-effort like the indexer hydration.
+
 - **A malformed explorer history no longer leaves the address watch's baseline as an unhandled rejection.** The baseline guarded the history fetch but not the loop that keys its entries, so an entry without `status` threw `Cannot read properties of undefined (reading 'block_time')` out of a floating promise. Seeding now sits inside the same failure handling as the fetch, so a bad response takes the existing "first poll pass establishes the baseline" fallback.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription

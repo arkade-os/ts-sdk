@@ -1313,6 +1313,7 @@ export class ContractManager implements IContractManager {
             // Best-effort hydration so wallet construction survives an offline operator; the
             // contract is still watched and hydrates on the next reconcile.
             await this.trySync(() => this.fetchContractVxosFromIndexer([contract]));
+            await this.syncNewOnchain([contract]);
             await this.watcher.addContract(contract);
         }
         return contract;
@@ -1345,6 +1346,7 @@ export class ContractManager implements IContractManager {
             const fresh = upserted.filter((u) => u.persisted).map((u) => u.contract);
             if (fresh.length > 0) {
                 await this.trySync(() => this.fetchContractVxosFromIndexer(fresh));
+                await this.syncNewOnchain(fresh);
                 for (const contract of fresh) await this.watcher.addContract(contract);
             }
             return upserted.map((u) => u.contract);
@@ -2137,6 +2139,18 @@ export class ContractManager implements IContractManager {
     /** @see IContractManager.getWatchedScripts */
     async getWatchedScripts(): Promise<WatchedScript[]> {
         return this.watcher.getWatchedScripts();
+    }
+
+    /**
+     * The onchain side of hydrating new contracts: stores their coins, and the sync's retarget
+     * adds their addresses to the onchain watch. Best-effort: the next sync retries.
+     */
+    private async syncNewOnchain(contracts: Contract[]): Promise<void> {
+        const scripts = contracts.filter(isOnchainScoped).map((c) => c.script);
+        if (scripts.length === 0) return;
+        await this.syncOnchain(scripts).catch((e) =>
+            console.warn("[contracts] onchain sync of new contracts failed", e),
+        );
     }
 
     /** @see IContractManager.syncOnchain */
