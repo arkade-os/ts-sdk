@@ -156,7 +156,6 @@ export const verifySendWindow = (input: {
     readonly onchain?: {
         htlcLocktime: number;
         minConfirmations: number;
-        direction: "send" | "receive";
     };
 }): void => {
     gated(

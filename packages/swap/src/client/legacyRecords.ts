@@ -24,6 +24,7 @@ import type { AssetSwap } from "../store";
 import type { RfqSwapRecord } from "../rfqRecord";
 import { isRfqSwapTerminal } from "../rfqSwapState";
 import { pageRfqRecords, splitRecords, type CorridorRecordStore } from "./driveRecords";
+import { isCorridorKind } from "./outcome";
 
 /** v1 corridor records, or none: an unreadable v1 store must not stop the v2 records. */
 const readLegacyRfqSwaps = async (
@@ -31,7 +32,9 @@ const readLegacyRfqSwaps = async (
     filter: RfqSwapPageFilter = {},
 ): Promise<RfqSwapRecord[]> => {
     try {
-        return await collectRfqSwaps(repository, filter);
+        return (await collectRfqSwaps(repository, filter)).filter((record) =>
+            isCorridorKind(record.kind),
+        );
     } catch (error) {
         console.warn("[swap] the v1 rfq swaps could not be read", error);
         return [];
