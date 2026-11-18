@@ -71,11 +71,16 @@ import { registerLockupContract } from "./lockupContract";
 import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
 import {
-    ASSET_SWAP_BASELINE,
     ASSET_SWAP_CONTRACT_VERSIONS,
     type AssetSwapContractVersion,
     assetSwapContractVersion,
 } from "./program";
+import {
+    ASSET_SWAP_BASELINE,
+    RFQ_CONTRACT_VERSION_KEY,
+    RFQ_CONTRACT_VERSION_UNSUPPORTED,
+    RFQ_CONTRACT_VERSIONS_KEY,
+} from "./rfq-contract";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -153,7 +158,7 @@ export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded",
 
 export const RFQ_REFUSAL_ERROR_CODES = [
     "amount_side_unsupported",
-    "contract_version_unsupported",
+    RFQ_CONTRACT_VERSION_UNSUPPORTED,
     "exact_out_unsupported",
     "invalid_amount",
     "invalid_payout_address",
@@ -298,7 +303,7 @@ export interface RfqQuote {
     solver_pubkey: string;
     valid_until: number;
     /** Contract version the solver chose; echoed only when the request advertised `contract_versions`. */
-    contract_version?: string;
+    [RFQ_CONTRACT_VERSION_KEY]?: string;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
     refund_locktime?: number;
     profile: {
@@ -392,7 +397,7 @@ export const arkadeSwapRequest = (input: {
         amount_side: input.amountSide ?? "from",
         amount: canonicalAssetAmount(input.amount),
         ...(input.contractVersions && input.contractVersions.length > 0
-            ? { contract_versions: [...input.contractVersions] }
+            ? { [RFQ_CONTRACT_VERSIONS_KEY]: [...input.contractVersions] }
             : {}),
         // The solver's `.strict()` schema refuses any undeclared key as `unsupported_payload`.
         profile: {
@@ -777,16 +782,15 @@ export const requestVersionedQuote = async (
         ) {
             throw error;
         }
-        const { contract_versions: _, ...baseline } = request;
+        const { [RFQ_CONTRACT_VERSIONS_KEY]: _, ...baseline } = request;
         sent = { ...baseline, rfq_id: newRfqId() };
         quote = await transport.requestQuote(sent);
     }
-    if (sent !== request && quote.contract_version !== undefined) {
-        throw new Error(
-            `solver chose contract version ${quote.contract_version}, but none was advertised`,
-        );
+    const selected = quote[RFQ_CONTRACT_VERSION_KEY];
+    if (sent !== request && selected !== undefined) {
+        throw new Error(`solver chose contract version ${selected}, but none was advertised`);
     }
-    const version = quote.contract_version ?? ASSET_SWAP_BASELINE;
+    const version = selected ?? ASSET_SWAP_BASELINE;
     if (!advertised.includes(version)) {
         throw new Error(
             `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
