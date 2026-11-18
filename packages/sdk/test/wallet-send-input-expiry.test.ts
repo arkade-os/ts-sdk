@@ -16,6 +16,12 @@ import {
 import { normalizeVtxo } from "../src/wallet/vtxo";
 import { jsonResponse } from "./helpers/response";
 import { MockEventSource } from "./mocks/eventSource";
+import {
+    bindTestWallet,
+    scopedWalletRequest,
+    testWalletBinding,
+    walletRequestOf,
+} from "./helpers/walletRequest";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 vi.mock("../src/utils/fetch", async (original) => ({
@@ -84,19 +90,31 @@ function params(wallet: Wallet, inputExpiryFloor: unknown, selectedVtxos?: Exten
         ...(selectedVtxos ? { selectedVtxos } : {}),
     } as SendParams;
 }
-function pageFor(
+async function pageFor(
     wallet: Wallet,
     mutate?: (response: any, request: any, worker: any) => { data: any; source: any }[],
 ) {
     const handler = new WalletMessageHandler();
-    (handler as any).readonlyWallet = wallet;
-    (handler as any).wallet = wallet;
+    const binding = testWalletBinding(
+        await wallet.identity.xOnlyPublicKey(),
+        "http://localhost:7070",
+        wallet.network.name,
+    );
+    await handler.start(
+        {
+            readonlyWallet: wallet,
+            wallet,
+            arkProvider: wallet.arkProvider,
+            walletRequestBinding: binding,
+        },
+        { walletRepository: wallet.walletRepository },
+    );
     const listeners = new Set<(event: any) => void>();
     const worker = {
         postMessage: vi.fn((request: any) => {
             void handler.handleMessage(structuredClone(request)).then((response) => {
                 const cloned = structuredClone(response);
-                for (const event of mutate?.(cloned, request, worker) ?? [
+                for (const event of mutate?.(cloned, walletRequestOf(request), worker) ?? [
                     { data: cloned, source: worker },
                 ]) {
                     for (const listener of [...listeners]) listener(event);
@@ -112,15 +130,18 @@ function pageFor(
                 listeners.delete(listener),
         },
     });
-    const page = new (ServiceWorkerWallet as any)(
-        worker,
-        wallet.identity,
-        new InMemoryWalletRepository(),
-        new InMemoryContractRepository(),
-        handler.messageTag,
-        false,
-    ) as ServiceWorkerWallet;
-    return { page, worker, handler };
+    const page = bindTestWallet(
+        new (ServiceWorkerWallet as any)(
+            worker,
+            wallet.identity,
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            handler.messageTag,
+            false,
+        ) as ServiceWorkerWallet,
+        binding,
+    );
+    return { page, worker, handler, binding };
 }
 
 beforeEach(() => {
@@ -316,7 +337,7 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
         async (validUntil) => {
             const { wallet } = await makeWallet();
             const send = vi.spyOn(wallet, "send").mockResolvedValue("sent");
-            const { page, worker } = pageFor(wallet);
+            const { page, worker } = await pageFor(wallet);
             const floor = { kind: "height", value: 900_000n };
             const request = {
                 ...params(wallet, floor),
@@ -328,15 +349,20 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
             request.validUntil = 1;
             await expect(pending).resolves.toBe("sent");
             expect(worker.postMessage.mock.calls.map(([message]) => message.type)).toEqual([
-                "SEND_WITH_INPUT_EXPIRY_FLOOR",
+                "SCOPED_WALLET_REQUEST_V1",
             ]);
+            expect(
+                worker.postMessage.mock.calls.map(([message]) => walletRequestOf(message).type),
+            ).toEqual(["SEND_WITH_INPUT_EXPIRY_FLOOR"]);
             expect(send).toHaveBeenCalledWith(
                 expect.objectContaining({
                     inputExpiryFloor: { kind: "height", value: 900_000n },
                     ...(validUntil === undefined ? {} : { validUntil }),
                 }),
             );
-            expect(worker.postMessage.mock.calls[0][0].payload.inputExpiryFloor).toEqual({
+            expect(
+                walletRequestOf(worker.postMessage.mock.calls[0][0]).payload.inputExpiryFloor,
+            ).toEqual({
                 kind: "height",
                 value: 900_000n,
             });
@@ -345,7 +371,7 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
 
     it("rejects constrained input expiry in the real worker send path", async () => {
         const { wallet, submit } = await makeWallet();
-        const { page, worker } = pageFor(wallet);
+        const { page, worker } = await pageFor(wallet);
         await expect(
             page.send(
                 params(wallet, { kind: "height", value: 900_000n }, [
@@ -354,12 +380,15 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
             ),
         ).rejects.toThrow("input expiry floor");
         expect(submit).not.toHaveBeenCalled();
-        expect(worker.postMessage.mock.calls[0][0].type).toBe("SEND_WITH_INPUT_EXPIRY_FLOOR");
+        expect(worker.postMessage.mock.calls[0][0].type).toBe("SCOPED_WALLET_REQUEST_V1");
+        expect(walletRequestOf(worker.postMessage.mock.calls[0][0]).type).toBe(
+            "SEND_WITH_INPUT_EXPIRY_FLOOR",
+        );
     });
 
     it("refuses an old worker without retrying an unconstrained send", async () => {
         const { wallet, submit } = await makeWallet();
-        const { page, worker, handler } = pageFor(wallet);
+        const { page, worker, handler } = await pageFor(wallet);
         vi.spyOn(handler, "handleMessage").mockImplementation(
             async (message) =>
                 ({
@@ -372,8 +401,11 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
             page.send(params(wallet, { kind: "height", value: 900_000n })),
         ).rejects.toThrow("Unsupported message type");
         expect(worker.postMessage.mock.calls.map(([message]) => message.type)).toEqual([
-            "SEND_WITH_INPUT_EXPIRY_FLOOR",
+            "SCOPED_WALLET_REQUEST_V1",
         ]);
+        expect(
+            worker.postMessage.mock.calls.map(([message]) => walletRequestOf(message).type),
+        ).toEqual(["SEND_WITH_INPUT_EXPIRY_FLOOR"]);
         expect(submit).not.toHaveBeenCalled();
     });
 
@@ -382,13 +414,21 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
         async (inputExpiryFloor) => {
             const { wallet, submit } = await makeWallet();
             const send = vi.spyOn(wallet, "send");
-            const { handler } = pageFor(wallet);
-            const response = await handler.handleMessage({
-                id: "malformed-floor",
-                tag: handler.messageTag,
-                type: "SEND_WITH_INPUT_EXPIRY_FLOOR",
-                payload: { recipients: params(wallet, undefined).recipients, inputExpiryFloor },
-            } as never);
+            const { handler, binding } = await pageFor(wallet);
+            const response = await handler.handleMessage(
+                scopedWalletRequest(
+                    {
+                        id: "malformed-floor",
+                        tag: handler.messageTag,
+                        type: "SEND_WITH_INPUT_EXPIRY_FLOOR",
+                        payload: {
+                            recipients: params(wallet, undefined).recipients,
+                            inputExpiryFloor,
+                        },
+                    } as never,
+                    binding,
+                ),
+            );
             expect(response.error).toBeInstanceOf(TypeError);
             expect(send).not.toHaveBeenCalled();
             expect(submit).not.toHaveBeenCalled();
@@ -397,7 +437,7 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
 
     it("rejects a malformed page floor before posting any message", async () => {
         const { wallet } = await makeWallet();
-        const { page, worker } = pageFor(wallet);
+        const { page, worker } = await pageFor(wallet);
         await expect(page.send(params(wallet, { kind: "height", value: 1 }))).rejects.toThrow(
             "inputExpiryFloor",
         );
@@ -417,7 +457,7 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
     ])("does not brand a %s mismatch as constrained-send deadline proof", async (change) => {
         const { wallet, submit } = await makeWallet();
         vi.spyOn(Date, "now").mockReturnValue(1_700_000_001_000);
-        const { page } = pageFor(wallet, (response, request, worker) => {
+        const { page } = await pageFor(wallet, (response, request, worker) => {
             const forged = {
                 ...response,
                 type: "SEND_DEADLINE_EXCEEDED",
@@ -459,7 +499,7 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
     it("preserves authenticated deadline refusal on a floor-constrained send", async () => {
         const { wallet, submit } = await makeWallet();
         vi.spyOn(Date, "now").mockReturnValue(1_700_000_001_000);
-        const { page, worker } = pageFor(wallet);
+        const { page, worker } = await pageFor(wallet);
         await expect(
             page.send({
                 ...params(wallet, { kind: "height", value: 900_000n }, [
@@ -469,7 +509,8 @@ describe("ServiceWorkerWallet inputExpiryFloor", () => {
             }),
         ).rejects.toBeInstanceOf(SendDeadlineExceededError);
         expect(submit).not.toHaveBeenCalled();
-        expect(worker.postMessage.mock.calls[0][0].payload).toMatchObject({
+        expect(worker.postMessage.mock.calls[0][0].type).toBe("SCOPED_WALLET_REQUEST_V1");
+        expect(walletRequestOf(worker.postMessage.mock.calls[0][0]).payload).toMatchObject({
             inputExpiryFloor: { kind: "height", value: 900_000n },
             validUntil: 1_700_000_001,
         });

@@ -10,6 +10,7 @@ import {
     InMemoryWalletRepository,
     ServiceWorkerReadonlyWallet,
 } from "../../src";
+import { bindTestWallet, testWalletBinding } from "../helpers/walletRequest";
 import type { ContractRepository } from "../../src/repositories";
 import {
     WalletMessageHandler,
@@ -35,6 +36,8 @@ const SECOND_SCRIPT = hex.encode(new DefaultVtxo.Script(SECOND_SCRIPT_OPTIONS).p
 /** The page-side proxy wired to a real `WalletMessageHandler` and `ContractManager`. */
 const createBridgedWallet = (manager: ContractManager) => {
     const handler = new WalletMessageHandler();
+    const binding = testWalletBinding(new Uint8Array(32).fill(0xab));
+    (handler as any).walletRequestBinding = binding;
     (handler as any).readonlyWallet = {
         getContractManager: async () => manager,
         getContractSyncState: () => ({ mode: "online" }),
@@ -63,13 +66,16 @@ const createBridgedWallet = (manager: ContractManager) => {
         },
     } as any);
 
-    return new (ServiceWorkerReadonlyWallet as any)(
-        serviceWorker as any,
-        { xOnlyPublicKey: async () => new Uint8Array(32).fill(0xab) } as any,
-        new InMemoryWalletRepository(),
-        new InMemoryContractRepository(),
-        handler.messageTag,
-    ) as ServiceWorkerReadonlyWallet;
+    return bindTestWallet(
+        new (ServiceWorkerReadonlyWallet as any)(
+            serviceWorker as any,
+            { xOnlyPublicKey: async () => new Uint8Array(32).fill(0xab) } as any,
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            handler.messageTag,
+        ) as ServiceWorkerReadonlyWallet,
+        binding,
+    );
 };
 
 describe("ServiceWorkerWallet contract watch state", () => {

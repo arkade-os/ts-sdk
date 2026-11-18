@@ -1,3 +1,4 @@
+import { scopedWalletRequest, testWalletBinding } from "./helpers/walletRequest";
 import { collectScriptVtxos } from "../src/repositories/walletRepository";
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
@@ -22,16 +23,46 @@ const baseMessage = (id: string = "1") => ({
     tag: DEFAULT_MESSAGE_TAG,
 });
 
+const TEST_BINDING = testWalletBinding(
+    new Uint8Array(32).fill(0xab),
+    "http://localhost:7070",
+    "regtest",
+);
+
+const fixtureContext = (updater: WalletMessageHandler) => {
+    const state = updater as any;
+    if (state.readonlyWallet && state.indexerProvider && !state.readonlyWallet.indexerProvider) {
+        state.readonlyWallet.indexerProvider = state.indexerProvider;
+    }
+    return {
+        wallet: state.wallet,
+        readonlyWallet: state.readonlyWallet,
+        walletRepository: state.walletRepository,
+        arkProvider: state.arkProvider,
+        indexerProvider: state.readonlyWallet?.indexerProvider,
+        binding: state.walletRequestBinding,
+    };
+};
+
+const dispatch = (updater: WalletMessageHandler, message: any) => {
+    fixtureContext(updater);
+    return updater.handleMessage(
+        message.type === "GET_STATUS" ? message : scopedWalletRequest(message, TEST_BINDING),
+    );
+};
+
 describe("WalletMessageHandler handleMessage", () => {
     let updater: WalletMessageHandler;
 
     beforeEach(() => {
         updater = new WalletMessageHandler();
+        (updater as any).walletRequestBinding = TEST_BINDING;
     });
 
     it("initializes the wallet on INIT_WALLET", async () => {
         const initSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).handleInitWallet = initSpy;
+        (updater as any).readonlyWallet = {};
 
         const message = {
             ...baseMessage(),
@@ -42,9 +73,15 @@ describe("WalletMessageHandler handleMessage", () => {
             },
         } as any;
 
-        const response = await updater.handleMessage(message);
+        const response = await dispatch(updater, message);
 
-        expect(initSpy).toHaveBeenCalledWith(message);
+        expect(initSpy).toHaveBeenCalledWith(
+            message,
+            expect.objectContaining({
+                readonlyWallet: (updater as any).readonlyWallet,
+                binding: TEST_BINDING,
+            }),
+        );
         expect(response).toEqual({
             tag: updater.messageTag,
             id: "1",
@@ -53,9 +90,9 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("returns a tagged error when the wallet is missing", async () => {
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
-            type: "GET_ADDRESS",
+            type: "GET_STATUS",
         } as any);
 
         expect(response.tag).toBe(updater.messageTag);
@@ -79,7 +116,7 @@ describe("WalletMessageHandler handleMessage", () => {
             (updater as any).wallet = undefined;
 
             await expect(
-                updater.handleMessage({ ...baseMessage(), type, payload } as any),
+                dispatch(updater, { ...baseMessage(), type, payload } as any),
             ).resolves.toMatchObject({ type: expected });
         });
 
@@ -93,7 +130,7 @@ describe("WalletMessageHandler handleMessage", () => {
             (updater as any).readonlyWallet = {};
             (updater as any).wallet = undefined;
 
-            const response = await updater.handleMessage({
+            const response = await dispatch(updater, {
                 ...baseMessage(),
                 type,
                 payload,
@@ -115,7 +152,7 @@ describe("WalletMessageHandler handleMessage", () => {
             (updater as any).wallet = { getArkadeBroadcaster: async () => ({ finalizeTx }) };
 
             await expect(
-                updater.handleMessage({
+                dispatch(updater, {
                     ...baseMessage(),
                     type: "FINALIZE_TX",
                     payload: { arkTxid: "cd".repeat(32), finalCheckpointTxs: ["bb"] },
@@ -134,7 +171,7 @@ describe("WalletMessageHandler handleMessage", () => {
             (updater as any).wallet = { getArkadeBroadcaster: async () => ({ submitTx }) };
 
             await expect(
-                updater.handleMessage({
+                dispatch(updater, {
                     ...baseMessage(),
                     type: "SUBMIT_TX",
                     payload: { signedArkTx: "70736274ff", checkpointTxs: ["aa"] },
@@ -161,7 +198,7 @@ describe("WalletMessageHandler handleMessage", () => {
             (updater as any).readonlyWallet = {};
             (updater as any).wallet = undefined;
 
-            const response = await updater.handleMessage({
+            const response = await dispatch(updater, {
                 ...baseMessage(),
                 type,
                 ...(payload ? { payload } : {}),
@@ -179,7 +216,7 @@ describe("WalletMessageHandler handleMessage", () => {
             (updater as any).wallet = {};
 
             await expect(
-                updater.handleMessage({
+                dispatch(updater, {
                     ...baseMessage(),
                     type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK",
                     payload: { descriptor },
@@ -187,7 +224,7 @@ describe("WalletMessageHandler handleMessage", () => {
             ).resolves.toMatchObject({ type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED" });
 
             await expect(
-                updater.handleMessage({
+                dispatch(updater, {
                     ...baseMessage(),
                     type: "GET_NEXT_SIGNING_DESCRIPTOR",
                 } as any),
@@ -206,7 +243,7 @@ describe("WalletMessageHandler handleMessage", () => {
             };
 
             await expect(
-                updater.handleMessage({
+                dispatch(updater, {
                     ...baseMessage(),
                     type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK",
                     payload: { descriptor },
@@ -225,7 +262,7 @@ describe("WalletMessageHandler handleMessage", () => {
         });
         (updater as any).handleSettle = settleSpy;
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "SETTLE",
             payload: {},
@@ -244,7 +281,7 @@ describe("WalletMessageHandler handleMessage", () => {
         const sendSpy = vi.fn().mockResolvedValue("tx");
         (updater as any).wallet = { send: sendSpy };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "SEND",
             payload: { recipients: [{ address: "addr", amount: 1 }] },
@@ -268,7 +305,7 @@ describe("WalletMessageHandler handleMessage", () => {
         });
         (updater as any).handleSignTransaction = signSpy;
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "SIGN_TRANSACTION",
             payload: { tx: { id: "unsigned-tx" } },
@@ -287,7 +324,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getAddress: vi.fn().mockResolvedValue("bc1-test"),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_ADDRESS",
         } as any);
@@ -305,7 +342,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BOARDING_ADDRESS",
         } as any);
@@ -327,7 +364,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getOperatorInfo: vi.fn().mockResolvedValue(info),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type,
         } as any);
@@ -349,7 +386,7 @@ describe("WalletMessageHandler handleMessage", () => {
         const getOperatorInfo = vi.fn().mockResolvedValue({ network: "regtest" });
         (updater as any).readonlyWallet = { getOperatorInfo };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage(),
             type,
             payload: { requireLive: true },
@@ -357,7 +394,7 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(getOperatorInfo).toHaveBeenLastCalledWith({ requireLive: true });
 
         // and the default read stays a default read
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage(),
             type,
         } as any);
@@ -376,7 +413,7 @@ describe("WalletMessageHandler handleMessage", () => {
         };
         (updater as any).handleGetBalance = vi.fn().mockResolvedValue(balance);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -393,7 +430,7 @@ describe("WalletMessageHandler handleMessage", () => {
         const vtxos = [{ id: "v1" }];
         (updater as any).handleGetVtxos = vi.fn().mockResolvedValue(vtxos);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_VTXOS",
             payload: {},
@@ -452,7 +489,7 @@ describe("WalletMessageHandler handleMessage", () => {
         const getStoredBoardingUtxos = vi.fn().mockResolvedValue([]);
         (updater as any).readonlyWallet = { getBoardingUtxos, getStoredBoardingUtxos };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BOARDING_UTXOS",
         } as any);
@@ -471,7 +508,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).buildTransactionHistoryFromCache = vi.fn().mockResolvedValue(transactions);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_TRANSACTION_HISTORY",
         } as any);
@@ -497,7 +534,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getProviderConnectionState: vi.fn().mockReturnValue(providerConnectionState),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_STATUS",
         } as any);
@@ -518,7 +555,7 @@ describe("WalletMessageHandler handleMessage", () => {
         const getContractSyncState = vi.fn().mockReturnValue(syncState);
         (updater as any).readonlyWallet = { getContractSyncState };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_CONTRACT_SYNC_STATE",
         } as any);
@@ -538,7 +575,7 @@ describe("WalletMessageHandler handleMessage", () => {
         const clearSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).clear = clearSpy;
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "CLEAR",
         } as any);
@@ -556,7 +593,7 @@ describe("WalletMessageHandler handleMessage", () => {
         const reloadSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).reloadWallet = reloadSpy;
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RELOAD_WALLET",
         } as any);
@@ -589,7 +626,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getContractManager: vi.fn().mockResolvedValue(manager),
         };
 
-        const createResponse = await updater.handleMessage({
+        const createResponse = await dispatch(updater, {
             ...baseMessage("c"),
             type: "CREATE_CONTRACT",
             payload: { type: "test", params: {}, script: "00", address: "a" },
@@ -600,7 +637,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { contract },
         });
 
-        const getResponse = await updater.handleMessage({
+        const getResponse = await dispatch(updater, {
             ...baseMessage("g"),
             type: "GET_CONTRACTS",
             payload: {},
@@ -611,7 +648,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { contracts },
         });
 
-        const unsupportedResponse = await updater.handleMessage({
+        const unsupportedResponse = await dispatch(updater, {
             ...baseMessage("us"),
             type: "GET_UNSUPPORTED_CONTRACTS",
         } as any);
@@ -621,7 +658,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { contracts },
         });
 
-        const getWithVtxosResponse = await updater.handleMessage({
+        const getWithVtxosResponse = await dispatch(updater, {
             ...baseMessage("gw"),
             type: "GET_CONTRACTS_WITH_VTXOS",
             payload: {},
@@ -632,7 +669,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { contracts: contractsWithVtxos },
         });
 
-        const updateResponse = await updater.handleMessage({
+        const updateResponse = await dispatch(updater, {
             ...baseMessage("u"),
             type: "UPDATE_CONTRACT",
             payload: { script: "00", updates: { label: "new" } },
@@ -643,7 +680,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { contract },
         });
 
-        const deleteResponse = await updater.handleMessage({
+        const deleteResponse = await dispatch(updater, {
             ...baseMessage("d"),
             type: "DELETE_CONTRACT",
             payload: { script: "00" },
@@ -654,7 +691,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { deleted: true },
         });
 
-        const spendablePathsResponse = await updater.handleMessage({
+        const spendablePathsResponse = await dispatch(updater, {
             ...baseMessage("p"),
             type: "GET_SPENDABLE_PATHS",
             payload: { options: { contractId: "c1" } },
@@ -665,7 +702,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { paths },
         });
 
-        const watchingResponse = await updater.handleMessage({
+        const watchingResponse = await dispatch(updater, {
             ...baseMessage("w"),
             type: "IS_CONTRACT_MANAGER_WATCHING",
         } as any);
@@ -675,7 +712,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { isWatching: true },
         });
 
-        const refreshResponse = await updater.handleMessage({
+        const refreshResponse = await dispatch(updater, {
             ...baseMessage("r"),
             type: "REFRESH_VTXOS",
         } as any);
@@ -697,7 +734,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getContractManager: vi.fn().mockResolvedValue(manager),
         };
 
-        const watchResponse = await updater.handleMessage({
+        const watchResponse = await dispatch(updater, {
             ...baseMessage("ws"),
             type: "WATCH_SCRIPT",
             payload: { script: "aa", label: "lockup" },
@@ -709,7 +746,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { script: "aa" },
         });
 
-        const listResponse = await updater.handleMessage({
+        const listResponse = await dispatch(updater, {
             ...baseMessage("gws"),
             type: "GET_WATCHED_SCRIPTS",
             payload: {},
@@ -720,7 +757,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { scripts: watched },
         });
 
-        const unwatchResponse = await updater.handleMessage({
+        const unwatchResponse = await dispatch(updater, {
             ...baseMessage("uws"),
             type: "UNWATCH_SCRIPT",
             payload: { script: "aa" },
@@ -743,7 +780,7 @@ describe("WalletMessageHandler handleMessage", () => {
             ["UNWATCH_SCRIPT", { script: "aa" }],
             ["GET_WATCHED_SCRIPTS", {}],
         ] as const) {
-            const response = await updater.handleMessage({
+            const response = await dispatch(updater, {
                 ...baseMessage(`x-${type}`),
                 type,
                 payload,
@@ -775,6 +812,7 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(broadcast).toHaveBeenCalledWith({
             tag: updater.messageTag,
             type: "CONTRACT_EVENT",
+            walletRequestBinding: TEST_BINDING,
             broadcast: true,
             payload: { event },
         });
@@ -805,6 +843,7 @@ describe("WalletMessageHandler handleMessage", () => {
             {
                 tag: updater.messageTag,
                 type: "CONTRACT_EVENT",
+                walletRequestBinding: TEST_BINDING,
                 broadcast: true,
                 payload: { event },
             },
@@ -814,7 +853,7 @@ describe("WalletMessageHandler handleMessage", () => {
     it("returns a tagged error for unknown message types", async () => {
         (updater as any).readonlyWallet = {};
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "UNKNOWN",
         } as any);
@@ -848,7 +887,7 @@ describe("WalletMessageHandler handleMessage", () => {
         };
         // wallet is NOT set — readonly only
 
-        const addrRes = await updater.handleMessage({
+        const addrRes = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_ADDRESS",
         } as any);
@@ -857,7 +896,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { address: TEST_DEFAULT_ARK_ADDRESS },
         });
 
-        const boardingRes = await updater.handleMessage({
+        const boardingRes = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BOARDING_ADDRESS",
         } as any);
@@ -866,7 +905,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { address: "bc1-boarding" },
         });
 
-        const historyRes = await updater.handleMessage({
+        const historyRes = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_TRANSACTION_HISTORY",
         } as any);
@@ -875,7 +914,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { transactions: [] },
         });
 
-        const statusRes = await updater.handleMessage({
+        const statusRes = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_STATUS",
         } as any);
@@ -910,7 +949,7 @@ describe("WalletMessageHandler handleMessage", () => {
             }),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "DELEGATE",
             payload: {
@@ -958,7 +997,7 @@ describe("WalletMessageHandler handleMessage", () => {
             }),
         };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage(),
             type: "DELEGATE",
             payload: {
@@ -988,7 +1027,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getDelegateManager: vi.fn().mockResolvedValue({ delegate: delegateSpy }),
         };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage(),
             type: "DELEGATE",
             payload: {
@@ -1009,7 +1048,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getDelegateManager: vi.fn().mockResolvedValue(undefined),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "DELEGATE",
             payload: {
@@ -1026,7 +1065,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         // wallet is NOT set — readonly only
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "DELEGATE",
             payload: {
@@ -1053,7 +1092,7 @@ describe("WalletMessageHandler handleMessage", () => {
             }),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_DELEGATE_INFO",
         } as any);
@@ -1071,7 +1110,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getDelegateManager: vi.fn().mockResolvedValue(undefined),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_DELEGATE_INFO",
         } as any);
@@ -1089,7 +1128,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RECOVER_VTXOS",
         } as any);
@@ -1119,7 +1158,7 @@ describe("WalletMessageHandler handleMessage", () => {
         };
         (updater as any).channel = { broadcast };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage("r1"),
             type: "RECOVER_VTXOS",
         } as any);
@@ -1128,6 +1167,7 @@ describe("WalletMessageHandler handleMessage", () => {
             tag: updater.messageTag,
             id: "r1",
             type: "RECOVER_VTXOS_EVENT",
+            walletRequestBinding: TEST_BINDING,
             payload: event,
         });
         expect(await updater.tick(Date.now())).toEqual([]);
@@ -1146,7 +1186,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage("r1"),
             type: "RECOVER_VTXOS",
         } as any);
@@ -1157,6 +1197,7 @@ describe("WalletMessageHandler handleMessage", () => {
                 tag: updater.messageTag,
                 id: "r1",
                 type: "RECOVER_VTXOS_EVENT",
+                walletRequestBinding: TEST_BINDING,
                 payload: event,
             },
         ]);
@@ -1177,7 +1218,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_RECOVERABLE_BALANCE",
         } as any);
@@ -1205,7 +1246,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_EXPIRING_VTXOS",
             payload: { thresholdMs: 86400000 },
@@ -1228,7 +1269,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_EXPIRING_VTXOS",
             payload: {},
@@ -1251,7 +1292,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RENEW_VTXOS",
         } as any);
@@ -1274,7 +1315,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RENEW_VTXOS",
             payload: { thresholdSeconds },
@@ -1303,7 +1344,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage("n1"),
             type: "RENEW_VTXOS",
         } as any);
@@ -1314,6 +1355,7 @@ describe("WalletMessageHandler handleMessage", () => {
                 tag: updater.messageTag,
                 id: "n1",
                 type: "RENEW_VTXOS_EVENT",
+                walletRequestBinding: TEST_BINDING,
                 payload: event,
             },
         ]);
@@ -1329,7 +1371,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_EXPIRED_BOARDING_UTXOS",
         } as any);
@@ -1351,7 +1393,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "SWEEP_EXPIRED_BOARDING_UTXOS",
         } as any);
@@ -1379,11 +1421,11 @@ describe("WalletMessageHandler handleMessage", () => {
         };
         const send = { ...baseMessage(), type: "SEND_ONCHAIN", payload: params };
 
-        expect(await updater.handleMessage(cosign as any)).toMatchObject({
+        expect(await dispatch(updater, cosign as any)).toMatchObject({
             type: "COSIGN_ONCHAIN_TX_SUCCESS",
             payload: { txid: "cosign-txid" },
         });
-        expect(await updater.handleMessage(send as any)).toMatchObject({
+        expect(await dispatch(updater, send as any)).toMatchObject({
             type: "SEND_ONCHAIN_SUCCESS",
             payload: { txid: "send-txid" },
         });
@@ -1398,7 +1440,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).wallet = {
             sendOnchain: vi.fn().mockRejectedValue(new Error("insufficient onchain funds")),
         };
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "SEND_ONCHAIN",
             payload: { outputs: [] },
@@ -1450,7 +1492,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = (await updater.handleMessage({
+        const response = (await dispatch(updater, {
             ...baseMessage(),
             type: "MIGRATE_DEPRECATED_SIGNER_VTXOS",
         } as any)) as any;
@@ -1490,7 +1532,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = (await updater.handleMessage({
+        const response = (await dispatch(updater, {
             ...baseMessage("m1"),
             type: "MIGRATE_DEPRECATED_SIGNER_VTXOS",
         } as any)) as any;
@@ -1503,6 +1545,7 @@ describe("WalletMessageHandler handleMessage", () => {
                 tag: updater.messageTag,
                 id: "m1",
                 type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT",
+                walletRequestBinding: TEST_BINDING,
                 payload: event,
             },
         ]);
@@ -1526,7 +1569,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
         };
 
-        const response = (await updater.handleMessage({
+        const response = (await dispatch(updater, {
             ...baseMessage(),
             type: "GET_DEPRECATED_SIGNER_STATUS",
         } as any)) as any;
@@ -1547,7 +1590,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = { restore: restoreSpy };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RESTORE_WALLET",
             payload: { gapLimit: 50 },
@@ -1566,7 +1609,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = { restore: restoreSpy };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RESTORE_WALLET",
             payload: {},
@@ -1589,7 +1632,7 @@ describe("WalletMessageHandler handleMessage", () => {
             restore: vi.fn().mockRejectedValue(aggregate),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RESTORE_WALLET",
             payload: { gapLimit: 20 },
@@ -1612,7 +1655,7 @@ describe("WalletMessageHandler handleMessage", () => {
             restore: vi.fn().mockRejectedValue(err),
         };
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RESTORE_WALLET",
             payload: {},
@@ -1626,7 +1669,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         // wallet is NOT set — readonly only
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "RESTORE_WALLET",
             payload: {},
@@ -1698,7 +1741,7 @@ describe("WalletMessageHandler handleMessage", () => {
             saveTransactions: vi.fn().mockResolvedValue(undefined),
         };
 
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
 
         expect(getVtxoManagerSpy).toHaveBeenCalled();
     });
@@ -1736,28 +1779,28 @@ describe("WalletMessageHandler handleMessage", () => {
         };
 
         // Should not throw — just skips VtxoManager startup
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
     });
 
     it("vtxo manager operations fail with readonly wallet only", async () => {
         (updater as any).readonlyWallet = {};
         // wallet is NOT set — readonly only
 
-        const recoverRes = await updater.handleMessage({
+        const recoverRes = await dispatch(updater, {
             ...baseMessage(),
             type: "RECOVER_VTXOS",
         } as any);
         expect(recoverRes.error).toBeInstanceOf(Error);
         expect(recoverRes.error?.message).toBe("Read-only wallet: operation requires signing");
 
-        const renewRes = await updater.handleMessage({
+        const renewRes = await dispatch(updater, {
             ...baseMessage(),
             type: "RENEW_VTXOS",
         } as any);
         expect(renewRes.error).toBeInstanceOf(Error);
         expect(renewRes.error?.message).toBe("Read-only wallet: operation requires signing");
 
-        const sweepRes = await updater.handleMessage({
+        const sweepRes = await dispatch(updater, {
             ...baseMessage(),
             type: "SWEEP_EXPIRED_BOARDING_UTXOS",
         } as any);
@@ -1769,7 +1812,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         // wallet is NOT set — readonly only
 
-        const settleRes = await updater.handleMessage({
+        const settleRes = await dispatch(updater, {
             ...baseMessage(),
             type: "SETTLE",
             payload: {},
@@ -1777,7 +1820,7 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(settleRes.error).toBeInstanceOf(Error);
         expect(settleRes.error?.message).toBe("Read-only wallet: operation requires signing");
 
-        const sendRes = await updater.handleMessage({
+        const sendRes = await dispatch(updater, {
             ...baseMessage(),
             type: "SEND",
             payload: { recipients: [{ address: "addr", amount: 1 }] },
@@ -1785,7 +1828,7 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(sendRes.error).toBeInstanceOf(Error);
         expect(sendRes.error?.message).toBe("Read-only wallet: operation requires signing");
 
-        const signRes = await updater.handleMessage({
+        const signRes = await dispatch(updater, {
             ...baseMessage(),
             type: "SIGN_TRANSACTION",
             payload: { tx: {} },
@@ -1879,6 +1922,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
     beforeEach(() => {
         updater = new WalletMessageHandler();
+        (updater as any).walletRequestBinding = TEST_BINDING;
     });
 
     it("GET_VTXOS reads from repository, not indexer", async () => {
@@ -1889,7 +1933,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_VTXOS",
             payload: { filter: { withRecoverable: true } },
@@ -1932,7 +1976,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 items: [{ address: TEST_DEFAULT_ARK_ADDRESS, vtxo: second }],
             });
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_VTXOS",
             payload: {},
@@ -1999,7 +2043,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const txids = (...vtxos: (typeof live)[]) => vtxos.map((v) => v.txid).sort();
         const get = async (filter?: Record<string, boolean>) =>
             (
-                (await updater.handleMessage({
+                (await dispatch(updater, {
                     ...baseMessage(),
                     type: "GET_VTXOS",
                     payload: filter === undefined ? {} : { filter },
@@ -2041,7 +2085,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [live, spent, exited]);
         const reads = vi.spyOn(walletRepo, "getVtxosForScriptPage");
         const send = (id: string, type: string, payload?: unknown) =>
-            updater.handleMessage({ ...baseMessage(id), type, payload } as any);
+            dispatch(updater, { ...baseMessage(id), type, payload } as any);
 
         await send("1", "GET_BALANCE");
         await send("2", "GET_VTXOS", { filter: { withRecoverable: true } });
@@ -2083,7 +2127,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         const get = async (filter: Record<string, boolean>) =>
             (
-                (await updater.handleMessage({
+                (await dispatch(updater, {
                     ...baseMessage(),
                     type: "GET_VTXOS",
                     payload: { filter },
@@ -2114,7 +2158,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, preconfirmed]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2144,7 +2188,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, unrolled]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2181,12 +2225,12 @@ describe("WalletMessageHandler repo-backed reads", () => {
             onchainRow,
         ]);
 
-        const balance = await updater.handleMessage({
+        const balance = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
         expect(balance).toMatchObject({ payload: { unrolled: 0, total: 0 } });
-        const history = (await updater.handleMessage({
+        const history = (await dispatch(updater, {
             ...baseMessage(),
             type: "GET_TRANSACTION_HISTORY",
         } as any)) as any;
@@ -2223,7 +2267,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             [boardingRow, unrolled],
         );
 
-        const balance = await updater.handleMessage({
+        const balance = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2246,7 +2290,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, exitedSwept]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2280,7 +2324,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, exitedSpent]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2316,7 +2360,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             .fn()
             .mockReturnValue(new Set([`${pendingExpired.txid}:${pendingExpired.vout}`]));
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2354,7 +2398,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         ]);
 
         const manager = await (updater as any).readonlyWallet.getContractManager();
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2378,7 +2422,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             }),
         ]);
 
-        await updater.handleMessage({ ...baseMessage(), type: "GET_BALANCE" } as any);
+        await dispatch(updater, { ...baseMessage(), type: "GET_BALANCE" } as any);
 
         // `pendingRecoveryOutpoints()` takes a fresh contractSnapshot(), which
         // syncs — the one thing this repo-backed read promises not to do.
@@ -2397,7 +2441,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_TRANSACTION_HISTORY",
         } as any);
@@ -2429,7 +2473,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         await walletRepo.saveVtxos("contract-1", [vtxo1]);
         await walletRepo.saveVtxos("contract-2", [vtxo2]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_VTXOS",
             payload: { filter: { withRecoverable: true } },
@@ -2461,7 +2505,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             }),
         ]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2500,7 +2544,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             }),
         ]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2546,7 +2590,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             proofInputs: [{ txid: "aa".repeat(32), vout: 0 }],
         });
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -2568,7 +2612,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxos = [createMockExtendedVtxo({ txid: "aa".repeat(32) })];
         (updater as any).readonlyWallet.getSpendableVtxos = vi.fn().mockResolvedValue(vtxos);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_SPENDABLE_VTXOS",
             payload: {
@@ -2602,7 +2646,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         // Save same VTXO under both keys (contract address = wallet address)
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_VTXOS",
             payload: { filter: { withRecoverable: true } },
@@ -2643,7 +2687,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             finalizePendingTxs: finalizeSpy,
         };
 
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
 
         expect(finalizeSpy).toHaveBeenCalledOnce();
         const vtxosArg = finalizeSpy.mock.calls[0][0];
@@ -2802,7 +2846,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage(),
             type: "INIT_WALLET",
             payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
@@ -2827,7 +2871,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
 
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
 
         const [signers] = rw.getBoardingUtxosForSigners.mock.calls[0];
         expect([...signers]).toEqual([
@@ -2849,7 +2893,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage(),
             type: "RELOAD_WALLET",
         } as any);
@@ -2874,7 +2918,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         };
 
         // First: full init (sets up subscriptions + VtxoManager)
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
         expect(notifyFundsSpy).toHaveBeenCalledOnce();
         expect(getVtxoManagerSpy).toHaveBeenCalledOnce();
 
@@ -2883,7 +2927,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         getVtxoManagerSpy.mockClear();
 
         // Second: reload should NOT re-subscribe or restart VtxoManager
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage(),
             type: "RELOAD_WALLET",
         } as any);
@@ -2908,7 +2952,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             finalizePendingTxs: finalizeSpy,
         };
 
-        await updater.handleMessage({
+        await dispatch(updater, {
             ...baseMessage(),
             type: "RELOAD_WALLET",
         } as any);
@@ -2924,7 +2968,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
 
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
 
         // indexerProvider.getVtxos should NOT have been called directly
         // (contract manager calls it during its own init, but the SW
@@ -2935,7 +2979,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         // ensureContractEventBroadcasting short-circuits, but the
         // reload path should still not hit the indexer directly.
         (updater as any).contractEventsSubscription = {};
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
         expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
     });
 
@@ -2954,7 +2998,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [newVtxo]);
 
-        const response = await updater.handleMessage({
+        const response = await dispatch(updater, {
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
@@ -3063,6 +3107,8 @@ describe("WalletMessageHandler event-push generations", () => {
     let broadcast: Mock<(response: any) => void>;
 
     const attach = (wallet: any) => {
+        (updater as any).walletRequestBinding = TEST_BINDING;
+        wallet.indexerProvider ??= {};
         (updater as any).readonlyWallet = wallet;
         (updater as any).arkProvider = {};
         (updater as any).indexerProvider = {};
@@ -3075,6 +3121,7 @@ describe("WalletMessageHandler event-push generations", () => {
 
     beforeEach(() => {
         updater = new WalletMessageHandler();
+        (updater as any).walletRequestBinding = TEST_BINDING;
         repository = new InMemoryWalletRepository();
         broadcast = vi.fn();
         // Not under test, and the real one talks to the indexer.
@@ -3122,7 +3169,7 @@ describe("WalletMessageHandler event-push generations", () => {
             }),
         });
         attach(wallet);
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
 
         const inFlight = fundsCallback!(vtxoFunds());
         await flush();
@@ -3130,7 +3177,11 @@ describe("WalletMessageHandler event-push generations", () => {
         await updater.stop();
         const nextBroadcast = vi.fn();
         await updater.start(
-            { readonlyWallet: makeWallet(), arkProvider: {} } as any,
+            {
+                readonlyWallet: makeWallet({ indexerProvider: {} }),
+                arkProvider: {},
+                walletRequestBinding: TEST_BINDING,
+            } as any,
             { walletRepository: repository },
             { broadcast: nextBroadcast },
         );
@@ -3162,15 +3213,17 @@ describe("WalletMessageHandler event-push generations", () => {
             dispose: vi.fn().mockResolvedValue(undefined),
         };
 
-        const inFlight = updater.handleMessage({
+        const inFlight = dispatch(updater, {
             ...baseMessage("r1"),
             type: "RECOVER_VTXOS",
         } as any);
         await started.promise;
 
-        await updater.stop();
+        const stopping = updater.stop();
+        expect((updater as any).onNextTick).toEqual([]);
         gate.resolve();
         await inFlight;
+        await stopping;
 
         expect((updater as any).onNextTick).toEqual([]);
     });
@@ -3193,12 +3246,12 @@ describe("WalletMessageHandler event-push generations", () => {
             }),
         });
         attach(wallet);
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
 
         const inFlight = fundsCallback!(vtxoFunds());
         await flush();
 
-        await (updater as any).clear();
+        await (updater as any).clear((updater as any).readonlyWallet);
         expect(wallet.clear).toHaveBeenCalled();
         gate.resolve();
         await inFlight;
@@ -3225,8 +3278,8 @@ describe("WalletMessageHandler event-push generations", () => {
         });
         attach(wallet);
 
-        await (updater as any).onWalletInitialized();
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
 
         eventCallback?.({ type: "test" });
         expect(emitted("CONTRACT_EVENT")).toBe(true);
@@ -3248,14 +3301,17 @@ describe("WalletMessageHandler event-push generations", () => {
         attach(wallet);
         (updater as any).wallet = signer;
 
-        const inFlight = (updater as any).handleSettle({
-            ...baseMessage("s1"),
-            type: "SETTLE",
-            payload: { params: {} },
-        });
+        const inFlight = (updater as any).handleSettle(
+            {
+                ...baseMessage("s1"),
+                type: "SETTLE",
+                payload: { params: {} },
+            },
+            signer,
+        );
         await flush();
 
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
         gate.resolve();
         await inFlight;
 
@@ -3282,12 +3338,12 @@ describe("WalletMessageHandler event-push generations", () => {
             }),
         });
         attach(wallet);
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
 
         const inFlight = callbacks[0](vtxoFunds());
         await flush();
 
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
         gate.resolve();
         await inFlight;
 
@@ -3330,7 +3386,7 @@ describe("WalletMessageHandler event-push generations", () => {
             }),
         });
         await updater.start(
-            { readonlyWallet: fresh, arkProvider: {} } as any,
+            { readonlyWallet: fresh, arkProvider: {}, walletRequestBinding: TEST_BINDING } as any,
             { walletRepository: repository },
             { broadcast },
         );
@@ -3354,7 +3410,7 @@ describe("WalletMessageHandler event-push generations", () => {
             }),
         );
 
-        const pending = (updater as any).onWalletInitialized();
+        const pending = (updater as any).onWalletInitialized(fixtureContext(updater));
         await flush();
         await updater.stop();
         gate.resolve();
@@ -3378,16 +3434,14 @@ describe("WalletMessageHandler event-push generations", () => {
             if (signing) (updater as any).wallet = wallet;
             (updater as any).getVtxosFromRepo = vi.fn().mockResolvedValue([]);
             let completed = false;
-            const pending = updater
-                .handleMessage({
-                    ...baseMessage(),
-                    type: "INIT_WALLET",
-                    payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
-                } as any)
-                .then((response) => {
-                    completed = true;
-                    return response;
-                });
+            const pending = dispatch(updater, {
+                ...baseMessage(),
+                type: "INIT_WALLET",
+                payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+            } as any).then((response) => {
+                completed = true;
+                return response;
+            });
             await flush(30);
             try {
                 expect(wallet.notifyIncomingFunds).toHaveBeenCalledOnce();
@@ -3406,7 +3460,7 @@ describe("WalletMessageHandler event-push generations", () => {
         const gate = deferred<() => void>();
         attach(makeWallet({ notifyIncomingFunds: vi.fn(() => gate.promise) }));
         let completed = false;
-        const pending = (updater as any).onWalletInitialized().then(() => {
+        const pending = (updater as any).onWalletInitialized(fixtureContext(updater)).then(() => {
             completed = true;
         });
         await flush(30);
@@ -3427,7 +3481,7 @@ describe("WalletMessageHandler event-push generations", () => {
         attach(wallet);
         (updater as any).wallet = wallet;
         (updater as any).getVtxosFromRepo = vi.fn().mockResolvedValue([]);
-        const pending = (updater as any).onWalletInitialized();
+        const pending = (updater as any).onWalletInitialized(fixtureContext(updater));
         await flush(30);
         try {
             expect(wallet.notifyIncomingFunds).toHaveBeenCalledOnce();
@@ -3461,10 +3515,10 @@ describe("WalletMessageHandler event-push generations", () => {
                 }),
             });
             attach(old);
-            const first = (updater as any).onWalletInitialized();
+            const first = (updater as any).onWalletInitialized(fixtureContext(updater));
             await flush(30);
             if (action === "stop") await updater.stop();
-            else await (updater as any).clear();
+            else await (updater as any).clear((updater as any).readonlyWallet);
             const fresh = makeWallet({
                 onchainProvider,
                 notifyIncomingFunds: vi.fn(async () => {
@@ -3474,7 +3528,7 @@ describe("WalletMessageHandler event-push generations", () => {
                 }),
             });
             attach(fresh);
-            const second = (updater as any).onWalletInitialized();
+            const second = (updater as any).onWalletInitialized(fixtureContext(updater));
             await flush(30);
             try {
                 expect(fresh.notifyIncomingFunds).not.toHaveBeenCalled();
@@ -3514,7 +3568,7 @@ describe("WalletMessageHandler event-push generations", () => {
                 }),
             );
             (updater as any).lazyBoardingInit = true;
-            await (updater as any).onWalletInitialized();
+            await (updater as any).onWalletInitialized(fixtureContext(updater));
             await flush();
             await updater.stop();
             const fresh = makeWallet({
@@ -3528,9 +3582,11 @@ describe("WalletMessageHandler event-push generations", () => {
             attach(fresh);
             (updater as any).lazyBoardingInit = lazy;
             let completed = false;
-            const second = (updater as any).onWalletInitialized().then(() => {
-                completed = true;
-            });
+            const second = (updater as any)
+                .onWalletInitialized(fixtureContext(updater))
+                .then(() => {
+                    completed = true;
+                });
             await flush(30);
             try {
                 expect(fresh.notifyIncomingFunds).toHaveBeenCalledOnce();
@@ -3571,12 +3627,12 @@ describe("WalletMessageHandler event-push generations", () => {
             }),
         );
         (updater as any).lazyBoardingInit = true;
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
         await flush();
         await updater.stop();
         const middle = makeWallet({ onchainProvider: providerB });
         attach(middle);
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
         await flush(30);
         expect(middle.notifyIncomingFunds).toHaveBeenCalledOnce();
         await updater.stop();
@@ -3590,7 +3646,7 @@ describe("WalletMessageHandler event-push generations", () => {
         });
         attach(fresh);
         (updater as any).lazyBoardingInit = false;
-        const pending = (updater as any).onWalletInitialized();
+        const pending = (updater as any).onWalletInitialized(fixtureContext(updater));
         await flush(30);
         try {
             expect(fresh.notifyIncomingFunds).not.toHaveBeenCalled();
@@ -3616,11 +3672,11 @@ describe("WalletMessageHandler event-push generations", () => {
                 type: "INIT_WALLET",
                 payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
             } as any;
-            expect(await updater.handleMessage(message)).toMatchObject({
+            expect(await dispatch(updater, message)).toMatchObject({
                 type: "WALLET_INITIALIZED",
             });
             await flush(30);
-            expect(await updater.handleMessage(message)).toMatchObject({
+            expect(await dispatch(updater, message)).toMatchObject({
                 type: "WALLET_INITIALIZED",
             });
             await flush(30);
@@ -3652,8 +3708,10 @@ describe("WalletMessageHandler event-push generations", () => {
             payload: { arkServerUrl: "http://localhost:7070" },
         } as any;
 
-        await updater.handleMessage(message);
-        await expect(updater.handleMessage(message)).rejects.toThrow("onchain provider offline");
+        await dispatch(updater, message);
+        await expect(dispatch(updater, message)).resolves.toMatchObject({
+            error: { message: "onchain provider offline" },
+        });
 
         expect((updater as any).incomingFundsSubscription).toBe(unsubscribe);
         expect(unsubscribe).not.toHaveBeenCalled();
@@ -3682,11 +3740,13 @@ describe("WalletMessageHandler event-push generations", () => {
             .mockResolvedValueOnce(undefined)
             .mockRejectedValueOnce(new Error("onchain provider offline"));
         (updater as any).lazyBoardingInit = true;
-        await (updater as any).onWalletInitialized();
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
         await flush(30);
 
         (updater as any).lazyBoardingInit = false;
-        await expect((updater as any).onWalletInitialized()).rejects.toThrow();
+        await expect(
+            (updater as any).onWalletInitialized(fixtureContext(updater)),
+        ).rejects.toThrow();
         gate.resolve();
         await flush(30);
 
@@ -3713,9 +3773,9 @@ describe("WalletMessageHandler event-push generations", () => {
             }),
         );
 
-        const first = (updater as any).onWalletInitialized();
+        const first = (updater as any).onWalletInitialized(fixtureContext(updater));
         await flush();
-        const second = (updater as any).onWalletInitialized();
+        const second = (updater as any).onWalletInitialized(fixtureContext(updater));
         await flush();
         const callsBeforeRelease = calls;
         gate.resolve();
