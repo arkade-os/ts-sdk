@@ -42,10 +42,7 @@ const makeOffer = (
         emulatorPubkey: EMULATOR_KEY,
         ...(exitDelay ? { exitDelay } : {}),
     };
-    return {
-        ...binding,
-        swapPkScript: offerContract(binding, OPERATOR_KEY, "asset-swap-v3").pkScript,
-    };
+    return { ...binding, swapPkScript: offerContract(binding, OPERATOR_KEY).pkScript };
 };
 
 const scriptOf = (offer: Offer) => hex.encode(offer.swapPkScript);

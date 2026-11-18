@@ -3,9 +3,9 @@
  *
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
- * README's Roles section). `fulfill` pays `receiver` at least `amount` on the output at the
- * spending input's index and never inspects the deposit. The programs are loaded from
- * `contracts/*.ark` in `program.ts`. A funded script from the previous leaf still selects that tree.
+ * README's Roles section). One program per WANT side (`swap-want-asset` / `swap-want-btc`
+ * `.program.json`). The covenant constrains only what `fulfill` pays `$makerWP` and never inspects
+ * the deposit, which is what lets asset↔asset swaps ride the want-asset program.
  */
 import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
@@ -28,14 +28,8 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
-import {
-    ASSET_SWAP_BASELINE,
-    ASSET_SWAP_CONTRACTS,
-    ASSET_SWAP_CONTRACT_VERSIONS,
-    type AssetSwapContractVersion,
-    legacySwapPrograms,
-    swapPrograms,
-} from "./program";
+import wantAssetProgram from "./swap-want-asset.program.json";
+import wantBtcProgram from "./swap-want-btc.program.json";
 import {
     promoteOfferContract,
     RETIRABLE,
@@ -51,7 +45,24 @@ import {
     updateAssetSwapBestEffort,
 } from "./store";
 
-export { legacySwapPrograms, swapPrograms };
+// json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
+type Artifact = Parameters<typeof arkade.parseArtifact>[0];
+
+/**
+ * The contracts, one per WANT side — pure data, shared verbatim with any other implementation.
+ *
+ * An offer carrying an exit delay compiles a third closure that is in neither file (see
+ * {@link withExitClosure}); the golden in `offer.test.ts` pins the artifact it produces.
+ *
+ * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
+export const swapPrograms: Record<
+    "wantAsset" | "wantBtc",
+    ReturnType<typeof arkade.parseArtifact>
+> = {
+    wantAsset: arkade.parseArtifact(wantAssetProgram as Artifact),
+    wantBtc: arkade.parseArtifact(wantBtcProgram as Artifact),
+};
 
 // ── Offer ────────────────────────────────────────────────────────────────────
 
@@ -126,80 +137,39 @@ export function withExitClosure(
 }
 
 /** Exported for the asset-id vector tests (the args are the only place both asset-id forms are
- * visible). Deliberately absent from the package index -- not public API.
- * A carried `swapPkScript` selects the version that compiles to it; without one,
- * `contractVersion` picks, defaulting to {@link ASSET_SWAP_BASELINE}.
- */
+ * visible). Deliberately absent from the package index -- not public API. */
 export function swapProgramBinding(
-    offer: Omit<Offer, "swapPkScript"> & { swapPkScript?: Uint8Array },
+    offer: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
-    contractVersion: AssetSwapContractVersion = ASSET_SWAP_BASELINE,
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
-    const expected = offer.swapPkScript;
-    if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, contractVersion);
-    const funded = hex.encode(expected);
-    // Baseline first: nearly every funded offer is on it, so the common case compiles once.
-    const order: AssetSwapContractVersion[] = [
-        ASSET_SWAP_BASELINE,
-        ...ASSET_SWAP_CONTRACT_VERSIONS.filter((v) => v !== ASSET_SWAP_BASELINE),
-    ];
-    for (const version of order) {
-        const binding = bindSwapProgram(offer, operatorPubkey, version);
-        if (pkOf(binding) === funded) return binding;
-    }
-    // None matches (usually a rotated operator key): callers throw with that diagnosis.
-    return bindSwapProgram(offer, operatorPubkey, contractVersion);
-}
-
-function bindSwapProgram(
-    offer: Omit<Offer, "swapPkScript">,
-    operatorPubkey: Uint8Array,
-    contractVersion: AssetSwapContractVersion,
-): SwapProgramBinding {
-    const { programs, args } = ASSET_SWAP_CONTRACTS[contractVersion];
-    const user = offer.makerPublicKey;
-    const assetId = offer.wantAsset;
     return {
-        program: withExitClosure(assetId ? programs.wantAsset : programs.wantBtc, offer.exitDelay),
-        args: args({
-            receiver: offer.makerPkScript.subarray(2),
-            amount: offer.wantAmount,
-            // internal byte order
-            ...(assetId && {
-                asset: { txid: assetId.txid.slice().reverse(), groupIndex: assetId.groupIndex },
-            }),
-            user,
+        program: withExitClosure(
+            offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
+            offer.exitDelay,
+        ),
+        args: {
+            makerWP: offer.makerPkScript.subarray(2),
+            wantAmount: offer.wantAmount,
             server: operatorPubkey,
+            user: offer.makerPublicKey,
+            // internal byte order
+            ...(offer.wantAsset && {
+                wantAssetTxid: offer.wantAsset.txid.slice().reverse(),
+                wantAssetGroupIndex: offer.wantAsset.groupIndex,
+            }),
             ...(offer.exitDelay && { exitDelay: offer.exitDelay.value }),
-        }),
+        },
         keys: {
             serverKey: operatorPubkey,
-            userKey: user,
+            userKey: offer.makerPublicKey,
             emulatorKey: offer.emulatorPubkey,
         },
     };
-}
-
-type CompiledSwapScript = InstanceType<typeof arkade.ArkadeProgramScript>;
-const compiledBindings = new WeakMap<SwapProgramBinding, CompiledSwapScript>();
-
-/** The binding's taproot tree, compiled once however many callers ask. */
-function compileSwapBinding(binding: SwapProgramBinding): CompiledSwapScript {
-    let script = compiledBindings.get(binding);
-    if (!script) {
-        script = new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys);
-        compiledBindings.set(binding, script);
-    }
-    return script;
-}
-
-function pkOf(binding: SwapProgramBinding): string {
-    return hex.encode(compileSwapBinding(binding).pkScript);
 }
 
 /** Compile the offer's contract: program + args -> taproot tree.
@@ -209,9 +179,9 @@ function pkOf(binding: SwapProgramBinding): string {
 export function offerContract(
     offer: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
-    contractVersion?: AssetSwapContractVersion,
 ): InstanceType<typeof arkade.ArkadeProgramScript> {
-    return compileSwapBinding(swapProgramBinding(offer, operatorPubkey, contractVersion));
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
+    return new arkade.ArkadeProgramScript(program, args, keys);
 }
 
 // ── Offer wire format ────────────────────────────────────────────────────────
@@ -491,10 +461,7 @@ function offerContractParams(
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
 ) {
-    const { program, args, keys } = swapProgramBinding(
-        { ...binding, swapPkScript: expectedPkScript },
-        operatorPubkey,
-    );
+    const { program, args, keys } = swapProgramBinding(binding, operatorPubkey);
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering any other script would leave the real deposit
     // unwatched and unmarked
@@ -674,8 +641,6 @@ export interface OfferParams {
      * rotation between the two reads derive a covenant the solver never quoted.
      */
     maker?: { pkScript: Uint8Array; publicKey: Uint8Array };
-    /** Defaults to {@link ASSET_SWAP_BASELINE}. */
-    contractVersion?: AssetSwapContractVersion;
 }
 
 /**
@@ -776,7 +741,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
               ? assertExitDelay(params.exitDelay)
               : serverExitDelay(info.unilateralExitDelay),
     });
-    const script = offerContract(binding, operatorPubKey, params.contractVersion);
+    const script = offerContract(binding, operatorPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
     const payload = encodeOffer(offer);
     // frozen because `SwapClient.preparationOf` hands this very value out, and `accept()` registers it
@@ -965,13 +930,12 @@ export async function prepareOfferCancel(
     const operatorPubkey = swapAddress
         ? ArkAddress.decode(swapAddress).serverPubKey
         : client.serverKey;
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     // a mismatch means the wrong operator key; getUtxos would just return nothing, so fail with the
     // diagnosis instead
-    let binding: SwapProgramBinding;
     let rebuilt: InstanceType<typeof arkade.ArkadeProgramScript>;
     try {
-        binding = swapProgramBinding(offer, operatorPubkey);
-        rebuilt = compileSwapBinding(binding);
+        rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
     } catch (cause) {
         // a pinned key that is not a curve point throws in the taproot encoder — same diagnosis
         throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript), { cause });
@@ -979,7 +943,7 @@ export async function prepareOfferCancel(
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
         throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript));
     }
-    const contract = new arkade.ArkadeContract(client, binding.program, binding.args, binding.keys);
+    const contract = new arkade.ArkadeContract(client, program, args, keys);
 
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
     const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
@@ -1048,10 +1012,10 @@ export interface SponsorFillInput {
  * Fill an offer — the TAKER's side, and the counterpart to {@link createOffer}. Composes the
  * `fulfill` spend; it does not weaken or reinterpret the covenant.
  *
- * `fulfill` reads the output at the spending input's index. This builder puts the deposit at
- * input 0 and the maker payout at output 0. An ASSET want is the first packet group on that
- * output, which carries only a dust carrier ({@link ASSET_CARRIER_SATS}). Every other asset
- * goes to the taker's payout; see {@link FillFunding}.
+ * For an ASSET want the covenant reads output 0 through `OP_INSPECTOUTASSETLOOKUP` with
+ * `lookup_index = 0`, so the wanted asset must be the FIRST group in the packet (groups keep insertion
+ * order) and output 0 carries only a dust carrier ({@link ASSET_CARRIER_SATS}). Every other asset in
+ * the spend goes to the taker's payout; see {@link FillFunding}.
  *
  * Writes NO local swap record: the maker learns the outcome from the chain (RFQ protocol § 7.2).
  * `fund` is explicit because only the caller knows which coins are reserved (e.g. a corridor's
@@ -1140,8 +1104,8 @@ export async function connectFillContract(
     });
 
     const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
-    const binding = swapProgramBinding(offer, serverKey);
-    const rebuilt = compileSwapBinding(binding);
+    const { program, args, keys } = swapProgramBinding(offer, serverKey);
+    const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
         throw new Error(
             "rebuilt covenant does not match the offer's swapPkScript — the server " +
@@ -1149,7 +1113,7 @@ export async function connectFillContract(
                 "funded address) to pin the original key",
         );
     }
-    return new arkade.ArkadeContract(client, binding.program, binding.args, binding.keys);
+    return new arkade.ArkadeContract(client, program, args, keys);
 }
 
 export function resolveDeposit<V extends { txid: string; vout: number }>(
@@ -1346,7 +1310,6 @@ export function assembleOfferFill(
         wantedAssetId === undefined
             ? toAmount(offer.wantAmount, "offer.wantAmount", "sats")
             : carrier;
-    // The deposit is input 0, and fulfill reads the output at that index.
     const outputs: AssembledFillLayout["outputs"] = [
         { role: "receiver", script: offer.makerPkScript, sats: makerSats },
     ];

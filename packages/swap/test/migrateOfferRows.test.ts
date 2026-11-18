@@ -5,7 +5,6 @@ import {
     ContractManager,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    arkade,
     asset,
     type Contract,
     type IndexerProvider,
@@ -13,18 +12,12 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 import { migrateV0OfferRows } from "../src/migrateOfferRows";
-import {
-    encodeOffer,
-    legacySwapPrograms,
-    restoreOfferCoverage,
-    withExitClosure,
-    type Offer,
-} from "../src/offer";
+import { encodeOffer, offerContract, restoreOfferCoverage, type Offer } from "../src/offer";
 import type { AssetSwap } from "../src/store";
 import wantAssetV0 from "../src/legacy/swap-want-asset.program.v0.json";
 import wantBtcV0 from "../src/legacy/swap-want-btc.program.v0.json";
-import wantAssetV1 from "../src/legacy/swap-want-asset.program.v1.json";
-import wantBtcV1 from "../src/legacy/swap-want-btc.program.v1.json";
+import wantAssetV1 from "../src/swap-want-asset.program.json";
+import wantBtcV1 from "../src/swap-want-btc.program.json";
 import v0Wallet from "./fixtures/program-v0-offer.json";
 
 const makerKey = hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1");
@@ -101,33 +94,7 @@ const makeOffer = (wantAsset: boolean, exitDelay?: RelativeTimelock): Offer => {
         emulatorPubkey: EMULATOR_KEY,
         ...(exitDelay && { exitDelay }),
     };
-    // A v0 row's script is the previous leaf. Its constructor names are that leaf's.
-    const serverKey = hex.decode(SERVER_KEY);
-    const deposited = wantAsset ? asset.AssetId.fromString("aa".repeat(32) + "0000") : undefined;
-    const args = {
-        makerWP: binding.makerPkScript.subarray(2),
-        wantAmount: binding.wantAmount,
-        server: serverKey,
-        user: binding.makerPublicKey,
-        ...(deposited && {
-            wantAssetTxid: deposited.txid.slice().reverse(),
-            wantAssetGroupIndex: deposited.groupIndex,
-        }),
-        ...(exitDelay && { exitDelay: exitDelay.value }),
-    };
-    const keys = {
-        serverKey,
-        userKey: binding.makerPublicKey,
-        emulatorKey: binding.emulatorPubkey,
-    };
-    const program = withExitClosure(
-        wantAsset ? legacySwapPrograms.wantAsset : legacySwapPrograms.wantBtc,
-        exitDelay,
-    );
-    return {
-        ...binding,
-        swapPkScript: new arkade.ArkadeProgramScript(program, args, keys).pkScript,
-    };
+    return { ...binding, swapPkScript: offerContract(binding, hex.decode(SERVER_KEY)).pkScript };
 };
 
 const record = (offer: Offer): AssetSwap => ({
@@ -324,9 +291,8 @@ describe("migrateV0OfferRows", () => {
         await manager.dispose();
     });
 
-    // A failure here means the pre-pairing v1 files changed: migration's target
-    // has to stay the tree a v0 row's script was compiled from.
-    it("targets the pre-pairing v1 programs", () => {
+    // A failure here means a v1 program file changed: the migration's target needs reconsidering.
+    it("targets the current program files", () => {
         const patch = (v0: typeof wantAssetV0) => ({
             ...v0,
             version: 1,

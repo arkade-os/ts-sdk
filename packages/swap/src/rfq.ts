@@ -70,12 +70,6 @@ import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
-import {
-    ASSET_SWAP_BASELINE,
-    ASSET_SWAP_CONTRACT_VERSIONS,
-    type AssetSwapContractVersion,
-    assetSwapContractVersion,
-} from "./program";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -153,7 +147,6 @@ export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded",
 
 export const RFQ_REFUSAL_ERROR_CODES = [
     "amount_side_unsupported",
-    "contract_version_unsupported",
     "exact_out_unsupported",
     "invalid_amount",
     "invalid_payout_address",
@@ -297,8 +290,6 @@ export interface RfqQuote {
     carrier_sats?: number | string;
     solver_pubkey: string;
     valid_until: number;
-    /** Contract version the solver chose; echoed only when the request advertised `contract_versions`. */
-    contract_version?: string;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
     refund_locktime?: number;
     profile: {
@@ -370,9 +361,7 @@ export const arkadeSwapRequest = (input: {
     /** Trader's own x-only key (32 bytes), as bytes or lowercase hex. The
      * `cancel` path's `user` signer. */
     makerPublicKey: Uint8Array | string;
-    /** Covenants the trader can settle, most preferred first; omit for the baseline. */
-    contractVersions?: readonly string[];
-}): Record<string, unknown> & { rfq_id: string } => {
+}): Record<string, unknown> => {
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
             "set at least one of wantAsset or offerAsset — " +
@@ -391,9 +380,6 @@ export const arkadeSwapRequest = (input: {
         pair,
         amount_side: input.amountSide ?? "from",
         amount: canonicalAssetAmount(input.amount),
-        ...(input.contractVersions && input.contractVersions.length > 0
-            ? { contract_versions: [...input.contractVersions] }
-            : {}),
         // The solver's `.strict()` schema refuses any undeclared key as `unsupported_payload`.
         profile: {
             maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
@@ -744,55 +730,6 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
         );
     }
     return payload as RfqQuote;
-};
-
-/**
- * Ask for an arkade↔arkade quote advertising `contract_versions`, and read the tree to derive.
- * No `contract_version` in the quote is `asset-swap-v2`, the version every solver serves.
- * A pre-negotiation solver's strict schema refuses the list with a bare `unsupported_payload`;
- * it is asked once more without it, under a fresh rfq_id.
- */
-export const requestVersionedQuote = async (
-    transport: RfqTransport,
-    request: Record<string, unknown> & { rfq_id: string },
-    advertised: readonly string[],
-): Promise<{
-    quote: RfqQuote;
-    rfqId: string;
-    contractVersion: AssetSwapContractVersion;
-}> => {
-    if (advertised.length === 0) {
-        throw new Error("contractVersions is empty: advertise at least one contract version");
-    }
-    let sent: Record<string, unknown> & { rfq_id: string } = request;
-    let quote: RfqQuote;
-    try {
-        quote = await transport.requestQuote(request);
-    } catch (error) {
-        if (
-            !(error instanceof SwapRefusal) ||
-            error.reason !== "unsupported_payload" ||
-            error.errorCode !== undefined ||
-            !advertised.includes(ASSET_SWAP_BASELINE)
-        ) {
-            throw error;
-        }
-        const { contract_versions: _, ...baseline } = request;
-        sent = { ...baseline, rfq_id: newRfqId() };
-        quote = await transport.requestQuote(sent);
-    }
-    if (sent !== request && quote.contract_version !== undefined) {
-        throw new Error(
-            `solver chose contract version ${quote.contract_version}, but none was advertised`,
-        );
-    }
-    const version = quote.contract_version ?? ASSET_SWAP_BASELINE;
-    if (!advertised.includes(version)) {
-        throw new Error(
-            `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
-        );
-    }
-    return { quote, rfqId: sent.rfq_id, contractVersion: assetSwapContractVersion(version) };
 };
 
 /** The pair of a request we built, when it named one. */
@@ -1457,16 +1394,11 @@ export async function requestArkadeSwap(
          * so asserting it proves nothing and an unbounded caller funds what it is asked. */
         maxFromAmount?: bigint | number | string;
         minToAmount?: bigint | number | string;
-        /** A retry without `contract_versions` goes out under a fresh rfq_id, so the
-         * returned `rfqId` can differ from this one. */
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
         /** Canonical Arkade payout destination; the maker signing key stays this wallet's. */
         receiveAddress?: string;
-        /** Contract versions to advertise, most preferred first; the quote's choice must be one of them.
-         * Defaults to every covenant this build derives. */
-        contractVersions?: readonly string[];
         now?: number;
     },
 ): Promise<{
@@ -1491,6 +1423,7 @@ export async function requestArkadeSwap(
     if (!params.wantAsset && !params.offerAsset) {
         throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
     }
+    const rfqId = params.rfqId ?? newRfqId();
     const amountSide = params.amountSide ?? "from";
     const receiveAddress = params.receiveAddress;
     const [makerAddress, makerPublicKey] = await Promise.all([
@@ -1515,21 +1448,16 @@ export async function requestArkadeSwap(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
     );
-    // A copy: the request and the check of the reply must see the same list.
-    const contractVersions = [...(params.contractVersions ?? ASSET_SWAP_CONTRACT_VERSIONS)];
-    const { quote, rfqId, contractVersion } = await requestVersionedQuote(
-        transport,
+    const quote = await transport.requestQuote(
         arkadeSwapRequest({
-            rfqId: params.rfqId ?? newRfqId(),
+            rfqId,
             ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
             ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
             amount: params.amount,
             amountSide,
             makerPkScript,
             makerPublicKey,
-            contractVersions,
         }),
-        contractVersions,
     );
     if (quote.pair !== pair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
@@ -1571,7 +1499,6 @@ export async function requestArkadeSwap(
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
-        contractVersion,
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);
