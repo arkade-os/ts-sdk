@@ -59,6 +59,7 @@ import { setupServiceWorker } from "../../worker/browser/utils";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../../repositories";
 import {
     RequestClear,
+    RequestDispose,
     RequestCreateContract,
     RequestDeleteContract,
     RequestGetAddress,
@@ -348,6 +349,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     INIT_WALLET: 30_000,
     SCOPED_WALLET_REQUEST_V1: 30_000,
     CLEAR: 10_000,
+    DISPOSE: 30_000,
     SIGN_TRANSACTION: 30_000,
     CREATE_CONTRACT: 30_000,
     UPDATE_CONTRACT: 30_000,
@@ -699,6 +701,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         number
     >;
     private reinitPromise: Promise<void> | null = null;
+    private disposePromise?: Promise<void>;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<string, Promise<WalletUpdaterResponse>>();
 
@@ -1023,11 +1026,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             isComplete: (response: WalletUpdaterResponse) => boolean;
         },
     ): Promise<WalletUpdaterResponse> {
+        this.assertNotDisposed();
         request = this.scopeRequest(request);
         if (this.initConfig) {
             try {
                 await this.pingServiceWorker();
             } catch {
+                this.assertNotDisposed();
                 await this.reinitialize();
             }
         }
@@ -1035,6 +1040,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const timeoutMs = this.getTimeoutForRequest(request);
         const maxRetries = 2;
         for (let attempt = 0, initWaits = 0; ; attempt++) {
+            this.assertNotDisposed();
             try {
                 if (withEvents) {
                     return await this.sendMessageStreaming(
@@ -1046,6 +1052,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
                 if (isMessageBusInitializingError(error)) {
+                    this.assertNotDisposed();
                     if (initWaits >= MAX_INIT_WAITS) throw error;
                     await sleep(initWaitBackoffMs(initWaits++));
                     attempt--;
@@ -1054,6 +1061,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
+                this.assertNotDisposed();
                 await this.reinitialize();
             }
         }
@@ -1090,13 +1098,16 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     private async reinitialize(): Promise<void> {
+        this.assertNotDisposed();
         if (this.reinitPromise) return this.reinitPromise;
 
         this.reinitPromise = (async () => {
             const config = await this.buildInitConfig();
+            this.assertNotDisposed();
             const payload = this.buildInitWalletPayload();
 
             await initializeMessageBus(this.serviceWorker, config, this.messageBusTimeoutMs);
+            this.assertNotDisposed();
 
             const initMessage: RequestInitWallet = {
                 tag: this.messageTag,
@@ -1106,6 +1117,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             };
 
             await this.assertWorkerIdentityMatches();
+            this.assertNotDisposed();
             await this.sendMessageDirect(
                 this.scopeRequest(initMessage),
                 this.getTimeoutForRequest(initMessage),
@@ -1166,6 +1178,30 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             throw new Error("Worker wallet request scope changed during reinitialization");
         }
         this.walletRequestBinding ??= Object.freeze({ ...binding });
+    }
+
+    private assertNotDisposed(): void {
+        if (this.disposePromise) throw new Error("Service worker wallet is disposed");
+    }
+
+    /** Revoke this worker wallet and proxy without deleting persisted data or holds. */
+    dispose(): Promise<void> {
+        this.disposePromise ??= Promise.resolve().then(async () => {
+            await this.reinitPromise?.catch(() => undefined);
+            const message: RequestDispose = {
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "DISPOSE",
+            };
+            const response = await this.sendMessageDirect(
+                this.scopeRequest(message),
+                this.getTimeoutForRequest(message),
+            );
+            if (response.type !== "DISPOSE_SUCCESS") {
+                throw new Error("Worker did not confirm wallet disposal");
+            }
+        });
+        return this.disposePromise;
     }
 
     /** This tells the service worker to wipe all locally persisted wallet data. */
@@ -1461,11 +1497,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     /** Subscribe to contract and coin updates bound to this proxy's wallet. */
     onWalletUpdate(callback: (update: WalletUpdate) => void): () => void {
+        this.assertNotDisposed();
         const binding = this.walletRequestBinding;
         const tag = this.messageTag;
         const messageHandler = (event: MessageEvent) => {
             const response = event.data as WalletUpdate | undefined;
             if (
+                this.disposePromise ||
                 !binding ||
                 !response ||
                 response.tag !== tag ||
