@@ -1,0 +1,149 @@
+import { expectTypeOf, it } from "vitest";
+
+import type { ArtifactWitnessElement, ContractArtifact } from "../src/arkade/artifact";
+import type { ArkadeArgType, ArkadeNestedValue, ContractFunctions, Program } from "../src/arkade";
+
+const nativeProgram = {
+    version: 1,
+    functions: {
+        spend: {
+            tapscript: {
+                signers: [],
+                inputs: [
+                    { name: "key", type: "pubkey" },
+                    { name: "sig", type: "signature" },
+                    { name: "data", type: "bytes" },
+                    { name: "digest20", type: "bytes20" },
+                    { name: "digest32", type: "bytes32" },
+                    { name: "asset", type: "asset" },
+                    { name: "amount", type: "int" },
+                    { name: "flag", type: "bool" },
+                    { name: "group", type: "AssetGroup" },
+                ] as const,
+            },
+        },
+    },
+} satisfies Program;
+
+it("uses native scalar names without changing JavaScript call values", () => {
+    expectTypeOf<ArkadeArgType>().toEqualTypeOf<
+        | "pubkey"
+        | "signature"
+        | "bytes"
+        | "bytes20"
+        | "bytes32"
+        | "asset"
+        | "int"
+        | "bool"
+        | "AssetGroup"
+    >();
+    expectTypeOf<
+        Parameters<ContractFunctions<typeof nativeProgram>["spend"]>[0]["tapscript"]
+    >().toEqualTypeOf<
+        readonly [
+            Uint8Array,
+            Uint8Array,
+            Uint8Array,
+            Uint8Array,
+            Uint8Array,
+            Uint8Array,
+            bigint | number,
+            bigint | number,
+            bigint | number,
+        ]
+    >();
+});
+
+// Compiler format v1 records the encoding of every leaf witness item.
+const artifact = {
+    formatVersion: 1,
+    contractName: "T",
+    constructorInputs: [{ name: "owner", type: "pubkey" }],
+    functions: [
+        {
+            name: "exit",
+            leaves: [
+                {
+                    name: "exit",
+                    witness: [
+                        {
+                            name: "ownerSig",
+                            type: "signature",
+                            encoding: "schnorr-64",
+                        },
+                    ],
+                    asm: ["<owner>", "OP_CHECKSIG"],
+                },
+            ],
+        },
+    ],
+} satisfies ContractArtifact;
+
+it("reads an arkadec witness item that carries its encoding", () => {
+    expectTypeOf<ArtifactWitnessElement["encoding"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf(artifact).toExtend<ContractArtifact>();
+});
+
+it("keeps a function with dotted input names loose, since its fields bind as one argument", () => {
+    const dotted = {
+        version: 1,
+        functions: {
+            spend: {
+                tapscript: {
+                    signers: [],
+                    inputs: [
+                        { name: "point.x", type: "int" },
+                        { name: "point.y", type: "int" },
+                    ] as const,
+                },
+            },
+        },
+    } satisfies Program;
+    expectTypeOf<
+        Parameters<ContractFunctions<typeof dotted>["spend"]>[0]["tapscript"]
+    >().toEqualTypeOf<ArkadeNestedValue[]>();
+});
+
+it("accepts nested values when satisfies Program widens input names", () => {
+    const program = {
+        version: 1,
+        functions: {
+            spend: {
+                tapscript: {
+                    signers: [],
+                    inputs: [
+                        { name: "point.x", type: "int" },
+                        { name: "point.y", type: "int" },
+                    ],
+                },
+            },
+        },
+    } satisfies Program;
+    expectTypeOf<
+        Parameters<ContractFunctions<typeof program>["spend"]>[0]["tapscript"]
+    >().toEqualTypeOf<ArkadeNestedValue[]>();
+});
+
+it("keeps a function nullary when its segments declare empty inputs", () => {
+    const program = {
+        version: 1,
+        functions: {
+            refund: {
+                tapscript: { signers: [], inputs: [] as const },
+                arkadeScript: { asm: [], inputs: [] as const },
+            },
+        },
+    } satisfies Program;
+    expectTypeOf<Parameters<ContractFunctions<typeof program>["refund"]>>().toEqualTypeOf<[]>();
+});
+
+it("types a widened program's calls by segment, not positionally", () => {
+    expectTypeOf<Parameters<ContractFunctions<Program>[string]>>().toEqualTypeOf<
+        [
+            args?: {
+                tapscript?: readonly ArkadeNestedValue[];
+                arkadeScript?: readonly ArkadeNestedValue[];
+            },
+        ]
+    >();
+});

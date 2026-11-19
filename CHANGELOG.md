@@ -1,11 +1,3365 @@
 # Changelog
 
-All notable changes to `@arkade-os/sdk` are documented here. Format
-conventions and section ordering are defined in [`CLAUDE.md`](CLAUDE.md).
+All notable changes to `@arkade-os/sdk` are documented here. Entries land
+under `## [Unreleased]` in the same commit as the change, grouped in this
+order (omit empty sections): `### Breaking Changes`, `### Features`,
+`### Bug Fixes`, `### Performance`, `### Internal`. See
+[`AGENTS.md`](AGENTS.md#changelog) for the mechanism.
 
 This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
 style and have not been backfilled.
+
+## [Unreleased]
+
+### Breaking Changes
+
+- **Service-worker pages and workers must use the same wallet request protocol.** Every wallet operation now carries its captured identity/operator/network binding, including reads used to construct quotes and transactions. Older page/worker combinations fail before wallet access; update both together. `ServiceWorkerWallet` and its readonly variant accept `expectedNetwork` to verify the configured network during bootstrap.
+- **A worker `clear()` can be refused.** `ServiceWorkerWallet.clear()` rejects while a settlement or another long-running request from a page is in flight. It also fails without wiping anything if the remaining requests take over 5s to drain; the page then reinitializes before retrying. A logout that clears unconditionally must handle the rejection.
+
+- **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
+- **Arkade contract calls group their arguments by witness.** `contract.functions.<name>({ arkadeScript: [...], tapscript: [...] })` replaces the positional call, and programs declare inputs on the segment that uses them (`arkadeScript.inputs`, `tapscript.inputs`) instead of on the function. Widened programs are typed the same way, so a positional call no longer type-checks, and any call other than one such object (or none) is rejected at runtime. `ArkadeUnlocker.args` holds one map per segment. Compiled scripts are unchanged: a stored contract with function-level `inputs` still syncs, but its functions that take arguments fail until the program is re-created with those inputs moved onto its segments.
+- **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
+  `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
+  writes the old key keeps working: a coin that sets `intentTapLeafScript` signs
+  proofs with that leaf, and a handler that returns it has it moved to the new
+  key. A coin literal typed as `ExtendedCoin` and a handler typed as
+  `TapscriptDeriving` must add `proofTapLeafScript`.
+  Code that reads `intentTapLeafScript` from an SDK coin must move, because the
+  key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
+  keep the old key on disk.
+
+- **`@arkade-os/swap`: a new settlement leaf, used only when negotiated.** The
+  leaf is now the compiler artifact `asset-swap` or `sats-swap`
+  (`contracts/*.ark`). `fulfill` pays `receiver` on the output at the spending
+  input's index, so the same leaf can sit in a batch where input i is paid at
+  output i. A one-deposit fill is unchanged: the deposit stays input 0 and the
+  payout stays output 0. A newly derived offer address does not change by
+  default: an offer is derived on the previous tree unless the solver negotiates
+  `asset-swap-v3` over RFQ (`contractVersion: "asset-swap-v3"` opts in directly). An offer
+  that carries a `swapPkScript` compiles whichever tree matches it, so cancel,
+  fill, classify and restore keep rebuilding the address it was funded at. v0
+  offer rows migrate onto the previous tree. The deprecated `swapPrograms`
+  export of `@arkade-os/swap/protocol` now holds the new programs.
+- **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
+  The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
+  regtest) were a second source of truth for a value the operator already
+  advertises: `ArkadeInfo.checkpointTapscript` is decoded and its timelock
+  used as-is, so the floor only needs to reject a degenerate script. It is now
+  512s (the smallest seconds-typed CSV) everywhere; block-typed delays stay
+  regtest-only. `DEFAULT_`, `REGTEST_`, `SIGNET_` and
+  `MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS` are removed, and so is
+  `WalletConfig.minCheckpointExitDelaySeconds` (with its service-worker
+  mirror): nothing an operator can encode falls below the new floor, so the
+  override had nothing left to lower. With no overrides left, the policy
+  object went too: `defaultCheckpointExitDelayPolicy`,
+  `resolveCheckpointExitDelayPolicy` and `CheckpointExitDelayPolicy` are
+  removed, and `assertValidServerUnrollScript(checkpointTapscript, network,
+  advertisedForfeitPubkey?)` takes the pinned network and forfeit key directly.
+- **`WalletBalance.intentLocked` is renamed `pendingSettlement`.** The bucket
+  holds funds committed to an in-flight intent, which return to `available`
+  when it terminates; the new name says what the user is waiting for rather
+  than how the wallet enforces it. Same value, same semantics, no alias (see
+  `WalletBalance.available` for how the buckets add up). The service-worker
+  `GET_BALANCE` payload carries the new key too.
+- **`ArkIntent` is renamed `BatchRegistration`, and its fields follow.**
+  `IntentFilter` and `IntentPageFilter` take the matching names, and the three
+  old type names stay as deprecated aliases. On the record, `intentTxId` is
+  `proofTxId`, `intentId` is `registrationId`, and `intentVtxos` is
+  `proofInputs`. Filters use `proofTxIds` and `registrationIds`. These fields
+  have no alias, so a custom repository must update. Stored data does not
+  change, and no migration runs: backends keep their column and key names on
+  disk and map them at the repository boundary.
+
+- **`WalletBalance.gated` is renamed `contractLocked`, and `pendingRecovery`
+  is renamed `deprecatedSignerLocked`.** Each name now says what holds the
+  funds: a contract that generic spending refuses, or a server signer past
+  its cutoff. The old names stay as deprecated aliases with the same values,
+  and `intentLocked` returns as a deprecated alias of `pendingSettlement`.
+  Code that reads a balance keeps working. Code that builds a `WalletBalance`
+  itself, such as a test mock, must set the new fields and the aliases. The
+  service-worker `GET_BALANCE` payload carries both names. The `"gated"`
+  transaction history tag is unchanged.
+- **`@arkade-os/swap`: `JSON.stringify` on a `Market` now throws.** The new
+  `legs[].limits` hold `bigint`s, as atomic amounts do elsewhere in the client.
+  `Quote.market` is unchanged, since a `CardMarketRef` goes into durable records,
+  which forbid `bigint`. `Market` is also no longer an alias of `CardMarketRef`
+  but a superset: a `Market` can still be used as a ref, but a ref no longer
+  assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
+- **Custom onchain providers need `getMedianTimePast` to settle seconds-locked
+  boarding coins.** Seconds-based boarding expiry is judged on consensus
+  median-time-past, not the local clock, and a coin whose expiry cannot be
+  established is neither settled nor swept rather than guessed. On a provider
+  without the optional `OnchainProvider.getMedianTimePast`, such coins stay
+  where they are until it is implemented; block-locked coins and VTXO renewal
+  are unaffected. The built-in Esplora and Electrum providers implement it.
+- **`hasBoardingTxExpired` judges seconds-based delays on median-time-past.**
+  It takes two new optional arguments, `chainTipMedianTime` and
+  `confirmationParentMedianTime`, and with a seconds-based timelock returns
+  `false` unless both are given; it no longer compares `block_time` with the
+  local clock. Block-based delays need only the coin's `block_height` and
+  `chainTipHeight`, no longer a `block_time`. Callers on the three-argument
+  form must pass the median times, from `OnchainProvider.getMedianTimePast`
+  at the confirmation height minus one and at the tip, or seconds-locked
+  coins never read as expired.
+
+- **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
+  `scope`.** A custom `ContractRepository` must persist and round-trip
+  `Contract.scope`, filter on it in `getContractsPage`, and read a row without
+  one as its handler's default; the version bump makes a missing
+  implementation a compile error rather than a silent gap. The bundled
+  repositories do this: SQLite adds a nullable `scope` column on open, and a
+  Realm consumer must open at a `schemaVersion` of at least
+  `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
+
+### Features
+
+- **Client-side single-input VTXO verification and sovereign unilateral exit pipeline.** Add zero-trust single-input VTXO DAG reconstruction (`reconstructAndValidateVtxoDAG`, `verifyVtxoComplete`) covering TREE, CHECKPOINT, and single-input ARK chains, Taproot control-block/parity and BIP-342 exit-policy template verification (including script-path PSBTs without optional `tapInternalKey`), BIP-340/341 signature verification, conservative BIP-65/BIP-68 timelock and hash-preimage verification, fail-closed batch-scoped lookup when `commitmentTxid` is supplied with `getBatchVtxos` (fetching the sorted union of batch virtual transactions; `RestIndexerProvider` uses direct `getVtxoChain`), `BitcoinRpcProvider` (parsing JSON-RPC errors on non-OK HTTP responses and supporting `submitpackage` for 1P1C packages), and AES-256-GCM encrypted local exit-bundle persistence (`extractExitSequence`, `createSovereignUnrollPackage`, `executeSovereignUnroll`, `StorageCrypto`, `WalletAuthenticator`). Exit extraction uses the canonical `finalizeVirtualTx` helper to preserve SegWit witnesses and executes via `UnilateralExit.Executor` with an `ExitFeeWallet` so zero-fee P2A virtual transactions are always broadcast as 1P1C CPFP packages rather than standalone. Local storage encryption keys (`storageKey` / `passphrase`) are caller-managed at-rest secrets distinct from Bitcoin wallet seeds and signing keys. `executeSovereignUnroll` (formerly named as an "exit") only unrolls the VTXO chain on-chain and reports `swept: false`; the funds stay in the VTXO output until its CSV exit leaf is swept. It waits on (or, with `waitForMaturity: false`, reports via `pending`/`onPending` without broadcasting) hops whose nLockTime or BIP-68 delay is immature; a timestamp locktime equal to tip median-time-past is immature (BIP-113). Key-path TREE PSBTs as arkd v0.9.25 emits them (no internal key or merkle root) verify against the prevout output key. Sovereign script-path validation checks the actual PSBT `ConditionWitness` (enforcing `OP_SIZE` when present, Bitcoin Core's 80-byte standard Tapscript relay policy limit and BIP-342's 520-byte consensus limit, and hash equality) against the single unambiguously signed spent leaf before persistence and fails closed on missing, wrong, oversized, multi-leaf, unexpected, or unsupported condition scripts; witness assembly for verified `ConditionWitness` spends is scoped strictly to the sovereign exit pipeline (`sovereignStorage.ts`), leaving the shared wallet `finalizeVirtualTx` helper unchanged. In batch-scoped mode the whole batch union is fetched before any target-dependent check; privacy is limited to hiding the target among the chains the indexer returns, and the commitment txid stays visible. The Bitcoin Core backend needs `-txindex=1` for commitment lookup.
+
+- **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
+  can import the negotiation field names, refusal code, and asset contract IDs
+  without loading the client or contract builders. Existing `/protocol` exports
+  keep their names and values.
+
+- **The indexer can tell SDK callers apart.** `RestIndexerProvider` and
+  `ExpoIndexerProvider` send `X-SDK-VERSION` on REST calls and subscriptions
+  from runtimes with no page or worker origin, such as Node and React Native.
+  Browsers and workers send nothing new: a custom header there needs a CORS
+  preflight an indexer on its own origin may refuse. `X-Build-Version` stays
+  arkd-only.
+
+- **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
+  `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
+  (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the
+  quote's `contract_version` picks the tree the offer is derived on. A quote
+  naming none is the baseline `asset-swap-v2`. A solver that refuses the field
+  with a bare `unsupported_payload` is asked once more without it, under a fresh
+  `rfq_id`. A choice outside the advertised list, or a version this build cannot
+  derive, is refused before funding.
+
+- **Arkade Cash status, claim correlation, and activity through service-worker wallets.** Add public voucher issue/status records, expose create, inspect, and claim operations alongside existing wallet primitives, and resolve their funding and sweep transactions into arkade-cash activities without exposing bearer tokens. Records and status reports list `issues` and `claims` as `{ txid, amount }` (`ArkadeCashTx`), so a voucher's share of a shared funding transaction or a multi-sweep claim is exact. `ArkadeCashClaimResult.claims` has the same shape and includes sweeps finalized from previously pending claims. `addArkadeCashRecord` merges into an existing record through the exported `mergeArkadeCashRecord` (transactions unioned by txid, a claim outranks an issue), so a worker's recovery record no longer overwrites the page's record for the same voucher. Recording a recovered voucher's settlement runs inside the serialized wallet-state update, so concurrent recoveries keep each other's records and a failed state read can no longer wipe them. Issuing and reclaiming one voucher resolve to two activities (`arkade-cash:<id>:issued` and `:claimed`) instead of collapsing into one. An issue correlates only with a sent row and a claim only with a received row, so the same txid in a history of the other direction (a claimer's received funding row, an issuer's sent fee row) is never labelled. A claim recorded under a batch commitment, as a recovery settlement is, correlates only with the received row of exactly its amount, and boarding rows never correlate, so the other rows of that round are neither counted into the claim nor labelled "Cash claimed". Status reports list a coin spent by a batch settlement as a claim under the settlement's commitment txid, so an issuer sees the claim of a recovered voucher too; the amount is the coin's value before intent fees. Through a service worker, `create` and `claim` run with no message deadline on either side, so a slow multi-sweep claim or funded create still returns its result instead of a timeout. A funded-but-failed `create` rejects on the page with a real `ArkadeCashCreateError` whose `.cash` holds the recovery token, exactly as an in-process `Wallet.createCash` does.
+
+- **Export the SDK's boarding expiry classification.** `classifyBoardingExpiry`, `decodeBoardingExit` and `BoardingExpiry` let backend integrations reuse the existing median-time-aware classification instead of copying it.
+
+- **Worker reservations survive a closed tab and a restarted worker.** `ServiceWorkerWallet.reserveVtxos(outpoints, reservationId)` commits an external hold before acknowledging it, and restores every hold before automatic spending starts. Reusing the operation id resumes the same inputs; the owning application releases it only after establishing settlement or non-submission. A handle releases its id only while the id still names the handle's inputs, so a stale handle from an earlier resume leaves a newer hold under the same id alone, and editing a handle's returned `outpoints` cannot stop its release. Acquiring and releasing a hold never waits for an in-progress settlement, and a hold refuses inputs an SDK spend is already submitting, `buildAndSubmitOffchainTx` included. SDK sends and settlements refuse persistently held inputs, including explicit selections, so recovery and deprecated-signer migration leave held VTXOs out instead of failing. The direct wallet's synchronous `reserveVtxos(outpoints)` stays local and keeps its holder bypass; passing a reservation id makes the hold durable when `StorageConfig.vtxoReservationRepository` is configured, so a plugin gets the same guarantee from either wallet. The worker uses an IndexedDB store scoped to wallet identity and operator URL. Clearing the wallet drops its durable holds, and stored holds that overlap restore with a warning instead of failing startup: an outpoint they share stays held until every hold naming it is released. `ContractManager.reconcilePendingBatchRegistrations()` retries recovery through the wallet's active-settlement guard.
+
+- **Export `TreeSignerSession` for custom identities.** External `Identity`
+  implementations can use the existing session without an internal SDK import.
+  Class and factory TSDoc cover key isolation and nonce/session lifetime.
+
+- **`waitForIncomingFunds` takes a `NotifiesIncomingFunds` capability instead
+  of the `Wallet` class.** The new exported interface declares only
+  `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
+  helper. Type-level only, non-breaking.
+
+- **`PrfUnavailable` says why.** Its new `reason` is `"unsupported"` when PRF
+  was reported off (`enabled: false`) as the passkey was made, or there is no
+  WebAuthn; `"unknown"` when the browser returned no PRF output at all, so
+  another browser may still get a secret from it; `"no-secret"` when a use
+  returned no PRF secret,
+  `"secret-changed"` when the next use gave another one, `"malformed"` when the
+  secret was not 32 usable bytes, and `"unconfirmed"` on `PasskeyUnconfirmed`.
+  Only `"unsupported"` means the passkey never gives a key. An app that falls
+  back to another scheme for a passkey with a `credentialId` should do so only
+  for that reason: after the others the same passkey may still derive words
+  elsewhere, and a passkey login there would open a different wallet. The type
+  is exported as `PrfUnavailableReason`; a `PrfUnavailable` built without one
+  has no `reason`. Non-breaking.
+
+### Bug Fixes
+
+- **Retained service-worker proxies cannot read or spend a replacement wallet.** Wallet requests and contract-event subscriptions retain their original wallet binding. Requests capture their wallet, providers and repository before awaiting, and disposal drains admitted operations for up to 5s before closing their storage; settlements and other long-running operations are not waited for, so a re-init during a batch round is not blocked. Initialization separately drains its finite writes and finalization while pending subscription setup remains revocable; clearing revokes callbacks before draining. Reservation requests also verify the original network without changing durable hold namespaces, and timeout settings and settlement events still follow the original operation.
+
+- **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.
+
+- **Settlement refuses registration when its initial recovery proof cannot be saved.** With an intent repository configured, the first journal write is required before contacting the operator. A retry of an ambiguous proof retains its existing lock, while a previously terminal proof starts a fresh locked lifecycle. Later persistence errors still cannot cancel a completed batch.
+
+- **Spending stops when intent locks cannot be read.** Coin selection, explicit sends, settlements and durable reservation acquisition propagate a configured intent repository's read failure instead of treating it as an empty lock set. Explicit spending also refuses inputs held by another pending registration. Balance display retains its best-effort fallback.
+
+- **`ContractWatcher` no longer reconnects hard enough to hold a client over a
+  rate limit.** Against a server or CDN refusing the subscription stream, the
+  watcher retried every 5 seconds forever, with no jitter, and reset its ladder
+  on every accepted connection — so a server that accepted and immediately
+  dropped kept it at the 1-second base delay, and every client dropped by one
+  restart came back in the same instant. Each attempt also emits
+  `connection_reset`, which wallets read as "resync now", so the retries
+  multiplied into app-wide syncs. The delay is now jittered (equal jitter) and
+  capped at 60 seconds, the attempt counter resets only once a connection has
+  stayed up for 30 seconds (or the cap, if lower) and was not a refused open, and a `429`/`503` that carries `Retry-After` is
+  waited out (clamped to the rate gate's own 60-second ceiling), then spread
+  over half that again so the refused clients don't return together. Recovery after
+  a brief restart is unchanged in practice: the first retries are still
+  sub-second, and the 20-second failsafe poll, not the ladder, is what bounds
+  it. `maxReconnectAttempts` keeps counting consecutive failures, and every
+  config override still applies.
+
+- **Esplora failures carry their HTTP status and `Retry-After`.** Every non-2xx
+  response from `EsploraProvider` threw a bare `Error` built from
+  `response.statusText`, which HTTP/2 leaves empty — so a caller got
+  "Failed to fetch UTXOs: " and could not tell a `429` from a `500`, let alone
+  back off for as long as the server asked. These now throw the new exported
+  `HttpResponseError`, carrying `status` and the parsed `retryAfterMs`, with the
+  status added to the message and the existing prefix kept so string matching
+  still works. `getTxStatus`'s first request previously threw the bare
+  `statusText` with no prefix at all; it now reads
+  `Failed to get transaction <txid>: …`. A refused SSE stream carries its status
+  the same way, through the `error` event to the `EventSourceError` the watcher
+  backs off on; on `ExpoIndexerProvider` the stream throws the `HttpResponseError`
+  itself, now reading `Unexpected status when fetching SSE stream: … (<status>)`.
+  A body that fails to cancel no longer masks the error in `getFeeRate`.
+
+- **A malformed explorer history no longer leaves the address watch's baseline as an unhandled rejection.** The baseline guarded the history fetch but not the loop that keys its entries, so an entry without `status` threw `Cannot read properties of undefined (reading 'block_time')` out of a floating promise. Seeding now sits inside the same failure handling as the fetch, so a bad response takes the existing "first poll pass establishes the baseline" fallback.
+
+- **`waitForIncomingFunds` no longer hangs when the subscription
+  breaks.** The helper calls the unsubscribe function that the caller's
+  `notifyIncomingFunds` returns. When that function threw after the funds
+  arrived, the promise was left pending forever, past its timeout and with its
+  abort listener already removed. Teardown now runs inside a guard, so the
+  promise still settles with the funds. A `notifyIncomingFunds` that throws
+  synchronously, before it returns its promise, is routed through the same
+  cancel path, so the timeout timer and the abort listener are cleared instead
+  of leaking. No breaking change.
+
+- **`@arkade-os/swap`: a claim arkd accepted but never finalized is finalized
+  before the swap settles.** On the two-step path (`oneShotSubmit: false`, or an
+  operator without one-shot), a claim whose finalize was lost has still
+  published `P`: the solver can settle the payer with it, while the trader's
+  sats do not exist until the claim is finalized, and only the trader can
+  finalize it. A Lightning receive leg read that `P` as `settled` and never
+  retried the finalize. `createSwapClient` now finalizes its own pending claim
+  whenever the lockup holds one (the lockup's `pendingOnly` outputs, checkpoints
+  rebuilt from the claim leaf under the operator's current or a deprecated key,
+  the server's signatures carried over from the indexer's copy); a failed
+  finalize ends the pass and is retried, so no deadline closes the swap first.
+  The claim is recorded as the swap's `claimTxid` before the finalize is sent,
+  so a lost response cannot put the rest of the lockup back behind
+  the value gate. A pending spend that is not ours is left to its submitter, and
+  counts as `P` being public only if it reveals `P`. `onchain_receive` is left as it was: its
+  trader also holds the L1 refund, which finalizing could double.
+  `RfqSwapManagerCallbacks` gains optional `pendingClaims` (keyless) and
+  `finalizeClaim`; without both the manager settles as before.
+  `readLockupFate` also reads `P` off the ark tx: arkd up to v0.9.23 stores a
+  two-step claim's checkpoint without the condition witness until finalize, so
+  a funder saw `unknown` for a claim whose `P` was already public. No breaking
+  change.
+
+- **`@arkade-os/swap`: a Lightning receive no longer forgets that `P` is public
+  after a crash.** The value gate was dropped only when the swap's `claimTxid`
+  was set, and that field reached storage only at the end of a pass. A crash
+  between a claim landing and that save (a `claimLockup`, or a finalize of a
+  pending claim), or a two-step claim whose finalize response was lost,
+  restarted with the rest of a partly claimed lockup behind the gate. The
+  trader then left that rest to the solver's reclaim and the swap still read
+  `settled`. `readLockupFate` now reports a hash-verified `P` on a lockup that
+  still has live outputs (`open` gains an optional `preimage`, read only for the
+  receiver), and a Lightning receive drops the gate on it. A spend that does not
+  reveal `P` still counts for nothing, and `onchain_receive` is unchanged. No
+  breaking change.
+
+### Added
+
+- **`@arkade-os/sdk/compiler` compiles Arkade source into a `Program`.** Contracts written in Arkade had to be compiled separately and their artifact JSON read with `programFromArtifact`. `compile({ entry, files }, { optimize?, debug? })` runs the installed `@arkade-os/compiler` over an in-memory project with relative imports and resolves to `{ program, artifact, debug, diagnostics }`: the `program` goes straight to `client.contract(program, args)`, the raw `artifact` keeps the source bundle, compiler version and fingerprint, `debug` is the compiler's debug file, and `diagnostics` carries the warnings. Each covenant segment of `program` carries its `sourceMap`, so a failing opcode can be traced back to its statement and `require()` message; `{ debug: false }` leaves the file and the maps out. `programFromArtifact(artifact, debug?)` attaches an `arkadec --debug` file the same way and refuses one whose fingerprint does not match the artifact's. Source errors reject with `CompileError`, whose `diagnostics` list every located error. The compiler is an optional peer (`^0.1.0-rc.1`) loaded on the first call, so the root SDK and every other subpath load without it; calling `compile` without it rejects with the install command, while initialization and compilation errors pass through unchanged. The subpath ships ESM and CJS builds; the CJS build loads the ESM-only compiler through `import()`.
+
+- **Identities from a passkey.** `MnemonicIdentity.createPasskey({ rp, userName })`
+  creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
+  `MnemonicIdentity.fromPasskey({ rpId })` derives the same words again on any device
+  the passkey syncs to. Both return the identity, the words (for the app to offer as a
+  backup) and the credential id. The derivation follows Breez's seedless-restore
+  implementation: a `label` (default `DEFAULT_PASSKEY_LABEL`, `"Default"`) is the PRF
+  salt as its UTF-8 bytes, unnormalized, and the first 16 bytes of the PRF output are
+  the BIP39 entropy for 12 words, as Breez's SDK derives them, so the same passkey and
+  label give the same words as a Breez wallet; each label is a separate wallet.
+  `words: 24` instead takes all 32 bytes, as the spec text's `BIP39(root_key)` reads.
+  Without `credentialIds`, the passkey the user picks decides the wallet. A passkey is
+  used once right after creation and refused (`PasskeyUnconfirmed`) if that use fails
+  for any reason, with the underlying error as `cause`, and refused (`PrfUnavailable`)
+  if it gives no 32-byte secret or one different from the secret it returned at
+  creation (an authenticator that returns none at creation has nothing to compare
+  against); both carry the new passkey's `credentialId`, so an app can fall back to
+  that passkey. The
+  primitives (`createPrfPasskey`, `evaluatePrf`, `mnemonicFromPrf`, `prfSupport`) are
+  exported; every call that prompts takes a `client` in place of
+  `navigator.credentials`, and `mnemonicFromPrf` refuses a secret that is not 32 bytes.
+
+- **Onchain coin spends come from the arkd indexer first.** arkd v0.9.22
+  records the onchain coins whose spend it signed or watched (boarding inputs
+  of a batch, inputs of a cosigned onchain tx, spent unrolled VTXOs), and the
+  optional `IndexerProvider.getUtxos` reads them as `IndexerUtxo`; a server
+  without the route throws `IndexerUtxosUnsupportedError` and is not asked
+  again. `syncOnchain` names a vanished coin's spender without an `outspends`
+  call, and only asks about coins whose state can change. arkd's word holds a
+  coin the explorer still lists only for the spend this wallet recorded and
+  only within the six-block pending window: an unbounded hold would let an
+  operator hide a boarding coin from its CSV exit. `syncOnchain` also takes
+  the coins a caller already fetched, so `getBoardingUtxos` fetches each
+  boarding address once.
+
+- **Onchain coins can be spent at once through arkd's cosigner.** Boarding
+  UTXOs, unrolled VTXOs and Arkade covenant UTXOs could only move by joining a
+  batch or after their exit timelock. arkd v0.9.22's `POST
+  /v1/tx/onchain/cosign` cosigns their collaborative leaf instead:
+  `wallet.sendOnchain({ outputs, inputs?, sweepTo? })` pays from the wallet's
+  onchain coins, `wallet.cosignOnchainTx(psbt)` signs the owned inputs of a
+  caller-built PSBT, and `ArkadeTransactionBuilder.buildOnchain()` and
+  `sendOnchain()` spend covenant leaves the emulator cosigns. The service worker
+  and Expo wallets expose both wallet methods. `Ramps.offboardExact` without
+  named inputs tries an onchain spend before the batch path, and boarding
+  renewal near expiry tries a cosign first. The batch fallback runs only when
+  nothing can have been broadcast (unsupported endpoint, failed preflight, or a
+  rejection arkd raises before signing); any other outcome throws
+  `OnchainCosignAmbiguousError` and keeps the inputs pending until the spend is
+  seen or six blocks pass. Contracts gain `scope` (`offchain`, `onchain`,
+  `both`), and onchain coins are stored as VTXO rows that offchain balance and
+  history leave out. Legacy boarding UTXOs are copied in once at boot and the
+  legacy table is kept, so an earlier SDK still reads them.
+  `OperatorProvider.cosignOnchainTx` is optional, and an arkd older than
+  v0.9.22 reads as unsupported, so both keep the batch path.
+
+- **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are
+  submitted already signed, so arkd finalizes the transaction within
+  `submitTx`; an older arkd drops the signatures and the SDK falls back to
+  `finalizeTx` as before. Both flows carry each checkpoint's condition witness
+  (a swap claim's preimage) onto the copy arkd rebuilt. Covers wallet sends,
+  ArkadeCash sweeps, `signAndSubmitOffchainTx`, Arkade contract spends, and swap
+  claims, refunds and offer cancels. Set `WalletConfig.oneShotSubmit: false` to
+  keep the two-step flow. Swaps read it from the new `IWallet.oneShotSubmit`; an
+  `Arkade` client takes `ArkadeConnectOptions.oneShotSubmit` and the helpers
+  `oneShot: false`.
+  `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
+
+- **Wallet-state updates can use an optional backend transaction.** Repository
+  implementations expose `atomicWalletState`, which `updateWalletState` uses
+  instead of a separate read and save, without changing storage schemas or
+  required repository versions. SQLite enables it with
+  `walletStateTransactions: true`, only on a dedicated connection or one
+  coordinated through `getSerializedExecutor`/`runInTransaction`. Persistence
+  assertions remain explicit caller options. Custom repositories without the
+  capability keep their existing update path.
+
+- **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
+  carry.** An unbound packet lets covclaimd claim whatever the solver funds,
+  so a solver can fund the lockup with dust and learn `P` from that claim.
+  `sealClaimPacket` takes `minAmount`, written as TLV `0x04` and into the
+  AEAD's additional data so the courier cannot strip it, and
+  `RevealParams.minAmount` sends it as `packet.min_amount` for a ciphertext
+  sealed with one. Only covclaimd with `min_amount` support opens a bound
+  packet. The package's own receives keep sealing unbound until it deploys;
+  after that, only an exact-out receive is guaranteed a claim packet, so an
+  exact-in one may carry none and leave the claim to the trader.
+
+- **`Arkade.connect` takes a `service` and can own its contract manager.**
+  `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
+  contractRepository } })` resolves the mainnet operator, its cosigner that
+  emulates Arkade Script (new `DEFAULT_ARKADE_EMULATOR_URL`), indexer and esplora; `{ operatorUrl,
+  emulatorUrl? }` names a custom deployment, whose covenant paths stay disabled
+  without `emulatorUrl`. A `{ network }` service whose operator reports another
+  network throws. `storage` builds a session-scoped manager (in-memory VTXO
+  store, chain tip from esplora) that the new `arkade.dispose()` stops; a
+  caller-passed `contractManager` is never disposed. `service` and the provider
+  fields (`arkade`/`emulator`/`indexer`) are exclusive at the type level. The
+  resolver is exported as `arkade.resolveArkadeService`, and `Arkade` itself is
+  now exported from the package root as well as from the `arkade` namespace.
+
+- **`ArkadeContract.on` and `getVtxos`.** `await contract.on("vtxo_received" |
+  "vtxo_spent" | "connection_reset", cb)` registers the contract and reports its
+  activity from subscription on, returning a handle with `off()`. Coins that
+  predate it are not replayed and a reconnect re-syncs silently, so recover by
+  reading `getVtxos()` — every stored VTXO including spent ones, which
+  `getUtxos()` hides — after subscribing and on each `connection_reset`.
+  Handlers may be async: a throw or rejection is logged without reaching the
+  other handlers. `on()` after `arkade.dispose()` throws.
+
+- **`Wallet.create` short spellings.** `service` replaces `arkProvider`/
+  `indexerProvider`/`onchainProvider` (also on `ReadonlyWallet.create`), `mode`
+  aliases `walletMode` and `settlement` aliases `settlementConfig`. Setting both
+  spellings of one field throws. `service` reuses the server info the wallet
+  already fetched (or its cached snapshot), so `getInfo` is called once.
+
+- **`IndexerProvider.getFilteredSubscription` streams the transactions a CEL
+  filter matches.** `subscribeForScripts` needs the scripts in advance, so a
+  reader of extension packets at someone else's script — an offer, a sealed
+  claim — had to take arkd's whole transaction stream, or speak gRPC to reach
+  the filtered one. arkd has served that filter over SSE at
+  `GET /v1/indexer/subscription` since v0.9.6; both `RestIndexerProvider` and
+  `ExpoIndexerProvider` now open it. A custom `IndexerProvider` implementation
+  must add the method. The stream yields `SubscriptionEvent | SubscriptionHeartbeat`:
+  arkd heartbeats a quiet stream, and passing those through is what lets a
+  caller tell a half-open connection from a filter that matches nothing.
+  Callers on rc.26–28 must check `type === "event"` before reading `tx`.
+  `getSubscription` still skips heartbeats.
+  
+- **`toOffchainInputFeeParams` is exported.** It maps a VTXO to the
+  `OffchainInput` fields `Estimator.evalOffchainInput` reads: amount, the
+  `vtxo`/`recoverable` type, birth and expiry. Every fee-aware settle in the
+  SDK prices its inputs with it. An app building its own settle intents had
+  to copy it. The wallet's collaborative exit did not price inputs at all,
+  and arkd rejected it with `INTENT_INSUFFICIENT_FEE` once mutinynet charged
+  young coins.
+
+- **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
+  A covenant can read state the transaction carries — `tx.packet(type)` in the
+  spend itself, `tx.inputs[i].packet(type)` when the output is spent later —
+  but the builder only ever wrote the asset and emulator packets, so a
+  contract keeping its terms in a packet had to rebuild the extension output
+  by hand after `build()`. The caller's packet now joins those two in the one
+  extension output; a type either of them already uses is refused at build.
+
+- **`ArkadeTransactionBuilder.from` spends several coins, through one function
+  or several.** `.from(coins)` spends a list of coins, and `.from(coins,
+  other.unlock.fn(...args))` spends them through another function or contract
+  on the same client. The builder used to write one emulator entry, for input
+  0, so a covenant spend could use only one coin and anything more had to be
+  built by hand. Each input now gets its own leaf, `PrevArkTx`, condition
+  witness and emulator entry (#1116). `ark.transaction()` starts a spend with
+  no function of its own, so every input names its function in `.from()`.
+
+- **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
+
+- **`getOperatorInfo` replaces `getArkadeInfo`.** Wallets expose the new method,
+  and `GetArkadeInfoOptions` becomes `GetOperatorInfoOptions`. The old names stay
+  as deprecated aliases. A custom `IReadonlyWallet` must add the new method.
+  The worker message is now `GET_OPERATOR_INFO`, with an `OPERATOR_INFO` reply.
+  A worker still accepts `GET_ARKADE_INFO`, and a `messageTimeouts` entry under
+  that name still applies. A new page needs an updated worker.
+  Comments in the changed files now say the operator instead of the server.
+
+- **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
+  note's key is imported into the wallet and recovered through the next
+  settlement, net of intent fees; the claim result reports it under the new
+  `recovering` field. The imported key is held in a keyring
+  (`KeyringDescriptorProvider`, now exported) until the recovery settles,
+  then purged. Re-running the claim on the same note resumes an interrupted
+  import.
+
+- **`@arkade-os/swap/protocol` exports the RFQ claim-window and refund-retry floors.**
+  Solvers and refund callers can import `MIN_CLAIM_WINDOW_SECONDS` and
+  `REFUND_MTP_LAG_SECONDS` instead of duplicating the timing values.
+
+- **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
+  decoding, and compiler artifact import recognize the emulator's variable
+  assignment opcode.
+
+- **`OperatorInfo` replaces `ArkadeInfo`.** `networkFromArkadeInfo` becomes
+  `networkFromOperatorInfo`, and `liveArkadeInfo` in `@arkade-os/swap/advanced`
+  becomes `liveOperatorInfo`. The old names stay as deprecated aliases.
+  `ArkadeInfo` is now a type alias, so code that adds fields to it with
+  `declare module` must add them to `OperatorInfo` instead. Comments in the
+  changed files now say the operator instead of the server.
+
+- **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
+  takes a plan that returns piece amounts against the already-priced subtotal,
+  per-piece output fee, per-output ceiling and dust floor. A plan that claims
+  too much, breaks the ceiling, leaves dust or more unclaimed, or splits
+  asset-bearing inputs is refused rather than reshaped. Automatic renewal still
+  settles into one output, and `split` is refused on the service-worker wallet.
+- **`@arkade-os/swap/nostr` shares one Nostr pool by default.** `nostrRfqTransport()` and `nostrCardFetcher()` now multiplex over a process-wide `SimplePool` (one socket per relay) instead of opening a pool per transport or fetch, and `close()` ends only the caller's subscription. Concurrent quotes and card fetches no longer race relay teardown, and `createNostrTransportFactory(pool)` plus `nostrCardFetcher({ pool })` let an app lend one pool across discovery, quotes, and its own readers. New exports: `sharedNostrPool`, `createNostrPool`, `closeSharedNostrPool`, `createNostrTransportFactory`, and `NostrPool`. nostr-tools' idle close trusts a per-relay count that every subscription close decrements, a repeated one included, so on a shared socket one double close (a relay `CLOSED` followed by ours) would kill every other live quote. The pool turns that close off and counts its own users instead, closing a relay's socket 30s after its last subscription or publish, and pings to drop a half-open one. A relay that never acknowledges a publish is evicted at once, so the next quote reconnects instead of timing out on the same dead socket until the ping notices. A destroyed pool refuses to reconnect, so a transport that outlives `closeSharedNostrPool()` fails instead of opening a socket nothing can close, and concurrent card fetches are only merged when they ask the same relays.
+
+- **The cached operator info moves to a new key.** The snapshot in wallet settings
+  is now `operatorInfoSnapshot`. The SDK still reads `arkInfoSnapshot` until the next
+  live boot saves the new key, and the old key stays in place. Comments in this
+  file now say the operator instead of the server.
+
+- **`getStoredContractsWithVtxos()` is reachable through the service
+  worker.** It answers from the repository without waiting on the indexer and
+  keeps spent VTXOs, so a caller can tell whether, and by which transaction, a
+  contract's coin was spent without a server round trip:
+  `getContractsWithVtxos` keeps spent rows but syncs first, while `getVtxos`
+  reads locally but drops them. Without `lazyInitialization`, a read that
+  races the worker's `INIT_WALLET` still waits for the contract manager's
+  boot sync. (#953)
+
+- **`submitViaEmulator` submits emulator-cosigned offchain transactions.**
+  Covenant spends had no shared submit path, so every caller hand-rolled it.
+  The helper signs the caller's own ark-tx inputs and, up front, their
+  checkpoints, which the emulator verifies before its own arkd handshake. It
+  then submits through the emulator and rejects a reply whose ark tx has
+  another txid with a `ServerResponseMismatchError`.
+  `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
+  longer reports a txid it did not submit.
+
+- **`renewProgramContractOutputs` renews covenant VTXOs without an owner
+  key.** A covenant coin whose owner is offline was swept at batch expiry unless the
+  app hand-rolled the intent, the emulator packet and a batch handler that
+  still demanded a signer. The helper registers one intent for any number of
+  coins, each through a covenant function that lets proof input k+1 through
+  to output k (`renew` by default) with its assets, has the emulator sign the
+  proof, and joins the batch. `createArkadeBatchHandler` takes `undefined` as
+  its signer for this: forfeits go to the emulator unsigned, and boarding
+  inputs and inputs without an Arkade script, whose forfeits need a key, are
+  refused when the handler is built. A function whose leaf names any key but
+  the server's is refused before anything is registered, since no owner signs
+  a renewal, and so are a coin its contract does not lock and a server
+  provider lacking a method the renewal or its batch calls. The caller's `signal` ends the wait for a batch; one aborted
+  before registration registers nothing. A renewal that fails or is aborted
+  after registering deletes its intent with a delete proof the emulator signs
+  up front alongside the registration, as `Wallet.settle` does; a left intent
+  held the coins until arkd dropped it, failing retries with "duplicated
+  input". `EmulatorProvider.submitIntent` accepts a delete message for this.
+  Once the forfeits are being sent the signal is ignored and the intent kept,
+  and the renewal waits for the batch's outcome: arkd can commit it by then,
+  and an abort would report spent coins as unrenewed and lose the commitment
+  txid. It subscribes to batch events before
+  registering, as `Wallet.settle` does, so a batch that starts while the
+  intent is being registered is not missed; the new `Batch.prime` does the
+  subscribing for both. A renewal the server would charge an intent fee for
+  is refused before anything is signed: the covenant keeps each output equal
+  to its input, so no fee can be paid and arkd would reject the intent. A
+  renew leaf's condition witness goes on the proof and on the forfeits, where
+  arkd evaluates it. A leaf whose witness names a call input, which a renewal
+  cannot supply, or that has a CSV timelock, which arkd refuses as a forfeit
+  path, is refused before anything is signed. The renewal's asset packet is
+  built by `createAssetPacket`, as a wallet send's is.
+
+### Changed
+
+- **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
+  `.from(a).from(b)` spends both; it used to spend only `b`.
+
+- **Doc comments and two error messages describe the emulator as part of the operator.**
+  The SDK no longer presents it as a separate cosigner. `MissingCorridorDep` on an
+  unpinned network now names the key of the operator's cosigner that emulates Arkade
+  Script, and the VHTLC v2 error for two different emulator pubkeys rewords its second
+  clause. Code that matches either message must update.
+
+- **`Intent` is renamed `Proof`, because "intent" now names only Arkade Intents.**
+  A proof is a signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin
+  outputs, its signature proves the user controls them, and its message says what
+  to do with them. `Proof` is both a namespace and a type, so
+  `const proof: Proof = Proof.create(...)` compiles. `IntentCoin` is now
+  `ProofInput`, `SignedIntent` is `SignedProof`, `AssetInputType.Intent` is
+  `AssetInputType.Proof`, and `AssetInput.createIntent` is
+  `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
+  `ark-intent-proof-message` tag does not change, because the operator verifies it.
+
+- **The provider source uses `Proof` and `SignedProof`.** `OperatorProvider`,
+  `CachingOperatorProvider` and the batch registration reconciliation no
+  longer name the deprecated `Intent` and `SignedIntent`. The types are the
+  same, so nothing changes for callers.
+
+- **Delegation is scheduled three operator sessions before expiry.** The
+  default `delegateAt` left 10% of the remaining lifetime before expiry, floored
+  at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
+  three sessions, giving about 10% fewer renewals per coin and a lower fee on
+  programs that decay towards expiry. Delegation close to expiry is best effort:
+  three sessions don't guarantee three batches, and a delegator outage longer
+  than the window can miss expiry and leave the coin recoverable. A coin already
+  inside the window is delegated two seconds from now; with no future expiry,
+  such as only recoverable outputs, delegation stays one minute from now.
+
+- **`IntentRepository` is renamed `BatchRegistrationRepository`.** `ArkIntentState`
+  and the InMemory, IndexedDB, SQLite and Realm classes take the matching
+  `BatchRegistration` names, and so do `collectIntents`, `isTerminalIntentState`
+  and `INTENT_TERMINAL_STATES`. Every old name stays as a deprecated alias, and
+  stored data does not change.
+
+- **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
+
+- **`IntentRepository` methods are named after batch registrations.**
+  `saveIntent` becomes `saveBatchRegistration`, and `getIntentsPage` becomes
+  `getBatchRegistrationsPage`. The SDK calls the new names, so a custom
+  repository must add them, and creating a wallet with a repository that lacks
+  them now throws. The old names stay on the interface and on the InMemory,
+  IndexedDB, SQLite and Realm classes as deprecated methods.
+  `collectIntents` now reads through `getBatchRegistrationsPage`, so a plain
+  object passed to it must have that method.
+
+- **The SDK uses the batch registration names in its own code.** Internal code
+  no longer refers to `ArkIntent`, `IntentRepository`, `collectIntents` or the
+  other deprecated batch registration names. `collectBatchRegistrations` now
+  holds the implementation, and `collectIntents` is its alias. Every deprecated
+  name stays exported and behaves as before.
+
+- **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
+  cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
+  fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
+  Timer-backed settings additionally reject delays above 2,147,483,647 milliseconds
+  (the portable timer limit). Zero still disables optional timers or schedules an
+  immediate timeout/poll, depending on the existing API; reconnect caps still clamp
+  the base delay rather than requiring a particular ordering. A `messageTimeouts` key
+  set to `undefined` now falls back to its default instead of reaching the worker,
+  where it armed a timer of `undefined` and timed every such message out at once; the
+  message bus rejects such keys outright.
+
+- **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
+  `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
+  no longer hide subdust outputs. Explicit filter flags, spent-output
+  exclusions, and the separate spendability-gated accessor are unchanged.
+
+- **`ArkProvider` is renamed `OperatorProvider`.** `RestArkProvider`,
+  `CachingArkProvider` and `ExpoArkProvider` take the matching names, and
+  `Wallet.create` takes `operatorProvider`. Every old name stays as a deprecated
+  alias. Passing both `operatorProvider` and `arkProvider` throws.
+
+- **The SDK uses `OperatorInfo` in its own code.** Internal code and the
+  published `.d.ts` name `OperatorInfo`, `GetOperatorInfoOptions` and
+  `networkFromOperatorInfo` instead of their deprecated aliases. The types are
+  the same, so nothing changes for callers.
+
+- **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
+  `[]` with no wallet, which a caller could not tell from a wallet with no
+  boarding coins; it now throws `WalletNotInitializedError`, like
+  `GET_VTXOS`. (#943)
+
+- **Ark SSE streams send the SDK version headers.** `getEventStream` and
+  `getTransactionsStream` now send `X-Build-Version` and `X-SDK-VERSION`, like
+  every other Ark server call. A browser `EventSource` cannot set request
+  headers, so these streams reached arkd without them: arkd could not tie an
+  open stream to an SDK version, and its build-version guard did not apply.
+  With no factory configured, streams now open over `fetch`; the global
+  `EventSource` is used only where `fetch` cannot stream, and a factory from
+  `configureEventSource` or the `eventSource` option still wins.
+  `EventSourceFactory` takes the headers as an optional second argument; a
+  factory that ignores it keeps working but sends no headers. Indexer
+  subscriptions send none, because the indexer can be another origin. Like
+  the native `EventSource`, the `fetch` transport accepts LF, CR and CRLF line
+  endings, reads fields line by line as the spec does, and fails a response
+  that is not a 200 `text/event-stream`. It does not reconnect by itself, as
+  the callers already do.
+  In Node, streams no longer need the `eventsource` package or
+  `--experimental-eventsource`.
+
+### Bug Fixes
+
+- **Transaction history leaves out recovery-only coins, as the balance does.** `ReadonlyWallet.getTransactionHistory` and the service worker's history both counted the coins of a claimed, server-swept Arkade Cash voucher as the wallet's own while their recovery contract was held. Each swept coin showed as a received row under the voucher's funding txid before any sats arrived, and the recovery settlement, which spends one of those coins and pays the wallet in the same commitment, netted to a refresh: no row when fee-free, a sent "exit" row of the fee otherwise. When the contract was purged the rows rewrote themselves. Both paths now skip recovery-only contracts, so nothing shows while recovery is pending and the recovered output then appears as one received batch row. The worker's `includeRecoveryOnly` option, which only the history read used, is removed.
+
+- **`createArkadeBatchHandler` writes an input's condition witness on its
+  forfeit.** arkd evaluates a condition leaf against the forfeit's
+  ConditionWitness field when it verifies the forfeit's signatures. The proof
+  carried it but the forfeit never did, so a batch spending a coin through a
+  condition leaf failed with `INVALID_FORFEIT_TXS`. An input's `extraWitness`
+  now goes on its forfeit too.
+
+- **Expired boarding UTXOs held under a deprecated signer are now swept.**
+  After the operator rotated its signer, deposits made to a boarding address on
+  the old key showed in history but were never recovered: the sweep fetched
+  boarding coins for the current signer only, found nothing, and its "no
+  expired boarding UTXOs" result is silenced by the poll loop, so they sat
+  unswept with no error. A boarding exit leaf is the user's key plus a CSV, so
+  a unilateral sweep needs no operator and works for any signer. The poll now
+  fetches every address history shows (current and deprecated signers) once,
+  sweeps all of it, and still settles only current-signer coins, which the
+  server would reject otherwise. A failed lookup at a deprecated-signer address
+  is bounded, skipped for that poll and retried on the next, both in boarding
+  discovery and in the deprecated-signer migration pass, so it cannot block
+  current-signer work; a current-signer failure still fails it, as before.
+  Discovery also includes index-zero baseline addresses for deprecated signers,
+  including when their persisted row coalesced onto `default`. If the signer
+  rotates during discovery, the poll rediscovers before selecting settlement
+  inputs and checks again immediately before intent registration; an abort
+  there does not count as a settle failure, so it does not lengthen the
+  backoff. Expiry is now
+  read from each coin's own CSV
+  exit leaf rather than the wallet's current boarding delay, in the sweep, the
+  periodic settle and `Wallet.settle` alike, so a rotation that changed the
+  delay can no longer leave a coin that settle skips and the sweep ignores, or
+  the reverse. Block-based expiry no longer requires a block timestamp;
+  seconds-based expiry uses the confirmation parent's and current tip's
+  consensus median-time-past values, not the local clock. A coin whose expiry
+  cannot be established (no block height, a failed chain-tip or median-time
+  lookup) is left out of settlement and the sweep, while the other coins and
+  VTXO renewal go ahead.
+
+- **The automatic cosign sweep takes boarding coins only.** `needsOnchainSweep`
+  selected coins by scope, so any contract registered with `scope: "onchain"`
+  or `"both"` had its onchain coins swept into the wallet's boarding address
+  near CSV maturity, and settled into Arkade by a later poll. It now takes only
+  `boarding` contracts and the `default` row an equal-delay boarding script
+  coalesced onto, recognized by its CSV matching the boarding CSV rather than
+  by its `both` scope, which any caller may set. Onchain sync and balances
+  still cover every onchain-scoped contract.
+
+- **Explorer transaction output values are numeric satoshis across providers.**
+  `ExplorerTransaction.vout.value` was typed as a string even though Esplora
+  REST responses and the WebSocket validator use numbers. The type and Electrum
+  adapter now match that contract; Bitcoin's full satoshi supply fits exactly
+  in a JavaScript number. Custom providers must return numbers rather than
+  strings, and Electrum consumers no longer receive string amounts.
+
+- **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
+  SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
+  `getEventStream` and `getTransactionsStream` took a refused stream's status
+  for an unknown message, and reconnected at once into the same refusal when
+  arkd closed the stream. Expo streams now read frames through the same SSE
+  reader as the `fetch` transport: a `failure` event throws the stream failure
+  on every Expo stream, as on the other transports, and `ExpoIndexerProvider`
+  no longer detects it from the data. Other named events are ignored, a
+  frame's `data:` lines form one message, and CR line endings are accepted.
+
+- **A failed contract-manager start-up no longer leaves its watcher running.**
+  `getContractManager()` dropped a manager whose baseline registration, or the
+  identity key read before it, rejected after `ContractManager.create()` had
+  started its watcher. Nothing held the manager any more, so its event stream
+  and failsafe polling outlived the failure. The start-up now disposes it
+  before the rejection reaches the caller, which can retry as before.
+
+- **IndexedDB wallet-state read failures no longer look like an empty wallet.**
+  Read errors propagate before updates can replace persisted pending-submit, cursor
+  or unrelated settings. Genuine absence still returns null.
+
+- **Service-worker balances normalize renamed buckets from older workers.**
+  When a worker response omits `contractLocked` or `deprecatedSignerLocked`,
+  the client now reads the corresponding deprecated `gated` or
+  `pendingRecovery` value without changing the other payload fields.
+
+- **Failed settlement cleanup retains persisted intent locks.** With an
+  `IntentRepository`, failed deletion no longer marks an unresolved intent as
+  cancelled. Reconciliation retries its stored delete proof, including when a
+  lost registration response left the row `waiting_to_submit`. SDK picks also skip
+  boarding UTXOs those intents still lock. Existing terminal states, expiry and
+  precise no-match handling remain unchanged.
+
+- **Lazy boarding no longer blocks worker startup on an onchain subscription.**
+  With `lazyBoarding: true`, cached initialization and VTXO background work can
+  finish while subscription setup is pending. Registration and stale cleanup
+  serialize per provider across reinitialization, so a stale registration
+  finishing late cannot unsubscribe the live one, without blocking a different
+  provider. Default eager startup still waits for registration, and delayed
+  setup cannot recreate a disposed wallet's contract manager. A reinitialization
+  that fails before registering leaves the existing subscription delivering.
+
+- **Coin selection and `.from()` skip swept and expired coins.** `getUtxos()`
+  can return a coin that is swept or past its batch expiry; a registered
+  contract keeps them so they can be recovered. arkd rejects a spend that
+  includes one (`VTXO_RECOVERABLE`). Selection without `.from()` now skips
+  them, and `.from()` refuses a coin with `isSwept: true` or an `expiresAt`
+  that has been reached, instead of failing at arkd. A coin without expiry
+  fields, such as an onchain one, is never refused for expiry. An `expiresAt`
+  restored from JSON as a string is read as a date.
+
+- **`ArkadeTransactionBuilder` refuses an asset coin with no asset route.** arkd
+  refuses an input whose assets the transaction does not route
+  (`ASSET_VALIDATION_FAILED`), so `.from(await contract.getUtxos())` with one
+  asset-carrying coin sank the whole spend. `send()` now refuses a coin whose
+  `assets` neither a `.withAsset()` input nor a caller's asset packet
+  (`.withPacket()`) routes, naming the coin and input; `build()` leaves routing
+  to the caller. Selection without `.from()` skips asset coins when the spend
+  routes no assets from input 0, so it picks a plain coin that can pay.
+
+- **A tapscript-only `send()` through a hashlock leaf finalizes.** arkd
+  returns checkpoints without the condition witness, so finalizing failed with
+  `INVALID_SIGNATURE`. The builder now adds it back after signing.
+
+- **`send()` refuses a server-only leaf without a covenant, before signing.**
+  arkd rejects an input that only the server signs (`missing tapscript spend
+  sig`); a covenant leaf is fine, since the emulator adds its key. `send()` now
+  says so up front, naming the function, whichever route the spend takes.
+
+- **SQLite statements no longer run inside another repository's
+  transaction.** Repositories sharing an executor sent reads and
+  single-statement writes straight to the connection, so one issued between a
+  neighbour's `BEGIN IMMEDIATE` and `COMMIT` joined that transaction and was
+  rolled back with it. Every SDK SQLite repository now routes its statements
+  through one queue per executor, for every user, not only
+  `walletStateTransactions` opt-ins: a statement waits for an in-flight
+  transaction instead of joining it. A repository or serialized-executor call
+  made inside a `runInTransaction` callback therefore deadlocks; after 10s the
+  SDK warns with that call's stack.
+
+- **Swap SQLite repositories accept the SDK's serialized executor.** Transaction
+  callbacks use the supplied raw executor instead of enqueueing statements behind
+  their own transaction. Initialization, record writes, scan tracking and clearing
+  therefore complete when consumers pass `getSerializedExecutor(db)`.
+
+- **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
+  on a misread.** A `returned` lockup read before `refundLocktime` was final,
+  so an indexer read missing the solver's preimage ended a paid send as
+  `refunded` for good (#1105). Before the locktime the only refund the solver
+  can push alone is `nonInteractiveRefund`, so any other pre-locktime
+  `returned` read is not final and the swap stays monitored. The same holds for
+  an onchain send, whose L1 claim would otherwise stop being driven. A
+  `refunded` Lightning send stored without a refund txid can now be re-read with
+  `RfqSwapManager.recheckRefundedSends()`, which `createSwapClient` runs in
+  the background after `ready`, without holding up new swaps or `dispose()`.
+  It moves the send to `settled` if the lockup
+  now reads claimed; any other read leaves it as is. A correction drops the
+  refund spend the record named, even when the claim read names no ark
+  transaction. A correction a sink refuses stays monitored until the poll lands
+  the write.
+
+- **Over Electrum, spend checks on a deposit or an HTLC funding no longer read
+  the payer's other outputs.** Electrum has no spend index, so
+  `ElectrumOnchainProvider.getTxOutspends` reads every output script's history,
+  and `getBoardingTxs` and both `@arkade-os/swap` chain sources call it on
+  transactions someone else built, whose other outputs are the payer's change
+  and any service fee address. Fulcrum answers a history past `max_history`
+  with an empty list (read as unspent), electrs refuses one past 500 entries by
+  default (failing the call), and a large one can exceed Fulcrum's per-client
+  buffer, which drops the connection. The new optional
+  `OnchainProvider.getTxOutspend(txid, vout)` answers one output from its own
+  script; those three callers use it when the provider has it.
+
+- **`@arkade-os/swap` declares a lockup's assets when claiming or refunding
+  it.** Anyone can send an asset vtxo to a swap lockup's address, and arkd
+  refuses to spend an asset-carrying input unless the transaction carries an
+  asset packet saying where the asset goes. `pushClaim` and
+  `pushRefundWithoutReceiver` built one sats output and no packet, so a single
+  such vtxo failed every claim or refund of that lockup with
+  `ASSET_VALIDATION_FAILED`. `LockupVtxo` gains an optional `assets` field,
+  which `findLockupVtxos` fills from the contract manager's rows, and both
+  spends now declare every input's assets onto their one aggregate output.
+
+- **Docs: stale API comments.** The `OnchainWallet` and `nodeSwapRepository`
+  examples passed `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is),
+  and `StorageConfig.virtualTxRepository` was still described as inert although
+  the wallet captures exit branches into it and prunes them on spend.
+  `WalletBalance.boarding.unconfirmed` said "mainnet" for onchain, and
+  `boarding.loaded` had no doc.
+
+- **`@arkade-os/swap` builds an onchain send's lockup with the quoted solo
+  refund delay.** `deriveOnchainSend` always used the base ladder's
+  `unilateralRefundWithoutReceiverDelay`, so a solver that stretches that
+  delay (needed where a short exit delay would let the solo refund open before
+  the solver's last Arkade claim) quoted a lockup the client could not derive,
+  and the client refused to fund. It now reads
+  `profile.refund_without_receiver_delay` when the quote carries one, validates
+  it as `deriveLightningSend` does, and checks it against the refund-window
+  policy. A quote without the field still derives the base ladder.
+
+- **`@arkade-os/swap` migrates Program v0 offer rows.** A wallet upgraded from
+  a swap release before 0.1.0-rc.31 kept its offer rows as unsupported Program
+  v0 unless a live swap record rebuilt them, so settled offers and offers
+  without a usable record were never synced again. The drive's restore now
+  rewrites any offer row matching one of the two bundled programs to Program v1
+  in place, from the row alone, after checking the script is unchanged. It runs
+  in the background, so `ready` never waits on the indexer to hydrate the rows.
+
+- **`@arkade-os/swap` restores offers funded before a signer rotation.**
+  `restoreOfferCoverage` rebuilt every live offer with the current signer, so
+  an offer funded under a rotated-out key failed its script check and was
+  skipped, its deposit left unwatched. It now takes the operator key from the
+  offer's stored row, which stays readable even for a Program v0 row, and the
+  rebuild replaces such a row in place from the swap record.
+
+- **A stream arkd refuses fails with arkd's reason.** arkd sends the status
+  of a refused stream — a filter that does not compile, say — as a named SSE
+  `failure` event, which nothing listened for: the EventSource providers
+  surfaced only a bare `EventSource error`, and `ExpoIndexerProvider` skipped
+  the payload and reconnected straight into the same refusal, in a tight loop.
+  Both now throw an `EventSourceError` carrying arkd's message.
+
+- **`claimCash` refuses another operator's ArkadeCash.** The token's script
+  commits to its issuer's signer, but the claim never checked it against the
+  connected operator, so a wallet on the wrong operator queried an indexer
+  that could not know the note and failed with a misleading "No VTXOs found".
+  It now throws `ArkadeCashOperatorMismatchError` before any query. A signer
+  the operator lists as deprecated is accepted, cutoff or not: it is the same
+  operator after a rotation, and refusing it would lock the bearer out of
+  cash minted before the rotation, including swept cash that still recovers
+  through settlement. (#1045)
+
+- **Contract subscription recovery clears stale poll state.** Recovery now
+  uses the same connection-reset path as stream reconnection, so a successful
+  manager reconciliation re-enables failsafe polling for contracts whose
+  earlier event handling failed. Subscription request timeouts are validated
+  as portable timer delays and must be greater than zero; accepting zero
+  caused immediate timeouts and endless retries.
+
+- **Two-step swap claims pass arkd v0.9.24's submit check.** arkd now refuses a
+  checkpoint whose condition witness differs from that of the ark tx input
+  spending it. `claimWithPreimageIdentity` attaches the preimage only while
+  signing, so the unsigned checkpoints the two-step flow submits carried none.
+  `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
+  before submitting, in both flows.
+
+### Performance
+
+- **Electrum `getCoins` avoids per-height block-header lookups.**
+  `listunspent` already supplies confirmation status and height, so balance and
+  coin-selection reads no longer fetch a header for every distinct coin height.
+  Transaction-history reads still fetch block timestamps where they are needed;
+  boarding expiry uses consensus median-time-past.
+
+### Breaking Changes
+
+- Removed the deprecated `receivePkScriptFor` helper from `@arkade-os/swap/protocol`.
+
+- **Public offchain submissions share the wallet transaction lock.**
+  `buildAndSubmitOffchainTx` waits behind `send`, `settle`, and other offchain
+  submissions. The lock is non-reentrant: do not call it from a settlement
+  callback while that settlement still holds the lock.
+
+- **`IContractManager.dispose()` returns a promise.** Implementations must
+  return `Promise<void>`; callers can await teardown, including in-flight
+  event handling and repository writes.
+
+- **`IContractManager.getStoredContractsWithVtxos()` is required.** Custom
+  `IContractManager` implementations must add it; `Wallet` no longer falls
+  back to the syncing `getContractsWithVtxos` when it is missing. (#953)
+
+- **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
+  the ad it named; kind 38859 now carries the signed solver card, exported
+  as `SOLVER_CARD_KIND` by `@arkade-os/solver-discovery`.
+- **`@arkade-os/swap`: `SnapshotRef.source` gains `"local"`.** It marks a
+  snapshot answered by pinned cards alone, while the registry is unreachable
+  and nothing is cached; such a snapshot carries no `registry`. Code with an
+  exhaustive `switch` on `source` must handle it.
+- **`@arkade-os/swap/protocol` no longer exports `refundIfUnresolved`,
+  `RefundOutcome`, `claimReceiveLockup` or `awaitLockupFunding`.** The
+  deprecated refund loop pushed one capped refund and reported `refunded`
+  while outputs past the 16-input cap stayed at the lockup, and its type hid
+  the `left` count that would have said so. `claimReceiveLockup` did the same
+  to a claim after publishing `P`, so the outputs it left went back to the
+  solver at their CLTV; `awaitLockupFunding` was its wait. `client.recover()`
+  and the drive finish both; to drive them by hand, call
+  `pushRefundWithoutReceiver` or `pushClaim` until it reports nothing `left`.
+
+- **Arkade contracts use typed normalized Program v1 only.** Compiler imports use source function names: an Arkade function and its same-named Taproot leaf share `contract.functions.claim(...)`, while standalone Taproot functions use their own names, such as `contract.functions.unilateral()`. Leaf order is preserved and duplicate callable names are rejected. `InputRef` remains exported as an alias of `InputDef`; constructor parameters and call inputs require `{ name, type }` declarations using native Arkade scalar names. `signature` replaces `sig`; `bytes20`, `bytes32` and `asset` replace the ambiguous `hash` type; `bool` and `AssetGroup` remain distinct from `int`. Width and boolean constraints follow the native type without extra declaration flags. JavaScript argument values are unchanged, and every `pubkey` remains restricted to 32 bytes. Explicit version 0 programs and persisted contracts are rejected without automatic migration, with the new `UnsupportedProgramVersionError`; omitted normalized JSON versions default to 1. A persisted v0 row is kept but no longer synced, and no longer degrades `getSyncState()` or warns on every sync: `IContractManager.getUnsupportedContracts()` lists those rows, and a custom `IContractManager` must add the method. Creating a contract with v1 params for a v0 row's script replaces that row in place, keeping its `createdAt`, `state`, `watch`, its generic-spend gate (a closed one stays closed; an open one stays open unless the caller sets the flag), and its label and metadata unless new ones are passed; exiting or spending a v0 row still fails. Back up v0 contract rows and retain a compatible SDK; manual recovery requires reconstructing the typed program with stored bindings and keys and verifying its `pkScript` matches before updating stored parameters or re-registering (see the SDK README). Server bindings must match the connected server. CSV offchain spending and external or covenant-tweaked leaf signing through `send()` fail explicitly. `SignerRef` remains unchanged, and emulator placement uses optional `emulatorIndex` metadata. Malformed function entries, declaration arrays, signature metadata and emulator positions are rejected during normalized artifact parsing. Tapscript signer validation uses the resolved signer list, including any emulator. The swap package's bundled programs use version 1 with compiler byte-width constraints and unchanged scripts and addresses.
+
+- **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
+  `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
+  `ArkadeCashClaimResult.recovering`, and only a failed import is reported
+  as unclaimed. Code matching on `"swept"` must handle `recovering`
+  instead.
+
+- **`ArkadeCash` accepts only the `arkadecash` and `tarkadecash`
+  prefixes.** Any other HRP throws on decode and on mint. Notes minted
+  by 0.4.48-rc.0 with the `arkcash` prefix can no longer be claimed.
+
+- **Repository collection reads are replaced by bounded pages.** Custom SDK
+  contract, intent, or wallet repositories and swap repositories must implement
+  the new page methods. Intent pages now sort by `intentTxId` rather than
+  `(createdAt, intentTxId)`, so consumers displaying intents in time order
+  should sort the collected result explicitly. `IntentFilter.skip` and `take`
+  are replaced by `PageRequest` cursors.
+
+- **The shared IndexedDB wallet schema upgrades from v4 to v6.** v5 adds an
+  `(address, createdAt)` transaction-history index without rewriting
+  history rows or activating the separate experimental intent stores. v6
+  adds two contract indexes on watch state and writes the state they key
+  on into every stored contract, `watched` for one stored without a state;
+  contracts read back unchanged. That rewrites each stored contract once,
+  so the first open after updating takes longer the more contracts are
+  stored. Both upgrades are one-way: an older SDK, a 0.5.0 release
+  candidate at v5 included, cannot reopen the upgraded database and fails
+  with `VersionError`.
+
+- **`IndexedDBIntentRepository` and `IndexedDBVirtualTxRepository` move to
+  their own database, `arkade-batches`.** They defaulted to the wallet's
+  database name while running their own schema version on it, so beside the
+  wallet and contract repositories one of the opens failed, or the intent
+  stores were never created. Their stores now live only in `arkade-batches`,
+  or in the database a custom `dbName` creates. Nothing an earlier SDK
+  stored is migrated, under the wallet's name or a custom one: a database
+  it created cannot be reopened and fails with `VersionError`.
+
+- **`@arkade-os/boltz-swap` is removed from the repo and will not be
+  published on the 0.5 line.** The package's Boltz-routed rails are
+  superseded by the `@arkade-os/swap` v2 client (`createSwapClient` on the
+  package root). There is no in-tree replacement for `ArkadeSwaps`,
+  `BoltzSwapProvider`, or `ArkadeLightning` as drop-in APIs — consumers
+  migrate to the v2 corridors. Known pinned consumers that need a coordinated
+  migration before or with this release: **BlueWallet**
+  (`@arkade-os/boltz-swap@0.3.26`), **arkade-wdk** (`0.3.40`), **coinflip**
+  (`0.3.60`), and **checkout** (`@latest`). See the boltz-swap section of
+  [`packages/swap/MIGRATION.md`](packages/swap/MIGRATION.md) for the mapping.
+
+- **`@arkade-os/swap`: the root export is the v2 client, and the v1
+  building blocks moved to `@arkade-os/swap/protocol`.** `createSwapClient`
+  and `SwapClient` on the root are now the v2 declarations, not the facade
+  `0.1.0-rc.1` published: the factory takes a `SwapClientConfig`,
+  `quote(market, input)` became `quote(input)`, `cancel` takes a swap id
+  rather than a funding txid, `onUpdate` delivers `{ swap, outcome, detail }`,
+  and `client.manager` is gone. `quote`'s arity change fails loudly;
+  `SwapQuoteInput.give: "base" | "quote"` is the quiet one, since `AssetId` is
+  a string alias — it still compiles and is refused at runtime with
+  `UnsupportedRoute`, so grep for `give: "base"` before upgrading. 192 further
+  names — requests, covenants, records, the RFQ manager, the restore scan, the
+  v1 solver rails — move to `@arkade-os/swap/protocol`, one specifier edit
+  each, under `@deprecated` pointers naming their v2 replacement. Eight v1
+  names the v2 surface references stay on the root instead — `InvoiceFacts`,
+  `ChainSource`, `AssetSwap`, `LockupSpendIndexer`, `SwapContractRegistry`,
+  `LockupRegistrationFailed`, `RfqSwapState`, `isRfqSwapTerminal` — because a
+  root-exported declaration its consumer cannot name is unusable without the
+  deprecated barrel. There is
+  deliberately **no window** in which both spellings work: this release breaks
+  regardless, so re-exporting them from the root would split one migration into
+  two and leave 200 v1 names on a root whose claim is to be the v2 surface. The
+  subpath is a permanent floor and nothing on it is scheduled for removal.
+  Removed outright, with no floor: the rest of the facade (`SwapQuoteInput`,
+  `UnifiedSwap`, `SwapClientDeps`, `SwapQuote`, `SpotQuote`,
+  `LightningSendQuote`, `LightningReceiveQuote`, `OnchainSendQuote`),
+  `ARKADE_ASSET`, and seventeen internals the client absorbed. The
+  `@arkade-os/swap/client` subpath is gone — it never shipped in a published
+  version, only on the release branch, and the client is the root now. Full table, including every name with no floor and why, in
+  [`packages/swap/MIGRATION.md`](packages/swap/MIGRATION.md).
+
+- **`@arkade-os/swap`: `AssetSwapRepository.version` is `5`, adding a v2
+  swap-record store.** Four methods land beside the existing ones —
+  `saveSwapRecord`, `getSwapRecord`, `getAllSwapRecords`,
+  `removeSwapRecord` — keyed by the client-minted quote id rather than a
+  funding txid, which is what lets a swap record exist *before* its
+  money does. An out-of-tree implementor of the interface fails to
+  compile until it adds them, which is what the version literal is for.
+  The four in-tree backends are updated; the IndexedDB one bumps
+  `DB_VERSION` to 3 and the migration is additive, so existing rows come
+  through untouched. Realm consumers gain a fifth schema,
+  `ArkadeSwapRecord` — spread `AssetSwapRealmSchemas` into your config
+  and bump your `schemaVersion`. The v1 readers are unchanged and keep
+  reading v1 rows; the two record families are deliberately invisible to
+  each other, while the restore-scan cursor and the markets cache stay
+  shared.
+
+- **`@arkade-os/swap`: the `arkServerUrl` positional is gone from the
+  five covenant-deriving entrypoints.** `createOffer(wallet, params)`,
+  and `requestLightningSend` / `requestLightningReceive` /
+  `requestOnchainSend` / `requestOnchainReceive` as
+  `request*(wallet, transport, params)`. Each reads the server's
+  network and signer key — and, for the four `request*` calls, its
+  unilateral-exit delay — from `wallet.getArkadeInfo()`
+  instead of building a `RestArkProvider` from a URL, so a caller
+  holding a wallet holds everything these need and pays no second
+  `/v1/info` round-trip per call (each entrypoint still performs its own
+  live read — deliberately, see the `requireLive` entry below). Drop the argument at every call site; nothing
+  else about these calls changed. (#734)
+- **`@arkade-os/swap`: the solver payment rails drop their
+  `arkServerUrl` dep.** `SolverLightningRailDeps` and
+  `SolverOnchainRailDeps` carried the URL for the one reason above — to
+  hand it to `requestLightningSend` / `requestOnchainSend` — so with the
+  positional gone the field has no reader. Remove it from the object you
+  pass `solverLightningRail` / `solverOnchainRail`; both rails already
+  take the wallet from the `RouterContext` they are quoted with. (#734)
+- **`@arkade-os/swap`: `cancelOffer` and `watchOfferSwaps` lose their
+  server URL too.** `cancelOffer(wallet, offerHex, opts)` and
+  `watchOfferSwaps({ wallet, repository })`. These two need more than
+  server info — cancel broadcasts and falls back to the indexer for a
+  deposit made before contract registration existed, and the watcher
+  reads spending transactions — so they now take those from the wallet
+  as well, through the two seams below. No *offer* entrypoint takes a
+  server URL now. The RFQ restore/refund/claim helpers still take
+  provider instances: an `ArkadeReader` satisfies their *indexer*
+  parameter structurally, while their ark-provider parameter wants
+  `getInfo` plus the broadcast pair — buildable from
+  `wallet.getArkadeInfo()` and `wallet.getArkadeBroadcaster()`.
+  Converting their callers is follow-up work. (#734)
+- **`Arkade.arkProvider` narrowed to `ArkadeServerProvider`.** The
+  provider a connected client exposes now types `submitTx`/`finalizeTx`
+  as optional, mirroring what `Arkade.connect` accepts. Reaching
+  through the field to broadcast — `client.arkProvider.submitTx(...)`
+  — no longer compiles. Broadcast through the transaction builder's
+  `.send()`, which runs the same submit/finalize behind an explicit
+  capability check, or keep your own reference to the provider you
+  handed `connect`. Type-only: the field still holds that provider
+  untouched, so there is no runtime or on-disk effect. (#734)
+- **`@arkade-os/swap`: `MarketRef` gains a `"restored"` member, and
+  `withOfferStatus` is now `withDepositFate`.** A record the client rebuilds
+  from chain carries `market: { kind: "restored" }`, which has no `.key` —
+  reaching through an unnarrowed `MarketRef` to read `swap.market.key` stops
+  compiling and wants a `kind` check first. The advanced export
+  `withOfferStatus` is replaced by `withDepositFate`, which writes a
+  deposit's spend and completion time alongside its status. Type-only in
+  both cases: nothing on disk changes, and a record written before the
+  upgrade reads back unchanged. (#930)
+- **`@arkade-os/swap`: BTC's asset id off mainnet is `slip44:1`, not
+  `slip44:0`.** `btcOn(rail, network)` now uses SLIP-44's testnet coin type
+  on `testnet`, `signet`, `mutinynet` and `regtest`
+  (`arkade:mutinynet/slip44:1`); mainnet keeps `arkade:bitcoin/slip44:0`.
+  That is the id solver-discovery validates and cards carry, so a card that
+  published a `caip19_id` was unreachable on a test network: a mutinynet
+  BTC → USDT quote failed with "no market serves", and the `"BTC"` ticker
+  refused as `ambiguous_alias`. A test-network BTC id spelled the old way
+  is now refused as `UnsupportedRoute` naming the right one; callers that
+  hard-code BTC ids — including a `maxFee` or `policy.maxFee` ceiling, which
+  would otherwise refuse as differently denominated — should build them
+  with `btcOn`. Swap records written before the upgrade are not rewritten
+  and still fund and reconcile as BTC. `BTC_ASSET_PART` is deprecated (it
+  is mainnet's part only); use `btcAssetPart(network)`, or `isBtcAsset`
+  (and `isBtcAssetLenient` for stored ids) to recognize BTC.
+- **`Wallet.create` and `ReadonlyWallet.create` need their class as
+  `this`.** Both now build the class they are called on, so a reference
+  taken off the class and called on its own, as in
+  `const { create } = Wallet`, throws `this is not a constructor`. Call
+  `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
+- **`@arkade-os/swap`: `revealClaimPacket` requires `minAmount`.** Pass the
+  sats the lockup must carry, such as the swap record's `expectedAmount`; one
+  that is not positive or is past `Number.MAX_SAFE_INTEGER` is refused before
+  any call. The packet does not bind it yet: that waits for covclaimd with
+  `min_amount` support to deploy, and the call stays the same when it does.
+
+### Features
+
+- **`@arkade-os/swap`: `client.markets()` reports each market's limits per leg.**
+  A UI had no way to show a market's min and max, or explain an out-of-range
+  amount, without an RFQ that discloses it. `Market` now carries `legs`, each with
+  its `asset`, `decimals` and announced `limits` in atomic units, `null` on a side
+  the solver will not pay out. They are indicative, and routing and the set of
+  markets returned do not change. New export: `MarketLeg`.
+
+- **`onchainProvider` can be a per-network factory, in a service worker
+  too.** `WalletConfig.onchainProvider` takes `(network) => OnchainProvider`,
+  called once the operator's network is known, live or from the cached
+  snapshot, and `MessageBus` takes the same factory for its worker wallet. A
+  provider cannot cross `postMessage`, so a worker wallet was pinned to Esplora
+  at `ESPLORA_URL[network]`; replacing `buildServices` instead meant
+  re-implementing identity hydration the SDK does not export.
+
+- **`@arkade-os/swap`: the onchain corridor reads L1 through a caller's
+  provider.** `corridors.onchain.chain` takes `{ provider }` beside
+  `{ esploraUrl }`, so a wallet on Electrum watches and claims the HTLC over
+  its own backend rather than a second, Esplora-only one.
+
+- **`concurrentSpending` lets spends overlap on disjoint VTXOs, and
+  `reserveVtxos` keeps VTXOs out of SDK-chosen spends.** Opt-in
+  (`Wallet.create({ concurrentSpending: true })`): the wallet lock covers only
+  picking and reserving inputs, so a send no longer waits for another
+  operation's batch swap; amount-bearing `Ramps` exits spend only the VTXOs
+  they need; naming a VTXO another operation is spending throws
+  `VtxoReservedError`. `wallet.reserveVtxos(outpoints)` holds VTXOs out of
+  `send`, `settle()`, exits, renewal, router rails and swap funding until
+  released; renewal skips a held VTXO even once it is due, and logs a warning
+  naming it, so a long-lived hold must be spent or released before the VTXO
+  expires. `WalletBalance` gains `reserved`, so
+  `settled + preconfirmed === available + gated + intentLocked + reserved`: a
+  held VTXO's value moves from `available` to `reserved`, and without holds no
+  existing field changes value. Code that builds `WalletBalance` objects
+  (custom `IWallet` implementations, test doubles) must add `reserved`. Without
+  the setting and without holds, behavior is unchanged except for asset
+  operations, listed under Bug Fixes.
+
+- **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
+  optional third argument reports `preparing` after lock acquisition and
+  `registration_attempt` before intent registration, allowing backend callers
+  to retain reservations once registration may have been attempted. `IWallet`
+  and `ServiceWorkerWallet` retain their two-argument settlement API.
+
+- **Opt-in faster startup with repository-first reads.** Wallet
+  construction waited for the look-ahead band, the boot reconcile and the
+  watcher start, so a returning wallet showed nothing until the indexer
+  answered. `lazyInitialization: true` (on `Wallet`, `ReadonlyWallet` and
+  the service-worker factories) runs that boot in the background, and the
+  new `getStoredBalance()`, `getStoredVtxos()` and
+  `getStoredBoardingUtxos()` answer from the repository at once, requesting
+  a sync behind the read. They are for display, never coin selection, and
+  can be empty or stale: `ContractSyncState` and `ProviderConnectionState`
+  gain `syncing` (a provider sync is in flight), and
+  `ContractManager.whenBooted()` settles when the background boot is done,
+  which then reports any failure through `getSyncState()`.
+  `WalletBalance.boarding.loaded` is false until this wallet instance has
+  fetched its boarding inputs. The service-worker factories also take
+  `lazyBoarding: true`, which moves the explorer-backed boarding and
+  history refresh off `INIT_WALLET` and broadcasts `UTXO_UPDATE` when it
+  completes. Both options default to false, and the existing reads
+  (`getVtxos`, `getBalance`, `getTransactionHistory`) still sync before
+  answering. (#943)
+
+- **`vtxoSyncOverlapMs` sets how far back each delta sync re-reads.**
+  Every delta sync re-read the 24 hours before the sync cursor, so a
+  sync seconds after a full one still paged a day of VTXO history from
+  the indexer. `ContractManagerConfig.vtxoSyncOverlapMs` or the wallet's
+  `vtxoSyncOverlapMs` config now sets that overlap, including at boot;
+  `setVtxoSyncOverlap` changes it later. The default stays 24 hours.
+  The indexer filters on each VTXO's last
+  update in arkd's clock while the cursor is this host's, so the overlap
+  must cover how far this host's clock can run ahead of arkd's: lower it
+  only on an NTP-synced host.
+
+- **`Wallet.create` and `ReadonlyWallet.create` build the class they are
+  called on.** A subclass that inherits either factory now gets an instance
+  of itself, typed as itself, where it used to get a plain `Wallet` or
+  `ReadonlyWallet`; its constructor receives the base constructor's
+  arguments. An override of `create` that delegates to `super.create()` now
+  constructs the subclass too; one that does not call it is unchanged, and
+  so are calls on `Wallet` and `ReadonlyWallet` themselves. The one calling
+  pattern that stops working is listed under Breaking Changes.
+
+- **`@arkade-os/swap/node`: the Node storage default.**
+  `nodeSwapRepository({ network })` opens a file-backed SQLite database
+  under the platform config directory (XDG /
+  `~/Library/Application Support` / `%APPDATA%`) at
+  `arkade/swaps/swaps-<network>.sqlite`, and is the one backend whose
+  `[Symbol.asyncDispose]` closes the connection — because it is the one
+  that opened it. `createNodeSqlExecutor(path)` and
+  `swapDatabasePath(network)` are exported beside it. A separate subpath
+  rather than a conditional import, so the browser bundle never sees
+  `node:sqlite`.
+
+- **`assertRecipientArkadeAddress` and `RecipientArkadeAddressContext` are
+  root-exported.** The rotation-aware recipient check — hrp, then
+  `classifyAgainstSignerSet`, refusing `UNKNOWN_SIGNER` and `EXPIRED`
+  distinctly — was reachable only from inside core, while every
+  ingredient it needs already was. A plugin classifying a destination
+  address had to hand-roll a `serverPubKey ===` comparison, which
+  rejects valid addresses mid-rotation. Nothing about the function
+  changed.
+- **`IReadonlyWallet.getArkadeInfo()`.** The wallet is the single place
+  that knows which Arkade server it speaks to, so a plugin needs only
+  the wallet, never a server URL of its own. It answers with the live
+  `ArkadeInfo` and falls back to the snapshot persisted at wallet
+  construction when the server is unreachable, so an offline wallet
+  still answers; implemented across the standard, service-worker and
+  Expo wallets. Additive for consumers, but **third-party `IWallet` /
+  `IReadonlyWallet` implementations must add the method** — a
+  compile-time break for external implementers only, with no runtime
+  or on-disk effect. (#734)
+- **`IReadonlyWallet.getArkadeReader()` and
+  `IWallet.getArkadeBroadcaster()`.** Chain reads and broadcast, taken
+  from the wallet rather than from a URL a caller carries. `ArkadeReader`
+  is `getVtxos` + `getVirtualTxs`; `ArkadeBroadcaster` is
+  `submitTx` + `finalizeTx`.
+  The split is the readonly/full line: reading is a readonly capability,
+  broadcasting is not. On the typed surface a readonly wallet — and
+  every `toReadonly()` view — exposes no way to submit (`protected` is
+  erased at runtime, so this is a compile-time boundary, not a
+  sandbox); the readonly service-worker enforces it at runtime too,
+  refusing `SUBMIT_TX`/`FINALIZE_TX` outright.
+  `ArkadeReader.getVtxos()` queries the server for arbitrary scripts and
+  is distinct from `IReadonlyWallet.getVtxos()`, which answers the
+  wallet's own outputs from repositories. It is shaped as
+  `getNormalizedVtxos`, so everything leaving the seam carries its
+  canonical facts — the guarantee `check-provider-boundary.mjs` enforces
+  inside the SDK, now extended to consumers. Deliberately not the whole
+  `IndexerProvider`/`ArkProvider`: a caller reaching further would be
+  talking to the server behind the wallet's back, which a service-worker
+  wallet cannot even express.
+  Implemented across the standard, service-worker and Expo wallets; on a
+  service-worker wallet both are proxied to the worker, so a plugin
+  shares the wallet's connection instead of opening a second one outside
+  its rate gate and caches. Additive for consumers, but **third-party
+  `IWallet` / `IReadonlyWallet` implementations must add both methods**
+  — a compile-time break for external implementers only, with no runtime
+  or on-disk effect. (#734)
+- **`getArkadeInfo({ requireLive: true })`, and honest freshness.** The
+  snapshot fallback is now opt-out for callers that must not derive from
+  a cache: with `requireLive` the read throws when the operator is
+  unreachable. The five covenant-deriving swap entrypoints and
+  `cancelOffer` use it, restoring their pre-#734 fail-closed behaviour —
+  a stale snapshot there binds a covenant to a key the operator may no
+  longer co-sign for. Every read now also updates
+  `getProviderConnectionState()`, so a wallet that booted offline and
+  recovered stops reporting `degraded` (and the inverse stops claiming
+  `online`). (#803 review)
+- **An info read is now a rotation signal, not its suppressor.**
+  `RestArkProvider.getInfo()` caches the digest that rides `X-Digest`;
+  previously a read after the operator rotated advanced it silently, so
+  arkd stopped answering `DIGEST_MISMATCH` and `onServerInfoChanged`
+  never fired. `getInfo()` now emits `onServerInfoChanged` when the
+  digest *moved* (boot read and the mismatch path's own refresh stay
+  silent), so the wallet re-derives instead of spending on a stale
+  epoch. The live `/v1/info` fetch also carries a 12s budget where the
+  runtime has `AbortSignal.timeout`, keeping the service-worker snapshot
+  fallback reachable on a black-holed connection. (#803 review)
+- **Typed error names survive the service-worker boundary for real.**
+  The structured-clone algorithm normalizes a custom `Error.name`
+  (`ProviderUnavailableError`, `ReadonlyWalletError`, …) to `"Error"` —
+  the earlier claim that `cause.name` survived was certified by a test
+  stub that copied `name` verbatim. The worker now sends the name beside
+  the error as plain data (`ResponseEnvelope.errorName`) and the page
+  restores it before rejecting, so `cause.name` genuinely is the thing
+  a page can branch on. Wire-compatible in both directions; against an
+  older worker the page sees the clone-normalized name, as it always
+  did. (#803 review)
+- **`ArkInfo` renamed to `ArkadeInfo`.** The type name now matches the
+  product and the accessor that returns it. `ArkInfo` is kept as a
+  deprecated alias (`export type ArkInfo = ArkadeInfo`), both are
+  exported from `@arkade-os/sdk`, and every existing import keeps
+  resolving — nothing to change today. (#734)
+- **`ArkadeConnectOptions.arkade` widened: only `getInfo` is
+  required.** `submitTx` / `finalizeTx` are optional now — `getInfo` is
+  what resolves the server key and checkpoint closure, which is all a
+  client needs to derive, register and inspect contracts. A client
+  built without the two broadcast methods throws at `.send()` on the
+  pure-tapscript path — the same deferred, explicit failure an absent
+  `indexer` gives `getUtxos()` and an absent `emulator` gives a covenant
+  spend.
+  That lets a caller already holding the server info connect with
+  `arkade: { getInfo: async () => info }` and no provider of its own,
+  and without a second `/v1/info` round-trip. A widening on the input,
+  so every existing `Arkade.connect` call still type-checks; the
+  matching narrowing on the `Arkade.arkProvider` field it hands back is
+  listed under Breaking Changes above. The shape is exported as
+  `ArkadeServerProvider`, so a caller building a derivation-only client
+  has a name to import. (#734)
+- **`@arkade-os/swap`: markets come from the cards solvers publish.** A
+  registry can list a solver by key alone; its markets come from the signed
+  card it publishes over Nostr (kind 38859, `d` = network).
+  `DiscoveryConfig.transportCards` and `discoverMarkets({ transportCards })`
+  default to `nostrCardFetcher` (`@arkade-os/swap/nostr`, optional
+  `nostr-tools` peer); `null` opts out. The fetcher fills a missed delivery
+  with the newest card it has seen, still subject to the discovery client's
+  card-age limit. A listed solver whose card still fails to arrive (a fresh
+  process whose relay is slow or dead, or a caller's own fetcher) no longer
+  drops out: for up to two hours such an answer leaves the cache alone,
+  `discoverMarkets` and `watchMarkets` keep serving the solver's cached
+  markets, and the client never mixes cached cards into a live snapshot.
+  Both ask the registry again after a minute, not on every call. A missing
+  `nostr-tools` peer is not a failed delivery. The markets cache lasts ten
+  minutes, not an hour, and `watchMarkets` (`@arkade-os/swap/protocol`)
+  keeps a long-lived view current. Needs `@arkade-os/solver-discovery`
+  0.3.0.
+
+### Bug Fixes
+
+- **Compiler server exit delays must be positive.** A missing server delay can arrive as zero, which previously compiled into a zero-block CSV leaf. Contract creation rejects zero alongside missing and negative delays before binding `SERVER_EXIT_DELAY`.
+
+- **Restored Arkade contracts sign with the connected identity.** Input selection used the persisted `userKey` even though signing preflight checked the connected identity, so a missing or different stored key could skip required signatures. Both checks now use the connected identity while persisted keys continue to preserve the contract script.
+
+- **`@arkade-os/swap`: a restore scan no longer reopens a cancelled or filled
+  offer.** A client starting right after a cancel scans its deposits, and the
+  indexer can still report the spent deposit as unspent. The scan wrote that
+  `pending` over the stored `cancelled`, so `swaps()` showed the offer `open`
+  until a later pass. A spent record now ignores a fate that shows no spend.
+
+- **An asset operation's inputs are no longer picked by a parallel `send`.**
+  `issue`, `reissue` and `burn` pick their coins without the wallet lock and
+  only queue for it to submit, while `getVtxos()` and every SDK pick still
+  showed those coins; a `send` that picked in that window spent the same
+  coin, and the operator refused whichever submit came second. The inputs are
+  now marked in flight from the moment the operation submits, as a `send`'s
+  are, so other picks skip them and `reserveVtxos` refuses them.
+
+- **`@arkade-os/swap`: the Nostr RFQ transport fails fast instead of waiting out its 30s reply
+  timeout.** nostr-tools *resolves* a publish to a relay it could not connect to (with
+  `"connection failure: …"`), and `send()` counted that as accepted, so with every relay
+  unreachable each quote waited 30s for "no solver reply". Those results now count as failures,
+  and the error lists each relay's outcome. A transport whose subscription every relay already
+  dropped rejects later requests at once with `RelayUnavailable`, and a closed one with
+  `TransportClosed`, without publishing. The pending reply is marked handled when it's created:
+  if every relay dropped while the publish was in flight, or the publish failed, it used to
+  reject with no handler attached, an unhandled rejection that ends a Node process by default.
+  A failed publish also clears the reply timer.
+
+- **`settle` no longer warns of a lingering intent the server refused.** A
+  settle that fails before commit deletes its intent so the next one doesn't
+  hit "duplicated input". When arkd had refused the registration (e.g.
+  `INTENT_INSUFFICIENT_FEE`) there was nothing to delete, and its "no
+  matching intents" answer was logged as a possibly lingering intent. That
+  answer now counts as released, as intent reconciliation already treats it.
+
+- **Swap refunds require a recognized refund spend leaf.** A claim checkpoint can be
+  visible before its preimage arrives, while retaining the same transaction id. The
+  lockup reader previously treated that missing witness as a refund and stopped
+  watching a successful payment. Incomplete claims and unsupported spend data now
+  remain unresolved until proof arrives; refund evidence must match every lockup outpoint.
+
+- **The failsafe poll no longer reports a just-spent coin as received
+  (#1083).** The stream updates the watcher at once, but the repository only
+  once the event's sync lands; a poll in that gap read the stale rows and
+  emitted the transaction inverted (the spent coin received, the new one
+  spent), then re-emitted both on the next tick. The poll now skips a contract
+  while a handler for its events is still running or settled during the read,
+  and after a failed sync until a later event or reconnect syncs it.
+  `ContractWatcher.startWatching` accepts a callback that returns a promise
+  for this, and `ContractManager` returns its handler's.
+- **`@arkade-os/swap`: an `arkade -> onchain` send no longer settles on an
+  unconfirmed L1 claim.** The swap ended `settled` the moment the solver
+  claimed the Arkade lockup, which only proves the solver read `P` off the
+  trader's claim — not that the claim was mined. Built at the relay floor on
+  every network, that claim can sit in the mempool until the solver's refund
+  leaf matures on median-time-past and replaces it, taking both sides of the
+  trade from a wallet already reporting success; an eviction loses the same
+  money with no solver at fault, since nothing re-broadcast it. The payout now
+  waits for the claim to confirm, is re-published when the chain has forgotten
+  it, and is replaced at a higher fee while it stays unconfirmed. `ChainSource`
+  gains two optional reads for this (`getTxStatus`, `getFeeRate`), both
+  implemented by the package's Esplora sources; a chain source without
+  `getTxStatus` keeps the old behaviour, and the old exposure.
+- **Selected send inputs normalize their expiry before checking a funding floor.**
+  JSON date strings and millisecond timestamps now receive the same expiry check
+  as `Date` values, and those normalized inputs reach transaction construction.
+- **Retry deadlines stay local to the funding attempt.** A tighter deadline on
+  a retry no longer overwrites the durable bound of an earlier ambiguous send.
+  Failed non-submission proof writes preserve the original authenticated send
+  deadline error and leave the contract watched until the proof is durable.
+- **Asset-payment comparisons ignore object key order.** Equivalent restored
+  terms and recipients no longer conflict with their verified quote. Malformed
+  stored payment terms are isolated from healthy swaps during listing and restore.
+  A funded offer whose fate changes during restore remains stored and watched;
+  its malformed public projection cannot poison readiness or other updates.
+
+- **`wallet.dispose()` waits for contract events still being handled.** It
+  stopped the contract watcher but returned while an event handler could still
+  be syncing, so that handler could write to storage the caller had already
+  closed. `ContractManager.dispose()` now returns a promise that settles once
+  in-flight events and any look-ahead drain finish, `ReadonlyWallet.dispose()`
+  awaits it, and an event delivered after dispose is dropped. `ContractManager`
+  also supports `await using`.
+- **`@arkade-os/swap`: one dead relay no longer kills a Node 22 process.**
+  nostr-tools 2.25 closes a socket from its `onerror`, and Node 22's
+  WebSocket re-fires `error` synchronously from `close()` on a connecting
+  socket; the recursion overflowed the stack. Both relay pools now use a
+  socket whose `close()` runs once.
+- **`@arkade-os/swap`: a pinned card no longer stands in for an unreachable
+  registry.** A local card always counts as answering, so a registry outage
+  replaced the cached markets with the pins alone. Only a registry answering
+  now replaces the cache. With nothing cached, the client still answers from
+  the pins, as a `source: "local"` snapshot that asks the registry again
+  after a minute rather than standing for the ten-minute TTL. `resolve()`
+  answers from them too, without the network, so a payment rail still offers
+  a pinned solver; 0.1.0-rc.24 left it out.
+- **`@arkade-os/swap`: dust sent to a lockup can no longer block the trader's
+  claim or refund.** Anyone can pay a lockup address, and both spends took
+  every output there. A few dozen dust outputs pushed the transaction past
+  arkd's `maxTxWeight`, so the refund of a send-leg lockup could never be
+  built and the funds stayed stuck. `pushClaim` and
+  `pushRefundWithoutReceiver` now spend at most `MAX_LOCKUP_SPEND_INPUTS` (16)
+  outputs, the largest first. `pushClaim` also leaves swept outputs out
+  instead of refusing the whole claim: only the sender's leaf can recover
+  them. The value gate weighs every live output, not just the batch the claim
+  spends. `pushClaim` returns the outputs it `spent` and how many live
+  outputs it `left`, so the swap manager re-claims any remainder on a later
+  pass, passing only outputs no claim has taken yet.
+  `pushRefundWithoutReceiver` returns how many outputs it `left` and which it
+  `spent`, and the manager keeps the swap live until none are left;
+  `arkadeRefunder` skips outputs an earlier pass already refunded, which a
+  lagging indexer still lists. A receive swap now settles once its claim is
+  out even if swept outputs remain: `readLockupFate` takes `receiver: true`
+  for that read.
+- **`@arkade-os/swap`: a refund that worked is no longer marked `failed`.**
+  `arkadeRefunder` remembers the outputs a partial refund spent only in
+  memory, so after a restart, or with a second refunder, a read that still
+  listed them made the next push name a spent output. The manager reported
+  the `VTXO_ALREADY_SPENT` rejection as a failure and, past
+  `refundLocktime + REFUND_MTP_LAG_SECONDS`, ended the swap `failed`. It now
+  retries on the next pass, as the claim path already did, and step 1
+  settles a spend that was the solver's.
+- **A partial VTXO filter no longer drops recoverable coins.**
+  `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
+  so any filter object, even one carrying only `maxSyncAgeMs`,
+  `watchedOnly`, `genericallySpendableOnly` or `requireSynced`, turned
+  `withRecoverable` off and silently left swept-but-unspent VTXOs out.
+  Each flag now defaults on its own, `withRecoverable` to `true` and
+  `withUnrolled` to `false`, and an explicit `false` still applies.
+  `getVtxos({ withUnrolled: true })` now returns recoverable coins too.
+
+- **`BIP21.parse` no longer lowercases the address in a URI, and
+  `BIP21.create` no longer lowercases the one it writes.** Base58 is
+  case-sensitive, so `bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn` parsed
+  as a *different* address — and silently, because `isBtcAddress` admits
+  a lowercase base58 string, so the corrupted address passed
+  classification and whatever it decoded to is what a rail would have
+  funded. Bech32 is unaffected either way: BIP173 forbids a case *mix*,
+  not upper case, and every decoder here takes an all-upper address.
+- **The `ark=` BIP21 parameter is matched case-insensitively.** Bech32m
+  permits an all-upper address and `ArkAddress.decode` accepts one, so a
+  case-sensitive prefix test dropped — with a `console.warn` — an
+  address that `arkTarget` claims happily when it arrives bare. Same fix
+  in `BIP21.create`. One destination classifying differently bare than
+  as a parameter was the defect; both forms now agree.
+
+- **Settlement forfeits a VTXO past expiry that the operator has not
+  swept.** The forfeit-skip decision read `canRecoverOnchain`, which is
+  true for any VTXO past its wall-clock expiry, so renewing one whose
+  batch output the operator never swept sent no forfeit and arkd failed
+  the batch with `missing forfeit transactions`. Settlement, delegation
+  and Arkade batches now decide with `requiresForfeit`, mirroring arkd's
+  `Vtxo.RequiresForfeit()`: only swept or unrolled VTXOs skip the
+  forfeit, whatever their expiry. Because the delta sync never revisits
+  a coin swept after its cursor, `settle` now refreshes the swept state
+  of expired inputs before deciding, so an already-swept VTXO is not
+  given a forfeit the operator allocated no connector for.
+
+- **`programFromArtifact` reads time-based CSV literals.** A literal
+  relative timelock in an `arkadec` artifact is the encoded BIP68
+  sequence, but the reader tagged every literal as a block count, so a
+  512-second literal such as `4194314` (bit 22 set) failed to build with
+  `Expected Number blocks <= 65535`. Literals are now decoded: `4194314`
+  reads as 5,120 seconds and builds the artifact's own script bytes. A
+  literal that does not round-trip through BIP68, such as `70000`, is
+  refused when the artifact is read. (#1012)
+
+- **`programFromArtifact` binds a `$param` CSV operand as a BIP68
+  sequence, not a block count.** The compiler emits a bare `<param>`
+  placeholder for a CSV operand and both it and the delegatee push the
+  parameter's raw value, which is the sequence. The reader tagged such
+  an operand `blocks`, so a seconds-domain exit delay could not be
+  built at all (`exitDelay = 4194472` threw `Expected Number blocks <=
+  65535`), and any delay a third party derived from the same artifact
+  pushed different bytes — a different address. An artifact CSV operand
+  now carries a new `sequence` kind in the Program format, decoded when
+  the parameter is bound with the same canonical check the literal path
+  uses; a value with the disable flag set or bits outside the value and
+  type fields is refused and names the parameter. A blocks-domain
+  sequence equals its block count, so every value that built before
+  builds the same bytes. Hand-written `blocks`/`seconds` programs are
+  unchanged. `ArtifactWitnessElement` also accepts the `encoding` field
+  `arkadec` tags signature witness items with.
+
+- **The missing-`EventSource` warning no longer promises polling.**
+  `ContractWatcher` warned it was "falling back to polling", but for the
+  wallet's own contracts its failsafe poll replays the wallet repository
+  rather than the indexer, so without server-sent events those contracts
+  see new and spent VTXOs only when the wallet syncs, on a read or
+  `refreshVtxos()`. Watch-only scripts are still polled against the
+  indexer. The warning now says both.
+
+- **`vtxoSyncMaxAgeMs` is validated however it is set.** Only the
+  per-read `maxSyncAgeMs` was checked; `setVtxoSyncMaxAge` and the
+  `ContractManager.create` config accepted any number, and `Infinity`
+  silently stopped every read from syncing. Both now reject a value that
+  is not a non-negative safe integer, as the per-read option does. The
+  manager keeps its own copy of the config, so mutating the object passed
+  to `create` no longer reconfigures it, and `setVtxoSyncMaxAge` no longer
+  writes into the caller's object.
+
+### Performance
+
+- **Transaction history stops rescanning the VTXO list per VTXO.**
+  `buildTransactionHistory` rescanned every VTXO the wallet ever held, spent
+  ones included, two to four times per VTXO. Refreshes made it worse, because
+  they leave no row to stop the rescan. The cost grew with the square of a
+  list that only grows: on Hermes, `getTransactionHistory` blocked the JS
+  thread for 3–4 s. The builder now indexes the VTXOs once per call, and a
+  9k-VTXO history takes ~30 ms instead of ~3 s. Output is unchanged.
+
+- **A wallet registers its baseline contracts in one batch.**
+  `initializeContractManager` created each baseline contract (the default,
+  delegate and boarding scripts, per signer and timelock) with its own
+  `createContract`, so a new contract repository read the indexer once per
+  contract and re-posted the whole subscription after each one: eight
+  sequential round trips for four contracts. It now hands the list to
+  `createContracts`, which persists the rows in the same order, hydrates them
+  with one indexer read and posts the subscription once. Registration order,
+  and with it first-wins on a script two kinds share, is unchanged. A wallet
+  whose contract repository is not persisted paid this on every start.
+
+- **Wallet construction asks the delegate for its key alongside server
+  info.** `getDelegateInfo()` started only after `getInfo()` resolved,
+  though neither depends on the other, so every wallet with a delegate paid
+  both round trips back to back before it could build its scripts — in a
+  service worker, on every page load. Both requests are now in flight
+  together. A delegate that fails or is unreachable still leaves the wallet
+  on the default script.
+
+- **`setupServiceWorker` no longer waits for the worker update check.** It
+  awaited `registration.update()`, a fetch of the worker script, before
+  returning the worker that was already active, so every
+  `ServiceWorkerWallet.setup()` paid a round trip to the app's own origin
+  first, and failed outright whenever that fetch failed, offline included.
+  The check still runs and still picks up a newer worker; setup no longer
+  waits on it, and a failed check is logged instead of thrown.
+
+- **`getVtxos` and `getBalance` no longer read spent history.** Both
+  loaded every stored VTXO row, spent ones included, and dropped the
+  spent ones in memory. They now ask the repository for unspent rows
+  only, the read `getSpendableVtxos` already uses, which IndexedDB
+  serves from the `scriptUnspent` index. Results are unchanged:
+  `getVtxos` still reads spent rows when `withUnrolled` is set, because
+  an unrolled coin is returned even when spent, and the balance buckets
+  already skip every spent coin.
+
+- **The service worker's balance and coin reads skip spent history too.**
+  `GET_BALANCE`, and `GET_VTXOS` unless unrolled coins are requested, now
+  read unspent rows only. These back `ServiceWorkerWallet.getBalance` and
+  `getVtxos`, which do not go through the `Wallet` methods above. Rows
+  under one contract script give the same result as before. One legacy
+  case changes: a stale copy of an outpoint stored under a different
+  script used to be counted or hidden depending on which contract the
+  worker read first; it is now counted whenever its own row is unspent,
+  as `getSpendableVtxos` already does.
+
+- **`ContractManager` starts from the contracts it watches.** Startup
+  read every contract row, `retained` ones included, and seeded the
+  watcher from each one's stored VTXOs, so a service that retires its
+  finished contracts still paid for its whole history at every start.
+  It now reads `watched` and `awaiting-funds` rows only. Retained rows
+  stay in the repository, where `getContracts`, `getContractsWithVtxos`,
+  annotation and history already read them, and re-watching one with
+  `setContractWatchState` registers and subscribes it then. For that,
+  `ContractWatcher.updateContract` now registers a watched contract it
+  does not hold instead of throwing, and ignores a retained one.
+
+- **Every contract repository answers watch reads from an index.** The
+  startup read above, and a watch read narrowed by type such as
+  `getContracts({ type, watch })`, now seek their few live rows instead
+  of walking every contract, or every contract of that type, page by
+  page. SQLite indexes the watch state, and IndexedDB does from schema v6
+  (see Breaking Changes). Realm already indexed `watch`, but a typed read
+  and every page after the first walked past that index; each live state
+  is now queried on its own, which the index serves. A row stored
+  without a watch state still counts as `watched`. The in-memory
+  repository still filters in memory. The Expo background poll now
+  reads only watched and awaiting-funds contracts too, instead of every
+  row.
+
+- **Hot paths no longer wait out independent reads.** Boarding history fetched
+  each address, then each output's spend status, one after another; exit
+  walked each VTXO chain and each confirmation the same way, and a batch of
+  received VTXOs captured exit branches one by one. Those reads now run
+  together. The first failure is still the one reported, and a duplicate
+  outpoint in the service-worker snapshot is still claimed by the earlier
+  contract. Spend checks overlap the chain tip with the wallet descriptor.
+  Recovery and an expiry read overlap the coin list with the chain tip, and
+  deprecated-signer classification overlaps VTXOs with boarding. A quote that
+  needs both a claim secret and a refund key, or a refund key and server info,
+  starts both at once. Restore does the same with contract-manager setup,
+  the static descriptor and server info. Delegate info overlaps server info.
+  None of these share a result, and a step that writes what the next step
+  reads is unchanged.
+
+- **Boarding history stops asking the explorer for spends it already lists.**
+  On every history read, `getBoardingTxs` asked for the spend status of every
+  boarding output, although the address's own transaction list already names
+  each spender. It now asks only about outputs no listed transaction spends,
+  mostly deposits not yet settled. The Electrum provider now returns each
+  transaction's inputs (`vin`) from `getTransactions` and `watchAddresses`, so
+  it benefits too: a settled output cost three or four sequential Electrum
+  round trips, plus a fetch of every other transaction at an address that
+  received more than one deposit. Output is unchanged.
+
+### Internal
+
+- **Dev-tooling dependency overrides raised past every high and critical
+  advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
+  development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and
+  `async-storage` peer installs, never in the SDK's runtime `dependencies`.
+  The `pnpm-workspace.yaml` overrides for `@xmldom/xmldom`, `node-forge`,
+  `vite`, `brace-expansion`, `shell-quote`, `js-yaml` and `markdown-it` now
+  sit at the patched floors, and new ones cover `tinypool` (prototype-pollution
+  RCE gadget, pulled in by `vitest`), `image-size`, `browserslist`,
+  `compression`, `zod`, `nanoid` and `source-map-js`. `pnpm audit --audit-level high` now
+  reports none. Published packages are unchanged.
+- **`vitest` and `@vitest/coverage-v8` move to 4.1.12.** Two moderate
+  advisories on `vitest` and `@vitest/mocker` (path traversal and code injection
+  through an unauthenticated manual mock) are fixed only from 4.1.11 on. The
+  move also retires the `tinypool` override, since 4.x no longer depends on
+  `tinypool`. One `syncOnchain` test now searches the `console.warn` calls
+  instead of reading the first, because a background sync left over from the
+  previous test can warn into the same spy, and six test files have type
+  annotations adjusted for vitest 4's stricter mock typings. No source change.
+- **Overrides cleaned up and an audit gate added to CI.** `markdown-it` is
+  capped below 15, because the `>=14.3.3` floor resolved to 15, which
+  needs `linkify-it` 6 and crashed `typedoc`. `minimatch` moves to 11 for every
+  consumer except `typedoc`, which calls `matchOne`, removed in 11, so it keeps
+  10.x. That leaves one moderate advisory on `minimatch` with no fix reachable
+  through `typedoc`. `glob` 13 moves to 14. The `zod` override is scoped to
+  `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
+  audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
+  high` and fails on any new high or critical advisory.
+
+## [0.4.77] - 2026-09-30
+
+### Breaking Changes
+
+- **The IndexedDB wallet database moves to schema v4.** `DB_VERSION`
+  goes from 3 to 4 to add a `scriptUnspent` index on the VTXO store;
+  existing rows are backfilled in one paged pass on upgrade, so no
+  manual migration is needed. An older SDK cannot reopen a v4
+  database, so a downgrade after upgrading fails to open storage.
+  `IndexedDBStorageAdapter` no longer defaults its `version` to the
+  wallet schema version and opens at the database's current version
+  when none is passed. (#991)
+
+### Features
+
+- **`programFromArtifact` reads `arkadec` compiler artifacts into a
+  `Program`.** The new reader (with `isContractArtifact` and the
+  `ContractArtifact` type, exported from the arkade entry) converts
+  the JSON the compiler writes, including constructor pubkeys tweaked
+  by a covenant (the new `TweakedSigner` signer form). `parseArtifact`
+  now refuses an `arkadec` artifact by name instead of turning its
+  spend-group array into functions named `"0"`, `"1"`, ...; byte
+  `0xdc` is named `OP_CHECKTIME`. (#958)
+- **Scoped and bounded funding reads for `getSpendableVtxos`.** The
+  filter is now `GetSpendableVtxosFilter`, which adds opt-in
+  `watchedOnly`, `genericallySpendableOnly`, `maxSyncAgeMs` and
+  `requireSynced`. Wallet repositories gain an optional
+  `getVtxosForScripts` bulk read, implemented by the in-memory,
+  IndexedDB, SQLite and Realm backends, and the built-in coin
+  selectors are scoped to eligible contracts. `hasTerminalSpend` is
+  renamed `isVtxoSpent`; the old name stays as a deprecated alias.
+  (#991)
+
+### Bug Fixes
+
+- **`send` no longer creates change below the operator's VTXO
+  minimum.** Coin selection now keeps adding coins until a positive
+  change output meets `vtxoMinAmount` (and dust when it carries asset
+  change), and falls back to an exact BTC-only subset with no change
+  when the balance cannot produce valid change. With an explicit
+  `selectedVtxos`, change below the minimum is refused with an error
+  naming both amounts. (#987)
+
+### Performance
+
+- **Contract VTXOs are grouped in one pass.** `ContractManager` builds
+  the per-contract VTXO grouping in a single sweep instead of
+  filtering once per contract. (#990)
+
+## [0.4.76] - 2026-09-25
+
+### Features
+
+- **`available` balance reserves one dust carrier while assets are
+  held.** An Arkade asset rides on a dust-sized carrier output whose
+  sats move only with the asset, so when any available VTXO carries
+  assets, `getBalance().available` is reduced by one dust amount on
+  both the main-thread and service-worker paths. `getDustAmount` now
+  accepts an `IReadonlyWallet` or `undefined` and falls back to the
+  default threshold. (#975)
+
+### Bug Fixes
+
+- **`BIP21.create` writes the amount as a plain decimal.** It formatted
+  the BTC amount with `String()`, which switches to exponent notation
+  below `1e-6`, so any amount under 100 sats came out as `amount=1e-7` —
+  outside BIP21's `*digit [ "." *digit ]` grammar, and rejected by the
+  SDK's own `BIP21.parse`. Amounts are now written with at most 8
+  decimals and no trailing zeros, which also drops float noise
+  (`0.30000000000000004` → `0.3`) and rounds sub-satoshi precision to the
+  satoshi.
+
+### Performance
+
+- **Contract tapscripts are memoized across syncs.** `ContractManager`
+  keeps derived tapscripts for its lifetime, keyed on type, script and
+  params and bounded to 1024 entries, instead of re-deriving every
+  contract on each bulk sync. A hit is only reused while the handler
+  that derived it is still registered. `TapscriptDeriving`
+  implementations must now be pure in type and params. (#984)
+
+## [0.4.75] - 2026-09-23
+
+### Features
+
+- **Arkade opcode table gains `PUSHEXPIRY`, `CHECKTIME`, `TUNNEL` and
+  the intent opcodes.** The table now covers `0xc3`-`0xf8`, matching
+  what the emulator and compiler artifacts already use. (#967)
+
+### Bug Fixes
+
+- **Collaborative exits pay the destination exactly.** New
+  `Ramps.offboardExact` prices the output fee on the destination
+  amount and sources it on top, replacing `onchainRail`'s fixpoint
+  gross-up, which could short-pay the recipient on a non-converging
+  fee schedule and charged the fee on the wrong output. Both exits now
+  refuse change above `vtxoMaxAmount` with the new
+  `OversizedChangeError` before submitting, and the `onchain` quote
+  includes the change output's own fee. (#956)
+- **HD unilateral-exit sweeps are signed with the right key.** Sweeps
+  now route through the wallet's descriptor-aware signer router
+  instead of always signing with the identity key, so a VTXO on a
+  rotated HD descriptor can be swept. (#959)
+- **`Arkade.connect` takes the address network from the server.** A
+  contract created without an explicit `network` against a signet,
+  regtest or mutinynet server previously got a mainnet (`ark1...`)
+  address; it now uses `getInfo().network`. An explicit `network`
+  still wins. (#962)
+- **A look-ahead failure at startup no longer aborts wallet
+  construction.** A transient provider error while probing the HD
+  look-ahead band is recorded as an owed refill, retried on the next
+  contract event, and reported as a degraded sync instead of throwing.
+  (#965)
+- **A just-recorded spend survives a stale indexer response.** A
+  `send` that left change could have its inputs restored to unspent by
+  an indexer sync that had not caught up yet, re-offered to coin
+  selection and rejected by the operator. Spends this process recorded
+  are now held in memory for 60 seconds against such a sync. (#966)
+
+### Performance
+
+- **Boarding addresses are fetched concurrently.** Boarding UTXO lookup
+  on wallet initialization queries all boarding addresses in parallel
+  instead of one at a time, and saves UTXOs only once every fetch has
+  succeeded. (#964)
+
+## [0.4.74] - 2026-09-19
+
+### Features
+
+- **A payment request can name the VTXOs it spends.**
+  `PaymentRequest.selectedVtxos` carries the caller's selection with
+  `SendParams.selectedVtxos` semantics (taken whole, a shortfall is an
+  error). The `ark` and `onchain` rails honour it; the swap rails drop
+  themselves rather than ignore it. `Ramps.offboard` gains a trailing
+  `vtxos` parameter for a partial exit, and an explicitly named input
+  whose fee exceeds its value is refused. `NormalizedExtendedVirtualCoin`
+  is now exported. (#948)
+- **`watchScript` and `unwatchScript` accept a set.** Both now take
+  `string | string[]`; a set is registered or dropped in one
+  subscription update with one batched indexer read. Single-script
+  calls are unchanged. (#955)
+
+### Bug Fixes
+
+- **A partial offboard now pays for its change output.**
+  `Ramps.offboard` priced its inputs and exit output but not the
+  offchain change output, so any partial offboard under a nonzero
+  `offchainOutput` fee was rejected by the server. The change fee is
+  now solved to a fixpoint, a schedule where it never settles is
+  refused, and a fee that outruns the change emits no change output.
+  (#950)
+- **Expo no longer sends Arkade headers to the indexer origin.**
+  `getExpoFetch` added `X-Build-Version` / `X-SDK-VERSION` to every
+  request, which fails CORS preflight on an indexer deployed on its
+  own origin. Only `ExpoArkProvider` sends them now. (#927)
+
+## [0.4.73] - 2026-09-15
+
+### Bug Fixes
+
+- **Wallet submits verify the operator's cosignature.**
+  `submitOffchainTx` had a server-signature check that the wallet
+  never enabled, so a txid-matching PSBT the server never signed was
+  finalized. The wallet now enables it, checking each signature
+  against the key the spent leaf names (the active signer or a
+  deprecated one). (#923)
+- **Settlements are validated against the intent proof when no
+  recipients are passed.** `createArkadeBatchHandler` skipped both
+  validation gates without an explicit `recipients` list; it now
+  falls back to the outputs signed in the intent proof. Asset
+  assignments still need the explicit list. (#922)
+- **`settle` fails when the commitment tx omits a boarding input.**
+  It previously continued silently and signed the VTXO forfeits,
+  leaving the boarding input behind. Arknotes are exempt. (#921)
+- **Delegation is scheduled at least one operator session before
+  expiry.** The default `delegateAt` is now the later of 10% of
+  remaining lifetime and `sessionDuration` before the earliest expiry,
+  so a short-lived VTXO is no longer scheduled too late to renew.
+  (#912)
+
+### Internal
+
+- **Regtest stacks run on arkd v0.9.16.** (#908)
+
+## [0.4.72] - 2026-09-10
+
+### Features
+
+- **Wallet restore hooks.** `registerWalletRestoreHook(wallet, hook)`
+  registers a plugin callback that runs after `restore()` completes,
+  on both the main-thread and service-worker wallets; it returns an
+  unregister function, and hook failures are collected into an
+  `AggregateError`. (#901)
+- **`RouteQuote.validUntil`.** A quote can now state how long it is
+  good for as a typed optional field instead of only in `meta`;
+  absence means the rail has nothing to state, not that the quote
+  never expires. (#874)
+- **`createContracts` registers a set of contracts in one indexer
+  round trip.** Optional on `IContractManager`, so custom
+  implementations keep compiling; a part-way failure does not leave
+  persisted rows unwatched. (#897)
+
+### Bug Fixes
+
+- **Provider reads have a 30-second deadline.** `baseFetch` now bounds
+  GET and HEAD requests with `READ_TIMEOUT_MS`, so a silently dropped
+  connection surfaces as a retryable `ProviderUnavailableError`
+  instead of hanging the retry ladder and the wallet's spend lock.
+  Writes stay unbounded, and a caller-supplied signal always wins.
+  The emulator's info read now goes through the same boundary. (#884,
+  #887)
+- **Transaction history is gated like balance.** Coins at gated
+  contracts (such as a swap offer covenant) were counted as the
+  wallet's own change, which cancelled out funding, fill and cancel
+  rows. History now treats them as an external counterparty and tags
+  those rows `"gated"`. (#859)
+- **A `vtxo_spent` from the failsafe poll now carries the row that records
+  the spend.** `ContractWatcher.pollContracts` reported the difference
+  using its *cached* rows, and those were unspent when cached — so a
+  poll-derived `vtxo_spent` stated `isSpent: false`, `spentBy: ""` and no
+  `arkTxId` on an event whose whole meaning is that the output was spent.
+  Anything reading a spend txid off these events saw nothing to bind the
+  spend to, including `Wallet`'s own subscription, which forwards them as
+  `spentVtxos`. The poll now takes spent rows from the repository query it
+  was already making — no extra read — and emits the stored row, falling
+  back to the cached one when storage has nothing fresher. **Grep your
+  `vtxo_spent` handlers for `spentBy`, `arkTxId` and `isSpent`**: fields
+  that were always empty on the poll path are now populated, and a handler
+  branching on `!vtxo.isSpent` inside a spend handler now takes the other
+  branch. (#864)
+
+### Performance
+
+- **Identical in-flight VTXO reads share one request.**
+  `RestIndexerProvider` serves concurrent identical
+  `/v1/indexer/vtxos` reads from a single wire request, while each
+  caller still gets its own converted coins. (#876)
+- **Opt-in staleness budget for the pre-send sync.**
+  `ContractManagerConfig.vtxoSyncMaxAgeMs` lets an embedder serve
+  `getContractsWithVtxos` from the repository when a full sync ran
+  within the budget. The default `0` keeps the old always-sync
+  behaviour, and a connection reset clears recorded freshness. (#882)
+
+## [0.4.71] - 2026-09-08
+
+### Breaking Changes
+
+- **`ContractEvent` gains contract-less `vtxo_received` /
+  `vtxo_spent` variants.** Code that narrows on `type` and then reads
+  `event.contract` no longer compiles; narrow with the new
+  `isContractVtxoEvent` first. (#857)
+
+### Features
+
+- **Watch-only scripts on `ContractWatcher`.** `watchScript`,
+  `unwatchScript` and `getWatchedScripts` (optional on
+  `IContractManager`, implemented by both shipped managers and the
+  service-worker wallet) report VTXO activity at a script the wallet
+  does not own, without persisting it or counting it in balance,
+  recovery or history. Delivery is at-least-once and re-announces on
+  restart. `WatchedScript` and `ContractVtxoEvent` are exported. (#857)
+
+## [0.4.70] - 2026-09-08
+
+### Breaking Changes
+
+- **`onchainRail` requires a fee source, and `RouterContext.wallet` is
+  `IWallet`.** `onchainRail()` is now `onchainRail({ feeInfo })` and
+  throws at construction without one; use the new
+  `walletFeeSource(wallet)`. `RouterContext.wallet` is typed `IWallet`
+  instead of the concrete `Wallet`, so a custom rail reading
+  `Wallet`-only members must take them as constructor dependencies.
+  `createDefaultPaymentRouter` callers are unaffected. (#851)
+
+### Features
+
+- **`PaymentRouter` gets an asset dimension.** `PaymentRequest` gains
+  optional `assets` and `RouteQuote` an optional `assets`
+  (`{ delivered, spent }`) view; the existing sats fields keep their
+  meaning. A new `ark-asset` rail (`arkAssetRail`, `ASSET_CARRIER_SATS`)
+  pays an Arkade address in an asset and is in the default router, and
+  every BTC-only rail now refuses a request carrying an asset instead
+  of paying only its carrier sats. (#838)
+
+### Bug Fixes
+
+- **`EsploraProvider.getChainTip` falls back to `/v1/blocks`.**
+  Mempool-backend-only explorers return 404 on `/blocks`; the provider
+  now retries `/v1/blocks` on a 404 and fails immediately on other
+  errors. (#637)
+
+## [0.4.69] - 2026-09-04
+
+### Features
+
+- **`waitForIncomingFunds` is cancellable.** It accepts
+  `{ signal, timeoutMs }` (`WaitForIncomingFundsOptions`) and rejects
+  with the new `AbortError` on cancellation, tearing down its watchers.
+  It also rejects when the underlying subscription fails instead of
+  hanging. (#830)
+
+### Bug Fixes
+
+- **Esplora address watchers no longer leak HTTP pollers.** A watcher
+  stopped during its async setup kept a 15-second full-history poll
+  running forever. Teardown is now tracked across awaits, watchers of
+  the same address set share one refcounted transport, polling uses
+  capped exponential backoff, and the WebSocket-to-HTTP fallback logs
+  a warning. (#830)
+- **A late address-watch baseline is anchored on chain height.** When
+  the initial history fetch fails, the chain height at watch start is
+  recorded so transactions confirmed above it (and unconfirmed ones)
+  are still reported as new when the baseline is later adopted.
+  `ExplorerTransaction.status` declares the optional `block_height`.
+  (#833, #840)
+- **Electrum `getChainTip().time` is median-time-past.**
+  `ElectrumOnchainProvider` returned the tip header's own `nTime`,
+  which can mature a seconds-based timelock early; it now computes the
+  11-block MTP, cached per tip hash, matching `EsploraProvider`. (#837)
+
+### Performance
+
+- **The HTTP watcher fallback probes address stats before refetching
+  history.** Each poll cycle first reads `/address/{addr}` activity
+  counts and fetches full history only when they changed or something
+  is pending in the mempool; a backend without the endpoint falls
+  through to history. (#834)
+
+## [0.4.68] - 2026-09-03
+
+### Breaking Changes
+
+- **VHTLC covenant leaves are enabled by one `nonInteractiveParameters`
+  option.** `VHTLC.Options.nonInteractiveClaim` and
+  `nonInteractiveRefund` (including `withoutReceiver` and the `strict`
+  claim bound) are removed; `nonInteractiveParameters: {
+  emulatorPubkey, receiverPkScript, senderPkScript }` builds all three
+  covenant leaves, byte-identical to before. The pre-timelocked-refund
+  shape stays expressible via `legacy: "preTimelockedRefund"`.
+  `VHTLCV2ContractParams` changes the same way; stored rows read back
+  unchanged, but rows written with only one leaf, two different
+  emulator keys, or `strict` keys are refused at deserialize. (#818)
+
+### Bug Fixes
+
+- **PSBT signing and tree validation are hardened.** `SingleKey` and
+  `SeedIdentity` now refuse to sign an input declaring
+  `SIGHASH_NONE` or `SIGHASH_SINGLE` variants (allowed: `DEFAULT`,
+  `ALL`, `ALL|ANYONECANPAY`), returned checkpoints are checked the same
+  way before signing, and `TxTree` rejects a node with a nonzero
+  locktime or non-final sequence. `assertAllowedSighashTypes` is
+  exported. (#819)
+- **Exited VTXOs are kept out of renewal, recovery and cash-claim
+  paths.** `isVtxoExpiringSoon` and `getExpiringAndRecoverableVtxos`
+  no longer return unrolled coins, `getSpendableVtxos` logs the exited
+  coins it drops, and `ArkadeContract.getUtxos` no longer trusts
+  server-side `spendableOnly` on its no-manager path. (#817)
+
+## [0.4.67] - 2026-08-31
+
+### Breaking Changes
+
+- **`OnchainProvider` gains a required `getRawTransaction`.** Both
+  shipped providers implement it (Esplora reads `/tx/{txid}/hex`); a
+  custom `OnchainProvider` must add it. (#809)
+- **Unrolled VTXOs are no longer Arkade-spendable.** A VTXO with
+  `isUnrolled: true` was counted in `available` and selectable for
+  send, renewal and recovery, all of which fail at the server. It now
+  moves to a new `unrolled` bucket on `WalletBalance` /
+  `OffchainBalance` (inside `total`), `canSpendOffchain` and
+  `canRecoverOnchain` refuse it, the new `canSweepOnchain` claims it,
+  and `classifyCashVtxos` reports a new `exited` reason. (#816)
+
+### Features
+
+- **`getNewAddresses` mints fresh receive and boarding addresses.**
+  `getNewAddresses({ types, forceNew })` allocates `default` and/or
+  `boarding` addresses from a single new HD index, registers them as
+  watched contracts without changing the advertised `getAddress()`,
+  and returns `{ address, contract, signingDescriptor }` entries.
+  `forceNew` throws `WalletCannotAllocateAddressError` on a wallet that
+  cannot allocate; an empty `types` list is rejected. Available on
+  `ExpoWallet` and `ServiceWorkerWallet`, with
+  `isAddressAllocationCapable` for feature detection.
+  `getNewBoardingAddress` is deprecated. (#810)
+- **`CachingArkProvider` caches `getInfo` with a TTL.** A decorator
+  over any `ArkProvider` (default 60s TTL) that is refreshed by
+  server-info change events. `RestArkProvider` now also emits
+  `onServerInfoChanged` when a routine `getInfo` refresh returns a
+  changed digest, not only after `DIGEST_MISMATCH`. (#676)
+- **Exit-observed hook.** `OnExitObserved`, `exitObserverFor` and
+  `notifyExitObserved` let `Unroll.sessionFor` and
+  `UnilateralExit.execute` mark a VTXO unrolled locally when this
+  wallet performs the exit. (#816)
+- **VHTLC non-interactive refund-without-receiver leaf.** An opt-in
+  ninth leaf lets a sender who goes offline be refunded to a
+  pre-committed destination after `refundLocktime` with only the
+  server and emulator co-signer; the vhtlc-v2 contract handler
+  round-trips the flag. Off by default because it changes the
+  address. (#812)
+- **Prevout transaction resolution for emulator v0.0.7.**
+  `resolvePrevTxs`, `attachPrevArkTxs`, `attachPrevoutTxs`,
+  `withPrevTxs` and `PrevTxUnavailableError` attach the prevout
+  transactions the emulator now requires; covenant spends and intent
+  proofs carry them, and arkd-direct paths are unchanged. (#809)
+
+### Bug Fixes
+
+- **A rejected 1P1C package no longer reports success.**
+  `/txs/package` answers HTTP 200 even when Bitcoin Core rejects every
+  transaction; the provider now inspects `package_msg` and throws with
+  the per-transaction errors, so the exit executor stops waiting on a
+  refused broadcast. (#807)
+- **Graph-mode exits quote enough funding.** `fundingRequiredSats`
+  omitted the final change output's dust floor, so depositing exactly
+  the quoted amount stranded the last CPFP bump. Estimate and prepare
+  now add one dust floor. (#806, #808)
+- **Signer-rotation migration reads a settled signer.** The migration
+  pass now drains an in-flight `onServerInfoChanged` rotation before
+  reading signer-derived state, and `report.rotated` reflects a
+  rotation applied by its own refresh. (#804)
+- **Service-worker events are pushed immediately.** Contract, VTXO,
+  UTXO and settle/renew/recover/migrate progress events no longer wait
+  for the next tick (up to `tickIntervalMs`); the bus has a push
+  channel, and discarded batches are logged at debug. (#813)
+
+### Internal
+
+- **Formatting moved from Prettier to Biome**, and `noImplicitReturns`
+  is enabled. (#786, #814)
+
+## [0.4.66] - 2026-08-24
+
+### Features
+
+- **`toXOnly` key normalizer.** Exported helper that converts a 33-byte
+  compressed or 32-byte x-only key to x-only and throws on anything
+  else. Every internal site that stripped a prefix inline now uses it,
+  so a malformed server, delegate or cosigner key fails loudly instead
+  of being truncated into a wrong key. (#780)
+- **`sweep_tx` transaction notifications.** `getTransactionsStream`
+  now yields a `sweepTx` arm (`SweepTxNotification`, with
+  `sweptVtxos` outpoints) instead of dropping the event; frames are
+  typed as `TxNotificationEvent`. (#781)
+- **`ArkInfo.maxTxWeight` and `maxOpReturnOutputs`.** Both server
+  limits are surfaced from `GetInfo` and round-trip through the cached
+  info snapshot. A missing or zero value reads as `undefined`
+  (unadvertised). (#782)
+- **Unpaged `getVtxos` returns every VTXO.** A query with no
+  `pageIndex`/`pageSize` is now paged to exhaustion internally (500
+  per page, following the server cursor) and returned without a
+  `page`, instead of a silent server-chosen prefix. Explicitly paged
+  queries are unchanged; `DEFAULT_VTXO_PAGE_SIZE` is exported. (#783)
+## [0.4.65] - 2026-08-20
+
+### Features
+
+- **`VHTLC.ScriptV2` can be denominated in an Arkade asset, with an
+  opt-in strict claim.** A new optional `asset: { txid, groupIndex }`
+  makes the two non-interactive covenant leaves also require the
+  output to hold at least the input's amount of that asset (the sat
+  covenant is kept alongside it). `nonInteractiveClaim.strict` adds
+  quoted-amount bounds on the claim leaf only. An `asset` with neither
+  covenant leaf is refused; omitting both options leaves every script
+  byte unchanged. The `vhtlc-v2` handler round-trips both fields. (#763)
+- **Asset-ID encoding vectors ship as a package export.**
+  `asset.ASSET_ID_VECTORS` pins the identity, covenant-push, offer-TLV
+  and RFQ pair-leg encodings so other implementations can test against
+  the same bytes. (#767)
+- **Shared IndexedDB connection helpers are exported.**
+  `createManagedConnection` (with `ManagedConnection` and
+  `ConnectionDisposedError`) plus `promisifyRequest`,
+  `awaitTransaction`, `deleteByIndex` and `getAllByIndexValues`, so
+  plugin repositories reuse the SDK's reopen and commit handling. (#765)
+
+### Bug Fixes
+
+- **IndexedDB repositories recover from a closed connection.** Every
+  repository cached its `IDBDatabase`, so a `versionchange` or abnormal
+  close bricked the store until reload. Wallet, contract, intent and
+  virtual-tx repositories now reopen on the next call. (#765)
+- **IndexedDB writes report success only once committed.** Most
+  `readwrite` transactions in the wallet and contract repositories
+  resolved on request success, so a quota or eviction abort could roll
+  back a write the caller was told had landed. (#765)
+- **A blocked IndexedDB upgrade fails instead of hanging.** An open
+  blocked by another connection now rejects with
+  `DatabaseUpgradeBlockedError` after `BLOCKED_UPGRADE_TIMEOUT_MS`
+  (10s) and can be retried, rather than stalling the first repository
+  call indefinitely. (#759)
+
+## [0.4.64] - 2026-08-18
+
+No SDK changes; released alongside `@arkade-os/swap`.
+
+## [0.4.63] - 2026-08-17
+
+### Features
+
+- **Activity resolvers can declare an outcome.** `GroupMembership` and
+  `ActivityIntent` gain an optional `outcome` string, an opaque machine
+  token (e.g. `"failed"`, `"refunded"`) merged first-writer-wins across
+  resolvers sharing a `groupId`, like `label` and `kind`. (#753)
+- **`runInTransaction` and `sanitizeTablePrefix` are exported from the
+  SQLite subpath.** Lets repositories outside the SDK share the one
+  write chain per executor instead of opening a second over the same
+  connection. (#758)
+
+### Bug Fixes
+
+- **The spending-gate log names a missing handler.** A VTXO excluded
+  because its contract type has no registered handler in this build was
+  logged with the same "not generically spendable" text as an ordinary
+  refusal; it now gets its own message. Which VTXOs are excluded is
+  unchanged. (#754)
+
+## [0.4.62] - 2026-08-13
+
+### Breaking Changes
+
+- **`contractPreimage` takes an options object.** The third parameter
+  changed from `stored?: Uint8Array` to
+  `{ stored?: Uint8Array; salt?: Uint8Array }`. (#744)
+
+### Features
+
+- **Static wallets derive swap preimages from a public per-swap salt.**
+  `provisionClaimSecret` now derives the preimage for single-key wallets
+  from a 32-byte salt kept in the clear on the record
+  (`ProvisionedClaimSecret.salt`), so only signers that cannot sign
+  deterministically still store one. Adds `signSchnorrDeterministic` on
+  `SingleKey` and `SeedIdentity`, `ARKADE_SALTED_PREIMAGE_TAG` and
+  `buildSaltedPreimageMessage`. (#744)
+- **`send` accepts the caller's inputs and a recipient taptree.**
+  `IWallet.send` also takes a `SendParams` object whose `selectedVtxos`
+  are spent exactly as given (a shortfall is an error, not a top-up),
+  with asset packets built correctly. `Recipient.tapTree` publishes
+  `PSBT_OUT_TAP_TREE` on that output and is refused unless it derives
+  the recipient address. Custom `IWallet` implementations must accept
+  the new argument form. (#730)
+- **Balance splits the unavailable remainder into `gated` and
+  `intentLocked`.** `WalletBalance` reports the two causes as disjoint
+  buckets so `settled + preconfirmed === available + gated +
+  intentLocked`; no existing field changes value. (#751)
+
+### Bug Fixes
+
+- **Contract preimage edge cases.** `contractPreimage` length-checks a
+  stored preimage, including an empty one; the salted arm no longer
+  swallows foreign-key and cannot-sign errors into a stored-preimage
+  fallback; and the payment-hash guard compares hex case-insensitively.
+  (#744)
+
+## [0.4.61] - 2026-08-13
+
+### Breaking Changes
+
+- **`signerForDescriptor` refuses descriptors the wallet cannot sign
+  for.** It previously returned the baseline identity for an unknown
+  descriptor; it now throws `ForeignDescriptorError`. On static and
+  `auto` wallets `getNextSigningDescriptor()` now returns the identity
+  key as `tr(pubkey)` instead of `undefined`. Both `Wallet` and
+  `ServiceWorkerWallet` go through the shared
+  `resolveDescriptorSigner`. (#738)
+
+### Features
+
+- **Contract key provisioning lives in the SDK.**
+  `provisionRefundKey`, `provisionClaimSecret`, `contractSigner`,
+  `contractPreimage` and `adoptContractDescriptor` give a contract leg
+  its key or claim secret without the caller probing wallet shape.
+  Provisioning refuses a wallet that cannot actually sign
+  (`WalletCannotSignError`) before anything is funded. Also exports
+  `identityDescriptor`, `isSigningIdentity` and descriptor parsing
+  helpers. (#738)
+- **`unspendableNowReasons` on the contract manager.** A predicate form
+  of `assertSpendableNow` returning refusals keyed by outpoint, so a
+  caller can drop a refused input instead of failing the batch;
+  `outpointReasons` feeds per-input reasons to `logExcludedVtxos`.
+  (#731)
+
+### Bug Fixes
+
+- **Recovery drops refused inputs instead of failing the batch.**
+  `recoverVtxos` and `getRecoverableBalance` read the ungated VTXO
+  list, so an immature VHTLC lockup joined the recovery batch and
+  failed it, including unrelated funds. Both now exclude refused inputs
+  and report every refusal when nothing is left to settle. (#731)
+- **`ExpoWallet` forwards the HD descriptor surface.** It forwarded
+  none of it, so an Expo wallet in `hd` mode bound every artifact to
+  its baseline key. (#738)
+- **Arkade scripts encode minimal pushes for single-byte data.** A
+  one-byte push of 1..16 or `0x81` is now written as `OP_1`..`OP_16` /
+  `OP_1NEGATE`, as the Arkade VM's MINIMALDATA rule requires. Scripts
+  containing such pushes encode to different bytes. (#742)
+
+## [0.4.60] - 2026-08-12
+
+### Breaking Changes
+
+- **Registered contracts are no longer generically spendable by
+  default.** `ContractHandler.isGenericallySpendable` gates send,
+  settle, renewal, asset operations, offboard and the `available`
+  balance; a handler without it is closed. `arkade` rows opt in via
+  `metadata.genericallySpendable === true`; `vhtlc` and `vhtlc-v2` are
+  closed. Explicit-input calls (`settle({ inputs })`,
+  `selectedVtxos`) stay open. (#681, #702)
+- **`IReadonlyWallet.getSpendableVtxos` and
+  `WalletBalance.availableAssets` are required.** The new read applies
+  the gate, pending recovery and intent locks from one snapshot;
+  `getVtxos` stays the raw read. Custom wallet implementations must add
+  both. (#681)
+- **`ContractRepository.version` is 2.** Implementations must persist
+  the new `Contract.watch` field and treat a missing one as
+  `"watched"`. The IndexedDB, in-memory, SQLite and Realm backends are
+  updated. (#694)
+
+### Features
+
+- **Retained-but-unwatched contract state.** `Contract.watch`
+  (`"watched" | "awaiting-funds" | "retained"`) is separate from
+  `state`: `retained` drops the subscription but keeps the row for
+  history and restore, and `awaiting-funds` self-demotes once funded.
+  `getContracts` accepts a `watch` filter. (#694)
+- **`VHTLC.ScriptV2` and non-interactive VHTLC leaves.** `VHTLC.Script`
+  gains optional `nonInteractiveClaim` and `nonInteractiveRefund`
+  covenant leaves paying a pre-committed P2TR destination (validated by
+  content). `ScriptV2` shares the leaf ladder but requires an exact
+  32-byte preimage. A new `vhtlc-v2` contract handler
+  (`VHTLCV2ContractHandler`) lets such lockups be registered. (#683,
+  #690)
+- **Consumers can supply the EventSource.** Set it per provider
+  (`eventSource` option) or via `configureEventSource()`. With none
+  available, streams throw `EventSourceUnavailableError` and the
+  watcher stops retrying instead of looping every 5s. (#699)
+- **HD allocation surface.** `HDAllocationCapable`
+  (`getNextSigningDescriptor`, `advanceSigningDescriptorWatermark`) is
+  implemented by `Wallet` and proxied through `ServiceWorkerWallet`;
+  `getUsedSigningDescriptors({ lookAhead })` probes past the watermark
+  (capped at `MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD`). The watermark
+  is bounded at 2^31. (#695, #705)
+- **Offchain-tx primitives exported.** `signAndSubmitOffchainTx` and
+  `claimWithPreimageIdentity`; `submitOffchainTx` gains opt-in
+  `verifyServerSignatures`, off by default. (#719)
+- **Explicit VHTLC settle is refused before its refund opens.** The
+  optional `assertSpendableNow` hook lets the VHTLC handlers reject
+  `settle({ inputs })` naming a lockup before `refundLocktime` with a
+  clear error, rather than a server rejection. (#704)
+- **The service-worker bus takes an `intentRepository`.** Without it,
+  worker mode persisted no intents and counted intent-locked VTXOs as
+  available. (#681)
+
+### Bug Fixes
+
+- **`renewVtxos` and `recoverVtxos` pay the intent fee.** Both built
+  their output as the gross input sum, so any operator with a non-zero
+  intent fee rejected them (`INTENT_INSUFFICIENT_FEE`). Inputs are now
+  priced like `settle()`, and `getRecoverableBalance` reports the same
+  net figures. Fixes #696. (#701)
+- **One broken contract no longer fails every read.** A row whose
+  handler is missing, or whose params its handler rejects, failed
+  `getVtxos`, `getBalance`, history and `initialize`. Its VTXOs are now
+  skipped and reported through `getSyncState`. (#681)
+- **VHTLC rows registered through `ContractManager` are visible.**
+  Annotation threw `forfeit is not a function`, so VTXOs were never
+  synced and sync stayed `degraded`. (#702)
+- **Height-typed CLTV paths are reachable.** `PathContext.blockHeight`
+  was never populated; `ContractManager` now fills it from a bounded,
+  cached `chainTip` that `Wallet` supplies. Seconds-typed timelocks use
+  the chain tip's time (`chainTime`) instead of the host clock. (#703,
+  #704)
+- **The service-worker `getVtxos` honors `withUnrolled`.** Unrolled
+  coins were always dropped, so `prepareUnrollTransaction` found
+  nothing behind the worker. (#681)
+
+### Internal
+
+- **`typescript` and `tsup` declared as devDependencies** so the
+  package builds standalone (e.g. a git subdirectory install). (#683)
+## [0.4.59] - 2026-08-12
+
+### Breaking Changes
+
+- **`Arkade.connect` takes the emulator co-signer key from the network,
+  not from the emulator.** It no longer calls the emulator's `getInfo`;
+  the key comes from a per-network pin (bitcoin, mutinynet, regtest). On
+  testnet, signet, or a hand-built `Network` with no `name`, connecting
+  with an emulator now throws unless you pass the new
+  `emulatorPubkey` option (33-byte compressed hex). (#729)
+
+### Features
+
+- **Per-network emulator co-signer constants.** New exports
+  `BITCOIN_EMULATOR_PUBKEY`, `MUTINYNET_EMULATOR_PUBKEY`,
+  `REGTEST_EMULATOR_PUBKEY`, `defaultEmulatorPubkey(network)` and
+  `resolveEmulatorPubkey(network, override?)`, which rejects a malformed
+  override instead of passing it through. `Network` gains an optional
+  `name`, set on every entry of the `networks` table. (#729)
+- **Checkpoint exit-delay floor defaults to what signet and mutinynet
+  advertise.** `Wallet.create` rejected the hosted signet (86016s) and
+  mutinynet (4096s) servers under the 86400s default floor. Those two
+  networks now default to their advertised values
+  (`SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS`,
+  `MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS`); bitcoin and testnet
+  keep 86400s. (#721)
+
+### Bug Fixes
+
+- **Timelock-floor rejections name the override that lowers them.** The
+  batch-expiry and checkpoint exit-delay errors now name
+  `minBatchExpirySeconds` / `minCheckpointExitDelaySeconds` and give the
+  value that would accept the server's timelock. (#721)
+
+### Internal
+
+- **`repository` field added to the published `package.json`.** (#707)
+
+## [0.4.58] - 2026-08-10
+
+### Features
+
+- **Service-worker wallets accept the timelock-floor overrides.**
+  `ServiceWorkerWalletOptions` now forwards `minBatchExpirySeconds` and
+  `minCheckpointExitDelaySeconds` to the worker's wallet. Before this,
+  page-side consumers could not set them at all, which blocked mutinynet,
+  whose server advertises a checkpoint delay below the default floor.
+  (#706)
+- **Node 26 allowed.** `engines.node` widened from `>=22.12.0 <25` to
+  `>=22.12.0 <27`. (#685)
+
+### Bug Fixes
+
+- **`renewVtxos` and `recoverVtxos` now pay the intent fee.** Both built
+  their settlement output as the gross sum of their inputs, so the
+  intent paid zero fee and any operator with a non-zero intent fee
+  rejected it (`INTENT_INSUFFICIENT_FEE`). This includes the automatic
+  renewal the SDK runs on `vtxo_received`. Inputs and outputs are now
+  priced through the fee estimator. Inputs whose fee is at least their
+  value are dropped before batch capping, and the dust check applies to
+  the net output. `getRecoverableBalance` uses the same pricing, so its
+  `recoverable`, `subdust` and `vtxoCount` now match what
+  `recoverVtxos` would settle. Closes #696. (#698)
+
+## [0.4.57] - 2026-08-07
+
+### Breaking Changes
+
+- **Server-supplied batch expiry and checkpoint exit delay are now
+  checked against a floor.** A round's `batchExpiry` and the checkpoint
+  script's exit delay were used without any check. Off regtest both must
+  now be seconds-typed and at least 24h by default. The checkpoint script's
+  pubkey must also be the operator's forfeit key, and `batchExpiry` must
+  equal `vtxoTreeExpiry` when the server advertises it. A failing round
+  is rejected with `ServerResponseMismatchError` before registration is
+  confirmed. A bad checkpoint script fails `Wallet.create` and
+  `rotateServerSigner`. Lower the floors with the new
+  `WalletConfig.minBatchExpirySeconds` /
+  `minCheckpointExitDelaySeconds` (they cannot be disabled). The policy
+  helpers (`assertValidBatchExpiry`, `assertValidServerUnrollScript`,
+  `default*Policy`, `resolve*Policy` and the floor constants) are
+  exported, and `ArkInfo` gains an optional `vtxoTreeExpiry`. (#686,
+  #687)
+
+## [0.4.56] - 2026-08-05
+
+### Breaking Changes
+
+- **Recipient Arkade addresses must match the wallet's network and
+  operator.** `send`, `sendBitcoin` and `settle` now reject an address
+  whose prefix differs from the wallet's, or whose server key is neither
+  the current signer nor a deprecated signer still before its rotation
+  cutoff. Before, such an address was accepted. (#675)
+- **`SignerSet.deprecated` is typed `ReadonlyMap`.** The wallet hands
+  out its live deprecated-signer map, which drives coin selection and
+  the pending-recovery balance. Code that wrote through it no longer
+  compiles. (#675)
+
+### Features
+
+- **`validateBatchRecipients` and `assertFinalCommitmentMatchesValidated`
+  exported.** Exported so external batch handlers (the boltz-swap VHTLC
+  handler) can run the same recipient check and commitment pinning as
+  the wallet. (#674)
+
+## [0.4.55] - 2026-08-04
+
+### Features
+
+- **Server responses are checked against locally derived data before
+  co-signing.** `submitTx` responses must return the `arkTxid` (and
+  `finalArkTx`, when present) that was submitted, and checkpoints that
+  match the ones submitted, by txid. Pending-tx finalization rebuilds
+  each checkpoint from its own VTXO. Batch finalization compares the
+  commitment tx with the one validated during tree signing. A mismatch
+  throws the new `ServerResponseMismatchError` (`retryable = false`); in
+  pending-tx finalization the tx is skipped and stays pending.
+  `assertSubmittedArkTxid` and `matchServerCheckpoints` are exported.
+  (#669)
+- **Settlements without offchain outputs now validate their
+  recipients.** Such a settle skips tree signing, so the commitment tx
+  was never checked against the requested recipients. It is now checked
+  at batch finalization, before any input is signed. Missing-output
+  errors from batch validation are now `ServerResponseMismatchError`.
+  (#670)
+- **Descriptor-scoped identity and HD wallet capability.** New
+  `DescriptorIdentity` (an `Identity` pinned to one HD descriptor) and
+  the `HDWalletCapable` interface with its `isHDWalletCapable` guard.
+  `Wallet` implements it with `getCurrentSigningDescriptor`,
+  `getUsedSigningDescriptors` and `signerForDescriptor`. Also exports
+  `isHDDeterministicSignCapable` and
+  `deriveDescriptorLeafCompressedPubKey`. (#662)
+- **Collaborative-exit and asset-mint activity resolvers.**
+  `createDefaultActivityRegistry()` now registers `collabExitResolver`
+  ("Collaborative exit") and `assetMintResolver` ("Asset mint" for the
+  issuer, "Asset receive" for a recipient of the genesis tx), so default
+  activity groupings can include these new kinds. `ArkTransaction` now
+  exposes the history builder's `tag`, typed as the open union `TxTag`.
+  (#584)
+
+## [0.4.54] - 2026-07-31
+
+### Features
+
+- **Payment router.** New `PaymentRouter` with pluggable rails, ranked
+  by a `priority` preference, plus `options()` / `route()` and
+  `AmbiguousRouteError` for `tieBreak: "require-choice"`.
+  `createDefaultPaymentRouter(wallet)` registers the `ark` rail
+  (`Wallet.send`) and the `onchain` rail (collaborative exit via
+  `Ramps.offboard`). Quotes are receiver-exact: `amount` is delivered
+  and `fee` is added on top, so the onchain rail grosses up its amount.
+  Also exports `PaymentRequest`, the target predicates, and
+  `resolveSendAmount` / `tryResolveSendAmount`. `BIP21` is now exported
+  from the root and gains `BIP21.amountSats`. (#586)
+- **Cancel a running exit `Executor` with an `AbortSignal`.** Pass
+  `signal` in the executor options. Iteration then rejects with an
+  error whose `name` is `"AbortError"`, including mid-poll.
+  Already-broadcast transactions are not recalled. (#663)
+- **`verifyTapscriptSignatures` can pin the signed leaf.** A new
+  optional `expectedLeafHash` argument rejects signatures over any
+  other leaf the input carries. `scriptFromTapLeafScript` is now
+  exported. (#653)
+
+### Performance
+
+- **Transaction history fetches tx timestamps in batches.** History
+  looked up each spent output's `createdAt` with one indexer call per
+  ark txid. These are now batched outpoint queries, 64 outpoints per
+  request. A retryable failure falls back to the previous estimate for
+  that chunk. (#661)
+
+### Internal
+
+- **MuSig2 helpers no longer sort the caller's key array in place.**
+  `aggregateKeys` and session creation sort a copy. An internal
+  `partialSigVerify` was added. (#653)
+- **Lint guard scripts work with Windows path separators.**
+
+## [0.4.53] - 2026-07-28
+
+### Features
+
+- **Message-bus error classifiers exported.**
+  `isMessageBusInitializingError` and `isMessageBusNotInitializedError`
+  are exported, so callers can tell a bus that is still initializing
+  from one that is not initialized. Test the initializing check first:
+  its message also matches the other. (#648)
+
+### Bug Fixes
+
+- **Expo background task ran every ~15 hours instead of every 15
+  minutes.** `registerExpoBackgroundTask` multiplied `minimumInterval`
+  by 60, but `expo-background-task` already takes minutes. (#647)
+
+## [0.4.52] - 2026-07-27
+
+### Bug Fixes
+
+- **The HD look-ahead window watches every receive variant.** The
+  window derived only the wallet's own receive script at each index.
+  A delegate wallet therefore missed funds sent to the default-variant
+  address issued at that index, which only `restore()` would find.
+  Handlers can now implement `Discoverable.candidatesAt`, used by both
+  the window and the restore scan. `hasCandidates` and `CandidateDeps`
+  are exported. (#645)
+
+## [0.4.51] - 2026-07-24
+
+### Breaking Changes
+
+- **`IContractManager` gains a required `refillLookAhead()` method.**
+  Custom implementations of the interface must add it (a no-op is fine
+  without a look-ahead config). (#643)
+
+### Features
+
+- **HD look-ahead watch window.** HD wallets now watch unfunded
+  offchain receive scripts within `N` indices on either side of the
+  last-used index. Funds sent to an address that another party issued
+  from the same seed now arrive without a `restore()`. Watched scripts
+  are not stored until funded, so they do not show up in balances,
+  address lists or history. Set the width with
+  `WalletConfig.lookAheadWindow` (default 20, positive integer), also
+  forwarded by `ServiceWorkerWalletOptions`. Refilling the window after
+  a rotation is best-effort: a refill failure does not fail the rotation.
+  (#643)
+## [0.4.50] - 2026-07-23
+
+### Bug Fixes
+
+- **Retired contracts stay in background coverage.** An Ark receive
+  address can be paid again after the wallet rotates past it, but
+  `ContractWatcher.getWatchedContracts()` dropped inactive contracts
+  once their VTXOs were spent, removing them from both the
+  subscription and the sync scope. The watched set is now every
+  registered contract; retirement only affects cadence and address
+  selection, and `deleteContract` is what stops watching. (#636)
+
+## [0.4.49] - 2026-07-23
+
+### Features
+
+- **Batched HD restore discovery.** `Discoverable` gains an optional
+  `discoverRange(entries, deps)` that answers a whole scan window in
+  one call; the scanner prefers it and falls back to per-index
+  `discoverAt`. The `default` and `delegate` handlers implement it.
+  A batched failure makes the whole range indeterminate, and an
+  incomplete result map is treated as a failure. `HandlerError` gains
+  an optional `toIndex`. (#635)
+
+### Bug Fixes
+
+- **`getVtxos` queries no longer exceed URL limits.** Scripts ride in
+  the query string, so a wallet with a few hundred contracts built a
+  ~28 KB URL and got a terminal 414: zero balance, and a failed
+  construct on the next boot. Script lists are now chunked at 32 and
+  each chunk is paged to exhaustion (`getAllNormalizedVtxos`). (#635)
+- **Restore fetches full history for newly discovered contracts.** The
+  post-scan `refreshVtxos` inherited the global delta cursor, already
+  advanced by the boot-time reconcile, so contracts found by the scan
+  were only queried for the last 24h. (#635)
+- **Delegate contract params decode through the shared helpers.**
+  `DelegateContractHandler.deserializeParams` now applies the same
+  descriptor and missing-`csvTimelock` guards as the default handler.
+  (#635)
+
+### Performance
+
+- **One subscription update per restore scan.** `addContract`
+  re-subscribed eagerly with the whole accumulated script list, so a
+  restore discovering N contracts sent N growing POSTs.
+  `scanContracts` now defers watcher updates and flushes a single
+  subscribe on exit, on both success and error paths. (#635)
+
+## [0.4.48] - 2026-07-21
+
+### Breaking Changes
+
+- **Implementer-facing type changes for custom wallets and contract
+  managers.** `IReadonlyWallet.getVtxos` now returns
+  `NormalizedExtendedVirtualCoin[]` (#619), and `ScanResult` gains a
+  required `highestConfirmedUsedIndex` plus optional `truncatedAt`,
+  with `lastIndexUsed` kept as a deprecated alias (#630). Callers are
+  unaffected; third-party `IReadonlyWallet` / `IContractManager`
+  implementations must return the new shapes.
+
+### Features
+
+- **ArkadeCash bearer instruments.** `wallet.createCash(amount)` sends
+  funds to a fresh key and returns an `arkadecash1...` (or
+  `tarkadecash1...`) bech32m string; `wallet.claimCash(str)` sweeps
+  every spendable VTXO at that key into the wallet, one offchain tx
+  each, and reports the rest (swept, subdust, already-spent,
+  has-assets, sweep-failed) with per-VTXO reasons. Nothing is
+  persisted; re-running a claim drains an interrupted one. Amounts
+  must be whole sats at or above dust. If funding fails after submit,
+  `ArkadeCashCreateError` carries the token so funds stay
+  recoverable. Exports `ArkadeCash`, `ArkadeCashCreateError` and the
+  claim-result types. (#621, #633)
+- **Canonical VTXO facts on `VirtualCoin`.** New optional fields
+  `isSwept`, `isPreconfirmed`, `commitmentTxIds`, `expiresAt` (Date)
+  and `expiresAtHeight` replace the lossy `virtualStatus`, which is
+  now deprecated but still emitted. Coins returned by the SDK are
+  normalized, including those from custom `IndexerProvider` and
+  `WalletRepository` backends. New predicates `canSpendOffchain`,
+  `canRecoverOnchain`, `hasTerminalSpend`, `isPastExpiry` and
+  `isVirtualCoin` plus the `TimeHeight` type are exported;
+  `isSpendable`, `isRecoverable` and `isExpired` are deprecated.
+  `isSpendable` now also treats a VTXO with `spentBy` or `settledBy`
+  as spent. (#619)
+- **Origin-scoped rate gate with `Retry-After` backoff.** Indexer,
+  `getInfo` and delegate-info GETs share a per-origin cooldown and a
+  concurrency cap of 6, wait behind a 429's `Retry-After` (capped at
+  60s, jittered), and GET/HEAD indexer requests retry availability
+  failures a bounded number of times. Intent and settlement POSTs only
+  report 429s and are never delayed or retried. (#630)
+
+### Bug Fixes
+
+- **Expired-but-unswept VTXOs no longer count as `available`.** Balance
+  counted them as available while `send` refused them; balance and
+  coin selection now read the same predicate, so they move to
+  `recoverable`. Renewal and recovery fetch the chain tip once per
+  pass, so height-encoded expiry is evaluated instead of ignored.
+  Forfeits skip expired inputs, matching arkd. A `batchExpiry` of 0
+  no longer reads as height 0. (#619)
+- **Restore no longer under-reports balances under rate limiting.** A
+  failed `discoverAt` probe counted toward the gap limit, so a
+  rate-limited scan closed its window on failed requests. The scan now
+  stops at the first indeterminate index, still persists confirmed
+  hits above it, and `restore` throws an `AggregateError` naming the
+  truncation index; retry is safe. (#630)
+- **Deprecated-signer migration skips inputs the send path would
+  reject.** One ineligible VTXO aborted the whole migration leg. Such
+  inputs are now partitioned out and reported as
+  `notSpendableOffchain`, with a new `"not-spendable-only"` skip
+  reason when nothing is eligible. (#619)
+- **Arkade batch handler distinguishes VTXOs from boarding inputs.**
+  `createArkadeBatchHandler` takes `ArkadeBatchInput` (the union of
+  `ArkadeExtendedCoin` and the new `ArkadeExtendedVirtualCoin`); an
+  unmatched boarding input now throws with its outpoint instead of
+  being skipped into an empty forfeit set. (#619)
+
+## [0.4.47] - 2026-07-17
+
+### Features
+
+- **Arkade Script support.** New `arkade` namespace export with Arkade
+  opcodes, `ArkadeScript` encoding and ASM conversion, script-key
+  tweaks, and a high-level `Arkade` / `ArkadeContract` program API
+  that compiles artifacts into contracts. Program contracts plug into
+  the contract pipeline via the new `ArkadeContractHandler`
+  (`ArkadeContractParams`). Adds `RestEmulatorProvider` and the
+  `EmulatorPacket` extension packet for covenant paths, and exports
+  the extension module (`Extension.getEmulatorPacket`,
+  `getPacketByType`, `getPackets`). (#319)
+- **Custom extension packets on sends.** `Recipient.extensions`
+  accepts `{ type, payload }` packets that are embedded in the
+  transaction's extension output alongside any asset packet. Also
+  exports `createAssetPacket`, `selectCoinsWithAsset`,
+  `selectVirtualCoins`, `PrevArkTxField` and `PrevoutTxField`. (#319)
+- **`TapscriptDeriving` handler capability.** Contract handlers whose
+  scripts have no `forfeit()` leaf can implement `deriveTapscripts` to
+  supply the forfeit/intent tapscripts used for VTXO annotation.
+  (#319)
+
+### Bug Fixes
+
+- **`Extension.create` rejects packet types outside 0-255.** The type
+  tag serializes as one byte, so larger values were silently
+  truncated on the wire. (#319)
+- **Offchain sends validate checkpoint counts against the built set.**
+  Both the signer's and the server's checkpoint arrays are now checked
+  against the checkpoints actually submitted; previously two equally
+  truncated arrays agreed with each other, and one path had no guard,
+  so a short server response could finalize silently. A miscounting
+  signer now fails before `submitTx`. (#620)
+
+### Internal
+
+- **Offchain submit/finalize core extracted** into `submitOffchainTx`
+  with an injected signer; wallet behaviour is unchanged. (#620)
+
+## [0.4.46] - 2026-07-16
+
+### Features
+
+- **arkd 0.9.14 indexer alignment.** `GetVtxosOptions` gains
+  `renewableOnly`. `pendingOnly` and `renewableOnly` now join the
+  client-side mutual-exclusivity check, so combining any two state
+  filters throws. New `ArkErrorName` constants (`DIGEST_MISMATCH`,
+  `VTXO_ALREADY_SPENT`, `INVALID_TX_FILTER`,
+  `TX_FILTERS_LIMIT_EXCEEDED`, `FORFEIT_CLOSURE_LOCKED`) and an
+  `isArkError(err, name?)` guard are exported. (#616, #618)
+
+### Bug Fixes
+
+- **Outputs exactly at the dust limit are accepted.** `sendBitcoin`
+  and delegation rejected amounts `<= dust`; they now share
+  `isSubdust` and reject only amounts below dust. `isSubdust` also
+  accepts a bigint amount. (#614)
+
+## [0.4.45] - 2026-07-11
+
+### Breaking Changes
+
+- **`IContractManager` gains a required `getSyncState()`.** Returns a
+  `ContractSyncState` (`online` or `degraded` with a reason). Custom
+  `IContractManager` implementations must add it. (#609)
+
+### Features
+
+- **Offline-first wallet boot.** Live server info is snapshotted to
+  wallet state; if the operator is unreachable at `create()`, the
+  wallet is built from the cached snapshot instead of throwing.
+  Indexer and Ark transport failures and bodyless 429/5xx responses
+  are typed as `ProviderUnavailableError`, and `ContractManager`
+  initialize, reads and hydration fall back to repository data on
+  those errors. A 5xx carrying a structured arkd error stays a
+  terminal `ArkError`. Exports `isRetryableProviderError`. (#609)
+- **Connection-state diagnostics.** `wallet.getProviderConnectionState()`
+  reports `online` or `degraded` (source, provider, reason) and
+  `getContractSyncState()` reports sync health. Both work across the
+  service-worker boundary (new `GET_CONTRACT_SYNC_STATE`, and
+  `GET_STATUS` carries the connection state); the Expo foreground
+  wallet exposes `getProviderConnectionState()`. (#609)
+- **Exit data captured locally for offline unilateral exit.** With a
+  `virtualTxRepository` configured, the wallet captures each received
+  VTXO's exit branch and prunes it on spend (ref-counted), and
+  `UnilateralExit.estimate`/`prepare` read it local-first before the
+  indexer. New `StorageConfig.exitDataCapture`: `mode` `"lite"`
+  (default, structure only) or `"full"` (also PSBTs, so exits need no
+  indexer), `minExitWorthSats` (default 1000), and extra `sources`.
+  Exports `createExitChainResolver`, `ExitDataSource`,
+  `ExitChainResolver` and `ExitCaptureMode`. (#608)
+
+## [0.4.44] - 2026-07-11
+
+### Features
+
+- **Pre-signed unilateral exit packages.** New `UnilateralExit`
+  namespace: `estimate` quotes tx count and funding without touching
+  funds, `prepare` pre-signs every unroll tx plus a CSV sweep per VTXO
+  to `sweepAddress` and broadcasts a fee-funding splitter, and
+  `Executor` drives the package with only an Esplora endpoint, no
+  keys. `mode: "graph"` defers fee funding to an executor-side
+  `ExitFeeWallet`. Packages are versioned JSON
+  (`serializeExitPackage` / `deserializeExitPackage`). Exit paths are
+  resolved through contract handlers, so e.g. VHTLC VTXOs are
+  supported; asset-bearing VTXOs are not. (#606)
+- **`OnchainWallet.bumpAnchor`.** Builds and signs a CPFP child for a
+  P2A parent from confirmed coins without broadcasting. `bumpP2A` now
+  shares its core, sizes the fee for the actual number of inputs, and
+  throws instead of creating a sub-dust change output. (#606)
+- **`completeUnroll` resolves the exit path through contract
+  handlers.** VTXOs with a contract row use their handler's
+  unilateral paths; others fall back to the tap-tree exit paths. The
+  shortest-delay path is chosen and must already be mature. (#606)
+
+## [0.4.43] - 2026-07-08
+
+### Features
+
+- **Intent and virtual-tx repositories.** New `IntentRepository` and
+  `VirtualTxRepository` interfaces with InMemory, IndexedDB, SQLite
+  and Realm backends (SQLite/Realm via their subpaths). Passing
+  `storage.intentRepository` makes `settle()` persist intent state,
+  reconciles stale intents against the indexer on sync, and subtracts
+  intent-locked VTXOs from `getBalance().available` only. Both are
+  opt-in; the IndexedDB and Realm schemas stay at v3/v2 and the new
+  stores live behind experimental schema versions, so upgrading
+  migrates nothing. `virtualTxRepository` is an experimental cache
+  `Unroll.Session.create` can read from. Exports `ChainedTxType`.
+  (#494)
+- **Deprecated-signer migration refreshes the wallet's signer cache.**
+  `VtxoManager.migrateDeprecatedSignerVtxos` now calls
+  `wallet.refreshDeprecatedSigners` with fresh server info first, so a
+  later `settle()` excludes expired deprecated-signer inputs even in
+  custom renewal loops. (#603)
+
+### Bug Fixes
+
+- **Typed `FetchError` for transport failures.** `fetch` / `baseFetch`
+  rejections (DNS, connection refused, TLS, CORS) are rethrown as an
+  exported `FetchError` carrying `url`, `method` and the original
+  error as `cause`. Both now also accept a `URL` input. (#601)
+- **MetaMask Snap (SES) compatibility.** `@marcbachmann/cel-js` is
+  bumped from 7.3.1 to 8.0.0, whose interpreter no longer contains a
+  bare `eval(` token that SES rejects. (#602)
+- **`settle()` never cancels a committed batch.** If a local step
+  fails after `Batch.join` returns, the server intent is no longer
+  deleted; the error is still thrown. A synchronous throw from
+  `eventCallback` no longer disrupts the settlement stream. (#494)
+- **SQLite writes are serialized per shared connection.**
+  Repositories sharing one `SQLExecutor` no longer nest
+  `BEGIN IMMEDIATE` ("cannot start a transaction within a
+  transaction"), and the `vtxos` table migration runs entirely in one
+  transaction. (#494)
+## [0.4.42] - 2026-07-06
+
+### Bug Fixes
+
+- **`ContractWatcher` recognises arkd's new stale-subscription error.**
+  arkd changed its wording from `subscription <uuid> not found` to
+  `subscription not found: <uuid>`, so the watcher never cleared a stale
+  subscription id and looped on reconnect. The match now accepts both
+  phrasings, clears the stale id, and creates a fresh subscription.
+  (#600)
+
+## [0.4.41] - 2026-07-01
+
+### Breaking Changes
+
+- **`IReadonlyWallet` gained required members: `clear()`, `activity` and
+  `getActivityHistory()`.** All SDK wallets implement them; custom
+  implementations of `IReadonlyWallet` / `IWallet` (shims, mocks) must add
+  them to keep compiling. `ServiceWorkerReadonlyWallet.clear()` changed
+  meaning: it used to delete only the current address's VTXOs on the page
+  side and now has the worker wipe the whole wallet and contract
+  repositories. (#579, #582)
+
+### Features
+
+- **Activity history: `wallet.getActivityHistory()` and
+  `ActivityRegistry`.** Groups the wallet's transaction history into
+  logical `Activity` rows with a signed net amount (positive received,
+  negative sent; same-key change rows excluded). Apps register an
+  `ActivityResolver` via `wallet.activity.use(...)` to tag their own
+  transactions; a built-in `boarding` resolver is pre-registered on every
+  wallet, and a transaction may belong to several groups. A resolver whose
+  `prepare()` throws is isolated rather than failing the whole call.
+  Exports `ActivityRegistry`, `boardingResolver`,
+  `createDefaultActivityRegistry` and the `Activity`, `ActivityIntent`,
+  `GroupMembership`, `ActivityResolver` types. (#582)
+- **`wallet.clear()` resets all locally stored wallet data.** `Wallet`
+  disposes itself and then clears both the wallet and contract
+  repositories. `ExpoWallet.clear()` stops the foreground poll, waits for
+  an in-flight poll to finish, wipes, and removes queued contract-poll
+  tasks. IndexedDB connections now close on `versionchange`, so a database
+  deletion is no longer blocked by the SDK's cached connection. (#579)
+
+### Bug Fixes
+
+- **Settling an unsignable boarding input fails fast with a diagnostic.**
+  A boarding UTXO whose script the signer router could not resolve was
+  silently left unsigned and only rejected later by arkd as "not a wallet
+  script". Settlement now throws before submission, naming the outpoint,
+  the unresolved address and the boarding addresses the wallet does
+  recognise. It does not make such an input signable. (#567)
+- **Wallet creation no longer fails when the delegate service is
+  unreachable.** If `getDelegateInfo()` on the configured delegate or
+  delegator provider rejects, the wallet now falls back to the plain
+  default script instead of throwing from `create()`. (#594)
+
+## [0.4.40] - 2026-06-29
+
+### Breaking Changes
+
+- **`Estimator.eval()` is renamed to `Estimator.evaluate()`.** MetaMask
+  Snaps run bundles through SES, whose direct-eval detector rejects any
+  bare `eval(` token, so the SDK could not be used inside a snap. The
+  per-input helpers (`evalOffchainInput`, `evalOnchainInput`,
+  `evalOffchainOutput`, `evalOnchainOutput`) keep their names. (#581)
+- **`OnchainProvider.getTxOutspends()` now returns `txid?: string`.**
+  Some Esplora deployments (e.g. mempool.arkade.sh) omit the spender
+  txid from `/outspends`; the type now says so. Callers reading `.txid`
+  must handle `undefined`. `ExplorerTransaction` also gains an optional
+  `vin` array. (#587)
+
+### Features
+
+- **Intent proofs set BIP-322's `PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE`
+  (0x09).** The intent message is now written into the PSBT's global 0x09
+  field, so a co-signer can recompute the `to_spend` commitment from PSBT
+  data and tell an ownership proof from a fund-moving spend. (#578)
+
+### Bug Fixes
+
+- **Boarding sweeps no longer show up as phantom receives in transaction
+  history.** When `/outspends` omitted the spender txid, `getBoardingTxs()`
+  could not match the sweep's commitment, so the swept VTXO was listed on
+  top of the boarding deposits and the history double-counted the
+  onboarded amount. The commitment txid is now recovered from the
+  boarding address's own transactions via their `vin`. (#587)
+- **Service-worker init can no longer bind the message bus to a stale
+  identity.** `INITIALIZE_MESSAGE_BUS` requests are serialized, wallet
+  messages are rejected while an init is pending (new
+  `MessageBusInitializingError` / `MESSAGE_BUS_INITIALIZING`, a subclass
+  of the not-initialized error), and handlers are not ticked during
+  re-init. `ServiceWorkerWallet.create()` / `reinitialize()` check the
+  worker reports the expected pubkey before returning. Also, Electrum
+  `getTxStatus` now matches not-in-block / missingheight errors whose
+  spaces were stripped by the transport. (#571)
+
+## [0.4.39] - 2026-06-19
+
+No SDK changes; released alongside `@arkade-os/boltz-swap`.
+
+## [0.4.38] - 2026-06-19
+
+No SDK changes; released alongside `@arkade-os/boltz-swap`.
+
+## [0.4.37] - 2026-06-18
+
+### Features
+
+- **`buildVersion` and `sdkVersion` are exported.** The values the SDK
+  sends to arkd as `X-Build-Version` and `X-SDK-VERSION` are now part of
+  the public API. (#569)
+
+### Bug Fixes
+
+- **`MissingSigningDescriptorError` names more causes.** The message now
+  also points out that the contract may belong to a different identity
+  (e.g. reused storage), and suggests deleting the contract. (#572)
+
+## [0.4.36] - 2026-06-16
+
+No SDK changes; released alongside `@arkade-os/boltz-swap`.
+
+## [0.4.35] - 2026-06-15
+
+### Breaking Changes
+
+- **`WalletBalance` has a new required `pendingRecovery` field.** Funds
+  under a deprecated server signer whose cutoff has passed cannot be
+  co-signed until the server sweeps them, so they are now excluded from
+  `available`, `settled` and `preconfirmed` and from send coin selection,
+  but still counted in `total`. Code that builds `WalletBalance` objects
+  or sums its fields must account for it. (#554)
+
+### Features
+
+- **Support for arkd signer rotation.** Wallets register and watch
+  baseline and boarding contracts under deprecated signers as well as the
+  current one. VTXOs under a deprecated signer are migrated to the active
+  signer before their cutoff via a new `SettlementConfig`
+  `deprecatedSignerMigration` poll pass (on by default) or explicitly via
+  `VtxoManager.migrateDeprecatedSignerVtxos()`; `getDeprecatedSignerStatus()`
+  reports per-signer state, and migration does not pay intent fees.
+  Post-cutoff funds are recovered under the active signer once swept.
+  New exports include `classifyContractSigner`,
+  `classifyAgainstSignerSet`, `signerSetFromInfo`,
+  `isCooperativelyMigratable`, `toXOnlySignerHex`, `BoardingUtxoGroup`
+  and the migration report types. (#554)
+- **Mid-session signer-change detection via `X-Digest`.**
+  `RestArkProvider` sends the cached server-info digest on arkd requests.
+  On a `DIGEST_MISMATCH` it refreshes `getInfo()`, notifies
+  `onServerInfoChanged` listeners (the wallet uses this to rotate signer)
+  and throws the new exported `DigestMismatchError`, so the caller must
+  rebuild and retry. `maybeArkError` now also parses errors that carry the
+  name only in the top-level message. (#554)
+- **arkd requests carry `X-Build-Version` and `X-SDK-VERSION` headers.**
+  Ark-server requests (including Expo's streaming fetch) send arkd's
+  compatibility version and `ts-sdk/<version>`. Esplora, indexer and
+  delegate requests stay header-free so their CORS preflight still
+  passes. (#557, #568, #554)
+
+### Bug Fixes
+
+- **Settlement batches respect the server's `vtxoMaxAmount`.** Renewal,
+  recovery, periodic and manual settle now also stop adding inputs once
+  the output would exceed the server's per-output ceiling, skipping
+  oversized inputs so smaller ones still fit; the rest settles next
+  cycle. `settle()` also reads the receive address once, so a concurrent
+  receive-address rotation can no longer cause a spurious "no output
+  matches" error. (#553)
+- **`ContractWatcher` recovers faster after a server disruption.**
+  Default reconnect backoff is capped at 5s (was 30s) and the failsafe
+  poll runs every 20s (was 60s). (#564)
+- **Signer-rotation self-transfers no longer appear as zero-amount sends.**
+  Transaction history skips a sent entry with zero net amount and no
+  assets; zero-amount asset sends (issue/reissue/burn) are kept. (#566)
+- **Electrum `getTxStatus` handles `RPCError`-wrapped index-lag errors.**
+  Not-in-block / missingheight errors are now matched in the error's
+  `.str` field too, so they return `{ confirmed: false }` instead of
+  throwing. (#562)
+
+### Internal
+
+- **typedoc bumped and `minimatch` overridden** to fix a Node.js 24 ESM
+  crash in the docs build. (#552)
+
+## [0.4.34] - 2026-06-09
+
+### Breaking Changes
+
+- **The regtest default Esplora URL is now `http://localhost:3000/api`**
+  (was `http://localhost:3000`), matching the arkade-regtest stack's
+  mempool endpoint. Regtest setups on the old nigiri layout must pass
+  their Esplora URL explicitly. (#538)
+
+### Features
+
+- **HD boarding-address rotation.** HD wallets now rotate the boarding
+  address after a settle spends a boarding UTXO, and expose
+  `getNewBoardingAddress()` and `getBoardingAddresses()`. Boarding UTXOs,
+  history, sweeps and `notifyIncomingFunds` cover every boarding address,
+  current and rotated, and the watcher re-subscribes when the address
+  rotates. Rotated boarding inputs are signed with their per-index key,
+  and `restore()` finds used boarding indices on-chain. Static wallets
+  keep a single boarding address. (#542)
+- **`restore()` scans deprecated server signers.** L2 discovery probes
+  the server's deprecated signers as well as the current one, from a
+  fresh `getInfo()` snapshot, so VTXOs created before a signer rotation
+  are restored with the right key. (#545)
+
+### Bug Fixes
+
+- **Taproot script trees now match arkd for every leaf count.**
+  `VtxoScript` builds its tree with btcd's algorithm instead of scure's
+  Huffman builder, which agreed with arkd only for power-of-two leaf
+  counts. For other counts the output key differed and arkd rejected
+  spends with `INVALID_PSBT_INPUT`. The builder is exported as
+  `assembleBtcdTaprootTree`. (#547)
+- **Settlement batches are capped at 50 VTXOs.** Large wallets could
+  build intents arkd rejects as `TX_TOO_LARGE`. Renewal and periodic
+  settle now take the soonest-expiring VTXOs first, recovery and manual
+  settle the highest-value ones; the rest settles next cycle. Recovery
+  throws a separate error when the capped batch is below dust. (#549)
+- **BIP21 amount validation tightened.** `BIP21.parse` accepts only the
+  BIP21 amount grammar (allowing `.5` and `5.`), and both `create` and
+  `parse` reject amounts beyond the safe-integer range. (#548)
+- **`EsploraProvider` works against mempool-backed Esplora.**
+  `getChainTip()` uses the standard `/blocks` route instead of
+  `/blocks/tip`, which mempool answers with an empty array. `getFeeRate()`
+  returns `undefined` on a 404 so callers fall back to the minimum fee
+  rate; other failures still throw. (#538)
+
+### Performance
+
+- **Faster `restore()` scans.** HD indices are probed in batches capped
+  by the remaining gap window, handlers run in parallel per index, and
+  default/delegate candidates are checked in one indexer query. The
+  discovered set is the same as a serial scan. (#545)
+
+### Internal
+
+- **Regtest moved off nigiri** to arkade-regtest's Node CLI stack, with
+  arkd v0.9.6. (#538, #544)
+## [0.4.33] - 2026-06-04
+
+### Breaking Changes
+
+- **`csvTimelock` is now required on `DefaultVtxo.Options` (and so on
+  `DelegateVtxo.Options`).** `DefaultVtxo.Script` and
+  `DelegateVtxo.Script` no longer fall back to
+  `DefaultVtxo.Script.DEFAULT_TIMELOCK` when the exit timelock is
+  omitted, and the wallet reads `offchainTapscript.options.csvTimelock`
+  without a fallback. Code constructing these scripts directly must pass
+  a `RelativeTimelock`. `DefaultContractHandler.deserializeParams` keeps
+  the `DEFAULT_TIMELOCK` fallback for persisted params that carry no
+  `csvTimelock`. (#518, #540)
+
+### Features
+
+- **New `boarding` contract type.** `BoardingContractHandler` and
+  `BoardingContractParams` are exported and registered in
+  `contractHandlers`. The wallet derives its on-chain boarding address
+  from this handler and, on contract-manager init, persists an active
+  `boarding` contract so the boarding script is watched. When the
+  boarding and default scripts coincide, the row is kept as a single
+  `default` contract instead of throwing. Code that enumerates contracts
+  will now see rows of type `boarding`. (#533)
+- **Contract handler authoring helpers exported.** `isCsvSpendable` and
+  `isCltvSatisfied` are now part of the root export, so custom
+  `ContractHandler`s can implement `selectPath` / `getSpendablePaths`
+  without reimplementing BIP-68 / BIP-65 maturity checks. (#541)
+
+### Bug Fixes
+
+- **`BatchSignableIdentity` one-popup signing restored.** The move to
+  per-input routing via `InputSignerRouter` (0.4.27) meant the send and
+  pending-tx recovery paths signed the ark tx and each checkpoint
+  separately, so `signMultiple` was never reached. When the identity is
+  batch-signable and every input resolves to the baseline key, the
+  wallet again calls `signMultiple` once for the ark tx plus all
+  checkpoints; HD-rotated or mixed sends keep the sequential path.
+  `combineTapscriptSigs` now throws an input-indexed error on an
+  input-count mismatch or a missing `tapScriptSig` on either side,
+  instead of appending `undefined` to the witness. (#535)
+- **`waitForIncomingFunds` no longer resolves on outgoing activity.**
+  `notifyIncomingFunds` also fires for spends (a `vtxo` event with empty
+  `newVtxos`, a `utxo` event with empty `coins`), so the helper could
+  resolve with an empty result on the spent half of a self-send. It now
+  skips fund-less notifications and keeps waiting. (#536)
+- **`RestIndexerProvider` reports spent VTXOs as `"spent"`.**
+  `virtualStatus.state` never took the value `"spent"`, so spent VTXOs
+  were reported as `"settled"` (or `"preconfirmed"` / `"swept"`). The
+  spent check now comes first. (#540)
+
+## [0.4.32] - 2026-05-29
+
+### Bug Fixes
+
+- **Swept boarding deposits no longer appear twice in transaction
+  history.** A leaf VTXO whose `settledBy` points at an ignored boarding
+  commitment was still emitted as a separate batch receive. Such VTXOs
+  are now suppressed, and boarding `ArkTransaction` entries carry
+  `key.commitmentTxid` (previously always `""`). (#530)
+- **Boarding refills no longer produce duplicate receive entries.**
+  `buildTransactionHistory` now matches each settled boarding receive
+  against at most one batch-received VTXO (by commitment txid, or by
+  amount and timestamp) and drops the duplicate batch entry. (#531)
+
+## [0.4.31] - 2026-05-28
+
+### Performance
+
+- **`annotateVtxos` builds each contract's taproot tree once per batch.**
+  `createScript()` was called for every VTXO, which dominated
+  `getVtxos()` / `getBalance()` latency on long spent/swept histories.
+  Tapscripts are now cached per contract for the duration of an
+  annotation batch and cloned into each VTXO, so callers mutating one
+  VTXO's tap leaves cannot affect another. (#529)
+
+## [0.4.30] - 2026-05-27
+
+### Features
+
+- **Per-call threshold on `renewVtxos`.** `IVtxoManager.renewVtxos`
+  accepts an optional second argument `RenewVtxosOptions` with
+  `thresholdSeconds`, overriding `SettlementConfig.vtxoThreshold` for
+  that call only. Forwarded through the service-worker bus. A
+  non-finite or non-positive value throws `TypeError` before any state
+  changes. `RenewVtxosOptions` is exported. (#512)
+
+### Bug Fixes
+
+- **`RealmLike.create` accepts a boolean `mode`.** The parameter was
+  typed `string` only, rejecting Realm's boolean update flag; it is now
+  `boolean | string`. (#527)
+
+## [0.4.29] - 2026-05-26
+
+### Breaking Changes
+
+- **"Delegator" renamed to "delegate" across the API.** New names:
+  `DelegateProvider`, `RestDelegateProvider`, `IDelegateManager`,
+  `DelegateManagerImpl`, `DelegateNotConfiguredError`, the
+  `delegateProvider` wallet config field and `getDelegateManager()`.
+  The old `Delegator*` exports, the `delegatorProvider` config field and
+  `getDelegatorManager()` remain as deprecated aliases. Not aliased: the
+  public `Wallet.delegatorProvider` property is now `delegateProvider`,
+  and `IWallet` implementers must add `getDelegateManager()`.
+  `DelegateInfo` gains `delegateAddress`; `delegatorAddress` is now an
+  optional deprecated alias, and `RestDelegateProvider.getDelegateInfo()`
+  accepts either field and always returns a string `delegateAddress`.
+  (#519, #520)
+
+### Features
+
+- **`ServiceWorkerWallet.restore()`.** Mirrors `Wallet.restore()` by
+  running the gap scan inside the worker on the long-running message
+  path, so the bus timeout does not race the scan. An `AggregateError`
+  from the worker is rebuilt on the page with its `.errors` intact.
+  Read-only worker wallets reject the call. (#501)
+- **Mainnet defaults for providers and scripts.** `RestArkProvider`,
+  `RestIndexerProvider`, `ExpoArkProvider` and `ExpoIndexerProvider`
+  default to `https://arkade.computer`, `EsploraProvider` to the
+  bitcoin mainnet Esplora URL, and `VtxoScript.address()` /
+  `onchainAddress()` to the bitcoin network. URL string fields in wallet
+  config (`arkServerUrl`, `indexerUrl`, `esploraUrl`, and `delegatorUrl`
+  on service-worker options) are marked `@deprecated` in favour of
+  provider instances; runtime behaviour is unchanged. (#511, #516)
+- **`AssetManager` exported.** `AssetManager`, `ReadonlyAssetManager`,
+  `IAssetManager` and `IReadonlyAssetManager` are now part of the root
+  export. (#517)
+
+### Bug Fixes
+
+- **Partial offboard rejects sub-dust change locally.** A collaborative
+  exit that would leave a change VTXO below the wallet's dust amount was
+  sent to arkd and failed with a raw server error. `Ramps` now throws an
+  exported `DustChangeError` (carrying `change` and `dustAmount`) so the
+  caller can offer to exit the full balance instead. (#513)
+
+## [0.4.28] - 2026-05-22
+
+### Breaking Changes
+
+- **Expo background-task helpers moved to
+  `@arkade-os/sdk/wallet/expo/background`.** `defineExpoBackgroundTask`,
+  `registerExpoBackgroundTask`, `unregisterExpoBackgroundTask` and their
+  option types are no longer exported from `@arkade-os/sdk/wallet/expo`.
+  The lazy `require()` there was invisible to Metro, so the Expo task
+  packages never entered the bundle. `ExpoWallet.setup()` no longer
+  registers the OS task and `dispose()` no longer unregisters it:
+  `background.taskName` and `background.minimumBackgroundInterval` are
+  removed (ignored with a console warning if still passed). Call
+  `registerExpoBackgroundTask` / `unregisterExpoBackgroundTask` from the
+  new subpath yourself. (#487)
+- **Build output layout changed (tsup).** The package now ships a single
+  `dist/` tree (`dist/index.js`, `dist/index.cjs`, per-entry `.d.ts` and
+  `.d.cts`) instead of `dist/esm`, `dist/cjs` and `dist/types`. Imports
+  through the documented `exports` subpaths are unaffected; deep imports
+  into `dist/esm/...` or `dist/cjs/...` no longer resolve. (#496)
+
+### Features
+
+- **Explicit wallet restore with gap-limit discovery.**
+  `Wallet.restore({ gapLimit? })` (default 20) recovers contracts and
+  balance on a fresh repository: HD wallets scan indices until
+  `gapLimit` consecutive unused ones, static wallets restore the single
+  default key. Concurrent calls share one run, `dispose()` waits for an
+  in-flight restore, and per-handler discovery failures are surfaced as
+  an `AggregateError` after found funds are recovered. Backed by the new
+  `IContractManager.scanContracts` (capped at index 10,000) and an
+  optional `Discoverable.discoverAt` capability, implemented by the
+  default and delegate handlers. `HDDescriptorProvider` gains
+  `materializeDescriptorAt` and `advanceLastIndexUsed`. Exported types:
+  `Discoverable`, `DiscoveryDeps`, `DiscoveredContract`,
+  `isDiscoverable`, `ScanResult`, `ScanContractsOptions`,
+  `HandlerError`. (#492)
+- **`getRandomId` exported** from the package root, and `RealmResults`
+  now declares `sorted()` and `length`. (#427)
+
+### Bug Fixes
+
+- **Deterministic active receive address after HD rotation.** When two
+  wallet-receive contracts share a `createdAt`, the boot lookup now
+  prefers the higher HD index from `metadata.signingDescriptor` instead
+  of an arbitrary order. (#492)
+
+### Internal
+
+- **Moved to a pnpm monorepo** under `packages/ts-sdk`, built with
+  tsup. `engines.node` widened from `>=22.12.0 <23` to
+  `>=22.12.0 <25`. (#427, #495, #496)
+
+## [0.4.27] - 2026-05-18
+
+### Features
+
+- **Opt-in HD receive-address rotation via `walletMode`.** New
+  `WalletConfig.walletMode`: `'auto'` (default, currently identical to
+  `'static'`), `'static'`, `'hd'` (throws at `Wallet.create` if the
+  identity is not HD-capable), or a `DescriptorProvider` instance.
+  In HD mode each `vtxo_received` on the current receive contract
+  allocates the next index, registers a new default/delegate contract
+  tagged `metadata.source = 'wallet-receive'`, and marks the previous
+  one inactive (still watched while it holds VTXOs). Signing is routed
+  per input to the identity or the matching descriptor, so rotated VTXOs
+  can be spent. Service workers accept the string modes
+  (`ServiceWorkerWalletMode`). New exports: `WalletMode`,
+  `ServiceWorkerWalletMode`, `isHDCapableIdentity`,
+  `MissingSigningDescriptorError`,
+  `DescriptorSigningProviderMissingError`. (#489)
+- **`refreshVtxos({ includeInactive: true })`.** Syncs every contract in
+  the repository, not just the watcher's active set, to audit for funds
+  sent to stale rotated addresses. Does not advance the sync cursor;
+  ignored when `scripts` is set. (#489)
+- **`ExtendedContractVtxo` type exported** for VTXOs that have been
+  annotated with their contract's tapscripts. (#464)
+- **Identity descriptor methods deprecated.** `isOurs`,
+  `signWithDescriptor` and `signMessageWithDescriptor` on
+  `SeedIdentity` and the `HDCapableIdentity` interface are marked
+  `@deprecated` in favour of the same methods on a `DescriptorProvider`
+  (`HDDescriptorProvider` or `StaticDescriptorProvider`). (#489)
+
+### Bug Fixes
+
+- **Custom `arkProvider` no longer pairs with the public default
+  indexer.** When `indexerProvider` and `indexerUrl` are both omitted,
+  the indexer URL is now taken from the injected `arkProvider`'s
+  `serverUrl`; `Wallet.create` throws if a custom provider exposes no
+  `serverUrl`. (#464)
+- **`Unroll.completeUnroll` no longer throws on fractional fee rates.**
+  `BigInt(feeRate)` threw `RangeError` when the onchain provider
+  returned a non-integer sat/vB; the rate is now rounded up first.
+  (#489)
+
+## [0.4.26] - 2026-05-08
+
+### Bug Fixes
+
+- **Published `.d.ts` files use ESM-compatible relative imports.**
+  Declaration files were emitted with extensionless relative specifiers,
+  which TypeScript consumers on `moduleResolution: "node16"` /
+  `"nodenext"` could not resolve. The build now adds `.js` extensions to
+  relative imports in `dist/types` as well as `dist/esm`, including
+  `import()` type references. (#485)
+
+### Internal
+
+- **TypeDoc comments clarified** on `VirtualCoin` fields (`isSpent`,
+  `settledBy`, `spentBy`, `arkTxId`) and default constants switched to
+  `as const`. (#484)
+
+## [0.4.25] - 2026-05-07
+
+### Features
+
+- **Script-scoped `WalletRepository` methods.** Optional
+  `getVtxosForScript`, `saveVtxosForScript` (keyed by the new
+  `VtxoRepositoryKey`) and `deleteVtxosForScript` are implemented by the
+  bundled IndexedDB, in-memory, SQLite and Realm backends. Contract-scoped
+  reads and writes use them when present; custom repositories without
+  them fall back to address-based storage filtered and validated by
+  script. (#482)
+- **`IContractManager.refreshOutpoints(outpoints)`.** Re-fetches the
+  given outpoints from the indexer and upserts them under their owning
+  contract, without moving the sync cursor. Also available through the
+  service worker. Custom `IContractManager` implementations must add it.
+  (#477)
+
+### Bug Fixes
+
+- **`VTXO_ALREADY_SPENT` recovery targets the rejected outpoint.** The
+  previous recovery was a cursor-bounded `refreshVtxos()`, which can
+  never see an old VTXO that was spent recently, so auto-renewal retried
+  the same stale VTXO every poll interval. When the server error carries
+  `metadata.vtxo_outpoint`, the wallet now refreshes that outpoint
+  directly; it still falls back to `refreshVtxos()` otherwise. (#477)
+- **Settle inputs are re-checked against the indexer before submit.**
+  `VtxoManager` refreshes the candidate outpoints before both renewal and
+  periodic settle and drops any now reported spent, avoiding a rejected
+  intent round-trip. A failed pre-check falls back to the original
+  candidates. (#478)
+
+## [0.4.24] - 2026-05-06
+
+### Features
+
+- **Unroll steps expose the package to broadcast.** `Unroll.UnrollStep`
+  now carries `pkg: [parent, child]`; the P2A fee bump runs when the step
+  is produced rather than inside `do()`. The tapscript decoder namespaces
+  gain `isScriptValid(script): true | Error` for validating a leaf without
+  catching exceptions. (#479)
+
+### Bug Fixes
+
+- **VTXOs are gated by owning script on every contract-scoped read and
+  write.** Legacy address buckets could hold rows for a different script,
+  which leaked into contract VTXO lists, won `txid:vout` dedup, and could
+  seed the watcher baseline so it emitted a phantom `vtxo_spent`. Rows
+  are now filtered by script; background sync skips mismatches with a
+  warning. After a send or settle, spent inputs are persisted under
+  their own contract's address, and a failure to persist now rejects the
+  `send` / `settle` call instead of being logged and swallowed. An
+  undecodable wallet address in cached reads now throws instead of
+  returning a zero balance. (#481)
+- **`refreshVtxos()` with no options syncs incrementally again.** It
+  passed an empty `window` object, which bypassed the cursor-derived
+  window, so every call re-downloaded the full VTXO history and never
+  advanced the cursor. (#476)
+- **`Unroll.completeUnroll` builds the output for the wallet's
+  network.** The output address was decoded as mainnet, so regtest and
+  testnet addresses failed with `Unknown letter`. (#479)
+
+### Internal
+
+- **BIP-68 helpers centralised** in `src/utils/timelock.ts`;
+  `timelockToSequence` / `sequenceToTimelock` keep the same root exports.
+  (#412)
 
 ## [0.4.23] - 2026-05-04
 

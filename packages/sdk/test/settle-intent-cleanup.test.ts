@@ -1,0 +1,284 @@
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, rmdirSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { base64, hex } from "@scure/base";
+import { ArkError, Transaction, Wallet, type ExtendedVirtualCoin } from "../src";
+import { SQLiteBatchRegistrationRepository, type SQLExecutor } from "../src/repositories/sqlite";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
+import { reconcileIntents } from "../src/wallet/intentReconciliation";
+import { ContractManager } from "../src/contracts/contractManager";
+
+const input = {
+    txid: "aa".repeat(32),
+    vout: 0,
+    value: 10_000,
+    script: `5120${"11".repeat(32)}`,
+    status: { confirmed: true },
+    isSpent: false,
+    isSwept: false,
+    isUnrolled: false,
+    isPreconfirmed: false,
+} as ExtendedVirtualCoin;
+const outpoint = { txid: input.txid, vout: input.vout };
+const deleteMessage = { type: "delete", expire_at: 0 } as const;
+const noMatch = () =>
+    new ArkError(23, "no matching intents found for intent proof", "INVALID_INTENT_PROOF");
+
+describe("Wallet settlement cleanup with SQLite intent locks", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ark-intent-cleanup-"));
+    const file = join(directory, "wallet.sqlite");
+    let db: DatabaseSync;
+    let repository: SQLiteBatchRegistrationRepository;
+
+    function open() {
+        db = new DatabaseSync(file);
+        const sql: SQLExecutor = {
+            run: async (query, params) => {
+                db.prepare(query).run(...((params ?? []) as []));
+            },
+            get: async (query, params) => db.prepare(query).get(...((params ?? []) as [])) as never,
+            all: async (query, params) => db.prepare(query).all(...((params ?? []) as [])) as never,
+        };
+        repository = new SQLiteBatchRegistrationRepository(sql);
+    }
+
+    beforeEach(() => {
+        open();
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => {
+        db.close();
+        unlinkSync(file);
+        vi.restoreAllMocks();
+    });
+    afterAll(() => rmdirSync(directory));
+
+    function setup(lostAck = false) {
+        const failure = new Error(lostAck ? "registration response lost" : "event stream failed");
+        const stream = {
+            next: vi.fn().mockRejectedValue(failure),
+            return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        };
+        const proof = new Transaction();
+        proof.addInput({ txid: input.txid, index: input.vout });
+        proof.addOutput({ script: hex.decode(input.script), amount: BigInt(input.value) });
+        let serverAccepted = false;
+        const provider = {
+            getEventStream: vi.fn(() => stream),
+            registerIntent: vi.fn(async () => {
+                serverAccepted = true;
+                if (lostAck) throw failure;
+                return "server-intent";
+            }),
+            deleteIntent: vi.fn().mockRejectedValue(new Error("delete response lost")),
+        };
+        const wallet: any = {
+            network: "mutinynet",
+            arkProvider: provider,
+            intentRepository: repository,
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            _settlingOutpoints: new Set<string>(),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
+                ),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: base64.encode(proof.toPSBT()),
+                message: { type: "register", expire_at: 0 },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "stored-delete-proof",
+                message: deleteMessage,
+            }),
+            logUngatedInputs: vi.fn(),
+            getContractManager: vi.fn().mockResolvedValue({ assertAnnotatable: vi.fn() }),
+            safeRegisterIntent: Wallet.prototype.safeRegisterIntent,
+            createBatchHandler: vi.fn().mockReturnValue({}),
+            persistIntentSnapshot: (Wallet.prototype as any).persistIntentSnapshot,
+        };
+        return {
+            wallet,
+            provider,
+            failure,
+            stream,
+            accepted: () => serverAccepted,
+            settle: () =>
+                (Wallet.prototype as any)._settleImpl.call(wallet, {
+                    inputs: [input],
+                    outputs: [],
+                }),
+        };
+    }
+
+    it.each([false, true])(
+        "retains ambiguous cleanup across reopen and releases only after retry (lost ack: %s)",
+        async (lostAck) => {
+            const s = setup(lostAck);
+            await expect(s.settle()).rejects.toBe(s.failure);
+            expect(s.accepted()).toBe(true);
+            expect(s.provider.deleteIntent).toHaveBeenCalledOnce();
+            expect(s.wallet._settlingOutpoints.size).toBe(0);
+            expect(s.stream.return).toHaveBeenCalledOnce();
+            const state = lostAck ? "waiting_to_submit" : "waiting_for_batch";
+            const [persisted] = await collectBatchRegistrations(repository);
+            expect(persisted.state).toBe(state);
+            expect(persisted.registrationId).toBe(lostAck ? undefined : "server-intent");
+            expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
+
+            db.close();
+            open();
+            const deleteIntent = vi.fn().mockRejectedValue(new Error("still disconnected"));
+            const deps = {
+                intentRepository: repository,
+                indexerProvider: { getVtxos: vi.fn().mockResolvedValue({ vtxos: [input] }) },
+                deleteIntent,
+            };
+            await reconcileIntents(deps);
+            expect(await collectBatchRegistrations(repository)).toEqual([persisted]);
+            expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
+            expect(deleteIntent).toHaveBeenCalledWith({
+                proof: persisted.deleteProof,
+                message: JSON.parse(persisted.deleteProofMessage),
+            });
+
+            deleteIntent.mockResolvedValue(undefined);
+            await reconcileIntents(deps);
+            expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
+            expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
+            expect(deleteIntent).toHaveBeenCalledTimes(2);
+        },
+    );
+
+    it("cancels when registration was never attempted", async () => {
+        const s = setup();
+        s.provider.getEventStream.mockImplementation(() => {
+            throw s.failure;
+        });
+        await expect(s.settle()).rejects.toBe(s.failure);
+        expect(s.provider.registerIntent).not.toHaveBeenCalled();
+        expect(s.provider.deleteIntent).not.toHaveBeenCalled();
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
+        expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
+        expect(s.wallet._settlingOutpoints.size).toBe(0);
+    });
+
+    it("refuses registration when its recovery proof cannot be persisted", async () => {
+        const s = setup();
+        const failure = new Error("intent journal unavailable");
+        vi.spyOn(repository, "saveBatchRegistration").mockRejectedValueOnce(failure);
+
+        await expect(s.settle()).rejects.toBe(failure);
+        expect(s.provider.getEventStream).not.toHaveBeenCalled();
+        expect(s.provider.registerIntent).not.toHaveBeenCalled();
+        expect(s.provider.deleteIntent).not.toHaveBeenCalled();
+        expect(s.wallet._removePendingSpends).toHaveBeenCalledWith([input]);
+        expect(s.wallet._settlingOutpoints.size).toBe(0);
+        expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
+    });
+
+    it("persists a fresh lock when retrying a previously cancelled proof", async () => {
+        const s = setup();
+        s.provider.deleteIntent.mockResolvedValue(undefined);
+        await expect(s.settle()).rejects.toBe(s.failure);
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
+        s.provider.deleteIntent.mockRejectedValue(new Error("delete unavailable"));
+        await expect(s.settle()).rejects.toBe(s.failure);
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("waiting_for_batch");
+        expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
+    });
+
+    it("does not cancel an older ambiguous registration when the same proof is retried", async () => {
+        const s = setup(true);
+        await expect(s.settle()).rejects.toBe(s.failure);
+        await expect(s.settle()).rejects.toMatchObject({ name: "VtxoReservedError" });
+        expect(s.provider.registerIntent).toHaveBeenCalledOnce();
+        expect(s.provider.deleteIntent).toHaveBeenCalledOnce();
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("waiting_to_submit");
+        expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
+    });
+
+    it("retries pending recovery without deleting a live settlement", async () => {
+        const s = setup(true);
+        await expect(s.settle()).rejects.toBe(s.failure);
+        const manager = Object.assign(Object.create(ContractManager.prototype), {
+            inFlightEvents: new Set(),
+            config: {
+                intentRepository: repository,
+                indexerProvider: { getVtxos: vi.fn().mockResolvedValue({ vtxos: [input] }) },
+                intentReconciliation: {
+                    deleteIntent: s.provider.deleteIntent,
+                    isOutpointInFlight: (o: typeof outpoint) =>
+                        s.wallet._settlingOutpoints.has(`${o.txid}:${o.vout}`),
+                },
+            },
+        }) as ContractManager;
+        s.provider.deleteIntent.mockResolvedValue(undefined);
+        s.wallet._settlingOutpoints.add(`${input.txid}:${input.vout}`);
+        await manager.reconcilePendingBatchRegistrations();
+        expect(s.provider.deleteIntent).toHaveBeenCalledOnce();
+        expect(await repository.getLockedVtxoOutpoints()).toEqual([outpoint]);
+
+        s.wallet._settlingOutpoints.clear();
+        await manager.reconcilePendingBatchRegistrations();
+        expect(s.provider.deleteIntent).toHaveBeenCalledTimes(2);
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
+        expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
+    });
+
+    it("drains public reconciliation before disposal and rejects new passes after disposal", async () => {
+        const s = setup(true);
+        await expect(s.settle()).rejects.toBe(s.failure);
+        let finishRead!: (value: { vtxos: ExtendedVirtualCoin[] }) => void;
+        const getVtxos = vi.fn(
+            () =>
+                new Promise<{ vtxos: ExtendedVirtualCoin[] }>((resolve) => {
+                    finishRead = resolve;
+                }),
+        );
+        s.provider.deleteIntent.mockResolvedValue(undefined);
+        const manager = Object.assign(Object.create(ContractManager.prototype), {
+            inFlightEvents: new Set(),
+            eventCallbacks: new Set(),
+            lookAheadEntries: new Map(),
+            config: {
+                intentRepository: repository,
+                indexerProvider: { getVtxos },
+                intentReconciliation: { deleteIntent: s.provider.deleteIntent },
+            },
+        }) as ContractManager;
+        const pass = manager.reconcilePendingBatchRegistrations();
+        await vi.waitFor(() => expect(getVtxos).toHaveBeenCalledOnce());
+        let disposed = false;
+        const disposal = manager.dispose().then(() => {
+            disposed = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(disposed).toBe(false);
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("waiting_to_submit");
+        finishRead({ vtxos: [input] });
+        await Promise.all([pass, disposal]);
+        expect(disposed).toBe(true);
+        expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
+        await manager.reconcilePendingBatchRegistrations();
+        expect(getVtxos).toHaveBeenCalledOnce();
+    });
+
+    it.each([undefined, noMatch()])(
+        "cancels for acknowledged deletion or the existing no-match response: %s",
+        async (reply) => {
+            const s = setup(true);
+            if (reply) s.provider.deleteIntent.mockRejectedValue(reply);
+            else s.provider.deleteIntent.mockResolvedValue(undefined);
+            await expect(s.settle()).rejects.toBe(s.failure);
+            expect((await collectBatchRegistrations(repository))[0].state).toBe("cancelled");
+            expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
+        },
+    );
+});

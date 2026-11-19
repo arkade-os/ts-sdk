@@ -21,7 +21,11 @@
             "!**/coverage/",
             "!**/pnpm-lock.yaml",
             "!**/*.md",
-            "!packages/swap/src/*.program.json"
+            "!packages/swap/src/*.program.json",
+            "!packages/swap/src/legacy/*.program.v0.json",
+            "!packages/swap/src/legacy/*.program.v1.json",
+            "!packages/swap/src/contracts/*.json",
+            "!**/fixtures/arkadec/**"
         ]
     },
     "linter": { "enabled": false },

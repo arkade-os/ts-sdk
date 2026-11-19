@@ -1,0 +1,111 @@
+import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
+import {
+    RestOperatorProvider,
+    SettlementEvent,
+    TxNotificationEvent,
+    isFetchTimeoutError,
+} from "./ark";
+import { getExpoFetch, sseStreamIterator } from "./expoUtils";
+import { ARKADE_VERSION_HEADERS } from "../utils/fetch";
+
+/**
+ * Expo-compatible operator provider implementation using expo/fetch for SSE support.
+ * This provider works specifically in React Native/Expo environments where
+ * standard EventSource is not available but expo/fetch provides SSE capabilities.
+ *
+ * @example
+ * ```typescript
+ * import { ExpoOperatorProvider } from '@arkade-os/sdk/adapters/expo';
+ *
+ * const provider = new ExpoOperatorProvider('https://arkade.computer');
+ * const info = await provider.getInfo();
+ * ```
+ */
+export class ExpoOperatorProvider extends RestOperatorProvider {
+    constructor(serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {
+        super(serverUrl);
+    }
+
+    override async *getEventStream(
+        signal: AbortSignal,
+        topics: string[],
+    ): AsyncIterableIterator<SettlementEvent> {
+        const expoFetch = await getExpoFetch();
+        const url = `${this.serverUrl}/v1/batch/events`;
+        const queryParams =
+            topics.length > 0
+                ? `?${topics.map((topic) => `topics=${encodeURIComponent(topic)}`).join("&")}`
+                : "";
+
+        while (!signal?.aborted) {
+            try {
+                yield* sseStreamIterator(
+                    url + queryParams,
+                    signal,
+                    expoFetch,
+                    ARKADE_VERSION_HEADERS,
+                    (data) => {
+                        // Handle different response structures
+                        // v8 mesh API might wrap in {result: ...} or send directly
+                        const eventData = data.result || data;
+
+                        // Skip heartbeat messages
+                        if (eventData.heartbeat !== undefined) {
+                            return null;
+                        }
+
+                        return this.parseSettlementEvent(eventData);
+                    },
+                );
+            } catch (error) {
+                if (error instanceof Error && error.name === "AbortError") {
+                    break;
+                }
+
+                // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                // these timeouts are set by expo/fetch function
+                if (isFetchTimeoutError(error)) {
+                    console.debug("Timeout error ignored");
+                    continue;
+                }
+
+                console.error("Event stream error:", error);
+                throw error;
+            }
+        }
+    }
+
+    override async *getTransactionsStream(
+        signal: AbortSignal,
+    ): AsyncIterableIterator<TxNotificationEvent> {
+        const expoFetch = await getExpoFetch();
+        const url = `${this.serverUrl}/v1/txs`;
+
+        while (!signal?.aborted) {
+            try {
+                yield* sseStreamIterator(url, signal, expoFetch, ARKADE_VERSION_HEADERS, (data) => {
+                    return this.parseTransactionNotification(data.result);
+                });
+            } catch (error) {
+                if (error instanceof Error && error.name === "AbortError") {
+                    break;
+                }
+
+                // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                // these timeouts are set by expo/fetch function
+                if (isFetchTimeoutError(error)) {
+                    console.debug("Timeout error ignored");
+                    continue;
+                }
+
+                console.error("Transaction stream error:", error);
+                throw error;
+            }
+        }
+    }
+}
+
+/** @deprecated Use {@link ExpoOperatorProvider}. */
+export const ExpoArkProvider = ExpoOperatorProvider;
+/** @deprecated Use {@link ExpoOperatorProvider}. */
+export type ExpoArkProvider = ExpoOperatorProvider;

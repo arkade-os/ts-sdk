@@ -16,6 +16,8 @@ import * as btc from "@scure/btc-signer";
 import {
     LOCKTIME_THRESHOLD,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
+    ONCHAIN_CLAIM_VSIZE,
+    ONCHAIN_DUST_SATS,
     awaitOnchainFill,
     buildHtlcClaim,
     buildHtlcRefund,
@@ -23,6 +25,7 @@ import {
     classifyOnchainHtlc,
     extractPreimage,
     newPreimage,
+    nextClaimFeeRate,
     onchainHtlcScript,
     paymentHashOf,
     type ChainSource,
@@ -187,6 +190,22 @@ describe("buildHtlcClaim", () => {
         expect(hex.encode(extractPreimage(spend.txHex, PAYMENT_HASH)!)).toBe(hex.encode(PREIMAGE));
     });
 
+    it("costs what ONCHAIN_CLAIM_VSIZE prices it at, on the widest standard payout", async () => {
+        // The rail quotes this fee before the claim exists, so the constant and
+        // the builder have to move together. `PAYOUT` is P2TR — the largest
+        // standard output script, and the one the constant is sized against, so
+        // a rail's estimate never under-charges the recipient's payout.
+        const spend = await buildHtlcClaim({
+            htlc: htlc(),
+            utxo: UTXO,
+            preimage: PREIMAGE,
+            payoutPkScript: PAYOUT,
+            feeRateSatVb: 1,
+            sign: signWith(1),
+        });
+        expect(UTXO.amount - spend.payoutAmount).toBe(BigInt(ONCHAIN_CLAIM_VSIZE));
+    });
+
     it("refuses a preimage that does not match the HTLC", async () => {
         await expect(
             buildHtlcClaim({
@@ -337,6 +356,53 @@ describe("claimOnchainFill", () => {
                 now: LOCKTIME - ONCHAIN_CLAIM_MARGIN_SECONDS + 1,
             }),
         ).rejects.toMatchObject({ reason: "claim_window_closed" });
+    });
+
+    it("re-publishes inside that window once P is already public", async () => {
+        const chain = fakeChain({});
+        await claimOnchainFill(chain, {
+            htlc: htlc(),
+            utxo: UTXO,
+            preimage: PREIMAGE,
+            payoutPkScript: PAYOUT,
+            feeRateSatVb: 2,
+            sign: signWith(1),
+            now: LOCKTIME - 1,
+            republish: true,
+        });
+        expect(chain.broadcasts).toHaveLength(1);
+    });
+});
+
+describe("nextClaimFeeRate", () => {
+    const rate = (over: Partial<Parameters<typeof nextClaimFeeRate>[0]> = {}) =>
+        nextClaimFeeRate({ configuredSatVb: 1, utxoAmount: UTXO.amount, ...over });
+
+    it("takes a live estimate over the agreed floor, and the floor when there is none", () => {
+        expect(rate({ estimateSatVb: 12 })).toBe(12);
+        expect(rate({ configuredSatVb: 20, estimateSatVb: 12 })).toBe(20);
+        expect(rate()).toBe(1);
+    });
+
+    it("re-broadcasts at the rate already out there, so the same transaction is rebuilt", () => {
+        expect(rate({ lastSatVb: 4, estimateSatVb: 2 })).toBe(4);
+    });
+
+    it("re-broadcasts over a risen estimate, which is what drops a claim", () => {
+        expect(rate({ lastSatVb: 4, estimateSatVb: 60 })).toBe(60);
+    });
+
+    it("bumps by at least half again, and by at least one sat/vB", () => {
+        expect(rate({ lastSatVb: 4, bump: true })).toBe(6);
+        // 1.5x of 1 rounds to 2 either way; the +1 is what moves a rate halving cannot.
+        expect(rate({ lastSatVb: 1, bump: true })).toBe(2);
+        expect(rate({ lastSatVb: 4, bump: true, estimateSatVb: 30 })).toBe(30);
+    });
+
+    it("never bumps the payout under dust, and never below what is already out there", () => {
+        const affordable = Number((UTXO.amount - ONCHAIN_DUST_SATS) / BigInt(ONCHAIN_CLAIM_VSIZE));
+        expect(rate({ lastSatVb: 500, bump: true, estimateSatVb: 9_000 })).toBe(affordable);
+        expect(rate({ lastSatVb: affordable + 10, bump: true })).toBe(affordable + 10);
     });
 });
 

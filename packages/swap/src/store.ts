@@ -2,8 +2,9 @@ import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { contractPreimage } from "@arkade-os/sdk";
 import type { IWallet, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
-import type { AssetSwapRepository } from "./repository";
+import { collectAssetSwaps, type AssetSwapRepository } from "./repository";
 
+/** @deprecated Use `Outcome`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export type AssetSwapStatus =
     | "pending"
     | "cancelling"
@@ -16,56 +17,37 @@ export type AssetSwapStatus =
     | "claimed"
     | "refunded_l1";
 
-/** The sentinel asset id for BTC itself, as opposed to a 68-hex asset id.
- * Lives here with the {@link AssetSwap} fields it describes so the market and
- * restore layers share one spelling instead of re-typing the literal. */
+/** The sentinel asset id for BTC itself, as opposed to a 68-hex asset id. */
 export const BTC_ASSET_ID = "btc";
 
 // ponytail: records carry only chain-recoverable facts — no quote-time display
 // snapshot (tickers, fee bps, fiat value); add an optional snapshot field back
 // if a consumer must persist display metadata the restore scan cannot rebuild
 
-// ponytail: store policy (newest-first order, insert-if-absent, id-is-the-key,
-// write-failure reporting) lives in these repository-first functions, so a
-// consumer calling repository.saveSwap directly bypasses all of it — saveSwap
-// is an upsert, so it will not even preserve insert-if-absent. Promote to an
-// AssetSwapStore class holding the repository privately if a second consumer
-// starts writing swaps, or the first invariant gets violated in practice.
+// ponytail: store policy (newest-first, insert-if-absent, id-is-the-key, write-failure reporting)
+// lives in these functions, so a direct repository.saveSwap (an upsert) bypasses it. Promote to an
+// AssetSwapStore class holding the repository privately if a second consumer starts writing swaps.
 
 /**
- * The record fields a wallet-provisioned secret becomes — what
- * {@link swapSecretsToRecord} emits, and what every record type carrying swap
- * secrets embeds.
- *
- * A named type rather than four fields restated per record: the mapper and the
- * records it feeds must agree exactly, and a record that silently omits one of
- * these round-trips a swap whose preimage cannot be re-derived. Embedding makes
- * the omission a compile error instead.
- *
- * **Only `preimageHex` is secret.** `signingDescriptor` and `preimageSaltHex`
- * are public derivation inputs — they must survive a field-mapped backend, but
- * they leak nothing without the seed.
+ * The record fields a wallet-provisioned secret becomes; every secret-carrying record embeds it, so
+ * omitting one (an unrecoverable preimage) is a compile error. **Only `preimageHex` is secret**; the
+ * descriptor and salt are public derivation inputs that leak nothing without the seed.
  */
 export interface SwapSecretsProjection {
-    /**
-     * The wallet descriptor this swap's sender key comes from — a fresh HD
-     * child, or a static wallet's `tr(pubkey)`. Public — the signer
-     * re-derives from the wallet, so the record carries no key material.
-     */
+    /** The wallet descriptor this swap's sender key comes from (a fresh HD child, or a static
+     * wallet's `tr(pubkey)`). Public; the record carries no key material. */
     signingDescriptor?: string;
     /** P, hex, when it cannot be re-derived from the seed at all: the user
      * supplied it, or the signer cannot sign deterministically. The swap's only
      * claim secret when present. */
     preimageHex?: string;
-    /**
-     * The salt P derives from, hex, on the salted arm — what a static wallet
-     * gets instead of storing P. **Public**, and unlike every other field here
-     * it is minted per swap: it is what stops one repeating key from handing
-     * every swap the same preimage.
-     */
+    /** The salt P derives from, hex — what a static wallet stores instead of P. **Public**, and minted
+     * per swap: it stops one repeating key from giving every swap the same preimage. */
     preimageSaltHex?: string;
 }
 
+/** The row {@link AssetSwapRepository} stores. A root export because custom storage backends are
+ * written against it. Not the v2 client's record (that is `SwapRecord`, projected as `Swap`). */
 export interface AssetSwap extends SwapSecretsProjection {
     /** Funding txid — the swap's identity. */
     id: string;
@@ -101,16 +83,13 @@ export interface AssetSwap extends SwapSecretsProjection {
     l1Txid?: string;
 }
 
-/** The canonical swap order, declared once so every read agrees on it. */
 const byNewest = (a: AssetSwap, b: AssetSwap): number => b.createdAt - a.createdAt;
 
-/** All swaps, newest-first. Insertion order is not chronological — the restore
- * scan rebuilds records in tx-scan order — so sort at read to keep
- * newest-first canonical for every consumer. */
+/** All swaps, newest-first. Sorted at read because the restore scan inserts in tx-scan order. */
 export const getAssetSwapsOrThrow = async (
     repository: AssetSwapRepository,
 ): Promise<AssetSwap[]> => {
-    return (await repository.getAllSwaps())
+    return (await collectAssetSwaps(repository))
         .filter(
             (s) =>
                 s &&
@@ -122,10 +101,9 @@ export const getAssetSwapsOrThrow = async (
         .sort(byNewest);
 };
 
-/** The consumer read: a broken backend reads as no swaps rather than crashing
- * a history view. Mutations must use {@link getAssetSwapsOrThrow} instead —
- * swallowing the read there would let "the backend is gone" masquerade as "no
- * such swap" and skip the write silently. */
+/** The consumer read: a broken backend reads as no swaps rather than crashing a history view.
+ * Mutations must use {@link getAssetSwapsOrThrow}, or "backend gone" would masquerade as "no such
+ * swap" and skip the write silently. */
 export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<AssetSwap[]> => {
     try {
         return await getAssetSwapsOrThrow(repository);
@@ -146,7 +124,10 @@ const saveSwapOrThrow = async (repository: AssetSwapRepository, swap: AssetSwap)
 
 /** Add a swap; no-op if the id is already stored. Returns the updated list.
  * THROWS on a failed write — nothing irreversible may happen until this record
- * is durable, so the caller must not fund on a failure. */
+ * is durable, so the caller must not fund on a failure.
+ *
+ * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const addAssetSwap = async (
     repository: AssetSwapRepository,
     swap: AssetSwap,
@@ -154,18 +135,18 @@ export const addAssetSwap = async (
     const swaps = await getAssetSwapsOrThrow(repository);
     if (swaps.some((s) => s.id === swap.id)) return swaps;
     await saveSwapOrThrow(repository, swap);
-    // the list is already newest-first, so place the one new record rather than
-    // re-sorting the whole history around it
     const at = swaps.findIndex((s) => byNewest(swap, s) <= 0);
     const merged = [...swaps];
     merged.splice(at === -1 ? merged.length : at, 0, swap);
     return merged;
 };
 
-/** Merge changes into a swap by id. Returns the updated list.
- * THROWS on a failed read or write, like {@link addAssetSwap} — use this for a
- * write that gates something irreversible. Transitions written *after* the
- * irreversible act belong on {@link updateAssetSwapBestEffort}. */
+/** Merge changes into a swap by id. Returns the updated list. THROWS on a failed read or write —
+ * use it for a write that gates something irreversible; writes *after* the irreversible act belong
+ * on {@link updateAssetSwapBestEffort}.
+ *
+ * @deprecated `accept()` writes the record; read it with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const updateAssetSwap = async (
     repository: AssetSwapRepository,
     id: string,
@@ -182,14 +163,10 @@ export const updateAssetSwap = async (
 };
 
 /**
- * {@link updateAssetSwap} for transitions that follow an irreversible action (a
- * broadcast claim, a spent lockup): failing the caller there would report as
- * failed a swap whose funds already moved, and a stale status is recoverable —
- * crash recovery re-derives the true state from the chain
- * (`classifyOnchainHtlc`).
- *
- * `persisted` is the part that must not be hidden: a caller that notifies on a
- * change, or treats one as terminal, has to know the store did not agree.
+ * {@link updateAssetSwap} for transitions after an irreversible action (a broadcast claim, a spent
+ * lockup): failing there would report a swap whose funds already moved as failed, and a stale status
+ * is recoverable from chain (`classifyOnchainHtlc`). `persisted` must not be hidden: a caller that
+ * notifies on or finalizes a change has to know the store did not agree.
  */
 export const updateAssetSwapBestEffort = async (
     repository: AssetSwapRepository,
@@ -200,8 +177,7 @@ export const updateAssetSwapBestEffort = async (
         return { swaps: await updateAssetSwap(repository, id, changes), persisted: true };
     } catch (error) {
         console.warn(`[swap] failed to persist update for swap ${id}`, error);
-        // the read may be what failed, so report the merge over what we can
-        // still see rather than claiming an empty history
+        // the read may be what failed: merge over what is still visible rather than claim empty
         const swaps = (await getAssetSwaps(repository)).map((s) =>
             s.id === id ? { ...s, ...changes } : s,
         );
@@ -210,12 +186,9 @@ export const updateAssetSwapBestEffort = async (
 };
 
 /**
- * The record fields a wallet-provisioned secret becomes.
- *
- * `signingDescriptor` is public and always stored — it is what recovers the
- * signer. Then at most one of: `preimageHex`, when the wallet says it cannot
- * re-derive P and it becomes the swap's only claim secret; or
- * `preimageSaltHex`, the public input a derivable-but-repeating key needs.
+ * The record fields a wallet-provisioned secret becomes: `signingDescriptor` always, then at most
+ * one of `preimageHex` (the wallet cannot re-derive P) or `preimageSaltHex` (derivable but
+ * repeating key).
  */
 export const swapSecretsToRecord = (
     secrets: ProvisionedKey | ProvisionedClaimSecret,
@@ -244,28 +217,17 @@ export type PreimageBlockedReason =
     | "no-secrets"
     /** `preimageHex` or `preimageSaltHex` is present but not 32 bytes of hex. */
     | "malformed-record"
-    /**
-     * Nothing to derive from: a descriptor that repeats across swaps, with
-     * neither a stored preimage nor a salt — or one this wallet holds no key
-     * for. Merged deliberately: `contractSigner` reports a key it does not
-     * hold as a plain `Error` for static wallets and a `ForeignDescriptorError`
-     * for HD ones, so splitting the two here would mean matching on message
-     * text, which is the thing this type exists to avoid. The `cause` carries
-     * whichever it was.
-     */
+    /** Nothing to derive from, or a descriptor this wallet holds no key for — merged because
+     * `contractSigner` reports the latter inconsistently; `cause` carries which. */
     | "not-derivable"
     /** Derived, but it does not hash to the record's `paymentHash`. */
     | "hash-mismatch";
 
 /**
- * The wallet cannot produce this swap's preimage, and which of the four ways
- * is `reason`.
+ * The wallet cannot produce this swap's preimage; `reason` says which way.
  *
- * Deliberately **not** {@link RefundNotLocallyPossibleError}: that one means
- * "no local refund is possible", and `RfqSwapManager` acts on it by reporting
- * `needs_counterparty`. A claim-path read failure is a different verdict, and
- * borrowing the refund error would have the manager announce one for the
- * other.
+ * Deliberately **not** {@link RefundNotLocallyPossibleError}: `RfqSwapManager` reports that as
+ * `needs_counterparty`, and a claim-path read failure is a different verdict.
  */
 export class PreimageNotRecoverableError extends Error {
     override readonly name = "PreimageNotRecoverableError";
@@ -279,23 +241,10 @@ export class PreimageNotRecoverableError extends Error {
 }
 
 /**
- * The preimage a swap record claims with — stored, or re-derived from the
- * wallet.
- *
- * The record-shaped inverse of {@link swapSecretsToRecord}, and the one place
- * that knows which of a record's fields `contractPreimage` needs. Wire claim
- * paths here rather than composing it by hand: a caller that forgets to pass
- * `preimageSaltHex` gets a *wrong* preimage from a wallet that can derive,
- * not an error.
- *
- * Verifies the result against `paymentHash` when the record carries one. The
- * salted arm has two inputs that can be wrong — the key and the salt — where
- * the HD arm had one, and a wrong P otherwise surfaces as an opaque script
- * failure at claim time, long after the mistake.
- *
- * Every refusal is a {@link PreimageNotRecoverableError} carrying a `reason`,
- * so a caller can tell "this record predates the descriptor" from "the salt is
- * corrupt" without reading message text.
+ * The preimage a swap record claims with — stored, or re-derived. Use this rather than composing by
+ * hand: forgetting `preimageSaltHex` yields a *wrong* preimage, not an error. Verified against
+ * `paymentHash` when present, since a wrong P otherwise surfaces as an opaque script failure at
+ * claim time. Every refusal is a {@link PreimageNotRecoverableError} with a `reason`.
  */
 export const preimageForSwapRecord = async (
     wallet: IWallet,
@@ -307,8 +256,7 @@ export const preimageForSwapRecord = async (
             "this swap record carries no signing descriptor",
         );
     }
-    // Decoding sits outside the derivation try: a malformed record is the
-    // caller's bug, not evidence the wallet cannot derive.
+    // outside the derivation try: a malformed record is the caller's bug, not "cannot derive"
     let stored: Uint8Array | undefined;
     let salt: Uint8Array | undefined;
     try {
@@ -335,10 +283,8 @@ export const preimageForSwapRecord = async (
         );
     }
 
-    // Case-folded: `hex.encode` always emits lowercase, but `hex.decode`
-    // accepts either, so a backend that normalises hex to uppercase round-trips
-    // the salt and the preimage fine and then fails only here — a spurious
-    // hash-mismatch on a preimage that is actually correct.
+    // case-folded: a backend that uppercases hex round-trips salt and preimage fine (`hex.decode`
+    // accepts either) and would otherwise fail only here, with a spurious hash-mismatch
     if (record.paymentHash && hex.encode(sha256(preimage)) !== record.paymentHash.toLowerCase()) {
         throw new PreimageNotRecoverableError(
             "hash-mismatch",

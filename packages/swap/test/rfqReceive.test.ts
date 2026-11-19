@@ -10,27 +10,11 @@
  * exactly as its receive corridors build them (`receiver` = the trader's
  * payout key, `client` = the solver).
  */
-import { describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
-
-const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return state.arkInfo;
-            }
-        },
-    };
-});
 
 import {
     ArkAddress,
@@ -45,12 +29,13 @@ import {
     AddressMismatch,
     LIGHTNING_RECEIVE_PAIR,
     ONCHAIN_RECEIVE_PAIR,
+    SwapRefusal,
     assertReceivable,
     deriveLightningReceive,
     deriveOnchainReceive,
     lightningReceiveRequest,
     onchainReceiveRequest,
-    receiveVtxoScript,
+    lightningReceiveContract,
     requestLightningReceive,
     requestOnchainReceive,
     verifyReceiveInvoice,
@@ -64,7 +49,15 @@ import type { LightningReceiveSwap } from "../src/swapManager";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
 import { contractPreimage } from "@arkade-os/sdk";
 import { preimageForSwapRecord } from "../src/store";
-import { rfqClaimSecretOf, rfqSecretsProfile, rfqSignerOf } from "../src/rfqProfileParts";
+import {
+    rfqClaimDestinationOf,
+    rfqClaimSecretOf,
+    rfqSecretsProfile,
+    rfqSignerOf,
+} from "../src/rfqProfileParts";
+
+const gate = vi.hoisted(() => ({ binds: false }));
+vi.mock("../src/claimAmountGate", () => ({ bindsClaimAmount: () => gate.binds }));
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -73,7 +66,7 @@ const RFQ_ID = "a1".repeat(32);
 const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
 
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 const SOLVER = key(1);
 const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
@@ -82,16 +75,22 @@ const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 const L1_REFUND_PUBKEY = key(7);
 const HTLC_CLAIM_PUBKEY = key(11);
 const COVCLAIMD_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x22), true);
-const PAYOUT_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
+const PAYOUT_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+/** What every wallet below answers `getArkadeInfo()` with: the server info the
+ * receive flows used to fetch over the wire, now sourced off the wallet. */
+const ARK_INFO = {
+    signerPubkey: hex.encode(OPERATOR_PUBKEY),
+    unilateralExitDelay: 4096,
+    network: "regtest",
+};
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
 const REFUND_LOCKTIME = NOW + 2 * 3600;
 const HTLC_LOCKTIME = NOW + 30 * 600 + 6 * 3600;
 
-describe("receiveVtxoScript", () => {
+describe("lightningReceiveContract", () => {
     // The reference solver's fixture, roles inverted: sender (VHTLC) = key(1)
     // (the solver), receiver = key(13) (the trader's payout key), server =
     // key(3), emulator = key(9), covenant refund destination = p2tr(key(8))
@@ -105,17 +104,23 @@ describe("receiveVtxoScript", () => {
     // and validated by first reproducing the pre-change pin `5120f683cdac…`.
     // See the longer note in `rfq.test.ts` before regenerating — recomputing
     // this from the package itself would make the assertion circular.
+    //
+    // `legacy: "preTimelockedRefund"` because that solver predates the
+    // timelocked non-interactive refund leaf — the pin is its eight-leaf
+    // output, and this marker reproduces that shape byte for byte. The
+    // default full suite is one leaf longer.
     const script = () =>
-        receiveVtxoScript({
+        lightningReceiveContract({
             solverPubkey: SOLVER,
             refundLocktime: 1_800_000_000,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
             solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
             payoutPubkey: TRADER_PAYOUT_PUBKEY,
             payoutPkScript: p2tr(key(5)),
+            legacy: "preTimelockedRefund",
         });
 
     it("is byte-identical to the reference solver's role-inverted script — golden scriptPubKey", () => {
@@ -130,18 +135,18 @@ describe("receiveVtxoScript", () => {
 
         // claim: preimage (length-checked) + the TRADER (receiver) + server
         expect(compiled.claimScript).toBe(
-            `82012088a914${hash160}876920${hex.encode(TRADER_PAYOUT_PUBKEY)}ad20${hex.encode(SERVER)}ac`,
+            `82012088a914${hash160}876920${hex.encode(TRADER_PAYOUT_PUBKEY)}ad20${hex.encode(OPERATOR_PUBKEY)}ac`,
         );
         // collaborative refund: solver(sender) + trader + server
         expect(compiled.refundScript).toBe(
-            `20${hex.encode(SOLVER)}ad20${hex.encode(TRADER_PAYOUT_PUBKEY)}ad20${hex.encode(SERVER)}ac`,
+            `20${hex.encode(SOLVER)}ad20${hex.encode(TRADER_PAYOUT_PUBKEY)}ad20${hex.encode(OPERATOR_PUBKEY)}ac`,
         );
         // refundWithoutReceiver: solver + server, CLTV(refundLocktime) — the
         // solver's own recourse on these legs
         expect(compiled.refundWithoutReceiverScript.includes("b175")).toBe(true);
         expect(
             compiled.refundWithoutReceiverScript.endsWith(
-                `20${hex.encode(SOLVER)}ad20${hex.encode(SERVER)}ac`,
+                `20${hex.encode(SOLVER)}ad20${hex.encode(OPERATOR_PUBKEY)}ac`,
             ),
         ).toBe(true);
         // unilateralClaim: preimage + the trader alone, CSV(4096s)
@@ -152,8 +157,8 @@ describe("receiveVtxoScript", () => {
         // nonInteractiveRefund = server + trader(receiver) + emulator-tweaked
         // key, pinned to the solver's refund destination; nonInteractiveClaim
         // carries the server + the trader's payout pin.
-        expect(compiled.nonInteractiveClaimScript).toContain(hex.encode(SERVER));
-        expect(compiled.nonInteractiveRefundScript).toContain(hex.encode(SERVER));
+        expect(compiled.nonInteractiveClaimScript).toContain(hex.encode(OPERATOR_PUBKEY));
+        expect(compiled.nonInteractiveRefundScript).toContain(hex.encode(OPERATOR_PUBKEY));
         expect(compiled.nonInteractiveRefundScript).toContain(hex.encode(TRADER_PAYOUT_PUBKEY));
     });
 });
@@ -214,6 +219,44 @@ describe("receive request builders", () => {
             },
         });
     });
+
+    // Absence, not falsiness: the solver keeps `.min(1)`, so `""` is refused and
+    // `null` is no packet either — an omitted key is the only way to say absent.
+    it("omits claim_packet from the lightning profile when there is none", () => {
+        const { profile } = lightningReceiveRequest({
+            rfqId: RFQ_ID,
+            paymentHash: PAYMENT_HASH,
+            payoutAddress: "tark1q...",
+            payoutPubkey: TRADER_PAYOUT_PUBKEY,
+            amount: 5_000,
+            amountSide: "to",
+        }) as { profile: Record<string, unknown> };
+        expect(Object.keys(profile)).not.toContain("claim_packet");
+        expect(profile).toEqual({
+            payment_hash: PAYMENT_HASH,
+            payout_address: "tark1q...",
+            payout_pubkey: hex.encode(TRADER_PAYOUT_PUBKEY),
+        });
+    });
+
+    it("omits claim_packet from the onchain profile when there is none", () => {
+        const { profile } = onchainReceiveRequest({
+            rfqId: RFQ_ID,
+            paymentHash: PAYMENT_HASH,
+            payoutAddress: "tark1q...",
+            payoutPubkey: TRADER_PAYOUT_PUBKEY,
+            refundPubkey: L1_REFUND_PUBKEY,
+            amount: 100_000,
+            amountSide: "from",
+        }) as { profile: Record<string, unknown> };
+        expect(Object.keys(profile)).not.toContain("claim_packet");
+        expect(profile).toEqual({
+            payment_hash: PAYMENT_HASH,
+            refund_pubkey: hex.encode(L1_REFUND_PUBKEY),
+            payout_address: "tark1q...",
+            payout_pubkey: hex.encode(TRADER_PAYOUT_PUBKEY),
+        });
+    });
 });
 
 /** A quote whose covenant fields derive the lockup the maker will derive. */
@@ -222,10 +265,10 @@ const receiveQuote = (
     over: { from?: number; to?: number; profile?: Record<string, unknown> } = {},
 ): RfqQuote => {
     const profile = (payload as { profile: Record<string, unknown> }).profile;
-    const script = receiveVtxoScript({
+    const contract = lightningReceiveContract({
         solverPubkey: SOLVER,
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: profile.payment_hash as string,
         claimDelay: 4096,
         emulatorPubkey: EMULATOR_PUBKEY,
@@ -244,9 +287,9 @@ const receiveQuote = (
         valid_until: VALID_UNTIL,
         refund_locktime: REFUND_LOCKTIME,
         profile: {
-            payment_hash: profile.payment_hash,
+            payment_hash: profile.payment_hash as string | undefined,
             invoice: "lnbcrt49u1p...",
-            lockup_address: script.address("tark", SERVER).encode(),
+            lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
             solver_refund_pk_script: hex.encode(SOLVER_REFUND_PK_SCRIPT),
             ...over.profile,
         },
@@ -272,7 +315,7 @@ describe("deriveLightningReceive", () => {
             paymentHash: PAYMENT_HASH,
             payoutPubkey: TRADER_PAYOUT_PUBKEY,
             payoutAddress: PAYOUT_ADDRESS,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             emulatorPubkey: EMULATOR_PUBKEY,
             claimDelay: 4096,
             hrp: "tark",
@@ -290,7 +333,7 @@ describe("deriveLightningReceive", () => {
                 paymentHash: PAYMENT_HASH,
                 payoutPubkey: TRADER_PAYOUT_PUBKEY,
                 payoutAddress: PAYOUT_ADDRESS,
-                serverPubkey: SERVER,
+                operatorPubkey: OPERATOR_PUBKEY,
                 emulatorPubkey: EMULATOR_PUBKEY,
                 claimDelay: 4096,
                 hrp: "tark",
@@ -306,12 +349,104 @@ describe("deriveLightningReceive", () => {
                 paymentHash: PAYMENT_HASH,
                 payoutPubkey: TRADER_PAYOUT_PUBKEY,
                 payoutAddress: PAYOUT_ADDRESS,
-                serverPubkey: SERVER,
+                operatorPubkey: OPERATOR_PUBKEY,
                 emulatorPubkey: EMULATOR_PUBKEY,
                 claimDelay: 4096,
                 hrp: "tark",
             }),
         ).toThrow(/missing a binding field/);
+    });
+});
+
+describe("deriveLightningReceive — the two lockup shapes", () => {
+    // Nothing on the wire says whether a quote's covenant carries the
+    // timelocked non-interactive refund leaf, so the derivation builds BOTH
+    // shapes and keeps the one the quote's own `lockup_address` matches.
+    // These pin WHICH candidate each shape of quoting solver gets.
+    const request = () =>
+        lightningReceiveRequest({
+            rfqId: RFQ_ID,
+            paymentHash: PAYMENT_HASH,
+            payoutAddress: PAYOUT_ADDRESS,
+            payoutPubkey: TRADER_PAYOUT_PUBKEY,
+            claimPacket: "abc=",
+            amount: 5_000,
+            amountSide: "to",
+        });
+
+    const derive = (quote: RfqQuote) =>
+        deriveLightningReceive({
+            quote,
+            paymentHash: PAYMENT_HASH,
+            payoutPubkey: TRADER_PAYOUT_PUBKEY,
+            payoutAddress: PAYOUT_ADDRESS,
+            operatorPubkey: OPERATOR_PUBKEY,
+            emulatorPubkey: EMULATOR_PUBKEY,
+            claimDelay: 4096,
+            hrp: "tark",
+        });
+
+    const contractParams = {
+        solverPubkey: SOLVER,
+        refundLocktime: REFUND_LOCKTIME,
+        operatorPubkey: OPERATOR_PUBKEY,
+        paymentHash: PAYMENT_HASH,
+        claimDelay: 4096,
+        emulatorPubkey: EMULATOR_PUBKEY,
+        solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
+        payoutPubkey: TRADER_PAYOUT_PUBKEY,
+        payoutPkScript: ArkAddress.decode(PAYOUT_ADDRESS).pkScript,
+    };
+    const fullSuite = lightningReceiveContract(contractParams);
+    const legacySuite = lightningReceiveContract({
+        ...contractParams,
+        legacy: "preTimelockedRefund",
+    });
+    const fullAddress = fullSuite.address("tark", OPERATOR_PUBKEY).encode();
+    const legacyAddress = legacySuite.address("tark", OPERATOR_PUBKEY).encode();
+
+    it("a nine-leaf-quoting solver matches the FULL-suite candidate, not the legacy one", () => {
+        // The two shapes must actually differ, or the assertions below prove nothing.
+        expect(fullAddress).not.toBe(legacyAddress);
+        expect(fullSuite.scripts).toHaveLength(9);
+
+        const quote = receiveQuote(request(), { profile: { lockup_address: fullAddress } });
+        const derived = derive(quote);
+
+        expect(derived.address).toBe(fullAddress);
+        expect(derived.contractParams.legacy).toBeUndefined();
+        // The kept script IS the full-suite build — the timelocked refund
+        // leaf present, every byte matching the independent derivation.
+        expect(derived.script.nonInteractiveRefundWithoutReceiverScript).toBeDefined();
+        expect(hex.encode(derived.script.pkScript)).toBe(hex.encode(fullSuite.pkScript));
+    });
+
+    it("an eight-leaf-quoting solver matches the LEGACY candidate", () => {
+        const quote = receiveQuote(request(), { profile: { lockup_address: legacyAddress } });
+        const derived = derive(quote);
+
+        expect(derived.address).toBe(legacyAddress);
+        // ...and the matched shape travels in contractParams, so a record
+        // persisted from it rebuilds the lockup the solver actually funded.
+        expect(derived.contractParams.legacy).toBe("preTimelockedRefund");
+        expect(derived.script.nonInteractiveRefundWithoutReceiverScript).toBeUndefined();
+        expect(derived.script.scripts).toHaveLength(8);
+        expect(hex.encode(derived.script.pkScript)).toBe(hex.encode(legacySuite.pkScript));
+    });
+
+    it("a quote matching NEITHER shape throws AddressMismatch carrying both candidates", () => {
+        const quote = receiveQuote(request(), { profile: { lockup_address: "tark1qwrong" } });
+        const mismatch = ((): unknown => {
+            try {
+                derive(quote);
+                return undefined;
+            } catch (error) {
+                return error;
+            }
+        })();
+        expect(mismatch).toBeInstanceOf(AddressMismatch);
+        // Newest first — the full suite, then the legacy rebuild.
+        expect((mismatch as AddressMismatch).derived).toEqual([fullAddress, legacyAddress]);
     });
 });
 
@@ -361,7 +496,7 @@ describe("deriveOnchainReceive", () => {
             payoutPubkey: TRADER_PAYOUT_PUBKEY,
             payoutAddress: PAYOUT_ADDRESS,
             refundPubkey: L1_REFUND_PUBKEY,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             emulatorPubkey: EMULATOR_PUBKEY,
             claimDelay: 4096,
             hrp: "tark",
@@ -603,6 +738,7 @@ const hdWallet = async (
     return {
         identity,
         getAddress: async () => PAYOUT_ADDRESS,
+        getArkadeInfo: async () => ARK_INFO,
         getContractManager: async () => ({ createContract }),
         getCurrentSigningDescriptor: () => provider.getCurrentSigningDescriptor(),
         getNextSigningDescriptor: () => provider.getNextSigningDescriptor(),
@@ -627,6 +763,7 @@ const staticWallet = (createContract: () => Promise<unknown> = async () => ({}))
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         ),
         getAddress: async () => PAYOUT_ADDRESS,
+        getArkadeInfo: async () => ARK_INFO,
         getContractManager: async () => ({ createContract }),
     }) as unknown as IWallet;
 
@@ -644,15 +781,26 @@ const lightningReceiveFlow = async (
         /** Reuse a wallet across flows, to observe what a second call
          * allocates. Carries its own writer, so `register` does not apply. */
         wallet?: IWallet;
+        /** How many requests the solver refuses `quote_conflict` before quoting. */
+        conflicts?: number;
     } = {},
 ) => {
     const createContract = vi.fn(over.register ?? (async () => ({})));
     const wallet = over.wallet ?? (await hdWallet(createContract));
-    const seen: { paymentHash?: string; payoutPubkey?: string; claimPacket?: unknown } = {};
+    const seen: {
+        paymentHash?: string;
+        payoutPubkey?: string;
+        claimPacket?: unknown;
+        requests: { rfqId: string; paymentHash: string }[];
+    } = { requests: [] };
     const transport: RfqTransport = {
         async requestQuote(payload) {
             const profile = (payload as { profile: Record<string, unknown> }).profile;
             seen.paymentHash = profile.payment_hash as string;
+            seen.requests.push({ rfqId: payload.rfq_id as string, paymentHash: seen.paymentHash });
+            if (seen.requests.length <= (over.conflicts ?? 0)) {
+                throw new SwapRefusal("quote_conflict", payload.rfq_id as string);
+            }
             seen.payoutPubkey = profile.payout_pubkey as string;
             seen.claimPacket = profile.claim_packet;
             return receiveQuote(payload, { from: 5_000, to: 4_950, ...over.quote });
@@ -676,7 +824,7 @@ const lightningReceiveFlow = async (
         seen,
         createContract,
         run: () =>
-            requestLightningReceive(wallet, "http://ark", transport, {
+            requestLightningReceive(wallet, transport, {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 5_000,
                 amountSide: "from",
@@ -737,16 +885,17 @@ describe("requestLightningReceive on an HD wallet", () => {
         // never decides which of its fields to copy.
         const flow = await lightningReceiveFlow();
         const result = await flow.run();
-        const { params } = flow.createContract.mock.calls[0][0] as {
-            params: Record<string, string>;
-        };
+        const call = (
+            flow.createContract.mock.calls as unknown as Array<[{ params: Record<string, string> }]>
+        )[0];
+        const { params } = call[0];
 
         const record = createRfqSwapRecord(
             {
                 kind: "lightning_receive",
                 lockupAddress: result.address,
                 profile: {
-                    ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                    ...rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                     expectedAmount: result.expectedAmount,
                     payoutAddress: result.payoutAddress,
                 },
@@ -757,8 +906,8 @@ describe("requestLightningReceive on an HD wallet", () => {
                 rfqId: result.rfqId,
                 state: "pending",
                 lockupPkScript: result.swapPkScript,
-                paymentHash: result.treeParams.paymentHash,
-                refundLocktime: result.treeParams.refundLocktime,
+                paymentHash: result.contractParams.paymentHash,
+                refundLocktime: result.contractParams.refundLocktime,
                 expectedAmount: result.expectedAmount,
                 createdAt: 1,
                 updatedAt: 1,
@@ -767,13 +916,13 @@ describe("requestLightningReceive on an HD wallet", () => {
 
         const rebuilt = rebuildRfqSwap(record, params) as LightningReceiveSwap;
         expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
-        expect(rebuilt.refundLocktime).toBe(result.treeParams.refundLocktime);
+        expect(rebuilt.refundLocktime).toBe(result.contractParams.refundLocktime);
         expect(rebuilt.expectedAmount).toBe(4_950);
         // an HD wallet re-derives P from the seed alone, so the hashlock carries
         // neither a preimage nor a salt — its descriptor is unique per swap
         expect(rfqClaimSecretOf(record)).toEqual({
             signingDescriptor: result.secrets.descriptor,
-            paymentHash: result.treeParams.paymentHash,
+            paymentHash: result.contractParams.paymentHash,
         });
     });
 
@@ -828,7 +977,7 @@ describe("requestLightningReceive on an HD wallet", () => {
         expect(error.cause).toMatchObject({ message: "repository unavailable" });
         // Both halves of `registerLockupContract`'s call travel together, so a
         // holder of the record can retry the write without a quote.
-        expect(error.script.address("tark", SERVER).encode()).toBe(error.address);
+        expect(error.script.address("tark", OPERATOR_PUBKEY).encode()).toBe(error.address);
         // The invoice must be unreachable, not merely discouraged: a payer who
         // pays into an unwatched lockup loses the payment.
         expect(error).not.toHaveProperty("invoice");
@@ -844,6 +993,47 @@ describe("requestLightningReceive on an HD wallet", () => {
 
         expect(first.seen.paymentHash).toBeDefined();
         expect(second.seen.paymentHash).not.toBe(first.seen.paymentHash);
+    });
+
+    // Another wallet on this seed, behind its own watermark, already spent this index's hash.
+    it("retries a quote_conflict once on the next index, under the same rfq_id", async () => {
+        const flow = await lightningReceiveFlow({ conflicts: 1 });
+        const result = await flow.run();
+
+        const [refused, quoted] = flow.seen.requests;
+        expect(quoted.paymentHash).not.toBe(refused.paymentHash);
+        expect(quoted.rfqId).toBe(refused.rfqId);
+        expect(paymentHashOf(result.secrets.preimage)).toBe(quoted.paymentHash);
+    });
+
+    it("surfaces a second quote_conflict instead of burning more indices", async () => {
+        const flow = await lightningReceiveFlow({ conflicts: 2 });
+        await expect(flow.run()).rejects.toMatchObject({ reason: "quote_conflict" });
+        expect(flow.seen.requests).toHaveLength(2);
+        expect(flow.createContract).not.toHaveBeenCalled();
+    });
+
+    it("does not retry any other refusal", async () => {
+        const wallet = await hdWallet();
+        let calls = 0;
+        const transport: RfqTransport = {
+            async requestQuote(payload) {
+                calls++;
+                throw new SwapRefusal("exposure_cap", payload.rfq_id as string);
+            },
+            async status() {
+                return null;
+            },
+            async close() {},
+        };
+        await expect(
+            requestLightningReceive(wallet, transport, {
+                amount: 5_000,
+                amountSide: "from",
+                decodeInvoice: decodeStub,
+            }),
+        ).rejects.toMatchObject({ reason: "exposure_cap" });
+        expect(calls).toBe(1);
     });
 });
 
@@ -865,7 +1055,7 @@ describe("a static wallet's receive record hands P back", () => {
                 kind: "lightning_receive",
                 lockupAddress: result.address,
                 profile: {
-                    ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                    ...rfqSecretsProfile(result.secrets, result.contractParams.paymentHash),
                     // required by `hydrate`, so a record without it would fail
                     // the round trip for a reason this test is not about
                     expectedAmount: result.expectedAmount,
@@ -878,8 +1068,8 @@ describe("a static wallet's receive record hands P back", () => {
                 rfqId: result.rfqId,
                 state: "pending",
                 lockupPkScript: result.swapPkScript,
-                paymentHash: result.treeParams.paymentHash,
-                refundLocktime: result.treeParams.refundLocktime,
+                paymentHash: result.contractParams.paymentHash,
+                refundLocktime: result.contractParams.refundLocktime,
                 expectedAmount: result.expectedAmount,
                 createdAt: 1,
                 updatedAt: 1,
@@ -887,10 +1077,12 @@ describe("a static wallet's receive record hands P back", () => {
         );
 
     it("stores the salt, stores no preimage, and re-derives P through the record", async () => {
-        const createContract = vi.fn(async () => ({}));
+        const createContract = vi.fn(async (_args?: { params: Record<string, string> }) => ({}));
         const flow = await lightningReceiveFlow({ wallet: staticWallet(createContract) });
         const result = await flow.run();
-        const { params } = createContract.mock.calls[0][0] as { params: Record<string, string> };
+        const { params } = createContract.mock.calls[0][0] as unknown as {
+            params: Record<string, string>;
+        };
 
         // the arm this test exists for: one repeating key, so uniqueness comes
         // from a salt rather than from the descriptor
@@ -909,7 +1101,7 @@ describe("a static wallet's receive record hands P back", () => {
         // the record still restores, and the claim reader still verifies
         rebuildRfqSwap(record, params);
         const recovered = await preimageForSwapRecord(flow.wallet, rfqClaimSecretOf(record)!);
-        expect(hex.encode(sha256(recovered))).toBe(result.treeParams.paymentHash);
+        expect(hex.encode(sha256(recovered))).toBe(result.contractParams.paymentHash);
     });
 
     it("throws rather than reading a lost payment hash back unverified", async () => {
@@ -954,6 +1146,28 @@ describe("a static wallet's receive record hands P back", () => {
             rfqSignerOf({ ...record, profile: { ...record.profile, signer: {} } }),
         ).toThrow(/signingDescriptor/);
     });
+
+    it("reads the claim destination off the corridor, and refuses a wrong-shaped one", async () => {
+        // What the cast this replaced could not do: `profile` is
+        // `Record<string, unknown>`, so `as { payoutAddress?: string }` passed
+        // any truthy value straight to `ArkAddress.decode`.
+        const flow = await lightningReceiveFlow({ wallet: staticWallet() });
+        const record = recordFor(await flow.run());
+        expect(rfqClaimDestinationOf(record)).toBe(record.profile.payoutAddress as string);
+        expect(() =>
+            rfqClaimDestinationOf({ ...record, profile: { ...record.profile, payoutAddress: 7 } }),
+        ).toThrow(/claim destination is unusable/);
+    });
+
+    it("answers undefined for a leg that claims nothing", async () => {
+        // `lightning_send` registers no `claimDestination`, the same way it
+        // registers no `claimSecret`: P belongs to the payee. Read off the kind
+        // rather than off the key, so a stray `payoutAddress` on a leg we never
+        // claim cannot be mistaken for one.
+        const flow = await lightningReceiveFlow({ wallet: staticWallet() });
+        const record = recordFor(await flow.run());
+        expect(rfqClaimDestinationOf({ ...record, kind: "lightning_send" })).toBeUndefined();
+    });
 });
 
 describe("requestOnchainReceive on an HD wallet", () => {
@@ -964,10 +1178,10 @@ describe("requestOnchainReceive on an HD wallet", () => {
             async requestQuote(payload) {
                 const profile = (payload as { profile: Record<string, unknown> }).profile;
                 seen.paymentHash = profile.payment_hash as string;
-                const script = receiveVtxoScript({
+                const contract = lightningReceiveContract({
                     solverPubkey: SOLVER,
                     refundLocktime: REFUND_LOCKTIME,
-                    serverPubkey: SERVER,
+                    operatorPubkey: OPERATOR_PUBKEY,
                     paymentHash: seen.paymentHash!,
                     claimDelay: 4096,
                     emulatorPubkey: EMULATOR_PUBKEY,
@@ -1000,7 +1214,7 @@ describe("requestOnchainReceive on an HD wallet", () => {
                         htlc_locktime: HTLC_LOCKTIME,
                         htlc_address: htlc.address,
                         min_confirmations: 2,
-                        lockup_address: script.address("tark", SERVER).encode(),
+                        lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
                         solver_refund_pk_script: hex.encode(SOLVER_REFUND_PK_SCRIPT),
                     },
                 } satisfies RfqQuote;
@@ -1011,7 +1225,7 @@ describe("requestOnchainReceive on an HD wallet", () => {
             async close() {},
         };
 
-        const result = await requestOnchainReceive(wallet, "http://ark", transport, {
+        const result = await requestOnchainReceive(wallet, transport, {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
             amount: 100_000,
             amountSide: "from",
@@ -1026,5 +1240,152 @@ describe("requestOnchainReceive on an HD wallet", () => {
             stored: result.secrets.preimage,
         });
         expect(seen.paymentHash).toBe(paymentHashOf(preimage));
+    });
+});
+
+/** Captures the profile that actually went out, then aborts the flow. Rejecting
+ * on the sentinel is load-bearing: a seal against an absent key throws first. */
+const capturedProfile = async (
+    send: (transport: RfqTransport) => Promise<unknown>,
+): Promise<Record<string, unknown>> => {
+    const seen: { profile?: Record<string, unknown> } = {};
+    const transport: RfqTransport = {
+        async requestQuote(payload) {
+            seen.profile = (payload as { profile: Record<string, unknown> }).profile;
+            throw new Error("captured");
+        },
+        async status() {
+            return null;
+        },
+        async close() {},
+    };
+    await expect(send(transport)).rejects.toThrow("captured");
+    return seen.profile!;
+};
+
+const decodeStub = (raw: string): InvoiceFacts => ({
+    raw,
+    paymentHash: "",
+    amountSats: 5_000,
+    expiresAt: INVOICE_EXPIRES_AT,
+});
+
+describe("a receive with no covclaimd to seal to", () => {
+    it("sends no claim_packet on the lightning leg", async () => {
+        const wallet = await hdWallet();
+        const profile = await capturedProfile((transport) =>
+            requestLightningReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 5_000,
+                amountSide: "from",
+                decodeInvoice: decodeStub,
+            }),
+        );
+        expect(Object.keys(profile)).not.toContain("claim_packet");
+    });
+
+    it("sends no claim_packet on the onchain leg", async () => {
+        const wallet = await hdWallet();
+        const profile = await capturedProfile((transport) =>
+            requestOnchainReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "from",
+                refundPubkey: L1_REFUND_PUBKEY,
+            }),
+        );
+        expect(Object.keys(profile)).not.toContain("claim_packet");
+    });
+
+    const minAmountTlv = (packet: unknown): string =>
+        hex.encode(base64.decode(packet as string).subarray(-11));
+
+    it("seals unbound on both legs and both sides while claim packets bind no amount", async () => {
+        const wallet = await hdWallet();
+        for (const amountSide of ["from", "to"] as const) {
+            const lightning = await capturedProfile((transport) =>
+                requestLightningReceive(wallet, transport, {
+                    emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                    amount: 5_000,
+                    amountSide,
+                    covclaimdPubkey: COVCLAIMD_PK,
+                    decodeInvoice: decodeStub,
+                }),
+            );
+            expect(minAmountTlv(lightning.claim_packet), amountSide).not.toMatch(/^040008/);
+
+            const onchain = await capturedProfile((transport) =>
+                requestOnchainReceive(wallet, transport, {
+                    emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                    amount: 100_000,
+                    amountSide,
+                    refundPubkey: L1_REFUND_PUBKEY,
+                    covclaimdPubkey: COVCLAIMD_PK,
+                }),
+            );
+            expect(minAmountTlv(onchain.claim_packet), amountSide).not.toMatch(/^040008/);
+        }
+    });
+});
+
+describe("a receive once claim packets bind the amount", () => {
+    beforeEach(() => {
+        gate.binds = true;
+    });
+    afterEach(() => {
+        gate.binds = false;
+    });
+
+    const minAmountTlv = (packet: unknown): string =>
+        hex.encode(base64.decode(packet as string).subarray(-11));
+
+    it("seals an exact-out request on both legs, bound to the amount it pins", async () => {
+        const wallet = await hdWallet();
+        const lightning = await capturedProfile((transport) =>
+            requestLightningReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 5_000,
+                amountSide: "to",
+                covclaimdPubkey: COVCLAIMD_PK,
+                decodeInvoice: decodeStub,
+            }),
+        );
+        expect(minAmountTlv(lightning.claim_packet)).toBe("040008" + "0000000000001388");
+
+        const onchain = await capturedProfile((transport) =>
+            requestOnchainReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "to",
+                refundPubkey: L1_REFUND_PUBKEY,
+                covclaimdPubkey: COVCLAIMD_PK,
+            }),
+        );
+        expect(minAmountTlv(onchain.claim_packet)).toBe("040008" + "00000000000186a0");
+    });
+
+    it("sends no claim_packet for an exact-in request, even with covclaimd configured", async () => {
+        const wallet = await hdWallet();
+        const lightning = await capturedProfile((transport) =>
+            requestLightningReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 5_000,
+                amountSide: "from",
+                covclaimdPubkey: COVCLAIMD_PK,
+                decodeInvoice: decodeStub,
+            }),
+        );
+        expect(Object.keys(lightning)).not.toContain("claim_packet");
+
+        const onchain = await capturedProfile((transport) =>
+            requestOnchainReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "from",
+                refundPubkey: L1_REFUND_PUBKEY,
+                covclaimdPubkey: COVCLAIMD_PK,
+            }),
+        );
+        expect(Object.keys(onchain)).not.toContain("claim_packet");
     });
 });

@@ -1,0 +1,55 @@
+// Fails when production SDK logic reintroduces a dependency on `virtualStatus`. Behavior must read
+// the canonical facts and capability predicates instead; see src/wallet/vtxo.ts.
+//
+// The identifier is matched bare rather than as `virtualStatus.`, so that destructuring reads
+// (`const { batchExpiry } = vtxo.virtualStatus`) and `"virtualStatus" in x` discriminators — the
+// forms that slipped through before — are caught too.
+
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const pkgRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const srcRoot = join(pkgRoot, "src");
+
+// Only the storage migrations may mention `virtualStatus`: the module that recovers canonical facts
+// from the legacy blob, and the IndexedDB read path that applies it to rows no column migration can
+// reach. The projection is gone from the domain, so anything else naming it is a regression.
+const ALLOWLIST = [
+    "src/repositories/legacyVtxoFacts.ts",
+    "src/repositories/indexedDB/walletRepository.ts",
+];
+
+function* walk(dir) {
+    for (const entry of readdirSync(dir)) {
+        const p = join(dir, entry);
+        if (statSync(p).isDirectory()) yield* walk(p);
+        else if (p.endsWith(".ts")) yield p;
+    }
+}
+
+const findings = [];
+for (const file of walk(srcRoot)) {
+    // ALLOWLIST is written with forward slashes; relative() yields the platform
+    // separator, so on Windows every allowlisted file would otherwise be reported.
+    const rel = relative(pkgRoot, file).split(sep).join("/");
+    if (ALLOWLIST.includes(rel)) continue;
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((line, i) => {
+        if (!/\bvirtualStatus\b/.test(line)) return;
+        findings.push(`${rel}:${i + 1}: ${line.trim()}`);
+    });
+}
+
+if (findings.length > 0) {
+    console.error(
+        `Found ${findings.length} virtualStatus reference(s) in production SDK logic.\n` +
+            `VirtualStatus is deprecated: read the canonical facts (isSwept, isPreconfirmed,\n` +
+            `isSpent, expiresAt, expiresAtHeight, commitmentTxIds, spentBy, settledBy) or a\n` +
+            `capability predicate from src/wallet/vtxo.ts instead.\n`,
+    );
+    for (const f of findings) console.error(`  ${f}`);
+    process.exit(1);
+}
+
+console.log("virtualStatus guard: no references in production SDK logic.");

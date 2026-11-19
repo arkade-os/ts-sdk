@@ -1,14 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { planOffer, quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
+import {
+    planOffer,
+    quoteOffer,
+    registryIndexUrl,
+    type DiscoveredMarket,
+    type Network,
+} from "@arkade-os/solver-discovery";
 import {
     discoverMarkets,
     findMarket,
     makeCachedFeedFetch,
+    MARKETS_CACHE_TTL_MS,
     QUOTE_OPTIONS,
     validatePlan,
 } from "../src/markets";
+import type { TransportCardFetcher } from "@arkade-os/solver-discovery";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { btcChf, btcUsd, CHF_ID, USD_ID, XAU_ID, xauUsd } from "./fixtures";
+import { pointedSolver } from "./client/fixtures";
+import { nostrCardFetcher } from "../src/nostr";
+import type { SimplePool } from "nostr-tools";
 
 const markets = [btcUsd, btcChf];
 
@@ -50,6 +61,30 @@ describe("findMarket", () => {
 
     it("returns a null market for unknown assets", () => {
         expect(findMarket(markets, "btc", "ff".repeat(34))?.market).toBeNull();
+    });
+
+    it("maps logical btc to the Arkade CAIP-19 BTC leg", () => {
+        const caip19 = {
+            ...btcUsd,
+            pair: undefined,
+            base_asset: { ...btcUsd.base_asset, id: "arkade:mutinynet/slip44:1" },
+        } as unknown as DiscoveredMarket;
+        expect(findMarket([caip19], "btc", USD_ID)).toEqual({ market: caip19, give: "base" });
+        expect(findMarket([caip19], USD_ID, "btc")).toEqual({ market: caip19, give: "quote" });
+    });
+
+    it("maps an Arkade asset id to its CAIP-19 market leg", () => {
+        const caip19 = {
+            ...btcUsd,
+            pair: undefined,
+            base_asset: { ...btcUsd.base_asset, id: "arkade:mutinynet/slip44:1" },
+            quote_asset: {
+                ...btcUsd.quote_asset,
+                id: `arkade:mutinynet/asset:${USD_ID}`,
+            },
+        } as unknown as DiscoveredMarket;
+        expect(findMarket([caip19], "btc", USD_ID)).toEqual({ market: caip19, give: "base" });
+        expect(findMarket([caip19], USD_ID, "btc")).toEqual({ market: caip19, give: "quote" });
     });
 });
 
@@ -98,6 +133,15 @@ describe("quoteOffer with the package quote options", () => {
 });
 
 describe("makeCachedFeedFetch", () => {
+    it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+        "rejects invalid TTL %s",
+        (ttl) => {
+            expect(() => makeCachedFeedFetch(ttl)).toThrow(
+                "ttlMs must be a non-negative safe integer",
+            );
+        },
+    );
+
     it("keeps repeated quotes within the TTL to a single feed call", async () => {
         // the invariant behind the wallet's flat-feedCalls screen test: a burst of
         // debounced quotes against the same feed URL must hit the network once, or
@@ -214,6 +258,23 @@ describe("discoverMarkets caching", () => {
         repository = new InMemoryAssetSwapRepository();
     });
 
+    it("answers from the cache, and keeps it, when only a pinned card answered", async () => {
+        await seedCache(Date.now() - 2 * MARKETS_CACHE_TTL_MS, [btcUsd]);
+        const { solver: _solver, source: _source, sourceType: _type, ...market } = btcChf;
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            registryUrl: REGISTRY_URL,
+            repository,
+            fetchImpl: jsonFetch([new Error("registry down")]),
+            localCards: [
+                { card: { version: 0, name: "pinned", markets: [market] }, network: "mutinynet" },
+            ],
+            transportCards: null,
+        });
+        expect(markets.map((m) => m.pair)).toEqual(["BTC/USD"]);
+        expect((await cache())?.markets.map((m) => m.pair)).toEqual(["BTC/USD"]);
+    });
+
     it("fetches on a cold start and caches the result", async () => {
         const fetchImpl = jsonFetch([registryIndex()]);
         const markets = await discoverWith(fetchImpl);
@@ -228,6 +289,31 @@ describe("discoverMarkets caching", () => {
         const fetchImpl = jsonFetch([registryIndex()]);
         const markets = await discoverWith(fetchImpl);
         expect(markets).toHaveLength(1);
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("keeps a cache fresh for ten minutes, then refetches", async () => {
+        await seedCache(Date.now() - 9 * 60_000);
+        const fresh = jsonFetch([registryIndex()]);
+        await discoverWith(fresh);
+        expect(fresh).not.toHaveBeenCalled();
+
+        await seedCache(Date.now() - 11 * 60_000);
+        const aged = jsonFetch([registryIndex()]);
+        await discoverWith(aged);
+        expect(aged).toHaveBeenCalledTimes(1);
+    });
+
+    it("serves a fresh pairless CAIP-19 cache without fetching", async () => {
+        const pairless = {
+            ...btcUsd,
+            pair: undefined,
+            base_asset: { ...btcUsd.base_asset, id: "arkade:mutinynet/slip44:1" },
+        } as unknown as DiscoveredMarket;
+        await seedCache(Date.now(), [pairless]);
+        const fetchImpl = jsonFetch([registryIndex()]);
+
+        expect(await discoverWith(fetchImpl)).toEqual([pairless]);
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 
@@ -253,6 +339,24 @@ describe("discoverMarkets caching", () => {
         const markets = await discoverWith(fetchImpl);
         expect(markets).toHaveLength(1);
         expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it("drops an unreadable market without discarding the readable cache", async () => {
+        await seedCache(Date.now(), [btcUsd, null as unknown as DiscoveredMarket]);
+        const fetchImpl = jsonFetch([registryIndex()]);
+
+        const served = await discoverWith(fetchImpl);
+        expect(served).toHaveLength(1);
+        expect(served[0].source).toBe(btcUsd.source);
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("serves a fresh empty cache without refetching", async () => {
+        await seedCache(Date.now(), []);
+        const fetchImpl = jsonFetch([registryIndex()]);
+
+        expect(await discoverWith(fetchImpl)).toEqual([]);
+        expect(fetchImpl).not.toHaveBeenCalled();
     });
 
     it("fetches when the cache backend itself is unreadable", async () => {
@@ -305,6 +409,161 @@ describe("discoverMarkets caching", () => {
         expect(await discoverMarkets(opts)).toHaveLength(1);
         expect(await discoverMarkets(opts)).toHaveLength(1);
         expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it("follows the network default when registryUrl is omitted, caching under the resolved URL", async () => {
+        const resolved = registryIndexUrl("mutinynet");
+        const fetchImpl = jsonFetch([registryIndex()]);
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            repository,
+            fetchImpl,
+            registryUrl: undefined,
+        });
+        expect(markets).toHaveLength(1);
+        expect(fetchImpl.mock.calls[0][0]).toBe(resolved);
+        expect((await repository.getCachedMarkets("mutinynet", resolved))?.markets).toHaveLength(1);
+
+        // a second omitted-URL call serves that cache instead of refetching
+        const again = jsonFetch([registryIndex()]);
+        expect(
+            await discoverMarkets({
+                network: "mutinynet",
+                repository,
+                fetchImpl: again,
+                registryUrl: undefined,
+            }),
+        ).toHaveLength(1);
+        expect(again).not.toHaveBeenCalled();
+    });
+
+    it("uses a caller-supplied registryUrl instead of the default", async () => {
+        const url = "https://solver-registry.example.test/mutinynet.json";
+        const fetchImpl = jsonFetch([registryIndex()]);
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            registryUrl: url,
+            repository,
+            fetchImpl,
+        });
+        expect(markets).toHaveLength(1);
+        expect(fetchImpl.mock.calls[0][0]).toBe(url);
+        expect((await repository.getCachedMarkets("mutinynet", url))?.markets).toHaveLength(1);
+        expect(
+            await repository.getCachedMarkets("mutinynet", registryIndexUrl("mutinynet")),
+        ).toBeUndefined();
+    });
+
+    it("yields no markets for an unrecognised network, without fetching", async () => {
+        const fetchImpl = jsonFetch([registryIndex()]);
+        const markets = await discoverMarkets({
+            network: "not-a-network" as Network,
+            repository,
+            fetchImpl,
+            registryUrl: undefined,
+        });
+        expect(markets).toEqual([]);
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+});
+
+describe("discoverMarkets with a listed solver whose card did not arrive", () => {
+    const REGISTRY = "https://registry.example/regtest.json";
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+    let repository: InMemoryAssetSwapRepository;
+    beforeEach(() => {
+        repository = new InMemoryAssetSwapRepository();
+    });
+    const cache = () => repository.getCachedMarkets("regtest", REGISTRY);
+    const read = (index: unknown, transportCards: TransportCardFetcher) =>
+        discoverMarkets({
+            network: "regtest",
+            registryUrl: REGISTRY,
+            repository,
+            useCache: false,
+            fetchImpl: jsonFetch([index]),
+            transportCards,
+        });
+    const relayDown: TransportCardFetcher = {
+        fetch: async () => {
+            throw new Error("relay timed out");
+        },
+    };
+    const relaySilent: TransportCardFetcher = { fetch: async () => [] };
+
+    it.each([
+        ["fails", relayDown],
+        ["answers without it", relaySilent],
+    ])("keeps the solver, and leaves the cache alone, when the fetch %s", async (_how, fetcher) => {
+        const pointed = pointedSolver();
+        await read(pointed.index, { fetch: async () => [pointed.card()] });
+        const before = await cache();
+        const markets = await read(pointed.index, fetcher);
+        expect(markets.map((m) => m.solver)).toEqual(["pointed"]);
+        expect(await cache()).toEqual(before);
+    });
+
+    // a fresh process: the fetcher has no earlier card to fill the miss with
+    it("keeps the solver when a fresh nostrCardFetcher's relay misses its card", async () => {
+        const pointed = pointedSolver();
+        await read(pointed.index, { fetch: async () => [pointed.card()] });
+        const before = await cache();
+        const silentPool = {
+            subscribeMany: (_r: unknown, _f: unknown, params: { oneose?: () => void }) => {
+                queueMicrotask(() => params.oneose?.());
+                return { close: () => {} };
+            },
+            close: () => {},
+        };
+        const markets = await read(
+            pointed.index,
+            nostrCardFetcher({ pool: silentPool as unknown as SimplePool }),
+        );
+        expect(markets.map((m) => m.solver)).toEqual(["pointed"]);
+        expect(await cache()).toEqual(before);
+    });
+
+    it("lets the solver go once the cache is two hours old", async () => {
+        const pointed = pointedSolver();
+        await read(pointed.index, { fetch: async () => [pointed.card()] });
+        const entry = (await cache())!;
+        await repository.saveCachedMarkets("regtest", REGISTRY, {
+            ...entry,
+            fetchedAt: Date.now() - TWO_HOURS_MS,
+        });
+        expect(await read(pointed.index, relayDown)).toEqual([]);
+        expect((await cache())?.markets).toEqual([]);
+    });
+
+    it("asks the registry once a minute while it carries the solver, not on every call", async () => {
+        const pointed = pointedSolver();
+        await read(pointed.index, { fetch: async () => [pointed.card()] });
+        const entry = (await cache())!;
+        await repository.saveCachedMarkets("regtest", REGISTRY, {
+            ...entry,
+            fetchedAt: Date.now() - MARKETS_CACHE_TTL_MS,
+        });
+        const fetchImpl = jsonFetch([pointed.index]);
+        const call = async () =>
+            (
+                await discoverMarkets({
+                    network: "regtest",
+                    registryUrl: REGISTRY,
+                    repository,
+                    fetchImpl,
+                    transportCards: relaySilent,
+                })
+            ).map((m) => m.solver);
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            for (let i = 0; i < 3; i++) expect(await call()).toEqual(["pointed"]);
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.setSystemTime(Date.now() + 60_000);
+            expect(await call()).toEqual(["pointed"]);
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 

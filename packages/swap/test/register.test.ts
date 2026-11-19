@@ -1,73 +1,79 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     asset,
+    collectContracts,
+    CSVMultisigTapscript,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ProviderUnavailableError,
     ReadonlySingleKey,
     ReadonlyWallet,
-    type ArkProvider,
+    type OperatorProvider,
     type IndexerProvider,
     type IWallet,
+    type RelativeTimelock,
     type OnchainProvider,
 } from "@arkade-os/sdk";
-import { createOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
+import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
+import { requestArkadeSwap, type RfqTransport } from "../src/rfq";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
-// all real here — only the network seam (the three Rest* providers) and the
-// contract manager are stubbed, so a writer that omits or misspells the escrow
-// marker fails this test rather than passing on a hand-built fixture
+// all real here — only the wallet's view of the server and the contract manager
+// are stubbed, so a writer that omits or misspells the escrow marker fails this
+// test rather than passing on a hand-built fixture
 const makerKey = hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1");
 const makerAddress =
     "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2";
 
-const state = vi.hoisted(() => ({
+// ── The server both wallets below answer for ────────────────────────────────
+//
+// `createOffer` reads its info off the wallet, so this is the single source of
+// truth for the covenant: the fake wallet hands it back directly and the real
+// `ReadonlyWallet` further down resolves it through a stubbed `arkProvider`.
+// One fixture, so the two derive against the same server.
+
+const SIGNER_PUBKEY = "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
+
+// derived from the signer key rather than pinned, the way arkd advertises it:
+// a checkpoint committing to some other key would describe a different server
+const checkpointTapscript = hex.encode(
+    CSVMultisigTapscript.encode({
+        timelock: { type: "blocks", value: 10n },
+        pubkeys: [hex.decode(SIGNER_PUBKEY.slice(2))],
+    }).script,
+);
+
+const arkInfo = () => ({
+    boardingExitDelay: 144n,
+    checkpointTapscript,
+    deprecatedSigners: [],
+    digest: "d",
+    dust: 1000n,
+    fees: { intentFee: {}, txFeeRate: "0" },
+    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+    forfeitPubkey: SIGNER_PUBKEY,
+    network: "regtest",
+    serviceStatus: {},
+    sessionDuration: 3600n,
+    signerPubkey: SIGNER_PUBKEY,
+    unilateralExitDelay: 4096n,
+    utxoMaxAmount: -1n,
+    utxoMinAmount: 0n,
+    version: "1",
+    vtxoMaxAmount: -1n,
+    vtxoMinAmount: 0n,
+});
+
+const state = {
     created: [] as Record<string, unknown>[],
     watched: [] as [string, string][],
     createContract: undefined as ((params: Record<string, unknown>) => unknown) | undefined,
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    // the factory is hoisted above this file's imports, so re-import inside it
-    const { hex } = await import("@scure/base");
-    const checkpointTapscript = hex.encode(
-        mod.CSVMultisigTapscript.encode({
-            timelock: { type: "blocks", value: 10n },
-            pubkeys: [
-                hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"),
-            ],
-        }).script,
-    );
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return {
-                    signerPubkey:
-                        "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-                    checkpointTapscript,
-                    network: "regtest",
-                };
-            }
-        },
-        RestIndexerProvider: class {
-            async getVtxos() {
-                return { vtxos: [] };
-            }
-        },
-        RestEmulatorProvider: class {
-            async getInfo() {
-                return {
-                    signerPubkey:
-                        "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
-                };
-            }
-        },
-    };
-});
+    // what the server advertises as its unilateral exit delay; createOffer
+    // builds the offer's exit closure from it unless the caller opts out
+    unilateralExitDelay: BigInt(4096),
+};
 
 const contractManager = {
     createContract: async (params: Record<string, unknown>) => {
@@ -83,6 +89,7 @@ const contractManager = {
 const wallet = {
     identity: { xOnlyPublicKey: async () => makerKey },
     getAddress: async () => makerAddress,
+    getArkadeInfo: async () => ({ ...arkInfo(), unilateralExitDelay: state.unilateralExitDelay }),
     getContractManager: async () => contractManager,
 } as unknown as IWallet;
 
@@ -90,17 +97,176 @@ const wallet = {
 const emulatorPubkey = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const create = (maker: IWallet = wallet) =>
-    createOffer(maker, "http://ark", {
+    createOffer(maker, {
         wantAmount: BigInt(50_000),
         wantAsset: testAsset,
         emulatorPubkey,
     });
 
+// file-level, not per-describe: the mocked provider is module state, so a
+// describe that forgot to reset it would inherit the previous one's server
+beforeEach(() => {
+    state.created = [];
+    state.watched = [];
+    state.createContract = undefined;
+    state.unilateralExitDelay = BigInt(4096);
+});
+
 describe("offer contract registration", () => {
-    beforeEach(() => {
-        state.created = [];
-        state.watched = [];
-        state.createContract = undefined;
+    // On amount_side "to" the payout is echoed back verbatim, so the named-side
+    // check passes by construction and from_amount is whatever the solver asked.
+    it("refuses an exact-out quote whose from_amount exceeds the caller's cap", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
+        const expected = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+        });
+        const rfqId = "33".repeat(32);
+        const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
+        const gouging: RfqTransport = {
+            requestQuote: vi.fn(async () => ({
+                v: 1 as const,
+                type: "rfq_quote" as const,
+                rfq_id: rfqId,
+                pair,
+                // 1000x a fair deposit, while to_amount echoes the request.
+                from_amount: "700000",
+                to_amount: "50000",
+                solver_pubkey: "22".repeat(32),
+                valid_until: 1_800_000_060,
+                profile: {
+                    offer_address: expected.address,
+                    offer_pk_script: hex.encode(expected.swapPkScript),
+                },
+            })),
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        };
+        const request = {
+            offerAsset,
+            wantAsset: testAsset,
+            amount: 50_000n,
+            amountSide: "to" as const,
+            rfqId,
+            emulatorPubkey,
+            now: 1_800_000_000,
+        };
+        // Unbounded, the caller funds it: the named side matches, so nothing objects.
+        await expect(requestArkadeSwap(wallet, gouging, request)).resolves.toMatchObject({
+            fundAmount: 700_000n,
+        });
+        await expect(
+            requestArkadeSwap(wallet, gouging, { ...request, maxFromAmount: 1000n }),
+        ).rejects.toMatchObject({ reason: "quote_amount_rejected" });
+        await expect(
+            requestArkadeSwap(wallet, gouging, {
+                ...request,
+                maxFromAmount: 700_000n,
+            }),
+        ).resolves.toMatchObject({ fundAmount: 700_000n });
+        // The mirror bound, for exact-IN where the solver picks the payout.
+        await expect(
+            requestArkadeSwap(wallet, gouging, {
+                ...request,
+                amountSide: "from",
+                amount: 700_000n,
+                minToAmount: 60_000n,
+            }),
+        ).rejects.toMatchObject({ reason: "quote_amount_rejected" });
+    });
+
+    it("requests an asset-to-asset RFQ and derives a want-asset-only offer", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
+        const expected = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+        });
+        const rfqId = "11".repeat(32);
+        const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
+        const transport: RfqTransport = {
+            requestQuote: vi.fn(async () => ({
+                v: 1 as const,
+                type: "rfq_quote" as const,
+                rfq_id: rfqId,
+                pair,
+                from_amount: "700",
+                to_amount: "50000",
+                solver_pubkey: "22".repeat(32),
+                valid_until: 1_800_000_060,
+                profile: {
+                    offer_address: expected.address,
+                    offer_pk_script: hex.encode(expected.swapPkScript),
+                },
+            })),
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        };
+
+        const swap = await requestArkadeSwap(wallet, transport, {
+            offerAsset,
+            wantAsset: testAsset,
+            amount: 700n,
+            rfqId,
+            emulatorPubkey,
+            now: 1_800_000_000,
+        });
+
+        expect(transport.requestQuote).toHaveBeenCalledWith(
+            expect.objectContaining({ pair, amount: "700" }),
+        );
+        expect(swap).toMatchObject({ pair, fundAmount: 700n, carrierSats: 330n });
+        expect(swap.address).toBe(expected.address);
+        const encodedOffer = decodeOffer(hex.decode(swap.offerHex));
+        expect(encodedOffer.wantAsset?.toString()).toBe(testAsset.toString());
+        expect(encodedOffer.offerAsset).toBeUndefined();
+    });
+
+    /** A solver whose dust is not 330 prices against its own; the constant would misfund. */
+    it("funds the carrier the solver published, not the SDK constant", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
+        const expected = await create();
+        const rfqId = "33".repeat(32);
+        const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
+        const quoteWith = (carrier?: string): RfqTransport => ({
+            requestQuote: vi.fn(async () => ({
+                v: 1 as const,
+                type: "rfq_quote" as const,
+                rfq_id: rfqId,
+                pair,
+                from_amount: "700",
+                to_amount: "50000",
+                ...(carrier === undefined ? {} : { carrier_sats: carrier }),
+                solver_pubkey: "22".repeat(32),
+                valid_until: 1_800_000_060,
+                profile: {
+                    offer_address: expected.address,
+                    offer_pk_script: hex.encode(expected.swapPkScript),
+                },
+            })),
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        });
+        const request = (transport: RfqTransport) =>
+            requestArkadeSwap(wallet, transport, {
+                offerAsset,
+                wantAsset: testAsset,
+                amount: 700n,
+                rfqId,
+                emulatorPubkey,
+                now: 1_800_000_000,
+            });
+
+        expect((await request(quoteWith("1000"))).carrierSats).toBe(1000n);
+        expect((await request(quoteWith(undefined))).carrierSats).toBe(330n);
+        expect((await request(quoteWith("0"))).carrierSats).toBe(330n);
+        expect((await request(quoteWith("1000000"))).carrierSats).toBe(1_000_000n);
+        for (const carrier of ["1e3", "-1"]) {
+            await expect(request(quoteWith(carrier))).rejects.toMatchObject({
+                reason: "carrier_malformed",
+            });
+        }
     });
 
     it("registers the funded covenant as an escrowed arkade contract", async () => {
@@ -149,33 +315,118 @@ describe("offer contract registration", () => {
         const offer = await create();
         expect(state.watched).toEqual([[hex.encode(offer.swapPkScript), "watched"]]);
     });
+
+    it("refuses a zero want before registering anything", async () => {
+        await expect(
+            createOffer(wallet, { wantAmount: BigInt(0), wantAsset: testAsset, emulatorPubkey }),
+        ).rejects.toThrow("wantAmount must be positive");
+        expect(state.created).toEqual([]);
+    });
+});
+
+// ── The exit closure createOffer builds by default ───────────────────────────
+
+describe("a new offer's unilateral exit", () => {
+    it("is built by default, at the server's own delay", async () => {
+        // without it `cancel` is the only route out, and cancel needs the
+        // server: a server that will not co-sign strands the deposit until the
+        // VTXO expires and the operator sweeps it
+        const offer = decodeOffer(hex.decode((await create()).offerHex));
+        expect(offer.exitDelay).toEqual({ type: "seconds", value: BigInt(4096) });
+    });
+
+    it("reads a sub-512 delay as blocks, the threshold arkd's own closures use", async () => {
+        state.unilateralExitDelay = BigInt(144);
+        const offer = decodeOffer(hex.decode((await create()).offerHex));
+        expect(offer.exitDelay).toEqual({ type: "blocks", value: BigInt(144) });
+    });
+
+    it("puts the 512 boundary on the seconds side, as arkd and solverd do", async () => {
+        // 511 is blocks, 512 is seconds; reading the boundary the other way
+        // derives a different swap address from the same server
+        state.unilateralExitDelay = BigInt(512);
+        expect(decodeOffer(hex.decode((await create()).offerHex)).exitDelay).toEqual({
+            type: "seconds",
+            value: BigInt(512),
+        });
+        state.unilateralExitDelay = BigInt(511);
+        expect(decodeOffer(hex.decode((await create()).offerHex)).exitDelay).toEqual({
+            type: "blocks",
+            value: BigInt(511),
+        });
+    });
+
+    it("takes an explicit delay over the server's", async () => {
+        const created = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+            exitDelay: { type: "blocks", value: BigInt(10) },
+        });
+        expect(decodeOffer(hex.decode(created.offerHex)).exitDelay).toEqual({
+            type: "blocks",
+            value: BigInt(10),
+        });
+    });
+
+    it("is omitted on noExit, which also moves the swap address", async () => {
+        const withExit = await create();
+        const without = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+            noExit: true,
+        });
+        expect(decodeOffer(hex.decode(without.offerHex)).exitDelay).toBeUndefined();
+        // the closure is part of the covenant, so the two are different contracts
+        expect(without.swapPkScript).not.toEqual(withExit.swapPkScript);
+    });
+
+    const withExitDelay = (exitDelay: RelativeTimelock) =>
+        createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            wantAsset: testAsset,
+            emulatorPubkey,
+            exitDelay,
+        });
+
+    it("registers nothing for an explicit delay it will refuse to encode", async () => {
+        // A CSV of zero compiles happily, so the covenant is derived and
+        // REGISTERED before the encoder ever sees the delay. Refusing only at
+        // encode time leaves a watched contract behind for an offer that never
+        // formed — and promoteOfferContract has already marked its address
+        // outstanding, so retireOfferContract will not take that row back.
+        await expect(withExitDelay({ type: "blocks", value: BigInt(0) })).rejects.toThrow(
+            "exitDelay must be a positive relative locktime",
+        );
+        expect(state.created, "nothing may be registered for an offer that never formed").toEqual(
+            [],
+        );
+        expect(state.watched).toEqual([]);
+    });
+
+    it("names an oversized delay itself, rather than letting bip68 do it", async () => {
+        // deriving first reports `Expected Number seconds <= 33553920` from
+        // inside the timelock encoder, which names neither the field nor the way
+        // out; the check has to run before the covenant is built
+        await expect(
+            withExitDelay({ type: "seconds", value: BigInt(1) << BigInt(32) }),
+        ).rejects.toThrow("exitDelay does not fit the locktime field (u32)");
+        expect(state.created).toEqual([]);
+    });
+
+    it("refuses to publish an exit in name only when the server reports none", async () => {
+        // RestOperatorProvider defaults a missing field to 0, which would compile to
+        // a CSV of zero — an offer that claims an exit it does not have
+        state.unilateralExitDelay = BigInt(0);
+        await expect(create()).rejects.toThrow("no usable unilateralExitDelay");
+        expect(state.created, "nothing may be registered for an offer that never formed").toEqual(
+            [],
+        );
+    });
 });
 
 // ── Re-offering a retired script, against a real contract manager ────────────
-
-const SIGNER_PUBKEY = "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
-
-const arkInfo = () => ({
-    boardingExitDelay: 144n,
-    checkpointTapscript:
-        "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
-    deprecatedSigners: [],
-    digest: "d",
-    dust: 1000n,
-    fees: { intentFee: {}, txFeeRate: "0" },
-    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-    forfeitPubkey: SIGNER_PUBKEY,
-    network: "regtest",
-    serviceStatus: {},
-    sessionDuration: 3600n,
-    signerPubkey: SIGNER_PUBKEY,
-    unilateralExitDelay: 4096n,
-    utxoMaxAmount: -1n,
-    utxoMinAmount: 0n,
-    version: "1",
-    vtxoMaxAmount: -1n,
-    vtxoMinAmount: 0n,
-});
 
 /** Offline: every indexer read fails retryably, so the row still persists. */
 const offlineIndexer = () =>
@@ -188,11 +439,11 @@ const offlineIndexer = () =>
         getSubscription: async function* () {},
     }) as Partial<IndexerProvider> as IndexerProvider;
 
-const realWallet = async () => {
-    const contractRepository = new InMemoryContractRepository();
+const realWallet = async (contractRepository = new InMemoryContractRepository()) => {
     const wallet = await ReadonlyWallet.create({
-        arkServerUrl: "http://localhost:7070",
-        arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
+        arkProvider: {
+            getInfo: async () => arkInfo(),
+        } as Partial<OperatorProvider> as OperatorProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],
@@ -221,7 +472,24 @@ describe("an offer at a script an earlier offer retired", () => {
         // promotion is the only thing that can restore coverage here
         await create(wallet);
 
-        const row = (await contractRepository.getContracts()).find((c) => c.script === script);
+        const row = (await collectContracts(contractRepository)).find((c) => c.script === script);
+        expect(row?.watch).toBe("watched");
+    });
+
+    it("is watched again after a restart, though the new manager never loaded it", async () => {
+        const first = await realWallet();
+        const offer = await create(first.wallet);
+        const script = hex.encode(offer.swapPkScript);
+        const firstManager = await first.wallet.getContractManager();
+        await firstManager.setContractWatchState(script, "retained");
+        firstManager.dispose();
+
+        const { wallet } = await realWallet(first.contractRepository);
+        await create(wallet);
+
+        const row = (await collectContracts(first.contractRepository)).find(
+            (c) => c.script === script,
+        );
         expect(row?.watch).toBe("watched");
     });
 });

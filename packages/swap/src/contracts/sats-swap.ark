@@ -1,0 +1,21 @@
+pragma arkade ^0.1.0;
+
+// The output at this input's index pays `receiver` at least `amount` sats.
+// Coordination of who funds it lives outside the contract.
+contract SatsSwap(
+    pubkey receiver,
+    int amount,
+    pubkey user
+) {
+    function fulfill() {
+        int i = this.activeInputIndex;
+        require(tx.outputs[i].value >= amount);
+        let paid = tx.outputs[i].script;
+        require(paid.version == 1);
+        require(paid.program == receiver);
+    }
+
+    function cancel(signature userSig, signature serverSig) tapscript {
+        require(checkMultisig([user, server], [userSig, serverSig], 2));
+    }
+}

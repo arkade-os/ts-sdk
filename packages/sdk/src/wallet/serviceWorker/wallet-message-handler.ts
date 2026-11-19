@@ -1,0 +1,3059 @@
+import { hex } from "@scure/base";
+import { requiresWalletScope, walletOperation, type WalletRequestBinding } from "./wallet-request";
+import { OperatorInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
+import { GetVtxosOptions, IndexerProvider, PaginationOptions } from "../../providers/indexer";
+import { WalletRepository } from "../../repositories";
+import type {
+    Contract,
+    ContractEvent,
+    ContractWithVtxos,
+    GetContractsFilter,
+    PathSelection,
+    WatchedScript,
+} from "../../contracts";
+import { isRecoveryOnlyContract } from "../../contracts";
+import type {
+    ContractSyncState,
+    CreateContractParams,
+    GetAllSpendingPathsOptions,
+    GetSpendablePathsOptions,
+} from "../../contracts/contractManager";
+import {
+    ArkadeBroadcaster,
+    ArkadeReader,
+    GetOperatorInfoOptions,
+    ArkTransaction,
+    AssetDetails,
+    BurnParams,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
+    GetNewAddressesOptions,
+    GetSpendableVtxosFilter,
+    GetVtxosFilter,
+    IssuanceParams,
+    IssuanceResult,
+    IWallet,
+    NewAddress,
+    Outpoint,
+    Recipient,
+    ReissuanceParams,
+    SendOnchainParams,
+    SettleParams,
+    VirtualCoin,
+    WalletBalance,
+} from "../index";
+import { DelegateInfo } from "../../providers/delegate";
+import {
+    fetchVtxoCreatedAtByTxid,
+    type NormalizedExtendedVirtualCoin,
+    type NormalizedVtxoPage,
+} from "../vtxo";
+import {
+    ArkadeCashCreateError,
+    filterFlatVtxos,
+    ReadonlyWallet,
+    spendableVtxosExcludingLocked,
+    Wallet,
+    type ProviderConnectionState,
+} from "../wallet";
+import { computeOffchainBalance, toWalletBalance } from "../balance";
+import { getDustAmount } from "../utils";
+import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
+import { captureInputExpiryFloor } from "../sendInputExpiry";
+import type { InputExpiryFloor } from "../index";
+import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
+import { gatedFrom, isGatedVtxo } from "../../contracts/spendability";
+import type {
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationGlobalSkipReason,
+    MigrationLegReport,
+    MigrationLegSkipReason,
+    MigrationVtxoRef,
+    RenewVtxosOptions,
+} from "../vtxo-manager";
+import { type SignerStatus, toXOnlySignerHex } from "../signerRotation";
+import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
+import { Transaction } from "../../utils/transaction";
+import { buildTransactionHistory } from "../../utils/transactionHistory";
+import {
+    getVtxosForContract,
+    saveVtxosForContract,
+    warnAndFilterVtxosForScript,
+} from "../../contracts/vtxoOwnership";
+import { offchainRows } from "../../contracts/onchainCoins";
+import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
+import { ArkadeCash } from "../../arkadeCash";
+import { readArkadeCash } from "../../arkadeCash/status";
+import {
+    addArkadeCashRecord,
+    arkadeCashActivity,
+    arkadeCashId,
+    createArkadeCashTracker,
+    isArkadeCashRecord,
+} from "../../arkadeCash/tracker";
+
+export class WalletNotInitializedError extends Error {
+    constructor() {
+        super("Wallet handler not initialized");
+        this.name = "WalletNotInitializedError";
+    }
+}
+
+/**
+ * Type-guard for a {@link SerializedAggregateError} object that has survived
+ * the postMessage boundary. Used on the page side of the RESTORE_WALLET path
+ * to detect a worker-side AggregateError and reconstruct it.
+ */
+export function isSerializedAggregateError(value: unknown): value is SerializedAggregateError {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Partial<SerializedAggregateError>;
+    return (
+        v.name === "AggregateError" &&
+        typeof v.message === "string" &&
+        Array.isArray(v.errors) &&
+        v.errors.every((e) => e && typeof e.name === "string" && typeof e.message === "string")
+    );
+}
+
+/** Worker-side serializer for a real {@link AggregateError}. */
+export function serializeAggregateError(error: AggregateError): SerializedAggregateError {
+    const errors: { name: string; message: string }[] = [];
+    for (const child of error.errors ?? []) {
+        if (child instanceof Error) {
+            errors.push({ name: child.name, message: child.message });
+        } else {
+            errors.push({ name: "Error", message: String(child) });
+        }
+    }
+    return {
+        name: "AggregateError",
+        message: error.message,
+        errors,
+    };
+}
+
+/** Page-side reconstructor: rebuild an {@link AggregateError} from the wire form. */
+export function deserializeAggregateError(payload: SerializedAggregateError): AggregateError {
+    const errs = payload.errors.map((e) => {
+        const err = new Error(e.message);
+        err.name = e.name;
+        return err;
+    });
+    return new AggregateError(errs, payload.message);
+}
+
+/**
+ * Wire envelope for an {@link ArkadeCashCreateError}. A raw `Error` loses its
+ * `cash` field to structured clone, and the token is the only way to recover
+ * the funded output, so it travels as a plain object instead.
+ */
+export type SerializedArkadeCashCreateError = {
+    name: "ArkadeCashCreateError";
+    message: string;
+    cash: string;
+    cause: { name: string; message: string };
+};
+
+/** Page-side guard for a {@link SerializedArkadeCashCreateError} that survived the clone. */
+export function isSerializedArkadeCashCreateError(
+    value: unknown,
+): value is SerializedArkadeCashCreateError {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Partial<SerializedArkadeCashCreateError>;
+    return (
+        v.name === "ArkadeCashCreateError" &&
+        typeof v.message === "string" &&
+        typeof v.cash === "string" &&
+        !!v.cause &&
+        typeof v.cause.name === "string" &&
+        typeof v.cause.message === "string"
+    );
+}
+
+/** Worker-side serializer for a real {@link ArkadeCashCreateError}. */
+export function serializeArkadeCashCreateError(
+    error: ArkadeCashCreateError,
+): SerializedArkadeCashCreateError {
+    const cause = error.cause;
+    return {
+        name: "ArkadeCashCreateError",
+        message: error.message,
+        cash: error.cash,
+        cause:
+            cause instanceof Error
+                ? { name: cause.name, message: cause.message }
+                : { name: "Error", message: String(cause) },
+    };
+}
+
+/** Page-side reconstructor: rebuild an {@link ArkadeCashCreateError} from the wire form. */
+export function deserializeArkadeCashCreateError(
+    payload: SerializedArkadeCashCreateError,
+): ArkadeCashCreateError {
+    const cause = new Error(payload.cause.message);
+    cause.name = payload.cause.name;
+    return new ArkadeCashCreateError(payload.cash, cause);
+}
+
+export class ReadonlyWalletError extends Error {
+    constructor() {
+        super("Read-only wallet: operation requires signing");
+        this.name = "ReadonlyWalletError";
+    }
+}
+
+export class DelegateNotConfiguredError extends Error {
+    constructor() {
+        super("Delegate not configured");
+        this.name = "DelegateNotConfiguredError";
+    }
+}
+
+export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
+
+export type RequestInitWallet = RequestEnvelope & {
+    type: "INIT_WALLET";
+    payload: {
+        arkServerUrl: string;
+        arkServerPublicKey?: string;
+        lazyBoarding?: boolean;
+    };
+};
+export type ResponseInitWallet = ResponseEnvelope & {
+    type: "WALLET_INITIALIZED";
+};
+
+export type RequestSettle = RequestEnvelope & {
+    type: "SETTLE";
+    payload: { params?: SettleParams };
+};
+export type ResponseSettle = ResponseEnvelope & {
+    type: "SETTLE_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestGetAddress = RequestEnvelope & { type: "GET_ADDRESS" };
+export type ResponseGetAddress = ResponseEnvelope & {
+    type: "ADDRESS";
+    payload: { address: string };
+};
+
+export type RequestGetBoardingAddress = RequestEnvelope & {
+    type: "GET_BOARDING_ADDRESS";
+};
+export type ResponseGetBoardingAddress = ResponseEnvelope & {
+    type: "BOARDING_ADDRESS";
+    payload: { address: string };
+};
+
+// The worker still accepts the old name, `GET_ARKADE_INFO`, so a page built before
+// the rename keeps working. A worker built before it answers "Unknown message".
+export type RequestGetOperatorInfo = RequestEnvelope & {
+    type: "GET_OPERATOR_INFO" | "GET_ARKADE_INFO";
+    payload?: GetOperatorInfoOptions;
+};
+// `OperatorInfo` is bigint-heavy and crosses the boundary raw: the channel is
+// `postMessage`/structuredClone, which is bigint-safe, and `GET_BALANCE` below
+// already relies on that for `Asset.amount`. Do NOT route it through the
+// `arkInfoSnapshot` serializer — that shape is the persistence cache and drops
+// `serviceStatus`.
+export type ResponseGetOperatorInfo = ResponseEnvelope & {
+    type: "OPERATOR_INFO";
+    payload: { info: OperatorInfo };
+};
+
+// `getArkadeReader()`/`getArkadeBroadcaster()` proxied to the worker, which
+// owns the providers. Named `INDEXER_*` rather than reusing `GET_VTXOS`: that
+// one answers the *wallet's own* outputs from repositories, while this is an
+// arbitrary-script query that reaches the operator. Same verb, different
+// question — collapsing them would silently change which one a caller gets.
+export type RequestIndexerGetVtxos = RequestEnvelope & {
+    type: "INDEXER_GET_VTXOS";
+    payload: { opts: GetVtxosOptions };
+};
+// VTXOs cross the boundary raw — `assets[].amount` is bigint — relying on the
+// same bigint-safe structuredClone channel `OPERATOR_INFO` documents above.
+export type ResponseIndexerGetVtxos = ResponseEnvelope & {
+    type: "INDEXER_VTXOS";
+    payload: NormalizedVtxoPage;
+};
+
+export type RequestIndexerGetVirtualTxs = RequestEnvelope & {
+    type: "INDEXER_GET_VIRTUAL_TXS";
+    payload: { txids: string[]; opts?: PaginationOptions };
+};
+export type ResponseIndexerGetVirtualTxs = ResponseEnvelope & {
+    type: "INDEXER_VIRTUAL_TXS";
+    payload: Awaited<ReturnType<ArkadeReader["getVirtualTxs"]>>;
+};
+
+export type RequestSubmitTx = RequestEnvelope & {
+    type: "SUBMIT_TX";
+    payload: { signedArkTx: string; checkpointTxs: string[] };
+};
+export type ResponseSubmitTx = ResponseEnvelope & {
+    type: "SUBMIT_TX_SUCCESS";
+    payload: Awaited<ReturnType<ArkadeBroadcaster["submitTx"]>>;
+};
+
+export type RequestFinalizeTx = RequestEnvelope & {
+    type: "FINALIZE_TX";
+    payload: { arkTxid: string; finalCheckpointTxs: string[] };
+};
+export type ResponseFinalizeTx = ResponseEnvelope & { type: "FINALIZE_TX_SUCCESS" };
+
+export type RequestGetBalance = RequestEnvelope & { type: "GET_BALANCE" };
+export type ResponseGetBalance = ResponseEnvelope & {
+    type: "BALANCE";
+    payload: WalletBalance;
+};
+
+export type RequestGetVtxos = RequestEnvelope & {
+    type: "GET_VTXOS";
+    payload: { filter?: GetVtxosFilter };
+};
+export type ResponseGetVtxos = ResponseEnvelope & {
+    type: "VTXOS";
+    payload: { vtxos: Awaited<ReturnType<IWallet["getVtxos"]>> };
+};
+
+export type RequestGetSpendableVtxos = RequestEnvelope & {
+    type: "GET_SPENDABLE_VTXOS";
+    payload: { filter?: GetSpendableVtxosFilter };
+};
+export type ResponseGetSpendableVtxos = ResponseEnvelope & {
+    type: "SPENDABLE_VTXOS";
+    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>>; filterApplied?: boolean };
+};
+
+export type RequestGetBoardingUtxos = RequestEnvelope & {
+    type: "GET_BOARDING_UTXOS";
+};
+
+export type RequestArkadeCash = RequestEnvelope & {
+    type: "ARKADE_CASH";
+    payload: import("../../arkadeCash/messages").ArkadeCashRequest;
+};
+export type ResponseArkadeCash = ResponseEnvelope & {
+    type: "ARKADE_CASH";
+    payload?: import("../../arkadeCash/messages").ArkadeCashResponse;
+};
+
+/** Cash actions that run sends or sweeps: no bus deadline on either side. */
+export const isLongRunningCashAction = (
+    request: import("../../arkadeCash/messages").ArkadeCashRequest,
+) => request.action === "create" || request.action === "claim";
+export type ResponseGetBoardingUtxos = ResponseEnvelope & {
+    type: "BOARDING_UTXOS";
+    payload: { utxos: ExtendedCoin[] };
+};
+
+export type RequestGetTransactionHistory = RequestEnvelope & {
+    type: "GET_TRANSACTION_HISTORY";
+};
+export type ResponseGetTransactionHistory = ResponseEnvelope & {
+    type: "TRANSACTION_HISTORY";
+    payload: { transactions: ArkTransaction[] };
+};
+
+export type RequestGetStatus = RequestEnvelope & { type: "GET_STATUS" };
+export type ResponseGetStatus = ResponseEnvelope & {
+    type: "WALLET_STATUS";
+    payload: {
+        walletInitialized: boolean;
+        xOnlyPublicKey: Uint8Array | undefined;
+        walletRequestBinding?: WalletRequestBinding;
+        // Wallet-level provider-connection freshness (boot operator info source
+        // composed with contract-manager sync health). Optional so a status
+        // response can predate a fully wired worker; always set for an
+        // initialized wallet.
+        providerConnectionState?: ProviderConnectionState;
+    };
+};
+
+export type RequestGetContractSyncState = RequestEnvelope & {
+    type: "GET_CONTRACT_SYNC_STATE";
+};
+export type ResponseGetContractSyncState = ResponseEnvelope & {
+    type: "CONTRACT_SYNC_STATE";
+    payload: { syncState: ContractSyncState };
+};
+
+export type RequestClear = RequestEnvelope & { type: "CLEAR" };
+export type ResponseClear = ResponseEnvelope & {
+    type: "CLEAR_SUCCESS";
+    payload: { cleared: boolean };
+};
+
+export type RequestSignTransaction = RequestEnvelope & {
+    type: "SIGN_TRANSACTION";
+    payload: { tx: Transaction; inputIndexes?: number[] };
+};
+export type ResponseSignTransaction = ResponseEnvelope & {
+    type: "SIGN_TRANSACTION";
+    payload: { tx: Transaction };
+};
+
+export type RequestReloadWallet = RequestEnvelope & { type: "RELOAD_WALLET" };
+export type ResponseReloadWallet = ResponseEnvelope & {
+    type: "RELOAD_SUCCESS";
+    payload: { reloaded: boolean };
+};
+
+export type RequestCreateContract = RequestEnvelope & {
+    type: "CREATE_CONTRACT";
+    payload: CreateContractParams;
+};
+export type ResponseCreateContract = ResponseEnvelope & {
+    type: "CONTRACT_CREATED";
+    payload: { contract: Contract };
+};
+
+export type RequestGetContracts = RequestEnvelope & {
+    type: "GET_CONTRACTS";
+    payload: { filter?: GetContractsFilter };
+};
+export type ResponseGetContracts = ResponseEnvelope & {
+    type: "CONTRACTS";
+    payload: { contracts: Contract[] };
+};
+
+export type RequestGetContractsWithVtxos = RequestEnvelope & {
+    type: "GET_CONTRACTS_WITH_VTXOS";
+    payload: {
+        filter?: GetContractsFilter;
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean };
+    };
+};
+export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
+    type: "CONTRACTS_WITH_VTXOS";
+    payload: { contracts: ContractWithVtxos[]; filterApplied?: boolean };
+};
+
+export type RequestGetStoredContractsWithVtxos = RequestEnvelope & {
+    type: "GET_STORED_CONTRACTS_WITH_VTXOS";
+    payload: { filter?: GetContractsFilter };
+};
+export type ResponseGetStoredContractsWithVtxos = ResponseEnvelope & {
+    type: "STORED_CONTRACTS_WITH_VTXOS";
+    payload: { contracts: ContractWithVtxos[] };
+};
+
+/** Whether every operation settled within `ms`. */
+async function settledWithin(operations: Iterable<Promise<unknown>>, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+    });
+    try {
+        return await Promise.race([Promise.allSettled([...operations]).then(() => true), expired]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function unsupportedByManager(method: string): Error {
+    return new Error(`Contract manager does not support ${method}`);
+}
+
+export type RequestWatchScript = RequestEnvelope & {
+    type: "WATCH_SCRIPT";
+    payload: { script: string | string[]; label?: string };
+};
+export type ResponseWatchScript = ResponseEnvelope & {
+    type: "SCRIPT_WATCHED";
+    payload: { script: string | string[] };
+};
+
+export type RequestUnwatchScript = RequestEnvelope & {
+    type: "UNWATCH_SCRIPT";
+    payload: { script: string | string[] };
+};
+export type ResponseUnwatchScript = ResponseEnvelope & {
+    type: "SCRIPT_UNWATCHED";
+    payload: { script: string | string[] };
+};
+
+export type RequestGetWatchedScripts = RequestEnvelope & {
+    type: "GET_WATCHED_SCRIPTS";
+    payload: Record<string, never>;
+};
+export type ResponseGetWatchedScripts = ResponseEnvelope & {
+    type: "WATCHED_SCRIPTS";
+    payload: { scripts: WatchedScript[] };
+};
+
+export type RequestAnnotateVtxos = RequestEnvelope & {
+    type: "ANNOTATE_VTXOS";
+    payload: { vtxos: VirtualCoin[] };
+};
+export type ResponseAnnotateVtxos = ResponseEnvelope & {
+    type: "ANNOTATED_VTXOS";
+    payload: { vtxos: ExtendedVirtualCoin[] };
+};
+
+export type RequestUpdateContract = RequestEnvelope & {
+    type: "UPDATE_CONTRACT";
+    payload: {
+        script: string;
+        updates: Partial<Omit<Contract, "id" | "createdAt">>;
+        /**
+         * Set only by the proxy's `setContractWatchState`, so the worker keeps its
+         * unchanged-state no-op. A worker predating the flag ignores it and writes.
+         */
+        watchStateOnly?: boolean;
+    };
+};
+export type ResponseUpdateContract = ResponseEnvelope & {
+    type: "CONTRACT_UPDATED";
+    payload: { contract: Contract };
+};
+/** Answers a `watchStateOnly` update; carries no row, so nothing is re-read. */
+export type ResponseContractWatchStateSet = ResponseEnvelope & {
+    type: "CONTRACT_WATCH_STATE_SET";
+};
+
+export type RequestDeleteContract = RequestEnvelope & {
+    type: "DELETE_CONTRACT";
+    payload: { script: string };
+};
+export type ResponseDeleteContract = ResponseEnvelope & {
+    type: "CONTRACT_DELETED";
+    payload: { deleted: boolean };
+};
+
+export type RequestGetSpendablePaths = RequestEnvelope & {
+    type: "GET_SPENDABLE_PATHS";
+    payload: { options: GetSpendablePathsOptions };
+};
+export type ResponseGetSpendablePaths = ResponseEnvelope & {
+    type: "SPENDABLE_PATHS";
+    payload: { paths: PathSelection[] };
+};
+
+export type RequestIsContractManagerWatching = RequestEnvelope & {
+    type: "IS_CONTRACT_MANAGER_WATCHING";
+};
+export type ResponseIsContractManagerWatching = ResponseEnvelope & {
+    type: "CONTRACT_WATCHING";
+    payload: { isWatching: boolean };
+};
+
+export type RequestRefreshVtxos = RequestEnvelope & {
+    type: "REFRESH_VTXOS";
+    payload?: {
+        scripts?: string[];
+        after?: number;
+        before?: number;
+    };
+};
+export type ResponseRefreshVtxos = ResponseEnvelope & {
+    type: "REFRESH_VTXOS_SUCCESS";
+};
+
+export type RequestRefreshOutpoints = RequestEnvelope & {
+    type: "REFRESH_OUTPOINTS";
+    payload: {
+        outpoints: { txid: string; vout: number }[];
+    };
+};
+export type ResponseRefreshOutpoints = ResponseEnvelope & {
+    type: "REFRESH_OUTPOINTS_SUCCESS";
+};
+
+// HD signing-descriptor surface. Descriptor allocation and the watermark are
+// owned by the worker-side Wallet (single writer); the page proxies both as
+// plain strings — unlike scanContracts there is no callback to cross the
+// structured-clone boundary.
+export type RequestGetCurrentSigningDescriptor = RequestEnvelope & {
+    type: "GET_CURRENT_SIGNING_DESCRIPTOR";
+};
+export type ResponseGetCurrentSigningDescriptor = ResponseEnvelope & {
+    type: "CURRENT_SIGNING_DESCRIPTOR";
+    payload: { descriptor?: string };
+};
+
+export type RequestGetNextSigningDescriptor = RequestEnvelope & {
+    type: "GET_NEXT_SIGNING_DESCRIPTOR";
+};
+export type ResponseGetNextSigningDescriptor = ResponseEnvelope & {
+    type: "NEXT_SIGNING_DESCRIPTOR";
+    payload: { descriptor?: string };
+};
+
+// Minting is one worker round-trip rather than a page-side reassembly out of
+// `getNextSigningDescriptor`: the worker owns both the HD watermark and the
+// contract repository, so a page that allocated an index and then could not
+// register the script would be left holding a burnt index and an address
+// nothing watches. `NewAddress` is plain data — strings plus a `Contract`
+// record — so it crosses the structured-clone boundary as-is.
+export type RequestGetNewAddresses = RequestEnvelope & {
+    type: "GET_NEW_ADDRESSES";
+    payload?: GetNewAddressesOptions;
+};
+export type ResponseGetNewAddresses = ResponseEnvelope & {
+    type: "NEW_ADDRESSES";
+    payload: { addresses: NewAddress[] };
+};
+
+export type RequestGetUsedSigningDescriptors = RequestEnvelope & {
+    type: "GET_USED_SIGNING_DESCRIPTORS";
+    payload?: { lookAhead?: number };
+};
+export type ResponseGetUsedSigningDescriptors = ResponseEnvelope & {
+    type: "USED_SIGNING_DESCRIPTORS";
+    payload: { descriptors: string[] };
+};
+
+export type RequestAdvanceSigningDescriptorWatermark = RequestEnvelope & {
+    type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK";
+    payload: { descriptor: string };
+};
+export type ResponseAdvanceSigningDescriptorWatermark = ResponseEnvelope & {
+    type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED";
+};
+
+export type RequestGetAllSpendingPaths = RequestEnvelope & {
+    type: "GET_ALL_SPENDING_PATHS";
+    payload: { options: GetAllSpendingPathsOptions };
+};
+export type ResponseGetAllSpendingPaths = ResponseEnvelope & {
+    type: "ALL_SPENDING_PATHS";
+    payload: { paths: PathSelection[] };
+};
+
+export type RequestGetUnsupportedContracts = RequestEnvelope & {
+    type: "GET_UNSUPPORTED_CONTRACTS";
+};
+export type ResponseGetUnsupportedContracts = ResponseEnvelope & {
+    type: "UNSUPPORTED_CONTRACTS";
+    payload: { contracts: Contract[] };
+};
+
+// broadcast messages
+export type ResponseSettleEvent = ResponseEnvelope & {
+    broadcast: true;
+    type: "SETTLE_EVENT";
+    payload: SettlementEvent;
+};
+export type ResponseRecoverVtxosEvent = ResponseEnvelope & {
+    type: "RECOVER_VTXOS_EVENT";
+    payload: SettlementEvent;
+};
+export type ResponseRenewVtxosEvent = ResponseEnvelope & {
+    type: "RENEW_VTXOS_EVENT";
+    payload: SettlementEvent;
+};
+export type ResponseMigrateDeprecatedSignerVtxosEvent = ResponseEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT";
+    payload: SettlementEvent;
+};
+export type ResponseUtxoUpdate = ResponseEnvelope & {
+    broadcast: true;
+    type: "UTXO_UPDATE";
+    payload: { coins: ExtendedCoin[] };
+};
+export type ResponseVtxoUpdate = ResponseEnvelope & {
+    broadcast: true;
+    type: "VTXO_UPDATE";
+    payload: { newVtxos: ExtendedCoin[]; spentVtxos: ExtendedCoin[] };
+};
+export type ResponseContractEvent = ResponseEnvelope & {
+    tag: string;
+    broadcast: true;
+    type: "CONTRACT_EVENT";
+    payload: { event: ContractEvent };
+};
+
+// Asset operations
+export type RequestReserveVtxos = RequestEnvelope & {
+    type: "RESERVE_SCOPED_VTXOS";
+    payload: { outpoints: Outpoint[]; reservationId: string; scope: string };
+};
+export type ResponseReserveVtxos = ResponseEnvelope & {
+    type: "VTXOS_RESERVED";
+};
+export type RequestReleaseVtxos = RequestEnvelope & {
+    type: "RELEASE_SCOPED_VTXOS";
+    /** With `outpoints`, a no-op once the id names other inputs. */
+    payload: { reservationId: string; scope: string; outpoints?: Outpoint[] };
+};
+export type ResponseReleaseVtxos = ResponseEnvelope & {
+    type: "VTXOS_RELEASED";
+};
+
+export type RequestSend = RequestEnvelope & {
+    type: "SEND";
+    payload: {
+        recipients: [Recipient, ...Recipient[]];
+        /** @see SendParams.selectedVtxos */
+        selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
+    };
+};
+export type RequestSendWithDeadline = RequestEnvelope & {
+    type: "SEND_WITH_DEADLINE";
+    payload: {
+        recipients: [Recipient, ...Recipient[]];
+        selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
+        validUntil: number;
+    };
+};
+export type RequestSendWithInputExpiryFloor = RequestEnvelope & {
+    type: "SEND_WITH_INPUT_EXPIRY_FLOOR";
+    payload: {
+        recipients: [Recipient, ...Recipient[]];
+        selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
+        inputExpiryFloor: InputExpiryFloor;
+        validUntil?: number;
+    };
+};
+export type ResponseSendDeadlineExceeded = ResponseEnvelope & {
+    type: "SEND_DEADLINE_EXCEEDED";
+    error: Error;
+    payload: { validUntil: number };
+};
+export type ResponseSend = ResponseEnvelope & {
+    type: "SEND_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestGetAssetDetails = RequestEnvelope & {
+    type: "GET_ASSET_DETAILS";
+    payload: { assetId: string };
+};
+export type ResponseGetAssetDetails = ResponseEnvelope & {
+    type: "ASSET_DETAILS";
+    payload: { assetDetails: AssetDetails };
+};
+
+export type RequestIssue = RequestEnvelope & {
+    type: "ISSUE";
+    payload: { params: IssuanceParams };
+};
+export type ResponseIssue = ResponseEnvelope & {
+    type: "ISSUE_SUCCESS";
+    payload: { result: IssuanceResult };
+};
+
+export type RequestReissue = RequestEnvelope & {
+    type: "REISSUE";
+    payload: { params: ReissuanceParams };
+};
+export type ResponseReissue = ResponseEnvelope & {
+    type: "REISSUE_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestBurn = RequestEnvelope & {
+    type: "BURN";
+    payload: { params: BurnParams };
+};
+export type ResponseBurn = ResponseEnvelope & {
+    type: "BURN_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestDelegate = RequestEnvelope & {
+    type: "DELEGATE";
+    payload: {
+        vtxoOutpoints: { txid: string; vout: number }[];
+        destination: string;
+        delegateAt?: number;
+    };
+};
+export type ResponseDelegate = ResponseEnvelope & {
+    type: "DELEGATE_SUCCESS";
+    payload: {
+        delegated: { txid: string; vout: number }[];
+        failed: {
+            outpoints: { txid: string; vout: number }[];
+            error: string;
+        }[];
+    };
+};
+
+export type RequestGetDelegateInfo = RequestEnvelope & {
+    type: "GET_DELEGATE_INFO";
+};
+export type ResponseGetDelegateInfo = ResponseEnvelope & {
+    type: "DELEGATE_INFO";
+    payload: { info: DelegateInfo };
+};
+
+// VtxoManager operations
+export type RequestRecoverVtxos = RequestEnvelope & {
+    type: "RECOVER_VTXOS";
+};
+export type ResponseRecoverVtxos = ResponseEnvelope & {
+    type: "RECOVER_VTXOS_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestGetRecoverableBalance = RequestEnvelope & {
+    type: "GET_RECOVERABLE_BALANCE";
+};
+export type ResponseGetRecoverableBalance = ResponseEnvelope & {
+    type: "RECOVERABLE_BALANCE";
+    payload: {
+        recoverable: string;
+        subdust: string;
+        includesSubdust: boolean;
+        vtxoCount: number;
+    };
+};
+
+export type RequestGetExpiringVtxos = RequestEnvelope & {
+    type: "GET_EXPIRING_VTXOS";
+    payload: { thresholdMs?: number };
+};
+export type ResponseGetExpiringVtxos = ResponseEnvelope & {
+    type: "EXPIRING_VTXOS";
+    payload: { vtxos: ExtendedVirtualCoin[] };
+};
+
+export type RequestRenewVtxos = RequestEnvelope & {
+    type: "RENEW_VTXOS";
+    payload?: RenewVtxosOptions;
+};
+export type ResponseRenewVtxos = ResponseEnvelope & {
+    type: "RENEW_VTXOS_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestGetExpiredBoardingUtxos = RequestEnvelope & {
+    type: "GET_EXPIRED_BOARDING_UTXOS";
+};
+export type ResponseGetExpiredBoardingUtxos = ResponseEnvelope & {
+    type: "EXPIRED_BOARDING_UTXOS";
+    payload: { utxos: ExtendedCoin[] };
+};
+
+export type RequestSweepExpiredBoardingUtxos = RequestEnvelope & {
+    type: "SWEEP_EXPIRED_BOARDING_UTXOS";
+};
+export type ResponseSweepExpiredBoardingUtxos = ResponseEnvelope & {
+    type: "SWEEP_EXPIRED_BOARDING_UTXOS_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestCosignOnchainTx = RequestEnvelope & {
+    type: "COSIGN_ONCHAIN_TX";
+    /** Base64 PSBT. */
+    payload: { psbt: string };
+};
+export type ResponseCosignOnchainTx = ResponseEnvelope & {
+    type: "COSIGN_ONCHAIN_TX_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestSendOnchain = RequestEnvelope & {
+    type: "SEND_ONCHAIN";
+    payload: SendOnchainParams;
+};
+export type ResponseSendOnchain = ResponseEnvelope & {
+    type: "SEND_ONCHAIN_SUCCESS";
+    payload: { txid: string };
+};
+
+// Deprecated-signer migration. Reports carry `bigint` cutoff dates, which are
+// serialized to strings for transport over the postMessage boundary (mirrors
+// how RECOVERABLE_BALANCE stringifies its bigints) and reconstructed on the
+// page side.
+export type WireMigrationVtxoRef = {
+    txid: string;
+    vout: number;
+    value: number;
+    signerPubKey: string;
+    cutoffDate?: string;
+};
+export type WireDeprecatedSignerReport = {
+    signerPubKey: string;
+    status: SignerStatus;
+    cutoffDate?: string;
+    secondsUntilCutoff?: number;
+    vtxoCount: number;
+    totalValue: number;
+    boardingCount: number;
+    boardingValue: number;
+    recoverableCount: number;
+    recoverableValue: number;
+    awaitingSweepCount: number;
+    awaitingSweepValue: number;
+    nextSweepEta?: number;
+};
+export type WireMigrationLegReport = {
+    txid?: string;
+    migrated: WireMigrationVtxoRef[];
+    skipped?: MigrationLegSkipReason;
+    deferred?: number;
+    oversized?: WireMigrationVtxoRef[];
+    error?: string;
+};
+export type WireDeprecatedSignerMigrationReport = {
+    rotated: boolean;
+    skipped?: MigrationGlobalSkipReason;
+    vtxos?: WireMigrationLegReport;
+    boarding?: WireMigrationLegReport;
+    expired: WireMigrationVtxoRef[];
+    signers: WireDeprecatedSignerReport[];
+};
+
+const serializeMigrationVtxoRef = (ref: MigrationVtxoRef): WireMigrationVtxoRef => ({
+    txid: ref.txid,
+    vout: ref.vout,
+    value: ref.value,
+    signerPubKey: ref.signerPubKey,
+    cutoffDate: ref.cutoffDate?.toString(),
+});
+const deserializeMigrationVtxoRef = (ref: WireMigrationVtxoRef): MigrationVtxoRef => ({
+    txid: ref.txid,
+    vout: ref.vout,
+    value: ref.value,
+    signerPubKey: ref.signerPubKey,
+    cutoffDate: ref.cutoffDate != null ? BigInt(ref.cutoffDate) : undefined,
+});
+export const serializeDeprecatedSignerReport = (
+    report: DeprecatedSignerReport,
+): WireDeprecatedSignerReport => ({
+    signerPubKey: report.signerPubKey,
+    status: report.status,
+    cutoffDate: report.cutoffDate?.toString(),
+    secondsUntilCutoff: report.secondsUntilCutoff,
+    vtxoCount: report.vtxoCount,
+    totalValue: report.totalValue,
+    boardingCount: report.boardingCount,
+    boardingValue: report.boardingValue,
+    recoverableCount: report.recoverableCount,
+    recoverableValue: report.recoverableValue,
+    awaitingSweepCount: report.awaitingSweepCount,
+    awaitingSweepValue: report.awaitingSweepValue,
+    nextSweepEta: report.nextSweepEta,
+});
+export const deserializeDeprecatedSignerReport = (
+    report: WireDeprecatedSignerReport,
+): DeprecatedSignerReport => ({
+    signerPubKey: report.signerPubKey,
+    status: report.status,
+    cutoffDate: report.cutoffDate != null ? BigInt(report.cutoffDate) : undefined,
+    secondsUntilCutoff: report.secondsUntilCutoff,
+    vtxoCount: report.vtxoCount,
+    totalValue: report.totalValue,
+    boardingCount: report.boardingCount,
+    boardingValue: report.boardingValue,
+    recoverableCount: report.recoverableCount,
+    recoverableValue: report.recoverableValue,
+    awaitingSweepCount: report.awaitingSweepCount,
+    awaitingSweepValue: report.awaitingSweepValue,
+    nextSweepEta: report.nextSweepEta,
+});
+const serializeMigrationLegReport = (leg: MigrationLegReport): WireMigrationLegReport => ({
+    txid: leg.txid,
+    migrated: leg.migrated.map(serializeMigrationVtxoRef),
+    skipped: leg.skipped,
+    deferred: leg.deferred,
+    oversized: leg.oversized?.map(serializeMigrationVtxoRef),
+    error: leg.error,
+});
+const deserializeMigrationLegReport = (leg: WireMigrationLegReport): MigrationLegReport => ({
+    txid: leg.txid,
+    migrated: leg.migrated.map(deserializeMigrationVtxoRef),
+    skipped: leg.skipped,
+    deferred: leg.deferred,
+    oversized: leg.oversized?.map(deserializeMigrationVtxoRef),
+    error: leg.error,
+});
+export const serializeMigrationReport = (
+    report: DeprecatedSignerMigrationReport,
+): WireDeprecatedSignerMigrationReport => ({
+    rotated: report.rotated,
+    skipped: report.skipped,
+    vtxos: report.vtxos ? serializeMigrationLegReport(report.vtxos) : undefined,
+    boarding: report.boarding ? serializeMigrationLegReport(report.boarding) : undefined,
+    expired: report.expired.map(serializeMigrationVtxoRef),
+    signers: report.signers.map(serializeDeprecatedSignerReport),
+});
+export const deserializeMigrationReport = (
+    report: WireDeprecatedSignerMigrationReport,
+): DeprecatedSignerMigrationReport => ({
+    rotated: report.rotated,
+    skipped: report.skipped,
+    vtxos: report.vtxos ? deserializeMigrationLegReport(report.vtxos) : undefined,
+    boarding: report.boarding ? deserializeMigrationLegReport(report.boarding) : undefined,
+    expired: report.expired.map(deserializeMigrationVtxoRef),
+    signers: report.signers.map(deserializeDeprecatedSignerReport),
+});
+
+export type RequestMigrateDeprecatedSignerVtxos = RequestEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS";
+};
+export type ResponseMigrateDeprecatedSignerVtxos = ResponseEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS";
+    payload: { report: WireDeprecatedSignerMigrationReport };
+};
+
+export type RequestGetDeprecatedSignerStatus = RequestEnvelope & {
+    type: "GET_DEPRECATED_SIGNER_STATUS";
+};
+export type ResponseGetDeprecatedSignerStatus = ResponseEnvelope & {
+    type: "DEPRECATED_SIGNER_STATUS";
+    payload: { signers: WireDeprecatedSignerReport[] };
+};
+
+export type RequestRestoreWallet = RequestEnvelope & {
+    type: "RESTORE_WALLET";
+    payload: { gapLimit?: number };
+};
+export type ResponseRestoreWallet = ResponseEnvelope & {
+    type: "RESTORE_WALLET_SUCCESS";
+};
+
+/**
+ * Wire envelope used to transmit an AggregateError across the postMessage
+ * boundary. `AggregateError` and its `.errors` array are not portable enough
+ * to rely on raw structured-clone behaviour across target browsers, so the
+ * RESTORE_WALLET path serializes/reconstructs explicitly. Non-Error entries
+ * are converted to Error on the worker side.
+ */
+export type SerializedAggregateError = {
+    name: "AggregateError";
+    message: string;
+    errors: { name: string; message: string }[];
+};
+
+// WalletUpdater
+export type WalletRequest =
+    | RequestInitWallet
+    | RequestSettle
+    | RequestGetAddress
+    | RequestGetBoardingAddress
+    | RequestGetOperatorInfo
+    | RequestIndexerGetVtxos
+    | RequestIndexerGetVirtualTxs
+    | RequestSubmitTx
+    | RequestFinalizeTx
+    | RequestGetBalance
+    | RequestGetVtxos
+    | RequestGetSpendableVtxos
+    | RequestGetBoardingUtxos
+    | RequestGetTransactionHistory
+    | RequestGetStatus
+    | RequestGetContractSyncState
+    | RequestClear
+    | RequestReloadWallet
+    | RequestSignTransaction
+    | RequestCreateContract
+    | RequestGetContracts
+    | RequestGetContractsWithVtxos
+    | RequestGetStoredContractsWithVtxos
+    | RequestWatchScript
+    | RequestUnwatchScript
+    | RequestGetWatchedScripts
+    | RequestAnnotateVtxos
+    | RequestUpdateContract
+    | RequestDeleteContract
+    | RequestGetSpendablePaths
+    | RequestGetAllSpendingPaths
+    | RequestGetUnsupportedContracts
+    | RequestIsContractManagerWatching
+    | RequestRefreshVtxos
+    | RequestRefreshOutpoints
+    | RequestGetCurrentSigningDescriptor
+    | RequestGetNextSigningDescriptor
+    | RequestGetNewAddresses
+    | RequestGetUsedSigningDescriptors
+    | RequestAdvanceSigningDescriptorWatermark
+    | RequestSend
+    | RequestReserveVtxos
+    | RequestReleaseVtxos
+    | RequestSendWithDeadline
+    | RequestSendWithInputExpiryFloor
+    | RequestGetAssetDetails
+    | RequestIssue
+    | RequestReissue
+    | RequestBurn
+    | RequestDelegate
+    | RequestGetDelegateInfo
+    | RequestRecoverVtxos
+    | RequestGetRecoverableBalance
+    | RequestGetExpiringVtxos
+    | RequestRenewVtxos
+    | RequestGetExpiredBoardingUtxos
+    | RequestSweepExpiredBoardingUtxos
+    | RequestCosignOnchainTx
+    | RequestSendOnchain
+    | RequestMigrateDeprecatedSignerVtxos
+    | RequestGetDeprecatedSignerStatus
+    | RequestRestoreWallet
+    | RequestArkadeCash;
+
+export type ScopedWalletRequest = RequestEnvelope & {
+    type: "SCOPED_WALLET_REQUEST_V1";
+    payload: { binding: WalletRequestBinding; request: WalletRequest };
+};
+export type WalletUpdaterRequest = WalletRequest | ScopedWalletRequest;
+
+export type WalletUpdaterResponse = ResponseEnvelope & {
+    walletRequestBinding?: WalletRequestBinding;
+} & (
+        | ResponseInitWallet
+        | ResponseSettle
+        | ResponseSettleEvent
+        | ResponseGetAddress
+        | ResponseGetBoardingAddress
+        | ResponseGetOperatorInfo
+        | ResponseIndexerGetVtxos
+        | ResponseIndexerGetVirtualTxs
+        | ResponseSubmitTx
+        | ResponseFinalizeTx
+        | ResponseGetBalance
+        | ResponseGetVtxos
+        | ResponseGetSpendableVtxos
+        | ResponseGetBoardingUtxos
+        | ResponseGetTransactionHistory
+        | ResponseGetStatus
+        | ResponseGetContractSyncState
+        | ResponseClear
+        | ResponseReloadWallet
+        | ResponseUtxoUpdate
+        | ResponseVtxoUpdate
+        | ResponseSignTransaction
+        | ResponseCreateContract
+        | ResponseGetContracts
+        | ResponseGetContractsWithVtxos
+        | ResponseGetStoredContractsWithVtxos
+        | ResponseWatchScript
+        | ResponseUnwatchScript
+        | ResponseGetWatchedScripts
+        | ResponseAnnotateVtxos
+        | ResponseUpdateContract
+        | ResponseContractWatchStateSet
+        | ResponseDeleteContract
+        | ResponseGetSpendablePaths
+        | ResponseGetAllSpendingPaths
+        | ResponseGetUnsupportedContracts
+        | ResponseIsContractManagerWatching
+        | ResponseRefreshVtxos
+        | ResponseRefreshOutpoints
+        | ResponseGetCurrentSigningDescriptor
+        | ResponseGetNextSigningDescriptor
+        | ResponseGetNewAddresses
+        | ResponseGetUsedSigningDescriptors
+        | ResponseAdvanceSigningDescriptorWatermark
+        | ResponseContractEvent
+        | ResponseSend
+        | ResponseReserveVtxos
+        | ResponseReleaseVtxos
+        | ResponseSendDeadlineExceeded
+        | ResponseGetAssetDetails
+        | ResponseIssue
+        | ResponseReissue
+        | ResponseBurn
+        | ResponseDelegate
+        | ResponseGetDelegateInfo
+        | ResponseRecoverVtxos
+        | ResponseRecoverVtxosEvent
+        | ResponseGetRecoverableBalance
+        | ResponseGetExpiringVtxos
+        | ResponseRenewVtxos
+        | ResponseRenewVtxosEvent
+        | ResponseGetExpiredBoardingUtxos
+        | ResponseSweepExpiredBoardingUtxos
+        | ResponseCosignOnchainTx
+        | ResponseSendOnchain
+        | ResponseMigrateDeprecatedSignerVtxos
+        | ResponseMigrateDeprecatedSignerVtxosEvent
+        | ResponseGetDeprecatedSignerStatus
+        | ResponseRestoreWallet
+        | ResponseArkadeCash
+    );
+
+/**
+ * What a generation counter covers: a subscription field, a derived cache, the
+ * request stream, or an initializer run.
+ */
+type Scope = "init" | "incomingFunds" | "contractEvents" | "boarding" | "request";
+
+/**
+ * Bound to the generation live when it was created. Re-check `stale` after
+ * every await that precedes a side effect — an emit, a repository write, or a
+ * subscription-field assignment.
+ */
+type Generation = { readonly stale: boolean };
+
+type Emitter = Generation & { emit(response: WalletUpdaterResponse | null): void };
+type WalletRequestContext = {
+    wallet: Wallet | undefined;
+    readonlyWallet: ReadonlyWallet;
+    walletRepository: WalletRepository | undefined;
+    arkProvider: OperatorProvider | undefined;
+    indexerProvider: IndexerProvider;
+    binding?: WalletRequestBinding;
+};
+
+export class WalletMessageHandler
+    implements MessageHandler<WalletUpdaterRequest, WalletUpdaterResponse>
+{
+    readonly messageTag: string;
+
+    private wallet: Wallet | undefined;
+    private readonlyWallet: ReadonlyWallet | undefined;
+    private walletRequestBinding: WalletRequestBinding | undefined;
+    private readonly inFlightOperations = new Set<Promise<unknown>>();
+    // A batch round can outlast any drain: neither `stop()` nor CLEAR waits for these.
+    private readonly longRunningOperations = new Set<Promise<unknown>>();
+    /** Under the page's re-init retries (~9s) and CLEAR's 10s timeout. */
+    private drainBudgetMs = 5_000;
+
+    private arkProvider: OperatorProvider | undefined;
+    private indexerProvider: IndexerProvider | undefined;
+    private walletRepository: WalletRepository | undefined;
+
+    private incomingFundsSubscription: (() => void) | undefined;
+    private incomingFundsRegistrations = new WeakMap<object, Promise<void>>();
+    private contractEventsSubscription: (() => void) | undefined;
+    private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
+    private channel: { broadcast(response: WalletUpdaterResponse): void } | undefined;
+
+    // One counter per subscription field, bumped exactly where that field is
+    // dropped — never where a neighbour's is. They cannot be merged:
+    // `onWalletInitialized` re-subscribes incoming funds while
+    // `ensureContractEventBroadcasting` deliberately keeps its subscription, so
+    // a shared bump would leave the live contract-event emitter permanently
+    // stale, folding requests in would truncate an in-flight settle, and
+    // sharing with boarding would kill every lazy refresh (see `boardingEpoch`).
+    private incomingFundsEpoch = 0;
+    /**
+     * Supersedes older initializers without touching `incomingFundsEpoch`, so a
+     * re-init that fails before registering leaves the live subscription delivering.
+     */
+    private initEpoch = 0;
+    private contractEventsEpoch = 0;
+    private boardingEpoch = 0;
+    /** Per-request progress callbacks: ends with the handler, not with a re-init. */
+    private requestEpoch = 0;
+
+    /**
+     * Instantiate a new WalletUpdater.
+     * Can override the default `messageTag` allowing more than one updater to run in parallel.
+     * Note that the default ServiceWorkerWallet sends messages to the default WalletUpdater tag.
+     */
+    constructor(options?: { messageTag?: string }) {
+        this.messageTag = options?.messageTag ?? DEFAULT_MESSAGE_TAG;
+    }
+
+    // lifecycle methods
+    async start(
+        ...params: Parameters<MessageHandler<WalletUpdaterRequest, WalletUpdaterResponse>["start"]>
+    ): Promise<void> {
+        const [services, repositories, channel] = params;
+        this.readonlyWallet = services.readonlyWallet;
+        this.wallet = services.wallet;
+        this.walletRequestBinding = services.walletRequestBinding
+            ? Object.freeze({ ...services.walletRequestBinding })
+            : undefined;
+        this.arkProvider = services.arkProvider;
+        this.indexerProvider = services.readonlyWallet.indexerProvider;
+        this.walletRepository = repositories.walletRepository;
+        this.channel = channel;
+        this.onNextTick = [];
+    }
+
+    async stop() {
+        const wallet = this.wallet ?? this.readonlyWallet;
+        // Before the async disposal below: an uncancelled handleMessage keeps
+        // invoking its progress callback, and without the bumps it would re-arm
+        // the tick queue that this just emptied.
+        this.requestEpoch++;
+        this.initEpoch++;
+        this.incomingFundsEpoch++;
+        this.contractEventsEpoch++;
+        this.boardingEpoch++;
+        this.channel = undefined;
+        this.walletRequestBinding = undefined;
+        this.onNextTick = [];
+
+        if (this.incomingFundsSubscription) {
+            this.incomingFundsSubscription();
+            this.incomingFundsSubscription = undefined;
+        }
+        if (this.contractEventsSubscription) {
+            this.contractEventsSubscription();
+            this.contractEventsSubscription = undefined;
+        }
+
+        await settledWithin(this.inFlightOperations, this.drainBudgetMs);
+        // Dispose the wallet to stop VtxoManager background tasks
+        // (auto-renewal, boarding input polling) and ContractWatcher.
+        try {
+            await wallet?.dispose();
+        } catch (_) {
+            // best-effort teardown
+        }
+
+        if ((this.wallet ?? this.readonlyWallet) === wallet) {
+            this.wallet = undefined;
+            this.readonlyWallet = undefined;
+            this.arkProvider = undefined;
+            this.indexerProvider = undefined;
+        }
+    }
+
+    async tick(_now: number) {
+        // Drain atomically: assigning [] after the await would re-clear anything
+        // a concurrent stop()/clear() queued, and resurrect what it dropped.
+        const pending = this.onNextTick.splice(0);
+        const results = await Promise.allSettled(pending.map((fn) => fn()));
+        return results
+            .map((result) => {
+                if (result.status === "fulfilled") {
+                    return result.value;
+                } else {
+                    console.error(`[${this.messageTag}] tick failed`, result.reason);
+                    // TODO: how to deliver errors down the stream? a broadcast?
+                    return null;
+                }
+            })
+            .filter((response) => response !== null);
+    }
+
+    private epochOf(scope: Scope): number {
+        switch (scope) {
+            case "init":
+                return this.initEpoch;
+            case "incomingFunds":
+                return this.incomingFundsEpoch;
+            case "contractEvents":
+                return this.contractEventsEpoch;
+            case "boarding":
+                return this.boardingEpoch;
+            case "request":
+                return this.requestEpoch;
+            default: {
+                // `never` here while the switch covers every Scope: a new
+                // member fails to compile instead of falling through. Without
+                // this (no noImplicitReturns in tsconfig) the fallthrough
+                // returns `undefined`, and `born !== undefined` makes every
+                // emitter for the new scope born stale — events lost silently.
+                const _exhaustive: never = scope;
+                throw new Error(`Unknown scope: ${_exhaustive}`);
+            }
+        }
+    }
+
+    private newGeneration(scope: Scope): Generation {
+        const born = this.epochOf(scope);
+        const stale = () => born !== this.epochOf(scope);
+        return {
+            get stale() {
+                return stale();
+            },
+        };
+    }
+
+    /**
+     * A handle rather than a `broadcast(response, epoch)` call, because it can
+     * only be written where the closure it guards is created — an epoch passed
+     * at the call site reads identically whether it guards anything or not.
+     */
+    private newEmitter(scope: Scope): Emitter {
+        const gen = this.newGeneration(scope);
+        const walletRequestBinding = this.walletRequestBinding;
+        return {
+            get stale() {
+                return gen.stale;
+            },
+            emit: (response) => {
+                // Before the channel branch, so a dead generation reaches
+                // neither delivery path.
+                if (!response || gen.stale) return;
+                const scopedResponse = { ...response, walletRequestBinding };
+                if (this.channel) return this.channel.broadcast(scopedResponse);
+                this.onNextTick.push(() => scopedResponse); // no channel: legacy tick delivery
+            },
+        };
+    }
+
+    private requireWallet(context?: WalletRequestContext): Wallet {
+        const wallet = context ? context.wallet : this.wallet;
+        if (!wallet) {
+            throw new ReadonlyWalletError();
+        }
+        return wallet;
+    }
+
+    private captureRequestContext(binding: WalletRequestBinding): WalletRequestContext {
+        const current = this.walletRequestBinding;
+        const readonlyWallet = this.readonlyWallet;
+        if (
+            !current ||
+            !readonlyWallet ||
+            !binding ||
+            binding.scope !== current.scope ||
+            binding.network !== current.network
+        ) {
+            throw new Error("Wallet request scope does not match the active wallet");
+        }
+        return {
+            wallet: this.wallet,
+            readonlyWallet,
+            walletRepository: this.walletRepository,
+            arkProvider: this.arkProvider,
+            indexerProvider: readonlyWallet.indexerProvider,
+            binding: current,
+        };
+    }
+
+    private async runOwnedOperation<T>(
+        context: WalletRequestContext,
+        operation: () => Promise<T>,
+    ): Promise<T> {
+        const active = this.walletRequestBinding;
+        if (
+            this.readonlyWallet !== context.readonlyWallet ||
+            !active ||
+            active.scope !== context.binding?.scope ||
+            active.network !== context.binding?.network
+        ) {
+            throw new Error("Wallet request scope is no longer active");
+        }
+        const execution = operation();
+        this.inFlightOperations.add(execution);
+        try {
+            return await execution;
+        } finally {
+            this.inFlightOperations.delete(execution);
+        }
+    }
+
+    private requireReservationWallet(scope: string, context: WalletRequestContext): Wallet {
+        const wallet = this.requireWallet(context);
+        if (!scope || scope !== context.binding?.scope) {
+            throw new Error("Reservation scope does not match the active wallet");
+        }
+        return wallet;
+    }
+
+    private tagged(res: Partial<WalletUpdaterResponse>): WalletUpdaterResponse {
+        // `errorName` is stamped by the bus at its postMessage egress
+        // (`MessageBus.deliverResponse`), not here — one choke point for
+        // every handler and for the bus's own typed errors.
+        return {
+            ...res,
+            tag: this.messageTag,
+        } as WalletUpdaterResponse;
+    }
+
+    // Flows that surrender control to the operator and the other participants
+    // in a batch round: quiet gaps between protocol events can easily exceed
+    // the bus-level messageTimeoutMs. Liveness is covered out-of-band by the
+    // page-side PING / MESSAGE_BUS_NOT_INITIALIZED path triggered by concurrent
+    // short requests (GET_STATUS, GET_BALANCE, ...).
+    isLongRunning(message: WalletUpdaterRequest): boolean {
+        const operation = walletOperation(message);
+        if (!operation) return false;
+        message = operation;
+        return (
+            message.type === "SETTLE" ||
+            message.type === "RECOVER_VTXOS" ||
+            message.type === "RENEW_VTXOS" ||
+            // Migration may rotate the operator's signer and then run a full
+            // settle, so it streams settlement events like RENEW_VTXOS.
+            message.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS" ||
+            // HD restore walks the index range with one indexer round-trip per
+            // step until it hits gapLimit consecutive unused indices. The bus
+            // deadline must not race the scan; liveness stays covered by PING.
+            message.type === "RESTORE_WALLET" ||
+            // `create` and `claim` run sends and sweeps. A bus deadline would
+            // answer with a timeout error and drop the token or txids that the
+            // finished handler could still deliver.
+            (message.type === "ARKADE_CASH" && isLongRunningCashAction(message.payload)) ||
+            message.type === "COSIGN_ONCHAIN_TX" ||
+            message.type === "SEND_ONCHAIN"
+        );
+    }
+
+    getRequestType(message: WalletUpdaterRequest): string | undefined {
+        return walletOperation(message)?.type;
+    }
+
+    async handleMessage(message: WalletUpdaterRequest): Promise<WalletUpdaterResponse> {
+        if (message.type === "SCOPED_WALLET_REQUEST_V1") {
+            try {
+                const request = walletOperation(message);
+                if (
+                    !request ||
+                    !requiresWalletScope(request) ||
+                    request.id !== message.id ||
+                    request.tag !== message.tag
+                ) {
+                    throw new Error("Invalid scoped wallet request");
+                }
+                const context = this.captureRequestContext(message.payload.binding);
+                if (request.type === "CLEAR" && this.longRunningOperations.size > 0) {
+                    throw new Error(
+                        "Cannot clear the wallet while a long-running operation such as a settlement is in progress",
+                    );
+                }
+                const pending = request.type === "CLEAR" ? [...this.inFlightOperations] : undefined;
+                if (pending) {
+                    this.walletRequestBinding = undefined;
+                    this.initEpoch++;
+                    this.requestEpoch++;
+                    this.incomingFundsEpoch++;
+                    this.contractEventsEpoch++;
+                    this.boardingEpoch++;
+                    this.onNextTick = [];
+                }
+                const execution = pending
+                    ? settledWithin(pending, this.drainBudgetMs).then((drained) => {
+                          // Fail rather than wipe after the page's timeout has reported failure.
+                          // The binding stays revoked: callbacks are already fenced off.
+                          if (!drained) {
+                              throw new Error(
+                                  "Wallet not cleared: in-flight operations did not finish; reinitialize and retry",
+                              );
+                          }
+                          return this.dispatchOperation(request, context);
+                      })
+                    : this.dispatchOperation(request, context);
+                // Subscription setup is epoch-revoked; its finite writes admit separately.
+                if (request.type === "INIT_WALLET") return await execution;
+                const operations = this.isLongRunning(message)
+                    ? this.longRunningOperations
+                    : this.inFlightOperations;
+                operations.add(execution);
+                try {
+                    return await execution;
+                } finally {
+                    operations.delete(execution);
+                }
+            } catch (error) {
+                return this.tagged({ id: message.id, error: error as Error });
+            }
+        }
+        if (requiresWalletScope(message)) {
+            return this.tagged({
+                id: message.id,
+                error: new Error("Scoped wallet request required"),
+            });
+        }
+        return this.dispatchOperation(message);
+    }
+
+    private async dispatchOperation(
+        message: WalletRequest,
+        context?: WalletRequestContext,
+    ): Promise<WalletUpdaterResponse> {
+        const id = message.id;
+        // Shared by the progress callbacks below: they are inline case blocks,
+        // so there is no per-request handler of their own to capture at.
+        const emitter = this.newEmitter("request");
+        if (message.type === "INIT_WALLET") {
+            if (!context) throw new Error("Scoped wallet request required");
+            await this.handleInitWallet(message, context);
+            return this.tagged({
+                id,
+                type: "WALLET_INITIALIZED",
+            });
+        }
+        if (!this.readonlyWallet) {
+            return this.tagged({
+                id,
+                error: new WalletNotInitializedError(),
+            });
+        }
+        context ??= {
+            wallet: this.wallet,
+            readonlyWallet: this.readonlyWallet,
+            walletRepository: this.walletRepository,
+            arkProvider: this.arkProvider,
+            indexerProvider: this.readonlyWallet.indexerProvider,
+            binding: this.walletRequestBinding,
+        };
+        const readonlyWallet = context.readonlyWallet;
+        const repository = context.walletRepository;
+        try {
+            switch (message.type) {
+                case "SETTLE": {
+                    const response = await this.handleSettle(message, this.requireWallet(context));
+                    return this.tagged({
+                        id,
+                        ...response,
+                    });
+                }
+
+                case "GET_ADDRESS": {
+                    const address = await readonlyWallet.getAddress();
+                    return this.tagged({
+                        id,
+                        type: "ADDRESS",
+                        payload: { address },
+                    });
+                }
+                case "GET_BOARDING_ADDRESS": {
+                    const address = await readonlyWallet.getBoardingAddress();
+                    return this.tagged({
+                        id,
+                        type: "BOARDING_ADDRESS",
+                        payload: { address },
+                    });
+                }
+                case "ARKADE_CASH": {
+                    const request = message.payload;
+                    switch (request.action) {
+                        case "get": {
+                            const cash = ArkadeCash.fromString(request.token);
+                            const report = await readArkadeCash(
+                                request.token,
+                                readonlyWallet.indexerProvider,
+                                await readonlyWallet.getArkadeInfo(),
+                                readonlyWallet.onchainProvider,
+                            );
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "get", cashId: arkadeCashId(cash), ...report },
+                            });
+                        }
+                        case "create": {
+                            try {
+                                const token = await this.requireWallet(context).createCash(
+                                    request.amount,
+                                );
+                                return this.tagged({
+                                    id,
+                                    type: "ARKADE_CASH",
+                                    payload: { action: "create", token },
+                                });
+                            } catch (error) {
+                                // A funded-but-failed create must hand its token
+                                // back: a raw Error would lose `cash` in the clone.
+                                if (!(error instanceof ArkadeCashCreateError)) throw error;
+                                return this.tagged({
+                                    id,
+                                    error: serializeArkadeCashCreateError(
+                                        error,
+                                    ) as unknown as Error,
+                                });
+                            }
+                        }
+                        case "activities": {
+                            const records = createArkadeCashTracker();
+                            request.records.forEach((record) =>
+                                addArkadeCashRecord(records, record),
+                            );
+                            const state = await repository?.getWalletState();
+                            const recovered = state?.settings?.arkadeCashRecovery;
+                            if (Array.isArray(recovered)) {
+                                recovered
+                                    .filter(isArkadeCashRecord)
+                                    .forEach((record) => addArkadeCashRecord(records, record));
+                            }
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: {
+                                    action: "activities",
+                                    activities: await arkadeCashActivity(
+                                        records,
+                                        (await this.buildTransactionHistoryFromCache(context)) ??
+                                            [],
+                                    ),
+                                },
+                            });
+                        }
+                        case "claim": {
+                            const result = await this.requireWallet(context).claimCash(
+                                request.token,
+                            );
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "claim", ...result },
+                            });
+                        }
+                        case "reveal": {
+                            const record = ArkadeCash.fromString(request.token);
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "reveal", cashId: arkadeCashId(record) },
+                            });
+                        }
+                    }
+                    return this.tagged({ id, error: new Error("Unknown Arkade Cash action") });
+                }
+                case "GET_OPERATOR_INFO":
+                case "GET_ARKADE_INFO": {
+                    const { payload } = message as RequestGetOperatorInfo;
+                    const info = await readonlyWallet.getOperatorInfo(payload);
+                    return this.tagged({
+                        id,
+                        type: "OPERATOR_INFO",
+                        payload: { info },
+                    });
+                }
+                case "INDEXER_GET_VTXOS": {
+                    const { opts } = (message as RequestIndexerGetVtxos).payload;
+                    const reader = await readonlyWallet.getArkadeReader();
+                    return this.tagged({
+                        id,
+                        type: "INDEXER_VTXOS",
+                        payload: await reader.getVtxos(opts),
+                    });
+                }
+                case "INDEXER_GET_VIRTUAL_TXS": {
+                    const { txids, opts } = (message as RequestIndexerGetVirtualTxs).payload;
+                    const reader = await readonlyWallet.getArkadeReader();
+                    return this.tagged({
+                        id,
+                        type: "INDEXER_VIRTUAL_TXS",
+                        payload: await reader.getVirtualTxs(txids, opts),
+                    });
+                }
+                case "SUBMIT_TX": {
+                    const { signedArkTx, checkpointTxs } = (message as RequestSubmitTx).payload;
+                    // requireWallet, not readonlyWallet: a readonly worker must
+                    // refuse to broadcast rather than answer with someone
+                    // else's provider.
+                    const broadcaster = await this.requireWallet(context).getArkadeBroadcaster();
+                    const result = await broadcaster.submitTx(signedArkTx, checkpointTxs);
+                    return this.tagged({
+                        id,
+                        type: "SUBMIT_TX_SUCCESS",
+                        payload: result,
+                    });
+                }
+                case "FINALIZE_TX": {
+                    const { arkTxid, finalCheckpointTxs } = (message as RequestFinalizeTx).payload;
+                    const broadcaster = await this.requireWallet(context).getArkadeBroadcaster();
+                    await broadcaster.finalizeTx(arkTxid, finalCheckpointTxs);
+                    return this.tagged({ id, type: "FINALIZE_TX_SUCCESS" });
+                }
+                case "GET_BALANCE": {
+                    const balance = await this.handleGetBalance(context);
+                    return this.tagged({
+                        id,
+                        type: "BALANCE",
+                        payload: balance,
+                    });
+                }
+                case "GET_VTXOS": {
+                    const vtxos = await this.handleGetVtxos(message, context);
+                    return {
+                        tag: this.messageTag,
+                        id,
+                        type: "VTXOS",
+                        payload: { vtxos },
+                    };
+                }
+                case "GET_SPENDABLE_VTXOS": {
+                    const vtxos = await readonlyWallet.getSpendableVtxos(message.payload.filter);
+                    return this.tagged({
+                        id,
+                        type: "SPENDABLE_VTXOS",
+                        payload: { vtxos, filterApplied: true },
+                    });
+                }
+                case "GET_BOARDING_UTXOS": {
+                    if (!readonlyWallet) {
+                        throw new WalletNotInitializedError();
+                    }
+                    const utxos = await readonlyWallet.getBoardingUtxos();
+                    return this.tagged({
+                        id,
+                        type: "BOARDING_UTXOS",
+                        payload: { utxos },
+                    });
+                }
+                case "GET_TRANSACTION_HISTORY": {
+                    const transactions =
+                        (await this.buildTransactionHistoryFromCache(context)) ?? [];
+                    return this.tagged({
+                        id,
+                        type: "TRANSACTION_HISTORY",
+                        payload: { transactions },
+                    });
+                }
+                case "GET_STATUS": {
+                    const binding = this.walletRequestBinding;
+                    const pubKey = await readonlyWallet.identity.xOnlyPublicKey();
+                    return this.tagged({
+                        id,
+                        type: "WALLET_STATUS",
+                        payload: {
+                            walletInitialized: true,
+                            xOnlyPublicKey: pubKey,
+                            walletRequestBinding: binding,
+                            providerConnectionState: readonlyWallet.getProviderConnectionState(),
+                        },
+                    });
+                }
+                case "GET_CONTRACT_SYNC_STATE": {
+                    // Pure diagnostics read: report the manager's already-known
+                    // state without forcing initialization or a remote sync.
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_SYNC_STATE",
+                        payload: { syncState: readonlyWallet.getContractSyncState() },
+                    });
+                }
+                case "CLEAR": {
+                    await this.clear(readonlyWallet);
+                    return this.tagged({
+                        id,
+                        type: "CLEAR_SUCCESS",
+                        payload: { cleared: true },
+                    });
+                }
+                case "RELOAD_WALLET": {
+                    await this.reloadWallet(context);
+                    return this.tagged({
+                        id,
+                        type: "RELOAD_SUCCESS",
+                        payload: { reloaded: true },
+                    });
+                }
+                case "SIGN_TRANSACTION": {
+                    const response = await this.handleSignTransaction(
+                        message,
+                        this.requireWallet(context),
+                    );
+                    return this.tagged({
+                        id,
+                        ...response,
+                    });
+                }
+                case "CREATE_CONTRACT": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const contract = await manager.createContract(message.payload);
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_CREATED",
+                        payload: { contract },
+                    });
+                }
+                case "GET_CONTRACTS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const contracts = await manager.getContracts(message.payload.filter);
+                    return this.tagged({
+                        id,
+                        type: "CONTRACTS",
+                        payload: { contracts },
+                    });
+                }
+                case "GET_CONTRACTS_WITH_VTXOS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const contracts = await manager.getContractsWithVtxos(
+                        message.payload.filter,
+                        undefined,
+                        message.payload.options,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "CONTRACTS_WITH_VTXOS",
+                        payload: { contracts, filterApplied: true },
+                    });
+                }
+                case "GET_STORED_CONTRACTS_WITH_VTXOS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const contracts = await manager.getStoredContractsWithVtxos(
+                        message.payload.filter,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "STORED_CONTRACTS_WITH_VTXOS",
+                        payload: { contracts },
+                    });
+                }
+                case "WATCH_SCRIPT": {
+                    const manager = await readonlyWallet.getContractManager();
+                    // Acking a manager that cannot watch would tell the
+                    // caller its script is covered when nothing is subscribed.
+                    if (!manager.watchScript) throw unsupportedByManager("watchScript");
+                    await manager.watchScript(message.payload.script, {
+                        label: message.payload.label,
+                    });
+                    return this.tagged({
+                        id,
+                        type: "SCRIPT_WATCHED",
+                        payload: { script: message.payload.script },
+                    });
+                }
+                case "UNWATCH_SCRIPT": {
+                    const manager = await readonlyWallet.getContractManager();
+                    if (!manager.unwatchScript) throw unsupportedByManager("unwatchScript");
+                    await manager.unwatchScript(message.payload.script);
+                    return this.tagged({
+                        id,
+                        type: "SCRIPT_UNWATCHED",
+                        payload: { script: message.payload.script },
+                    });
+                }
+                case "GET_WATCHED_SCRIPTS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    if (!manager.getWatchedScripts) {
+                        throw unsupportedByManager("getWatchedScripts");
+                    }
+                    return this.tagged({
+                        id,
+                        type: "WATCHED_SCRIPTS",
+                        payload: { scripts: await manager.getWatchedScripts() },
+                    });
+                }
+                case "ANNOTATE_VTXOS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const annotated = await manager.annotateVtxos(message.payload.vtxos);
+                    return this.tagged({
+                        id,
+                        type: "ANNOTATED_VTXOS",
+                        payload: { vtxos: annotated },
+                    });
+                }
+                case "UPDATE_CONTRACT": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const { script, updates, watchStateOnly } = message.payload;
+                    if (watchStateOnly && updates.watch) {
+                        await manager.setContractWatchState(script, updates.watch);
+                        return this.tagged({ id, type: "CONTRACT_WATCH_STATE_SET" });
+                    }
+                    const contract = await manager.updateContract(script, updates);
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_UPDATED",
+                        payload: { contract },
+                    });
+                }
+                case "DELETE_CONTRACT": {
+                    const manager = await readonlyWallet.getContractManager();
+                    await manager.deleteContract(message.payload.script);
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_DELETED",
+                        payload: { deleted: true },
+                    });
+                }
+                case "GET_SPENDABLE_PATHS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const paths = await manager.getSpendablePaths(message.payload.options);
+                    return this.tagged({
+                        id,
+                        type: "SPENDABLE_PATHS",
+                        payload: { paths },
+                    });
+                }
+                case "GET_ALL_SPENDING_PATHS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const paths = await manager.getAllSpendingPaths(message.payload.options);
+                    return this.tagged({
+                        id,
+                        type: "ALL_SPENDING_PATHS",
+                        payload: { paths },
+                    });
+                }
+                case "GET_UNSUPPORTED_CONTRACTS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const contracts = await manager.getUnsupportedContracts();
+                    return this.tagged({
+                        id,
+                        type: "UNSUPPORTED_CONTRACTS",
+                        payload: { contracts },
+                    });
+                }
+                case "IS_CONTRACT_MANAGER_WATCHING": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const isWatching = await manager.isWatching();
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_WATCHING",
+                        payload: { isWatching },
+                    });
+                }
+                case "REFRESH_VTXOS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    await manager.refreshVtxos((message as RequestRefreshVtxos).payload);
+                    return this.tagged({
+                        id,
+                        type: "REFRESH_VTXOS_SUCCESS",
+                    });
+                }
+                case "REFRESH_OUTPOINTS": {
+                    const manager = await readonlyWallet.getContractManager();
+                    const { outpoints } = (message as RequestRefreshOutpoints).payload;
+                    await manager.refreshOutpoints(outpoints);
+                    return this.tagged({
+                        id,
+                        type: "REFRESH_OUTPOINTS_SUCCESS",
+                    });
+                }
+                // The HD *probes* below answer like a static wallet (undefined
+                // / empty) rather than erroring when the worker wallet is
+                // readonly or non-HD: the page-side structural guards
+                // (isHDWalletCapable / isHDAllocationCapable) cannot see
+                // across the message bus, so "no HD state" must be a value.
+                //
+                // The two *allocating* cases split that condition. A wallet
+                // that is present but cannot allocate is a fact about the
+                // wallet, and still answers as a static one. No signing wallet
+                // at all — a readonly-initialized worker, or one past clear() /
+                // stop() — is an initialization error like every other mutating
+                // case here: answering "allocated" or "advanced" there would
+                // let the same index be issued twice, and two swaps sharing a
+                // descriptor derive the same preimage.
+                case "GET_CURRENT_SIGNING_DESCRIPTOR": {
+                    const wallet = context ? context.wallet : this.wallet;
+                    const descriptor = isHDWalletCapable(wallet)
+                        ? await wallet.getCurrentSigningDescriptor()
+                        : undefined;
+                    return this.tagged({
+                        id,
+                        type: "CURRENT_SIGNING_DESCRIPTOR",
+                        payload: { descriptor },
+                    });
+                }
+                case "GET_NEXT_SIGNING_DESCRIPTOR": {
+                    const wallet = context ? context.wallet : this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
+                    const descriptor = isHDAllocationCapable(wallet)
+                        ? await wallet.getNextSigningDescriptor()
+                        : undefined;
+                    return this.tagged({
+                        id,
+                        type: "NEXT_SIGNING_DESCRIPTOR",
+                        payload: { descriptor },
+                    });
+                }
+                case "GET_NEW_ADDRESSES": {
+                    const wallet = context ? context.wallet : this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
+                    // No capability probe: allocation policy is the wallet's,
+                    // and `getNewAddresses` answers for every shape — a wallet
+                    // with no HD stream returns its existing addresses, or
+                    // throws when the caller demanded a fresh one.
+                    const addresses = await wallet.getNewAddresses(
+                        (message as RequestGetNewAddresses).payload,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "NEW_ADDRESSES",
+                        payload: { addresses },
+                    });
+                }
+                case "GET_USED_SIGNING_DESCRIPTORS": {
+                    const wallet = context ? context.wallet : this.wallet;
+                    const descriptors = isHDWalletCapable(wallet)
+                        ? await wallet.getUsedSigningDescriptors(
+                              (message as RequestGetUsedSigningDescriptors).payload,
+                          )
+                        : [];
+                    return this.tagged({
+                        id,
+                        type: "USED_SIGNING_DESCRIPTORS",
+                        payload: { descriptors },
+                    });
+                }
+                case "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK": {
+                    const wallet = context ? context.wallet : this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
+                    if (isHDAllocationCapable(wallet)) {
+                        // Throws on a foreign or index-less descriptor — that
+                        // propagates to the page as an error response.
+                        await wallet.advanceSigningDescriptorWatermark(
+                            (message as RequestAdvanceSigningDescriptorWatermark).payload
+                                .descriptor,
+                        );
+                    }
+                    return this.tagged({
+                        id,
+                        type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED",
+                    });
+                }
+                case "RESERVE_SCOPED_VTXOS": {
+                    const { reservationId, outpoints, scope } = message.payload;
+                    const wallet = this.requireReservationWallet(scope, context);
+                    await wallet.reserveVtxosPersistently(outpoints, reservationId);
+                    return this.tagged({ id, type: "VTXOS_RESERVED" });
+                }
+                case "RELEASE_SCOPED_VTXOS": {
+                    const { reservationId, scope, outpoints } = message.payload;
+                    await this.requireReservationWallet(scope, context).releaseVtxoReservation(
+                        reservationId,
+                        outpoints,
+                    );
+                    return this.tagged({ id, type: "VTXOS_RELEASED" });
+                }
+                case "SEND": {
+                    const wallet = this.requireWallet(context);
+                    const { recipients, selectedVtxos, maxChangeFee } = (message as RequestSend)
+                        .payload;
+                    // Object form only when the client asked for it: the
+                    // variadic form is what every existing client sends, and
+                    // routing it through `{ recipients }` regardless would put
+                    // a behaviour change behind a protocol field nobody set.
+                    const txid = await (selectedVtxos || maxChangeFee !== undefined
+                        ? wallet.send({ recipients, selectedVtxos, maxChangeFee })
+                        : wallet.send(...recipients));
+                    return this.tagged({
+                        id,
+                        type: "SEND_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "SEND_WITH_DEADLINE":
+                case "SEND_WITH_INPUT_EXPIRY_FLOOR": {
+                    const wallet = this.requireWallet(context);
+                    const {
+                        recipients,
+                        selectedVtxos,
+                        maxChangeFee,
+                        validUntil: wireDeadline,
+                    } = (message as RequestSendWithDeadline | RequestSendWithInputExpiryFloor)
+                        .payload;
+                    const inputExpiryFloor =
+                        message.type === "SEND_WITH_INPUT_EXPIRY_FLOOR"
+                            ? captureInputExpiryFloor(
+                                  (message as RequestSendWithInputExpiryFloor).payload
+                                      .inputExpiryFloor,
+                                  true,
+                              )!
+                            : undefined;
+                    const validUntil = captureSendDeadline(
+                        wireDeadline,
+                        message.type === "SEND_WITH_DEADLINE",
+                    );
+                    try {
+                        const txid = await wallet.send({
+                            recipients,
+                            ...(selectedVtxos ? { selectedVtxos } : {}),
+                            ...(maxChangeFee !== undefined ? { maxChangeFee } : {}),
+                            validUntil,
+                            ...(inputExpiryFloor ? { inputExpiryFloor } : {}),
+                        });
+                        return this.tagged({ id, type: "SEND_SUCCESS", payload: { txid } });
+                    } catch (error) {
+                        if (
+                            validUntil === undefined ||
+                            !(error instanceof SendDeadlineExceededError)
+                        )
+                            throw error;
+                        return this.tagged({
+                            id,
+                            type: "SEND_DEADLINE_EXCEEDED",
+                            error,
+                            payload: { validUntil },
+                        });
+                    }
+                }
+                case "GET_ASSET_DETAILS": {
+                    const { assetId } = (message as RequestGetAssetDetails).payload;
+                    const assetDetails = await readonlyWallet.assetManager.getAssetDetails(assetId);
+                    return this.tagged({
+                        id,
+                        type: "ASSET_DETAILS",
+                        payload: { assetDetails },
+                    });
+                }
+                case "ISSUE": {
+                    const { params } = (message as RequestIssue).payload;
+                    const result = await this.requireWallet(context).assetManager.issue(params);
+                    return this.tagged({
+                        id,
+                        type: "ISSUE_SUCCESS",
+                        payload: { result },
+                    });
+                }
+                case "REISSUE": {
+                    const { params } = (message as RequestReissue).payload;
+                    const txid = await this.requireWallet(context).assetManager.reissue(params);
+                    return this.tagged({
+                        id,
+                        type: "REISSUE_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "BURN": {
+                    const { params } = (message as RequestBurn).payload;
+                    const txid = await this.requireWallet(context).assetManager.burn(params);
+                    return this.tagged({
+                        id,
+                        type: "BURN_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "DELEGATE": {
+                    const response = await this.handleDelegate(
+                        message as RequestDelegate,
+                        this.requireWallet(context),
+                    );
+                    return this.tagged({ id, ...response });
+                }
+                case "GET_DELEGATE_INFO": {
+                    const wallet = this.requireWallet(context);
+                    const delegateManager = await wallet.getDelegateManager();
+                    if (!delegateManager) {
+                        throw new DelegateNotConfiguredError();
+                    }
+                    const info = await delegateManager.getDelegateInfo();
+                    return this.tagged({
+                        id,
+                        type: "DELEGATE_INFO",
+                        payload: { info },
+                    });
+                }
+                case "RECOVER_VTXOS": {
+                    const wallet = this.requireWallet(context);
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const txid = await vtxoManager.recoverVtxos((e) => {
+                        emitter.emit(
+                            this.tagged({
+                                id,
+                                type: "RECOVER_VTXOS_EVENT",
+                                payload: e,
+                            }),
+                        );
+                    });
+                    return this.tagged({
+                        id,
+                        type: "RECOVER_VTXOS_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "GET_RECOVERABLE_BALANCE": {
+                    const wallet = this.requireWallet(context);
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const balance = await vtxoManager.getRecoverableBalance();
+                    return this.tagged({
+                        id,
+                        type: "RECOVERABLE_BALANCE",
+                        payload: {
+                            recoverable: balance.recoverable.toString(),
+                            subdust: balance.subdust.toString(),
+                            includesSubdust: balance.includesSubdust,
+                            vtxoCount: balance.vtxoCount,
+                        },
+                    });
+                }
+                case "GET_EXPIRING_VTXOS": {
+                    const wallet = this.requireWallet(context);
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const vtxos = await vtxoManager.getExpiringVtxos(
+                        (message as RequestGetExpiringVtxos).payload.thresholdMs,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "EXPIRING_VTXOS",
+                        payload: { vtxos },
+                    });
+                }
+                case "RENEW_VTXOS": {
+                    const wallet = this.requireWallet(context);
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const txid = await vtxoManager.renewVtxos((e) => {
+                        emitter.emit(
+                            this.tagged({
+                                id,
+                                type: "RENEW_VTXOS_EVENT",
+                                payload: e,
+                            }),
+                        );
+                    }, message.payload);
+                    return this.tagged({
+                        id,
+                        type: "RENEW_VTXOS_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "GET_EXPIRED_BOARDING_UTXOS": {
+                    const wallet = this.requireWallet(context);
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const utxos = await vtxoManager.getExpiredBoardingUtxos();
+                    return this.tagged({
+                        id,
+                        type: "EXPIRED_BOARDING_UTXOS",
+                        payload: { utxos },
+                    });
+                }
+                case "SWEEP_EXPIRED_BOARDING_UTXOS": {
+                    const wallet = this.requireWallet(context);
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const txid = await vtxoManager.sweepExpiredBoardingUtxos();
+                    return this.tagged({
+                        id,
+                        type: "SWEEP_EXPIRED_BOARDING_UTXOS_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "COSIGN_ONCHAIN_TX": {
+                    const { psbt } = (message as RequestCosignOnchainTx).payload;
+                    const txid = await this.requireWallet(context).cosignOnchainTx(psbt);
+                    return this.tagged({
+                        id,
+                        type: "COSIGN_ONCHAIN_TX_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "SEND_ONCHAIN": {
+                    const params = (message as RequestSendOnchain).payload;
+                    const txid = await this.requireWallet(context).sendOnchain(params);
+                    return this.tagged({
+                        id,
+                        type: "SEND_ONCHAIN_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "MIGRATE_DEPRECATED_SIGNER_VTXOS": {
+                    const wallet = this.requireWallet(context);
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const report = await vtxoManager.migrateDeprecatedSignerVtxos({
+                        eventCallback: (e) => {
+                            emitter.emit(
+                                this.tagged({
+                                    id,
+                                    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT",
+                                    payload: e,
+                                }),
+                            );
+                        },
+                    });
+                    return this.tagged({
+                        id,
+                        type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
+                        payload: { report: serializeMigrationReport(report) },
+                    });
+                }
+                case "GET_DEPRECATED_SIGNER_STATUS": {
+                    const wallet = this.requireWallet(context);
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const signers = await vtxoManager.getDeprecatedSignerStatus();
+                    return this.tagged({
+                        id,
+                        type: "DEPRECATED_SIGNER_STATUS",
+                        payload: { signers: signers.map(serializeDeprecatedSignerReport) },
+                    });
+                }
+                case "RESTORE_WALLET": {
+                    const wallet = this.requireWallet(context);
+                    try {
+                        await wallet.restore(message.payload);
+                    } catch (error: unknown) {
+                        // AggregateError loses its prototype across postMessage
+                        // and `.errors` is not portable enough to round-trip
+                        // raw — serialize explicitly so the page can rebuild
+                        // it. Other errors fall through to the generic catch.
+                        if (error instanceof AggregateError) {
+                            return this.tagged({
+                                id,
+                                error: serializeAggregateError(error) as unknown as Error,
+                            });
+                        }
+                        throw error;
+                    }
+                    return this.tagged({
+                        id,
+                        type: "RESTORE_WALLET_SUCCESS",
+                    });
+                }
+                default:
+                    console.error("Unknown message type", message);
+                    throw new Error("Unknown message");
+            }
+        } catch (error: unknown) {
+            return this.tagged({ id, error: error as Error });
+        }
+    }
+
+    // Wallet methods
+    private async handleInitWallet({ payload }: RequestInitWallet, context: WalletRequestContext) {
+        this.lazyBoardingInit = payload.lazyBoarding ?? false;
+        this.boardingEpoch++;
+        this.boardingLoaded = false;
+        this.indexerProvider = context.indexerProvider;
+        await this.onWalletInitialized(context);
+    }
+
+    /** @see RequestInitWallet.payload.lazyBoarding */
+    private lazyBoardingInit = false;
+    /** Set once this session has actually fetched the boarding addresses. */
+    private boardingLoaded = false;
+
+    /**
+     * The worker's own balance. Same bucketing rules as `Wallet.getBalance` —
+     * both call {@link computeOffchainBalance} — but deliberately a different
+     * freshness: this reads the repository directly, with no indexer sync, so a
+     * polling UI never pays for a network round-trip. That rules out
+     * `pendingRecoveryOutpoints()`, whose snapshot syncs; the same classification
+     * runs over this method's local snapshot instead.
+     */
+    private async handleGetBalance(context?: WalletRequestContext): Promise<WalletBalance> {
+        const wallet = context?.readonlyWallet ?? this.readonlyWallet;
+        const signingWallet = context ? context.wallet : this.wallet;
+        const [boardingUtxos, { snapshot, vtxos: allVtxos }] = await Promise.all([
+            this.getBoardingUtxosForBalance(wallet),
+            // The bucketer drops every spent coin and the gate reads contracts only.
+            this.repoSnapshot({ unspentOnly: true }, context),
+        ]);
+        // Both exclusion sets come off that one snapshot, so they answer about
+        // the same instant — and neither costs an indexer round-trip.
+        const pendingOutpoints = wallet?.pendingRecoveryOutpointsIn(snapshot) ?? new Set<string>();
+
+        const gated = gatedFrom(snapshot);
+        const unlocked = new Set(
+            (await spendableVtxosExcludingLocked(allVtxos, wallet?.intentRepository)).map(
+                (vtxo) => `${vtxo.txid}:${vtxo.vout}`,
+            ),
+        );
+
+        // No chain tip: this is an offline-first read.
+        const offchain = computeOffchainBalance(allVtxos, {
+            now: { timestamp: new Date() },
+            isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
+            isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
+            isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+            isReserved: (vtxo) => signingWallet?.isVtxoReserved(vtxo) ?? false,
+            dustCarrier: getDustAmount(wallet),
+        });
+
+        const balance = toWalletBalance(boardingUtxos, offchain);
+        balance.boarding.loaded = this.boardingLoaded;
+        return balance;
+    }
+    private async getBoardingUtxosForBalance(
+        wallet = this.readonlyWallet,
+    ): Promise<ExtendedCoin[]> {
+        if (!wallet) return [];
+        if (!this.lazyBoardingInit) return wallet.getBoardingUtxos();
+        return wallet.getStoredBoardingUtxos
+            ? wallet.getStoredBoardingUtxos()
+            : wallet.getBoardingUtxos();
+    }
+    private async onWalletInitialized(context: WalletRequestContext) {
+        const wallet = context.readonlyWallet;
+        const signingWallet = context.wallet;
+        const lazyBoarding = this.lazyBoardingInit;
+        if (!context.arkProvider || !context.indexerProvider || !context.walletRepository) {
+            return;
+        }
+
+        // The last INIT to start wins: an older one returns at its next check.
+        this.initEpoch++;
+        const init = this.newGeneration("init");
+
+        // Initialize contract manager FIRST — this populates the repository
+        // with full virtual output history for all contracts (one indexer call per contract)
+        await this.ensureContractEventBroadcasting(context);
+        if (init.stale) return;
+
+        await this.refreshCachedData({ lazyBoarding }, context, init);
+        if (init.stale) return;
+
+        // Recover pending transactions (init-only, not on reload).
+        // Pending txs only exist if a send was interrupted mid-finalization.
+        if (signingWallet) {
+            try {
+                const vtxos = await this.getVtxosFromRepo(undefined, context);
+                if (init.stale) return;
+                const { pending, finalized } = await this.runOwnedOperation(context, () =>
+                    signingWallet.finalizePendingTxs(
+                        vtxos.filter(
+                            (vtxo) => vtxo.isSpent || (vtxo.isPreconfirmed && !vtxo.isSwept),
+                        ),
+                    ),
+                );
+                console.info(
+                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`,
+                );
+            } catch (error: unknown) {
+                console.error("Error recovering pending transactions:", error);
+            }
+            if (init.stale) return;
+        }
+
+        this.incomingFundsEpoch++;
+        const emitter = this.newEmitter("incomingFunds");
+        const provider = wallet.onchainProvider ?? this;
+        // Serialized per provider: a provider may key watches by script (Electrum
+        // does), so a stale registration finishing late would overwrite, then
+        // unsubscribe, the live one. A timeout or bypass here reopens that race.
+        const previousRegistration =
+            this.incomingFundsRegistrations.get(provider) ?? Promise.resolve();
+        const registration = previousRegistration.then(() =>
+            this.registerIncomingFunds(wallet, emitter, context),
+        );
+        this.incomingFundsRegistrations.set(
+            provider,
+            registration.catch((error) => {
+                console.error("Error subscribing to incoming funds:", error);
+            }),
+        );
+
+        if (!lazyBoarding) await registration;
+        if (signingWallet && !emitter.stale) {
+            try {
+                await this.runOwnedOperation(context, () => signingWallet.getVtxoManager());
+            } catch (error) {
+                console.error("Error starting VtxoManager:", error);
+            }
+        }
+    }
+
+    private async registerIncomingFunds(
+        wallet: ReadonlyWallet,
+        emitter: Emitter,
+        context: WalletRequestContext,
+    ): Promise<void> {
+        const repository = context.walletRepository;
+        if (emitter.stale) return;
+        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
+        this.incomingFundsSubscription = undefined;
+
+        const address = await wallet.getAddress();
+        if (emitter.stale) return;
+
+        // subscribe for incoming funds and notify all clients when new funds arrive
+        const unsubscribe = await wallet.notifyIncomingFunds(async (funds) => {
+            if (emitter.stale) return;
+            if (funds.type === "vtxo") {
+                // `funds.newVtxos` / `funds.spentVtxos` are already
+                // ExtendedVirtualCoin — annotation happened inside the
+                // underlying Wallet's subscription handler before this
+                // callback fired. Re-annotating here would only duplicate
+                // work and re-expose us to `annotateVtxos` throws.
+                const { newVtxos, spentVtxos } = funds;
+
+                if (newVtxos.length + spentVtxos.length === 0) return;
+
+                // Save virtual outputs using unified repository. The
+                // event may carry rows for several scripts (other
+                // contracts the wallet watches), so split by script and
+                // save each bucket under its own contract address rather
+                // than saving a mixed-script array under one address.
+                const byScript = new Map<string, ExtendedVirtualCoin[]>();
+                for (const v of [...newVtxos, ...spentVtxos]) {
+                    if (!v.script) {
+                        // Without a script we can't route the row to the
+                        // right contract bucket; surface the drop instead
+                        // of silently losing the VTXO.
+                        console.warn(
+                            `WalletMessageHandler.notifyIncomingFunds: dropping VTXO without script ${v.txid}:${v.vout}`,
+                        );
+                        continue;
+                    }
+                    const arr = byScript.get(v.script) ?? [];
+                    arr.push(v);
+                    byScript.set(v.script, arr);
+                }
+                let walletScript: string | undefined;
+                try {
+                    walletScript = scriptFromArkAddress(address);
+                } catch {
+                    walletScript = undefined;
+                }
+                // Re-checked after every await: this callback *writes* before
+                // it emits, and `clear()` leaves `walletRepository` set, so
+                // guarding only the emit would resurrect the rows the wipe
+                // just deleted while telling the page nothing.
+                const cm = await wallet.getContractManager();
+                if (emitter.stale) return;
+                const contracts = await cm.getContracts();
+                if (emitter.stale) return;
+                const addrByScript = new Map(contracts.map((c) => [c.script, c.address]));
+                for (const [script, vtxos] of byScript) {
+                    const filtered = warnAndFilterVtxosForScript(
+                        vtxos,
+                        script,
+                        "WalletMessageHandler.notifyIncomingFunds",
+                    );
+                    if (filtered.length === 0) continue;
+                    const targetAddress =
+                        script === walletScript ? address : addrByScript.get(script);
+                    if (!targetAddress) continue;
+                    if (repository) {
+                        if (emitter.stale) return;
+                        await this.runOwnedOperation(context, () =>
+                            saveVtxosForContract(
+                                repository,
+                                { script, address: targetAddress },
+                                filtered,
+                            ),
+                        );
+                    }
+                }
+
+                // notify all clients about the virtual output state update
+                emitter.emit(
+                    this.tagged({
+                        type: "VTXO_UPDATE",
+                        broadcast: true,
+                        payload: { newVtxos, spentVtxos },
+                    }),
+                );
+            }
+            if (funds.type === "utxo") {
+                // A deposit may land on the current OR a previous boarding
+                // address (per-derivation rotation, plan §6-IV.2). The
+                // notified `coins` carry no address, so re-fetch + re-sync
+                // the full boarding-address set via getBoardingUtxos, which
+                // stores each UTXO under the script it sits on with the
+                // correct per-UTXO tapscript — instead of assuming the
+                // current boarding address.
+                if (emitter.stale) return; // its re-sync is internal: bail before the call
+                const utxos = await this.runOwnedOperation(context, () =>
+                    wallet.getBoardingUtxos(),
+                );
+
+                // notify all clients about the boarding input state update
+                emitter.emit(
+                    this.tagged({
+                        type: "UTXO_UPDATE",
+                        broadcast: true,
+                        payload: { coins: utxos },
+                    }),
+                );
+            }
+        });
+        // Teardown landed mid-registration: the subscription is already live, so
+        // a bare return would leave a callback nothing can unsubscribe.
+        if (emitter.stale) return unsubscribe();
+        this.incomingFundsSubscription = unsubscribe;
+    }
+
+    /**
+     * Refresh boarding inputs and transaction history. The virtual outputs come
+     * from the contract manager, which runs before this. Shared by
+     * onWalletInitialized (full bootstrap) and reloadWallet (post-refresh),
+     * avoiding duplicate subscriptions and VtxoManager restarts.
+     *
+     * Both legs reach the onchain provider, so `lazyBoarding` moves them both
+     * off the caller's path. @see RequestInitWallet.payload.lazyBoarding
+     */
+    private async refreshCachedData(
+        opts?: { lazyBoarding?: boolean },
+        context?: WalletRequestContext,
+        generation?: Generation,
+    ) {
+        const wallet = context?.readonlyWallet ?? this.readonlyWallet;
+        const repository = context ? context.walletRepository : this.walletRepository;
+        if (!wallet || !repository) {
+            return;
+        }
+        const captured = context ?? {
+            wallet: this.wallet,
+            readonlyWallet: wallet,
+            walletRepository: repository,
+            arkProvider: this.arkProvider,
+            indexerProvider: wallet.indexerProvider,
+            binding: this.walletRequestBinding,
+        };
+
+        if (opts?.lazyBoarding) {
+            const emitter = this.newEmitter("boarding");
+            void (async () => {
+                // `emitter` gates every write: a `clear()` or re-init during the onchain fetch
+                // must not repopulate the wiped repository. History stays behind this fetch so
+                // init returns with both onchain legs still parked.
+                await this.refreshBoardingCache(emitter, wallet, captured);
+                if (emitter.stale) return;
+                this.boardingLoaded = true;
+                const coins = (await wallet.getStoredBoardingUtxos?.()) ?? [];
+                emitter.emit(
+                    this.tagged({
+                        type: "UTXO_UPDATE",
+                        broadcast: true,
+                        payload: { coins },
+                    }),
+                );
+                await this.storeHistoryCache(
+                    await this.loadHistoryCache(captured),
+                    emitter,
+                    repository,
+                    captured,
+                );
+            })().catch((error) => {
+                console.warn("[wallet] background refresh failed", error);
+            });
+            return;
+        }
+
+        const history = this.loadHistoryCache(captured);
+        void history.catch(() => undefined);
+        await this.refreshBoardingCache(generation, wallet, captured);
+        if (generation?.stale) return;
+        this.boardingLoaded = true;
+        await this.storeHistoryCache(await history, generation, repository, captured);
+    }
+
+    /** History rows plus the address they are stored under. Does not write. */
+    private async loadHistoryCache(
+        context?: WalletRequestContext,
+    ): Promise<{ address: string; txs: ArkTransaction[] } | undefined> {
+        const wallet = context?.readonlyWallet ?? this.readonlyWallet;
+        const repository = context ? context.walletRepository : this.walletRepository;
+        if (!wallet || !repository) return undefined;
+        const address = await wallet.getAddress();
+        const txs = await this.buildTransactionHistoryFromCache(context);
+        if (!txs) return undefined;
+        return { address, txs };
+    }
+
+    private async storeHistoryCache(
+        history: { address: string; txs: ArkTransaction[] } | undefined,
+        gen?: Generation,
+        repository = this.walletRepository,
+        context?: WalletRequestContext,
+    ): Promise<void> {
+        if (!history || gen?.stale || !repository) return;
+        if (gen && context) {
+            await this.runOwnedOperation(context, () =>
+                repository.saveTransactions(history.address, history.txs),
+            );
+        } else {
+            await repository.saveTransactions(history.address, history.txs);
+        }
+    }
+
+    /** @param gen - set by a background caller; the refresh is skipped once it goes stale. */
+    private async refreshBoardingCache(
+        gen?: Generation,
+        wallet = this.readonlyWallet,
+        context?: WalletRequestContext,
+    ): Promise<void> {
+        if (!wallet || gen?.stale) return;
+        // Current-signer boarding only, as getBoardingUtxos does. The fetch throws on an address
+        // failure and syncs what it found into the contract manager's store.
+        const currentSigner = toXOnlySignerHex(
+            hex.encode(wallet.boardingTapscript.options.serverPubKey),
+        );
+        const refresh = () => wallet.getBoardingUtxosForSigners(new Set([currentSigner]));
+        if (context) await this.runOwnedOperation(context, refresh);
+        else await refresh();
+    }
+
+    /**
+     * Force a full VTXO refresh from the indexer, then refresh cached data.
+     * Used by RELOAD_WALLET to ensure fresh data without re-subscribing
+     * to incoming funds or restarting the VtxoManager.
+     */
+    private async reloadWallet(context: WalletRequestContext) {
+        const manager = await context.readonlyWallet.getContractManager();
+        await manager.refreshVtxos();
+        await this.refreshCachedData(undefined, context);
+    }
+
+    private async handleSettle(message: RequestSettle, wallet: Wallet) {
+        const emitter = this.newEmitter("request");
+        const txid = await wallet.settle(message.payload.params, (e) => {
+            emitter.emit(
+                this.tagged({
+                    id: message.id,
+                    type: "SETTLE_EVENT",
+                    payload: e,
+                }),
+            );
+        });
+
+        if (!txid) {
+            throw new Error("Settlement failed");
+        }
+        return { type: "SETTLE_SUCCESS", payload: { txid } } as ResponseSettle;
+    }
+
+    private async handleSignTransaction(message: RequestSignTransaction, wallet: Wallet) {
+        const { tx, inputIndexes } = message.payload;
+        const signature = await wallet.identity.sign(tx, inputIndexes);
+        if (!signature) {
+            throw new Error("Sign transaction failed");
+        }
+        return {
+            type: "SIGN_TRANSACTION",
+            payload: { tx: signature },
+        } as ResponseSignTransaction;
+    }
+
+    private async handleDelegate(
+        message: RequestDelegate,
+        wallet: Wallet,
+    ): Promise<ResponseDelegate> {
+        const delegateManager = await wallet.getDelegateManager();
+        if (!delegateManager) {
+            throw new DelegateNotConfiguredError();
+        }
+
+        const { vtxoOutpoints, destination, delegateAt } = message.payload;
+        const allVtxos = await wallet.getVtxos();
+        const outpointSet = new Set(vtxoOutpoints.map((o) => `${o.txid}:${o.vout}`));
+        const filtered = allVtxos
+            .filter((v) => outpointSet.has(`${v.txid}:${v.vout}`))
+            .map((v) => ({ ...v, contractScript: v.script }));
+
+        // Explicit outpoints, so ungated — but delegation hands the spending
+        // authority itself to a third party, which for a gated (e.g. escrowed)
+        // contract means giving away its cancel path. Legitimate deliberately,
+        // bad by accident: report it. Diagnostics only, never fatal.
+        void wallet.logUngatedInputs("delegate", filtered);
+
+        const result = await delegateManager.delegate(
+            filtered,
+            destination,
+            delegateAt !== undefined ? new Date(delegateAt) : undefined,
+        );
+
+        return {
+            tag: this.messageTag,
+            type: "DELEGATE_SUCCESS",
+            payload: {
+                delegated: result.delegated.map((o) => ({
+                    txid: o.txid,
+                    vout: o.vout,
+                })),
+                failed: result.failed.map((f) => ({
+                    outpoints: f.outpoints.map((o) => ({
+                        txid: o.txid,
+                        vout: o.vout,
+                    })),
+                    error: String(f.error),
+                })),
+            },
+        };
+    }
+
+    /**
+     * Ungated repository read mirroring `Wallet.getVtxos`, the raw reporting read.
+     */
+    private async handleGetVtxos(message: RequestGetVtxos, context?: WalletRequestContext) {
+        if (!(context?.readonlyWallet ?? this.readonlyWallet)) {
+            throw new WalletNotInitializedError();
+        }
+        const withUnrolled = message.payload.filter?.withUnrolled ?? false;
+        // Only an unrolled coin is returned spent.
+        const allVtxos = await this.getVtxosFromRepo({ unspentOnly: !withUnrolled }, context);
+        return filterFlatVtxos(allVtxos, message.payload.filter, new Set());
+    }
+
+    /** Tear down handler subscriptions, then delegate the full wipe to the wallet. */
+    private async clear(wallet: ReadonlyWallet) {
+        // The bus generation is untouched here, so the channel stays: dropping
+        // it would push later emits back onto the tick queue. The counters are
+        // what stop an in-flight callback from emitting — or writing — a
+        // just-wiped wallet's state.
+        this.requestEpoch++;
+        this.initEpoch++;
+        this.incomingFundsEpoch++;
+        this.contractEventsEpoch++;
+        this.boardingEpoch++;
+        this.boardingLoaded = false;
+        this.onNextTick = [];
+
+        if (this.incomingFundsSubscription) {
+            this.incomingFundsSubscription();
+            this.incomingFundsSubscription = undefined;
+        }
+        if (this.contractEventsSubscription) {
+            this.contractEventsSubscription();
+            this.contractEventsSubscription = undefined;
+        }
+
+        await wallet.clear();
+
+        if ((this.wallet ?? this.readonlyWallet) === wallet) {
+            this.wallet = undefined;
+            this.readonlyWallet = undefined;
+            this.arkProvider = undefined;
+            this.indexerProvider = undefined;
+        }
+    }
+
+    /**
+     * Read all virtual outputs from the repository, aggregated across all contract
+     * addresses and the wallet's primary address, with deduplication.
+     *
+     * Recovery-only contracts (imported by `claimCash` for operator-swept
+     * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
+     * they are settled in their own isolated intent and must stay out of the
+     * wallet's balance / VTXO / coin-selection / pending-tx views that read this.
+     * Transaction history excludes them too, as does the non-worker
+     * `getTransactionHistory`.
+     */
+    private async getVtxosFromRepo(
+        options?: {
+            unspentOnly?: boolean;
+        },
+        context?: WalletRequestContext,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        return (await this.repoSnapshot(options, context)).vtxos;
+    }
+
+    /**
+     * The worker's equivalent of `ReadonlyWallet.contractSnapshot`: contracts
+     * paired with the VTXOs the repository holds for them, plus the flat
+     * deduplicated list. Purely local — unlike the main-thread snapshot it never
+     * syncs against the indexer.
+     *
+     * One read of the contract rows serves both halves. Reading them twice
+     * (once for the VTXO buckets, once for the gate) races the contract
+     * manager's own writes: a contract registered between the two reads yields
+     * VTXOs with no matching row in the gate, and `gatedContracts` lists only
+     * what it knows is closed — so the coins of a just-registered escrowed
+     * contract would count as available until the next poll.
+     *
+     * Recovery-only contracts are skipped (see {@link getVtxosFromRepo}).
+     */
+    private async repoSnapshot(
+        options: { unspentOnly?: boolean } = {},
+        context?: WalletRequestContext,
+    ): Promise<{
+        // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
+        // and the gate and signer classification only read `contract`/`vtxos`.
+        snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
+        vtxos: NormalizedExtendedVirtualCoin[];
+    }> {
+        const repository = context ? context.walletRepository : this.walletRepository;
+        const wallet = context?.readonlyWallet ?? this.readonlyWallet;
+        if (!repository || !wallet) return { snapshot: [], vtxos: [] };
+        const seen = new Set<string>();
+        const allVtxos: NormalizedExtendedVirtualCoin[] = [];
+
+        const addVtxos = (vtxos: NormalizedExtendedVirtualCoin[]) => {
+            const fresh: NormalizedExtendedVirtualCoin[] = [];
+            for (const vtxo of vtxos) {
+                const key = `${vtxo.txid}:${vtxo.vout}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    allVtxos.push(vtxo);
+                    fresh.push(vtxo);
+                }
+            }
+            return fresh;
+        };
+
+        // Aggregate virtual outputs from all contract addresses. Address
+        // buckets may carry legacy duplicate rows from other contracts; gate
+        // each bucket by its owning contract script before deduplication so a
+        // wrong-script row never wins the txid:vout race.
+        const addressPromise = wallet.getAddress();
+        void addressPromise.catch(() => undefined);
+        const manager = await wallet.getContractManager();
+        const contracts = await manager.getContracts();
+        const eligible = contracts.filter((contract) => !isRecoveryOnlyContract(contract));
+        // One read per contract. Merge in repository order so the first row still wins a
+        // duplicate outpoint; folding the lists as they resolve would let a later contract claim it.
+        const listsPromise = Promise.all(
+            eligible.map((contract) => getVtxosForContract(repository, contract, options)),
+        );
+        void listsPromise.catch(() => undefined);
+        const walletAddress = await addressPromise;
+        // Also check the wallet's primary address. Decode it to its script
+        // and apply the same script gate. Failing to decode the wallet's own
+        // address is a structural bug — surfacing the error is safer than
+        // silently dropping the primary bucket and zeroing the user's
+        // visible balance.
+        let walletScript: string;
+        try {
+            walletScript = scriptFromArkAddress(walletAddress);
+        } catch (e) {
+            throw new Error(
+                `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,
+            );
+        }
+        // A contract row already answered for this script, layer-filtered or skipped on purpose;
+        // reading it again would re-add the rows it dropped (a `both` contract's boarding coins).
+        const primaryHasContract = contracts.some((contract) => contract.script === walletScript);
+        const [lists, primaryVtxos] = await Promise.all([
+            listsPromise,
+            // Routed through the same helper as the contract buckets rather than reading the
+            // repository directly, so this bucket normalizes too. Anything left here
+            // is outside every contract row, so it carries no contract to judge it
+            // by — the wallet's own receive address, which is never gated.
+            primaryHasContract
+                ? []
+                : getVtxosForContract(
+                      repository,
+                      { script: walletScript, address: walletAddress },
+                      options,
+                  ),
+        ]);
+        const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
+        for (const [i, contract] of eligible.entries()) {
+            snapshot.push({
+                contract,
+                vtxos: addVtxos(offchainRows(contract, lists[i])),
+            });
+        }
+        addVtxos(primaryVtxos);
+
+        return { snapshot, vtxos: allVtxos };
+    }
+
+    /**
+     * Build transaction history from cached virtual outputs, hitting the indexer only for
+     * uncached timestamps. Best-effort, like the plain Wallet path.
+     *
+     * Takes its own {@link repoSnapshot} rather than a caller-supplied VTXO
+     * list: the coins and the gate that judges them have to come off one read
+     * or they answer about different instants, and being the worker's only
+     * history builder means neither caller can supply one without the other.
+     * The snapshot and the boarding read are independent, so they run together
+     * — the same pairing `handleGetBalance` makes.
+     */
+    private async buildTransactionHistoryFromCache(
+        context?: WalletRequestContext,
+    ): Promise<ArkTransaction[] | null> {
+        const wallet = context?.readonlyWallet ?? this.readonlyWallet;
+        const indexerProvider = context ? context.indexerProvider : this.indexerProvider;
+        if (!wallet) return null;
+
+        const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+            this.repoSnapshot({}, context),
+            wallet.getBoardingTxs(),
+        ]);
+
+        const resolveTxCreatedAt = indexerProvider
+            ? (txids: string[]) => fetchVtxoCreatedAtByTxid(indexerProvider, txids)
+            : undefined;
+
+        // `ReadonlyWallet` derives the same gate from its own snapshot, so both
+        // sides of the bus classify a coin alike — differing only in freshness,
+        // as the balance reads do, because this one never syncs.
+        return buildTransactionHistory(
+            vtxos,
+            boardingTxs,
+            commitmentsToIgnore,
+            resolveTxCreatedAt,
+            gatedFrom(snapshot),
+        );
+    }
+
+    private async ensureContractEventBroadcasting(context?: WalletRequestContext) {
+        const wallet = context?.readonlyWallet ?? this.readonlyWallet;
+        if (!wallet) return;
+        if (this.contractEventsSubscription) return;
+        const gen = this.newGeneration("contractEvents");
+        try {
+            const manager = context
+                ? await this.runOwnedOperation(context, () => wallet.getContractManager())
+                : await wallet.getContractManager();
+            // A stale run assigning the field would make the early return above
+            // swallow every later call, killing delivery for good; and a peer
+            // may have subscribed while we awaited.
+            if (gen.stale || this.contractEventsSubscription) return;
+            const emitter = this.newEmitter("contractEvents");
+            this.contractEventsSubscription = manager.onContractEvent((event) => {
+                emitter.emit(
+                    this.tagged({
+                        type: "CONTRACT_EVENT",
+                        broadcast: true,
+                        payload: { event },
+                    }),
+                );
+            });
+        } catch (error) {
+            console.error("Error subscribing to contract events:", error);
+        }
+    }
+}

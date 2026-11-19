@@ -6,27 +6,38 @@
  * `refundWithoutReceiver` leaf (carrying the CLTV that makes it valid), and
  * that a dead-but-funded swap is still refunded rather than reported done.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { CSVMultisigTapscript, SingleKey, Transaction } from "@arkade-os/sdk";
+import { TaprootControlBlock } from "@scure/btc-signer";
+import {
+    CSVMultisigTapscript,
+    ConditionWitness,
+    SingleKey,
+    Transaction,
+    getNetwork,
+    setArkPsbtField,
+    scriptFromTapLeafScript,
+    type OperatorProvider,
+} from "@arkade-os/sdk";
 
-import { lightningSendVtxoScript, type RfqStatus, type RfqTransport } from "../src/rfq";
+import { lightningSendContract, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
     LockupNeedsRecoveryError,
+    MAX_LOCKUP_SPEND_INPUTS,
     RFQ_RESOLVED_STATES,
     awaitRfqResolution,
     findLockupVtxos,
     isRfqTerminal,
     pushRefundWithoutReceiver,
     readLockupFate,
-    refundIfUnresolved,
+    type LockupContractSource,
     type LockupSpendIndexer,
     type LockupVtxo,
-    type RefundArkProvider,
-    type RefundIndexer,
 } from "../src/refund";
+import { USD_ID } from "./fixtures";
+import { assetFlows } from "./helpers/assetPacket";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -38,13 +49,15 @@ const SENDER_PRIVATE_KEY = priv(13);
 /** The sender key as the signer the refund path now takes. */
 const SENDER = SingleKey.fromPrivateKey(SENDER_PRIVATE_KEY);
 const REFUND_PK_SCRIPT = p2tr(key(5));
+/** `sha256(P)` for the golden participant set. */
+const SWAP_PAYMENT_HASH = hex.encode(sha256(new Uint8Array(32).fill(7)));
 
 /** The same golden participant set rfq.test.ts pins the script bytes against. */
 const swapScript = () =>
-    lightningSendVtxoScript({
+    lightningSendContract({
         solverPubkey: key(1),
-        serverPubkey: key(3),
-        paymentHash: hex.encode(sha256(new Uint8Array(32).fill(7))),
+        operatorPubkey: key(3),
+        paymentHash: SWAP_PAYMENT_HASH,
         refundLocktime: REFUND_LOCKTIME,
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -53,69 +66,118 @@ const swapScript = () =>
         receiverPkScript: p2tr(key(1)),
     });
 
-const CHECKPOINT_TAPSCRIPT = hex.encode(
-    CSVMultisigTapscript.encode({
-        timelock: { type: "blocks", value: BigInt(144) },
-        pubkeys: [key(3)],
-    }).script,
-);
+const checkpointTapscriptOf = (
+    timelock: { type: "blocks" | "seconds"; value: bigint },
+    pubkey: Uint8Array = key(3),
+): string => hex.encode(CSVMultisigTapscript.encode({ timelock, pubkeys: [pubkey] }).script);
+
+const CHECKPOINT_TAPSCRIPT = checkpointTapscriptOf({ type: "blocks", value: BigInt(144) });
 
 const VTXOS: LockupVtxo[] = [
     { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
     { txid: "22".repeat(32), vout: 1, value: 40_000, recoverable: false },
 ];
+const dustOutputs = (count: number): LockupVtxo[] =>
+    Array.from({ length: count }, (_, i) => ({
+        txid: "dd".repeat(32),
+        vout: i,
+        value: 330,
+        recoverable: false,
+    }));
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
  * does, plus its own signature) and reports the ark txid it was submitted.
- * Typed against the production contract so a change to RefundArkProvider
+ * Typed against the production contract so a change to OperatorProvider
  * breaks the fake at compile time. */
-type FakeArk = RefundArkProvider & {
-    submitted: { arkTx: string; checkpoints: string[] }[];
-    finalized: { arkTxid: string; checkpoints: string[] }[];
+type FakeOperator = OperatorProvider & {
+    submitted: { tx: string; checkpoints: string[] }[];
+    finalized: { txid: string; checkpoints: string[] }[];
 };
 
-const fakeArk = (
+const fakeOperator = (
     over: {
         checkpointTapscript?: string;
+        network?: string;
+        forfeitPubkey?: string;
         checkpointsFor?: (submitted: string[]) => string[];
         failSubmit?: () => Error | undefined;
     } = {},
-): FakeArk => {
-    const submitted: { arkTx: string; checkpoints: string[] }[] = [];
-    const finalized: { arkTxid: string; checkpoints: string[] }[] = [];
+): FakeOperator => {
+    const submitted: { tx: string; checkpoints: string[] }[] = [];
+    const finalized: { txid: string; checkpoints: string[] }[] = [];
     return {
         submitted,
         finalized,
         getInfo: async () => ({
             checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
+            network: over.network ?? "regtest",
+            forfeitPubkey: over.forfeitPubkey ?? hex.encode(key(3)),
         }),
-        submitTx: async (arkTx: string, checkpoints: string[]) => {
+        submitTx: async (tx: string, checkpoints: string[]) => {
             const failure = over.failSubmit?.();
             if (failure) throw failure;
-            submitted.push({ arkTx, checkpoints });
+            submitted.push({ tx, checkpoints });
             return {
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-                finalArkTx: arkTx,
+                arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
+                finalArkTx: tx,
                 signedCheckpointTxs: over.checkpointsFor
                     ? over.checkpointsFor(checkpoints)
                     : checkpoints,
             };
         },
-        finalizeTx: async (arkTxid: string, checkpoints: string[]) => {
-            finalized.push({ arkTxid, checkpoints });
+        finalizeTx: async (txid: string, checkpoints: string[]) => {
+            finalized.push({ txid, checkpoints });
         },
-    } as unknown as FakeArk;
+    } as unknown as FakeOperator;
 };
 
-const fakeIndexer = (vtxos: LockupVtxo[]): RefundIndexer & { scripts: string[][] } => {
-    const scripts: string[][] = [];
+/** A lockup output as a test names it, plus the fact flags the manager's
+ * normalized row would carry. `recoverable` maps to `isSwept`. */
+type LockupRow = LockupVtxo & {
+    isUnrolled?: boolean;
+    isSpent?: boolean;
+    spentBy?: string;
+    settledBy?: string;
+};
+
+/** The lockup as the contract manager serves it: the registered row, one
+ * normalized output per entry, canonical facts filled in. Filters are recorded
+ * so a test can assert the script asked for. */
+const fakeContracts = (
+    rows: LockupRow[] = [],
+): LockupContractSource & { asked: (string | undefined)[] } => {
+    const asked: (string | undefined)[] = [];
     return {
-        scripts,
-        getVtxos: async (opts?: { scripts?: string[] }) => {
-            scripts.push(opts?.scripts ?? []);
-            return { vtxos };
+        asked,
+        getContractsWithVtxos: async (filter?: { script?: string }) => {
+            asked.push(filter?.script);
+            return [
+                {
+                    contract: {
+                        script: filter?.script,
+                        type: "vhtlc-v2",
+                        params: {},
+                        address: "ark1lockup",
+                        state: "active",
+                        createdAt: 1,
+                    },
+                    // `value` is kept as the test's number; the real rows carry
+                    // the same numeric `value` a settled coin does.
+                    vtxos: rows.map((row) => ({
+                        txid: row.txid,
+                        vout: row.vout,
+                        value: row.value,
+                        isSwept: !!row.recoverable,
+                        isSpent: !!row.isSpent,
+                        isUnrolled: !!row.isUnrolled,
+                        spentBy: row.spentBy ?? "",
+                        settledBy: row.settledBy,
+                        assets: row.assets,
+                    })),
+                },
+            ];
         },
-    } as unknown as RefundIndexer & { scripts: string[][] };
+    } as unknown as LockupContractSource & { asked: (string | undefined)[] };
 };
 
 const statusOf = (state: string): RfqStatus => ({
@@ -153,31 +215,31 @@ const spentLeafOf = (psbt: string): string => {
 
 describe("pushRefundWithoutReceiver", () => {
     it("spends the refundWithoutReceiver leaf, signed by the trader's own sender key", async () => {
-        const script = swapScript();
-        const ark = fakeArk();
-        await pushRefundWithoutReceiver(ark, {
-            script,
+        const contract = swapScript();
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, {
+            contract: contract,
             sender: SENDER,
             vtxos: VTXOS,
         });
 
-        expect(ark.submitted).toHaveLength(1);
+        expect(operator.submitted).toHaveLength(1);
         // Not `refund` (needs the solver) and not a unilateral leaf (needs an
         // exit): the CLTV leaf is the only one a stranded trader can drive.
-        expect(spentLeafOf(ark.submitted[0].arkTx)).toBe(script.refundWithoutReceiverScript);
+        expect(spentLeafOf(operator.submitted[0].tx)).toBe(contract.refundWithoutReceiverScript);
 
         // SingleKey.sign() swallows "No inputs signed", so an unsigned tx would
         // otherwise sail through to submitTx and be rejected only server-side.
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         for (let i = 0; i < tx.inputsLength; i++) {
             expect(tx.getInput(i).tapScriptSig?.length).toBeGreaterThan(0);
         }
     });
 
     it("carries the CLTV locktime and an nLockTime-enabling sequence", async () => {
-        const ark = fakeArk();
-        await pushRefundWithoutReceiver(ark, {
-            script: swapScript(),
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
         });
@@ -185,15 +247,15 @@ describe("pushRefundWithoutReceiver", () => {
         // Without both of these the spend is simply not consensus-valid — and
         // nothing in this package restates the locktime, so this is the check
         // that the CLTV leaf (not a timelock-free one) was handed to the builder.
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(tx.lockTime).toBe(REFUND_LOCKTIME);
         expect(tx.getInput(0).sequence).toBeLessThan(0xffffffff);
     });
 
     it("returns every funded output to the contract's own committed destination", async () => {
-        const ark = fakeArk();
-        const result = await pushRefundWithoutReceiver(ark, {
-            script: swapScript(),
+        const operator = fakeOperator();
+        const result = await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
         });
@@ -201,31 +263,77 @@ describe("pushRefundWithoutReceiver", () => {
         // Both deposits, aggregated: refunding vtxos[0] alone would strand the
         // rest at a script whose other refund paths are all longer.
         expect(result.amount).toBe(100_000);
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(tx.inputsLength).toBe(2);
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(REFUND_PK_SCRIPT));
         expect(tx.getOutput(0).amount).toBe(BigInt(100_000));
-        expect(ark.finalized).toHaveLength(1);
-        expect(ark.finalized[0].arkTxid).toBe(result.arkTxid);
+        expect(operator.finalized).toHaveLength(0);
+        expect(result.txid).toBe(tx.id);
+    });
+
+    it("keeps the two-step flow with oneShot: false", async () => {
+        const operator = fakeOperator();
+        const result = await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
+            sender: SENDER,
+            vtxos: VTXOS,
+            oneShot: false,
+        });
+
+        for (const checkpoint of operator.submitted[0].checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+        }
+        expect(operator.finalized).toHaveLength(1);
+        expect(operator.finalized[0].txid).toBe(result.txid);
+        expect(result.left).toBe(0);
+    });
+
+    it("declares an asset someone sent to the lockup, returning it with the sats", async () => {
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
+            sender: SENDER,
+            vtxos: [{ ...VTXOS[0], assets: [{ assetId: USD_ID, amount: 500n }] }, VTXOS[1]],
+        });
+
+        expect(assetFlows(operator.submitted[0].tx)).toEqual([
+            { assetId: USD_ID, inputs: [[0, 500n]], outputs: [[0, 500n]] },
+        ]);
+    });
+
+    it("spends at most MAX_LOCKUP_SPEND_INPUTS outputs, the largest", async () => {
+        const operator = fakeOperator();
+        const result = await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
+            sender: SENDER,
+            vtxos: [...dustOutputs(20), ...VTXOS],
+        });
+
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
+        expect(tx.inputsLength).toBe(MAX_LOCKUP_SPEND_INPUTS);
+        expect(result.amount).toBe(100_000 + (MAX_LOCKUP_SPEND_INPUTS - 2) * 330);
+        expect(tx.getOutput(0).amount).toBe(BigInt(result.amount));
+        expect(result.left).toBe(22 - MAX_LOCKUP_SPEND_INPUTS);
     });
 
     it("honours an explicit destination override", async () => {
-        const ark = fakeArk();
+        const operator = fakeOperator();
         const elsewhere = p2tr(key(21));
-        await pushRefundWithoutReceiver(ark, {
-            script: swapScript(),
+        await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
             refundPkScript: elsewhere,
         });
-        const tx = Transaction.fromPSBT(base64.decode(ark.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(elsewhere));
     });
 
     it("refuses an empty lockup instead of pushing an inputless transaction", async () => {
         await expect(
-            pushRefundWithoutReceiver(fakeArk(), {
-                script: swapScript(),
+            pushRefundWithoutReceiver(fakeOperator(), {
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: [],
             }),
@@ -238,31 +346,30 @@ describe("pushRefundWithoutReceiver", () => {
          * take it back — `canSpendOffchain` and `canRecoverOnchain` are
          * mutually exclusive in the SDK, and the latter means "must be
          * recovered into a fresh batch rather than spent offchain". Holding the
-         * sender key does not change that. `packages/boltz-swap` routes exactly
-         * this case through `joinBatch` instead of an offchain tx.
+         * sender key does not change that.
          */
         it("refuses rather than submitting a spend the server must reject", async () => {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const swept: LockupVtxo[] = [
                 { txid: "33".repeat(32), vout: 0, value: 5_000, recoverable: true },
             ];
             await expect(
-                pushRefundWithoutReceiver(ark, {
-                    script: swapScript(),
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
                     sender: SENDER,
                     vtxos: swept,
                 }),
             ).rejects.toThrow(LockupNeedsRecoveryError);
             // Nothing was sent: the point is to refuse before the round trip.
-            expect(ark.submitted).toEqual([]);
+            expect(operator.submitted).toEqual([]);
         });
 
         it("names the outpoints that need recovering", async () => {
             const swept: LockupVtxo[] = [
                 { txid: "33".repeat(32), vout: 2, value: 5_000, recoverable: true },
             ];
-            const error: unknown = await pushRefundWithoutReceiver(fakeArk(), {
-                script: swapScript(),
+            const error: unknown = await pushRefundWithoutReceiver(fakeOperator(), {
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: swept,
             }).then(
@@ -285,30 +392,30 @@ describe("pushRefundWithoutReceiver", () => {
             // would take the live ones down with it. Refusing names the fix;
             // silently dropping it would report success over money that never
             // moved.
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const mixed: LockupVtxo[] = [
                 { ...VTXOS[0], recoverable: false },
                 { txid: "44".repeat(32), vout: 1, value: 9_000, recoverable: true },
             ];
             await expect(
-                pushRefundWithoutReceiver(ark, {
-                    script: swapScript(),
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
                     sender: SENDER,
                     vtxos: mixed,
                 }),
             ).rejects.toThrow(LockupNeedsRecoveryError);
-            expect(ark.submitted).toEqual([]);
+            expect(operator.submitted).toEqual([]);
         });
 
         it("still pushes when every output is live", async () => {
-            const ark = fakeArk();
+            const operator = fakeOperator();
             const live: LockupVtxo[] = VTXOS.map((v) => ({ ...v, recoverable: false }));
-            await pushRefundWithoutReceiver(ark, {
-                script: swapScript(),
+            await pushRefundWithoutReceiver(operator, {
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: live,
             });
-            expect(ark.submitted).toHaveLength(1);
+            expect(operator.submitted).toHaveLength(1);
         });
     });
 
@@ -317,52 +424,100 @@ describe("pushRefundWithoutReceiver", () => {
         // same script — so the sender key can sign it perfectly well, and only
         // matching it against the locally built set catches the swap. (A
         // malformed stand-in would prove nothing: signing would fail anyway.)
-        const capture = fakeArk();
+        const capture = fakeOperator();
         await pushRefundWithoutReceiver(capture, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: [{ txid: "33".repeat(32), vout: 0, value: 7_000, recoverable: false }],
         });
         const foreignCheckpoint = capture.submitted[0].checkpoints[0];
 
-        const ark = fakeArk({ checkpointsFor: () => [foreignCheckpoint] });
+        const operator = fakeOperator({ checkpointsFor: () => [foreignCheckpoint] });
         await expect(
-            pushRefundWithoutReceiver(ark, {
-                script: swapScript(),
+            pushRefundWithoutReceiver(operator, {
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: [VTXOS[0]],
             }),
         ).rejects.toThrow(/does not match any submitted checkpoint/);
-        expect(ark.finalized).toHaveLength(0);
+        expect(operator.finalized).toHaveLength(0);
     });
 
     it("reports a malformed checkpointTapscript rather than failing deep in the builder", async () => {
         await expect(
-            pushRefundWithoutReceiver(fakeArk({ checkpointTapscript: "00" }), {
-                script: swapScript(),
+            pushRefundWithoutReceiver(fakeOperator({ checkpointTapscript: "00" }), {
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: VTXOS,
             }),
         ).rejects.toThrow(/checkpointTapscript/);
     });
+
+    describe("the checkpoint script the operator hands out is gated", () => {
+        // Sweepable checkpoints, so every refusal must land before anything is signed or sent.
+        it("refuses a checkpoint exit delay below the floor", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(0) }),
+            });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("refuses a checkpoint pinned to a key other than the advertised forfeit key", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf(
+                    { type: "blocks", value: BigInt(144) },
+                    key(4),
+                ),
+            });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                }),
+            ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("floors against the caller's pinned network, not the one the operator names", async () => {
+            // The same block-typed script the regtest default accepts: only the pin rejects it.
+            const operator = fakeOperator({ network: "regtest" });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                    network: getNetwork("bitcoin"),
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+    });
 });
 
 describe("findLockupVtxos", () => {
-    it("asks for the lockup script and returns every spendable output", async () => {
-        const script = swapScript();
-        const indexer = fakeIndexer(VTXOS);
-        expect(await findLockupVtxos(indexer, script.pkScript)).toHaveLength(2);
-        expect(indexer.scripts[0]).toEqual([hex.encode(script.pkScript)]);
+    it("reads the lockup's registered contract and returns every unspent output", async () => {
+        const contract = swapScript();
+        const contracts = fakeContracts(VTXOS);
+        expect(await findLockupVtxos(contracts, contract.pkScript)).toHaveLength(2);
+        expect(contracts.asked[0]).toBe(hex.encode(contract.pkScript));
     });
 
-    /** Filter-aware, unlike `fakeIndexer`: the two sets are disjoint here, which
-     * is what makes a swept output visible or not. */
-    const byFilterIndexer = (spendable: LockupVtxo[], recoverable: LockupVtxo[]): RefundIndexer =>
-        ({
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-                vtxos: opts?.recoverableOnly ? recoverable : opts?.spendableOnly ? spendable : [],
-            }),
-        }) as unknown as RefundIndexer;
+    it("keeps the assets an output carries, which every spend of it must declare", async () => {
+        const carrying = { ...VTXOS[0], assets: [{ assetId: USD_ID, amount: 5n }] };
+        const found = await findLockupVtxos(
+            fakeContracts([carrying, VTXOS[1]]),
+            swapScript().pkScript,
+        );
+        expect(found).toEqual([carrying, VTXOS[1]]);
+    });
 
     it("finds a swept lockup, which a spendable-only read would report as nothing to refund", async () => {
         // A batch expiry sweeps the output out of the spendable set. It is
@@ -372,30 +527,71 @@ describe("findLockupVtxos", () => {
         // Visible is NOT the same as refundable: a swept output must be
         // recovered before any offchain spend, which
         // `pushRefundWithoutReceiver` enforces rather than discovers.
-        const script = swapScript();
+        const contract = swapScript();
         const swept = { txid: "cc".repeat(32), vout: 1, value: 4_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([], [swept]), script.pkScript);
+        const found = await findLockupVtxos(
+            fakeContracts([
+                { txid: swept.txid, vout: swept.vout, value: swept.value, recoverable: true },
+            ]),
+            contract.pkScript,
+        );
         expect(found).toEqual([{ ...swept, recoverable: true }]);
     });
 
     it("merges both sets and marks which outputs were swept", async () => {
-        const script = swapScript();
+        const contract = swapScript();
         const live = { txid: "aa".repeat(32), vout: 0, value: 1_000, recoverable: false };
-        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([live], [swept]), script.pkScript);
-        expect(found).toEqual([
-            { ...live, recoverable: false },
-            { ...swept, recoverable: true },
-        ]);
+        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: true };
+        const found = await findLockupVtxos(fakeContracts([live, swept]), contract.pkScript);
+        expect(found).toEqual([live, swept]);
+    });
+
+    it("drops an unrolled output the manager still serves", async () => {
+        // A unilaterally exited output lives onchain behind its CSV, and
+        // `LockupVtxo` carries no flag to pass one along — anything that
+        // reached the mapping would be indistinguishable from the live output
+        // beside it and would be signed into a refund that no offchain leaf can
+        // land. The live sibling proves the drop is the output's own, not the
+        // whole response being discarded.
+        const script = swapScript();
+        const live = { txid: "ee".repeat(32), vout: 0, value: 3_000, recoverable: false };
+        const exited = {
+            txid: "ef".repeat(32),
+            vout: 1,
+            value: 6_000,
+            isUnrolled: true,
+            recoverable: false,
+        };
+        const found = await findLockupVtxos(fakeContracts([live, exited]), script.pkScript);
+        expect(found).toEqual([live]);
+    });
+
+    it("drops a terminally spent output beside its live sibling", async () => {
+        // A consumed output cannot back any refund push, and `isVtxoSpent`
+        // unions every spend fact the manager's normalized row carries — so the
+        // fake fills all three in and one alone must not drop out.
+        const script = swapScript();
+        const live = { txid: "f2".repeat(32), vout: 0, value: 2_500, recoverable: false };
+        const consumed = {
+            txid: "f1".repeat(32),
+            vout: 3,
+            value: 9_000,
+            isSpent: true,
+            spentBy: "77".repeat(32),
+            settledBy: "88".repeat(32),
+            recoverable: false,
+        };
+        const found = await findLockupVtxos(fakeContracts([live, consumed]), script.pkScript);
+        expect(found).toEqual([{ ...live, recoverable: false }]);
     });
 
     it("counts an output appearing in both sets exactly once", async () => {
         // Disjoint today, but double-counting would add the same outpoint to
         // the refund's aggregate output twice and build a transaction that
         // cannot be signed.
-        const script = swapScript();
+        const contract = swapScript();
         const both = { txid: "dd".repeat(32), vout: 0, value: 7_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([both], [both]), script.pkScript);
+        const found = await findLockupVtxos(fakeContracts([both, both]), contract.pkScript);
         expect(found).toHaveLength(1);
         expect(found[0]!.recoverable).toBe(false);
     });
@@ -423,129 +619,21 @@ describe("awaitRfqResolution", () => {
     });
 });
 
-describe("refundIfUnresolved", () => {
-    const baseInput = () => ({
-        rfqId: RFQ_ID,
-        script: swapScript(),
-        sender: SENDER,
-        refundLocktime: REFUND_LOCKTIME,
-        pollMs: 1,
-    });
-
-    it("stops without refunding when the solver resolved it", async () => {
-        for (const state of RFQ_RESOLVED_STATES) {
-            const ark = fakeArk();
-            const result = await refundIfUnresolved(
-                fakeTransport([state]),
-                ark,
-                fakeIndexer(VTXOS),
-                { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
-            );
-            expect(result.outcome).toBe("resolved");
-            // even though the deadline had passed and the lockup looked funded
-            expect(ark.submitted).toHaveLength(0);
-        }
-    });
-
-    it("still refunds a swap whose negotiation died — refused, expired or stuck", async () => {
-        // These are terminal states, but a trader can be holding a funded
-        // lockup in every one of them; treating "terminal" as "done" would
-        // walk away from the money.
-        for (const state of ["refused", "expired", "stuck"]) {
-            const ark = fakeArk();
-            const result = await refundIfUnresolved(
-                fakeTransport([state]),
-                ark,
-                fakeIndexer(VTXOS),
-                { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
-            );
-            expect(result.outcome).toBe("refunded");
-            expect(ark.submitted).toHaveLength(1);
-        }
-    });
-
-    it("reports a swept lockup instead of retrying a push that cannot succeed", async () => {
-        // Unlike a median-time-past refusal, waiting fixes nothing here: the
-        // batch is gone, so the CLTV refund is not "not yet" but "not this
-        // way". Burning the whole `attemptDeadline` window on it and then
-        // rethrowing would waste the time the caller needed to RECOVER the
-        // outputs and finish the refund properly.
-        const ark = fakeArk();
-        const swept = { txid: "55".repeat(32), vout: 3, value: 8_000 };
-        const indexer = {
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-                vtxos: opts?.recoverableOnly ? [swept] : [],
-            }),
-        } as unknown as RefundIndexer;
-
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), ark, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
-
-        expect(result.outcome).toBe("needs_recovery");
-        if (result.outcome === "needs_recovery") {
-            expect(result.outpoints).toEqual([`${"55".repeat(32)}:3`]);
-            expect(result.vtxos).toEqual([{ ...swept, recoverable: true }]);
-        }
-        expect(ark.submitted).toEqual([]);
-    });
-
-    it("waits while the refund window is shut, then pushes once it opens", async () => {
-        const ark = fakeArk();
-        let clock = REFUND_LOCKTIME - 3;
-        const result = await refundIfUnresolved(
-            fakeTransport(["quoted"]),
-            ark,
-            fakeIndexer(VTXOS),
-            { ...baseInput(), now: () => clock++ },
-        );
-        expect(result.outcome).toBe("refunded");
-        if (result.outcome === "refunded") expect(result.amount).toBe(100_000);
-        expect(ark.submitted).toHaveLength(1);
-    });
-
-    it("retries a push refused while median-time-past lags, then succeeds", async () => {
-        let attempts = 0;
-        const ark = fakeArk({
-            failSubmit: () => (++attempts <= 2 ? new Error("FORFEIT_CLOSURE_LOCKED") : undefined),
-        });
-        const result = await refundIfUnresolved(
-            fakeTransport(["quoted"]),
-            ark,
-            fakeIndexer(VTXOS),
-            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
-        );
-        expect(result.outcome).toBe("refunded");
-        expect(attempts).toBe(3);
-    });
-
-    it("rethrows the server's refusal once the attempt window closes", async () => {
-        const ark = fakeArk({ failSubmit: () => new Error("FORFEIT_CLOSURE_LOCKED") });
-        await expect(
-            refundIfUnresolved(fakeTransport(["quoted"]), ark, fakeIndexer(VTXOS), {
-                ...baseInput(),
-                now: () => REFUND_LOCKTIME + 1,
-                attemptDeadline: REFUND_LOCKTIME,
-            }),
-        ).rejects.toThrow(/FORFEIT_CLOSURE_LOCKED/);
-    });
-
-    it("reports an empty lockup instead of failing", async () => {
-        const ark = fakeArk();
-        const result = await refundIfUnresolved(fakeTransport(["stuck"]), ark, fakeIndexer([]), {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
-        expect(result.outcome).toBe("nothing_to_refund");
-        expect(ark.submitted).toHaveLength(0);
-    });
-});
-
 describe("readLockupFate", () => {
     const PREIMAGE = new Uint8Array(32).fill(9);
     const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
-    const SWAP_PK_SCRIPT = p2tr(key(21));
+    const LOCKUP = lightningSendContract({
+        solverPubkey: key(1),
+        operatorPubkey: key(3),
+        paymentHash: PAYMENT_HASH,
+        refundLocktime: REFUND_LOCKTIME,
+        claimDelay: 4096,
+        emulatorPubkey: key(9),
+        refundPkScript: REFUND_PK_SCRIPT,
+        senderPubkey: key(13),
+        receiverPkScript: p2tr(key(1)),
+    });
+    const SWAP_PK_SCRIPT = LOCKUP.pkScript;
     const OUT_A = { txid: "b2".repeat(32), vout: 0 };
     const OUT_B = { txid: "b3".repeat(32), vout: 1 };
 
@@ -553,9 +641,16 @@ describe("readLockupFate", () => {
     const spendOf = (
         out: { txid: string; vout: number },
         witness?: Uint8Array[],
+        leaf: ReturnType<typeof LOCKUP.claim> | null = witness
+            ? LOCKUP.claim()
+            : LOCKUP.refundWithoutReceiver(),
     ): { txid: string; psbt: string } => {
         const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
-        tx.addInput({ txid: out.txid, index: out.vout });
+        tx.addInput({
+            txid: out.txid,
+            index: out.vout,
+            ...(leaf ? { tapLeafScript: [leaf] } : {}),
+        });
         tx.addOutput({ script: REFUND_PK_SCRIPT, amount: 1_000n });
         if (witness) tx.updateInput(0, { finalScriptWitness: witness });
         return { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
@@ -566,6 +661,9 @@ describe("readLockupFate", () => {
         vout: number;
         spentBy: string;
         isSpent?: boolean;
+        settledBy?: string;
+        isUnrolled?: boolean;
+        isSwept?: boolean;
         arkTxId?: string;
     }
 
@@ -586,6 +684,104 @@ describe("readLockupFate", () => {
     const read = (indexer: LockupSpendIndexer) =>
         readLockupFate(indexer, { swapPkScript: SWAP_PK_SCRIPT, paymentHash: PAYMENT_HASH });
 
+    it("waits for a claim preimage and accepts the finalized checkpoint with the same txid", async () => {
+        const pending = spendOf(OUT_A, undefined, LOCKUP.claim());
+        const indexer = fateIndexer([{ ...OUT_A, spentBy: pending.txid }], [pending]);
+        expect(await read(indexer)).toEqual({ fate: "unknown" });
+
+        const tx = Transaction.fromPSBT(base64.decode(pending.psbt));
+        setArkPsbtField(tx, 0, ConditionWitness, [PREIMAGE]);
+        const finalized = { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
+        expect(finalized.txid).toBe(pending.txid);
+        expect(
+            await read(fateIndexer([{ ...OUT_A, spentBy: finalized.txid }], [finalized])),
+        ).toMatchObject({ fate: "claimed", preimage: PREIMAGE });
+    });
+
+    it("reads the preimage off the ark tx of a claim whose checkpoint is still bare", async () => {
+        const checkpoint = spendOf(OUT_A, undefined, LOCKUP.claim());
+        const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
+        tx.addInput({ txid: checkpoint.txid, index: 0 });
+        tx.addOutput({ script: REFUND_PK_SCRIPT, amount: 1_000n });
+        setArkPsbtField(tx, 0, ConditionWitness, [PREIMAGE]);
+        const ark = { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
+        const vtxos = [{ ...OUT_A, spentBy: checkpoint.txid, arkTxId: ark.txid }];
+        expect(await read(fateIndexer(vtxos, [checkpoint, ark]))).toEqual({
+            fate: "claimed",
+            preimage: PREIMAGE,
+            spends: [{ checkpointTxid: checkpoint.txid, txid: ark.txid }],
+        });
+    });
+
+    it.each(["missing", "unrecognized"])("keeps a %s spend leaf unresolved", async (name) => {
+        const leaf: ReturnType<typeof LOCKUP.claim> | null =
+            name === "missing" ? null : [LOCKUP.claim()[0], new Uint8Array([0x51, 0xc0])];
+        const spend = spendOf(OUT_A, undefined, leaf);
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]))).toEqual({
+            fate: "unknown",
+        });
+    });
+
+    it.each([
+        "refund",
+        "refundWithoutReceiver",
+        "unilateralRefund",
+        "unilateralRefundWithoutReceiver",
+        "nonInteractiveRefund",
+    ] as const)("recognizes the %s leaf", async (name) => {
+        const leaf = name === "nonInteractiveRefund" ? LOCKUP[name]()[0] : LOCKUP[name]();
+        const spend = spendOf(OUT_A, undefined, leaf);
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]))).toMatchObject(
+            {
+                fate: "returned",
+                leafScripts: [hex.encode(scriptFromTapLeafScript(leaf))],
+            },
+        );
+    });
+
+    it("recognizes a refund leaf in a finalized raw witness", async () => {
+        const leaf = LOCKUP.refundWithoutReceiver();
+        const control = TaprootControlBlock.encode(leaf[0]);
+        const spend = spendOf(
+            OUT_A,
+            [new Uint8Array(64), scriptFromTapLeafScript(leaf), control],
+            null,
+        );
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]))).toMatchObject(
+            {
+                fate: "returned",
+            },
+        );
+    });
+
+    it("keeps a mixed refund and incomplete claim unresolved", async () => {
+        const refund = spendOf(OUT_A);
+        const claim = spendOf(OUT_B, undefined, LOCKUP.claim());
+        const vtxos = [
+            { ...OUT_A, spentBy: refund.txid },
+            { ...OUT_B, spentBy: claim.txid },
+        ];
+        expect(await read(fateIndexer(vtxos, [refund, claim]))).toEqual({ fate: "unknown" });
+        const finalizedClaim = spendOf(OUT_B, [PREIMAGE]);
+        expect(await read(fateIndexer(vtxos, [refund, finalizedClaim]))).toMatchObject({
+            fate: "claimed",
+        });
+    });
+
+    it("does not infer a refund from a checkpoint that spends another outpoint", async () => {
+        const refund = spendOf(OUT_B);
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: refund.txid }], [refund]))).toEqual({
+            fate: "unknown",
+        });
+    });
+
+    it("ignores an unrequested checkpoint even if it spends the lockup", async () => {
+        const refund = spendOf(OUT_A);
+        const indexer = fateIndexer([{ ...OUT_A, spentBy: "ff".repeat(32) }]);
+        indexer.getVirtualTxs = async () => ({ txs: [refund.psbt] });
+        expect(await read(indexer)).toEqual({ fate: "unknown" });
+    });
+
     it("names every checkpoint that spent a multi-output lockup, and the ark tx each rode", async () => {
         const first = spendOf(OUT_A);
         const second = spendOf(OUT_B);
@@ -601,14 +797,15 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "returned",
             spends: [
-                { checkpointTxid: first.txid, arkTxid: "c1".repeat(32) },
-                { checkpointTxid: second.txid, arkTxid: "c2".repeat(32) },
+                { checkpointTxid: first.txid, txid: "c1".repeat(32) },
+                { checkpointTxid: second.txid, txid: "c2".repeat(32) },
             ],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 
     it("keeps each output's own ark tx when only one of them has it", async () => {
-        // The shape a single hoisted `arkTxid` would get wrong: two outputs,
+        // The shape a single hoisted `txid` would get wrong: two outputs,
         // one named, one not.
         const first = spendOf(OUT_A);
         const second = spendOf(OUT_B);
@@ -624,9 +821,10 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "returned",
             spends: [
-                { checkpointTxid: first.txid, arkTxid: undefined },
-                { checkpointTxid: second.txid, arkTxid: "c4".repeat(32) },
+                { checkpointTxid: first.txid, txid: undefined },
+                { checkpointTxid: second.txid, txid: "c4".repeat(32) },
             ],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 
@@ -635,7 +833,8 @@ describe("readLockupFate", () => {
         const fate = await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]));
         expect(fate).toEqual({
             fate: "returned",
-            spends: [{ checkpointTxid: spend.txid, arkTxid: undefined }],
+            spends: [{ checkpointTxid: spend.txid, txid: undefined }],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 
@@ -647,12 +846,180 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "claimed",
             preimage: PREIMAGE,
-            spends: [{ checkpointTxid: spend.txid, arkTxid: "c3".repeat(32) }],
+            spends: [{ checkpointTxid: spend.txid, txid: "c3".repeat(32) }],
         });
     });
 
     it("claims no spend when the lockup is still open", async () => {
         expect(await read(fateIndexer([{ ...OUT_A, spentBy: "" }]))).toEqual({ fate: "open" });
+    });
+
+    describe("read for the receiver", () => {
+        const readAsReceiver = (indexer: LockupSpendIndexer) =>
+            readLockupFate(indexer, {
+                swapPkScript: SWAP_PK_SCRIPT,
+                paymentHash: PAYMENT_HASH,
+                receiver: true,
+            });
+
+        it("settles a claim past a swept output the receiver cannot spend", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const vtxos = [
+                { ...OUT_A, spentBy: claim.txid },
+                { ...OUT_B, spentBy: "", isSwept: true },
+            ];
+            expect(await read(fateIndexer(vtxos, [claim]))).toEqual({ fate: "open" });
+            expect(await readAsReceiver(fateIndexer(vtxos, [claim]))).toMatchObject({
+                fate: "claimed",
+                preimage: PREIMAGE,
+            });
+        });
+
+        it("still reads swept outputs with no claim as open, not returned", async () => {
+            const refund = spendOf(OUT_A);
+            const fate = await readAsReceiver(
+                fateIndexer(
+                    [
+                        { ...OUT_A, spentBy: refund.txid },
+                        { ...OUT_B, spentBy: "", isSwept: true },
+                    ],
+                    [refund],
+                ),
+            );
+            expect(fate).toEqual({ fate: "open" });
+        });
+
+        it("keeps a live output open", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const fate = await readAsReceiver(
+                fateIndexer(
+                    [
+                        { ...OUT_A, spentBy: claim.txid },
+                        { ...OUT_B, spentBy: "" },
+                    ],
+                    [claim],
+                ),
+            );
+            expect(fate).toEqual({ fate: "open", preimage: PREIMAGE });
+        });
+
+        it("reads P off the ark tx of a bare checkpoint next to a live output", async () => {
+            const checkpoint = spendOf(OUT_A, undefined, LOCKUP.claim());
+            const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
+            tx.addInput({ txid: checkpoint.txid, index: 0 });
+            tx.addOutput({ script: REFUND_PK_SCRIPT, amount: 1_000n });
+            setArkPsbtField(tx, 0, ConditionWitness, [PREIMAGE]);
+            const ark = { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
+            const vtxos = [
+                { ...OUT_A, spentBy: checkpoint.txid, arkTxId: ark.txid },
+                { ...OUT_B, spentBy: "" },
+            ];
+            expect(await readAsReceiver(fateIndexer(vtxos, [checkpoint, ark]))).toEqual({
+                fate: "open",
+                preimage: PREIMAGE,
+            });
+        });
+
+        it.each([
+            ["a refund spend", () => spendOf(OUT_A)],
+            ["a claim witness that does not hash", () => spendOf(OUT_A, [new Uint8Array(32)])],
+        ])("does not count %s as P being public", async (_name, build) => {
+            const spend = build();
+            const fate = await readAsReceiver(
+                fateIndexer(
+                    [
+                        { ...OUT_A, spentBy: spend.txid },
+                        { ...OUT_B, spentBy: "" },
+                    ],
+                    [spend],
+                ),
+            );
+            expect(fate).toEqual({ fate: "open" });
+        });
+
+        it("stays open when the spend cannot be fetched", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const indexer = fateIndexer(
+                [
+                    { ...OUT_A, spentBy: claim.txid },
+                    { ...OUT_B, spentBy: "" },
+                ],
+                [claim],
+            );
+            indexer.getVirtualTxs = async () => {
+                throw new Error("indexer down");
+            };
+            expect(await readAsReceiver(indexer)).toEqual({ fate: "open" });
+        });
+
+        it("still throws when the spend cannot be fetched and nothing is live", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const indexer = fateIndexer([{ ...OUT_A, spentBy: claim.txid }], [claim]);
+            indexer.getVirtualTxs = async () => {
+                throw new Error("indexer down");
+            };
+            await expect(readAsReceiver(indexer)).rejects.toThrow("indexer down");
+        });
+
+        it("reads nothing extra for a send leg with a live output", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const indexer = fateIndexer(
+                [
+                    { ...OUT_A, spentBy: claim.txid },
+                    { ...OUT_B, spentBy: "" },
+                ],
+                [claim],
+            );
+            const fetched = vi.spyOn(indexer, "getVirtualTxs");
+            expect(await read(indexer)).toEqual({ fate: "open" });
+            expect(fetched).not.toHaveBeenCalled();
+        });
+    });
+
+    it("reports an unrolled output as exited rather than open", async () => {
+        // Unspent, but sitting onchain under the VHTLC script: neither the
+        // claim nor any refund leaf can be spent offchain against it. Reading
+        // it as a swap that is merely still running would leave a caller
+        // waiting on a resolution nobody is able to produce.
+        const fate = await read(fateIndexer([{ ...OUT_A, spentBy: "", isUnrolled: true }]));
+        expect(fate).toEqual({ fate: "exited", outpoints: [OUT_A] });
+    });
+
+    it("finds the exit wherever the indexer happens to list it", async () => {
+        // Scanned over the whole set, not in outpoint order: an in-loop test
+        // would hit the plain unspent output first and answer `open`, making
+        // the fate depend on the order the indexer returned rows in.
+        const fate = await read(
+            fateIndexer([
+                { ...OUT_A, spentBy: "" },
+                { ...OUT_B, spentBy: "", isUnrolled: true },
+            ]),
+        );
+        expect(fate).toEqual({ fate: "exited", outpoints: [OUT_B] });
+    });
+
+    it("leaves an exited output that was then spent on the ordinary spent path", async () => {
+        // `completeUnroll` already moved it, so the exit is history and the
+        // witness is what says how the swap ended. Reporting `exited` here
+        // would throw away hash-verified proof of a claim.
+        const spend = spendOf(OUT_A, [PREIMAGE]);
+        const fate = await read(
+            fateIndexer([{ ...OUT_A, spentBy: spend.txid, isUnrolled: true }], [spend]),
+        );
+        expect(fate).toEqual({
+            fate: "claimed",
+            preimage: PREIMAGE,
+            spends: [{ checkpointTxid: spend.txid, arkTxid: undefined }],
+        });
+    });
+
+    it("reads a settled-only output as spent, not as money still sitting there", async () => {
+        // The third spend fact, carried by the SDK's `isVtxoSpent` and by
+        // nothing else here: `settledBy` with no `spentBy` and no `isSpent`
+        // means the output was renewed away, and a `spentBy`-only test would
+        // call the empty lockup `open`.
+        const settled = { ...OUT_A, spentBy: "", settledBy: "e1".repeat(32) };
+        expect(await read(fateIndexer([settled]))).toEqual({ fate: "unknown" });
     });
 
     it("claims no spend when a spend was not named, or could not be produced", async () => {
