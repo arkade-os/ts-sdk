@@ -37,7 +37,7 @@ export type ExitOptions = {
     onchainWallet: OnchainWallet;
     /** Destination for the exited funds. */
     sweepAddress: string;
-    /** sat/vB; defaults to the onchain provider estimate, floored at MIN_FEE_RATE and capped at 1,000. */
+    /** sat/vB, used as given; defaults to the provider estimate, floored at MIN_FEE_RATE, capped at 1,000. */
     feeRate?: number;
     /** Defaults to all spendable VTXOs. */
     vtxos?: Outpoint[];

@@ -292,7 +292,9 @@ async function delegate(
     }
     amount -= BigInt(outputFee);
     if (delegateFee < 0n || delegateFee * 10n > amount) {
-        throw new Error(`unable to delegate: delegate fee ${fee} is not within 0-10% of ${amount}`);
+        throw new Error(
+            `unable to delegate: delegate fee ${delegateFee} is not within 0-10% of ${amount}`,
+        );
     }
 
     amount -= delegateFee;

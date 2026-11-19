@@ -549,6 +549,8 @@ export async function classifyOnchainHtlc(
             spend = await chain.getSpendingTx(funding.txid, funding.vout, input.htlc.pkScript);
         } catch (error) {
             // An RBF-replaced funding tx is unknown to the chain; `best` is then its replacement.
+            // Sources signal that differently, so a transient error also reads `best` for a pass:
+            // a refund needs the locktime, past which `best` is `refundable`, never `claimable`.
             if (!best) throw error;
         }
     }
