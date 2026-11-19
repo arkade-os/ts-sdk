@@ -80,6 +80,7 @@ import type { TapLeafScript } from "../script/base";
 import { toXOnly } from "../utils/keys";
 import { timelockToSequence } from "../utils/timelock";
 import { toTimelock } from "../wallet/timelockPolicy";
+import { assertValidServerUnrollScript } from "../wallet/checkpointExitDelay";
 import {
     buildOffchainTx,
     submitOffchainTx,
@@ -493,13 +494,13 @@ export class Arkade {
         }
 
         const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
-        const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         // The network the operator reports, so a test network doesn't yield mainnet addresses.
         const network =
             opts.network ??
             (Object.hasOwn(networks, info.network)
                 ? getNetwork(info.network as NetworkName)
                 : DEFAULT_NETWORK);
+        const checkpoint = assertValidServerUnrollScript(info.checkpointTapscript, network);
 
         // Pinned key, NOT the emulator's own /v1/info: otherwise whatever answers that URL picks
         // the key covenants commit to. A rotation is invisible until the pin ships;

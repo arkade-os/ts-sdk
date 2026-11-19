@@ -5460,7 +5460,11 @@ export class Wallet
      * and one per deprecated signer — else a pre-rotation tx would stay pending forever.
      */
     private checkpointUnrollCandidates(info: OperatorInfo): CSVMultisigTapscript.Type[] {
-        const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        const current = assertValidServerUnrollScript(
+            info.checkpointTapscript,
+            this.network,
+            this.forfeitPubkey,
+        );
         const candidates = [this._serverUnrollScript, current];
         for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {
             candidates.push(

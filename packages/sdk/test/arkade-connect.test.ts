@@ -34,7 +34,7 @@ const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207
 
 const checkpointTapscript = hex.encode(
     CSVMultisigTapscript.encode({
-        timelock: { type: "blocks", value: 10n },
+        timelock: { type: "seconds", value: 86_016n },
         pubkeys: [TEST_SERVER_PUB_KEY],
     }).script,
 );

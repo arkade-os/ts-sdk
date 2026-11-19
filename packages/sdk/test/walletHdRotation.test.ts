@@ -1879,6 +1879,27 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         await wallet.dispose();
     });
 
+    it("refuses recovery when the live checkpoint script is out of policy", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const oneBlock = CSVMultisigTapscript.encode({
+            timelock: { type: "blocks", value: 1n },
+            pubkeys: [wallet.forfeitPubkey],
+        });
+        vi.spyOn(wallet.arkProvider, "getInfo").mockResolvedValue({
+            ...mockArkInfo,
+            checkpointTapscript: hex.encode(oneBlock.script),
+            deprecatedSigners: [],
+        } as never);
+        const pending = await pendingTxFor(wallet, coin, oneBlock);
+
+        await expect(runFinalizePending(wallet, [coin], pending)).rejects.toThrow(
+            /checkpoint exit delay rejected/,
+        );
+
+        await wallet.dispose();
+    });
+
     // ── sendSelectedVtxosToSelf: the deprecated-signer VTXO migration primitive ──
 
     // A spendable, batch-expiry-bearing baseline coin: the migration primitive

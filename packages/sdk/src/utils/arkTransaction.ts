@@ -684,9 +684,12 @@ function assertServerSignedLeaf(
             `${context}: input ${inputIndex} spend leaf names no signer key the server advertises`,
         );
     }
+    const probe = localTx.clone();
+    const { tapScriptSig } = serverTx.getInput(inputIndex);
+    probe.updateInput(inputIndex, { tapScriptSig }, true);
     try {
         verifyTapscriptSignatures(
-            serverTx,
+            probe,
             inputIndex,
             [signer],
             undefined,
@@ -1018,6 +1021,7 @@ export async function submitViaEmulator(
     );
     const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
     assertSubmittedArkTxid({ arkTxid: txid }, arkTx, "emulator submitTx");
+    matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "emulator submitTx");
     return { txid, signedArkTx: res.signedArkTx, signedCheckpointTxs: res.signedCheckpointTxs };
 }
 

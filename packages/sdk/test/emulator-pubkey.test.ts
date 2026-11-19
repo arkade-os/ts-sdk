@@ -22,7 +22,7 @@ function stubProviders(emulatorSignerPubkey: string) {
     let emulatorInfoCalls = 0;
     const checkpointTapscript = hex.encode(
         CSVMultisigTapscript.encode({
-            timelock: { type: "blocks", value: 10n },
+            timelock: { type: "seconds", value: 86_016n },
             pubkeys: [hex.decode(SERVER_XONLY)],
         }).script,
     );
