@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { IDBObjectStore as FakeIDBObjectStore } from "fake-indexeddb";
 import { computeOffchainBalance } from "../src/wallet/balance";
 import { BTC_ADDR, fundedWallet, stallSubmits } from "./concurrentSpendingFixture";
 import { IndexedDBVtxoReservationRepository } from "../src/repositories/indexedDB/vtxoReservationRepository";
+import type { VtxoReservationRepository } from "../src/repositories/vtxoReservationRepository";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -185,6 +187,130 @@ describe("durable reservations on a direct wallet", () => {
     const store = () =>
         new IndexedDBVtxoReservationRepository(`vtxo-reservations-${crypto.randomUUID()}`);
 
+    it.each([
+        { version: 1, atomic: false },
+        { version: 1, atomic: true },
+        { version: 2, atomic: false },
+    ])("refuses unsupported JavaScript reservation backends before writes (%j)", async (shape) => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = store();
+        await repository.saveReservation({
+            id: "taxi-transfer",
+            outpoints: [{ txid: "aa".repeat(32), vout: 0 }],
+        });
+        const save = vi.spyOn(repository, "saveReservation");
+        const remove = vi.spyOn(repository, "deleteReservation");
+        const compare = vi.spyOn(repository, "deleteReservationIfMatches");
+        const unsupported = {
+            version: shape.version,
+            getReservations: repository.getReservations.bind(repository),
+            saveReservation: save.bind(repository),
+            deleteReservation: remove.bind(repository),
+            ...(shape.atomic && { deleteReservationIfMatches: compare.bind(repository) }),
+        } as unknown as VtxoReservationRepository;
+        const { wallet, coins, outpoints } = await fundedWallet({
+            vtxoReservationRepository: unsupported,
+        });
+        try {
+            await expect(wallet.reserveVtxos([coins[1]], "new-transfer")).rejects.toThrow(
+                /version 2.*atomic/i,
+            );
+            await expect(wallet.releaseVtxoReservation("taxi-transfer")).rejects.toThrow(
+                /version 2.*atomic/i,
+            );
+            expect(save).not.toHaveBeenCalled();
+            expect(remove).not.toHaveBeenCalled();
+            expect(compare).not.toHaveBeenCalled();
+            expect(await repository.getReservations()).toHaveLength(1);
+            expect((await wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[0]);
+            expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[1]);
+        } finally {
+            await wallet.dispose();
+            await repository[Symbol.asyncDispose]();
+        }
+    });
+
+    it("atomically compares the complete unordered outpoint set before deleting", async () => {
+        const repository = store();
+        const outpoints = ["aa", "bb"].map((fill) => ({ txid: fill.repeat(32), vout: 0 }));
+        const record = { id: "taxi-transfer", outpoints };
+        try {
+            expect(repository.version).toBe(2);
+            await repository.saveReservation(record);
+            expect(await repository.deleteReservationIfMatches("missing", outpoints)).toBe(false);
+            expect(await repository.deleteReservationIfMatches(record.id, [outpoints[0]])).toBe(
+                false,
+            );
+            expect(await repository.getReservations()).toEqual([record]);
+            expect(
+                await repository.deleteReservationIfMatches(record.id, [...outpoints].reverse()),
+            ).toBe(true);
+            expect(await repository.getReservations()).toEqual([]);
+        } finally {
+            await repository[Symbol.asyncDispose]();
+        }
+    });
+
+    it("serializes a replacement write behind the matching delete transaction", async () => {
+        const dbName = `vtxo-reservations-${crypto.randomUUID()}`;
+        const first = new IndexedDBVtxoReservationRepository(dbName);
+        const second = new IndexedDBVtxoReservationRepository(dbName);
+        const [a, b] = ["aa", "bb"].map((fill) => ({ txid: fill.repeat(32), vout: 0 }));
+        const replacement = { id: "taxi-transfer", outpoints: [b] };
+        let writing: Promise<void> | undefined;
+        try {
+            await first.saveReservation({ id: replacement.id, outpoints: [a] });
+            await second.getReservations();
+            const get = FakeIDBObjectStore.prototype.get;
+            vi.spyOn(FakeIDBObjectStore.prototype, "get").mockImplementationOnce(function (
+                this: IDBObjectStore,
+                key,
+            ) {
+                const request = get.call(this, key);
+                request.addEventListener("success", () => {
+                    writing = second.saveReservation(replacement);
+                });
+                return request;
+            });
+            expect(await first.deleteReservationIfMatches(replacement.id, [a])).toBe(true);
+            expect(writing).toBeDefined();
+            await writing;
+            expect(await second.getReservations()).toEqual([replacement]);
+        } finally {
+            await first[Symbol.asyncDispose]();
+            await second[Symbol.asyncDispose]();
+        }
+    });
+
+    it("retains the durable and local hold when a matching delete aborts after request success", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = store();
+        const { wallet, coins, outpoints } = await fundedWallet({
+            vtxoReservationRepository: repository,
+        });
+        try {
+            const hold = await wallet.reserveVtxos([coins[0]], "taxi-transfer");
+            const remove = FakeIDBObjectStore.prototype.delete;
+            vi.spyOn(FakeIDBObjectStore.prototype, "delete").mockImplementationOnce(function (
+                this: IDBObjectStore,
+                key,
+            ) {
+                const request = remove.call(this, key);
+                request.addEventListener("success", () => this.transaction.abort());
+                return request;
+            });
+            await expect(hold.release()).rejects.toThrow("transaction aborted");
+            expect(await repository.getReservations()).toHaveLength(1);
+            expect((await wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[0]);
+            await hold.release();
+            expect(await repository.getReservations()).toEqual([]);
+            expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[0]);
+        } finally {
+            await wallet.dispose();
+            await repository[Symbol.asyncDispose]();
+        }
+    });
+
     it("persists an id-keyed hold when a reservation repository is configured", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const repository = store();
@@ -214,6 +340,41 @@ describe("durable reservations on a direct wallet", () => {
         await hold.release();
         expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[0]);
         await wallet.dispose();
+    });
+
+    it("keeps a newer wallet's durable hold when a disposed wallet's handle releases", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const dbName = `vtxo-reservations-${crypto.randomUUID()}`;
+        const firstRepository = new IndexedDBVtxoReservationRepository(dbName);
+        const original = await fundedWallet({ vtxoReservationRepository: firstRepository });
+        const stale = await original.wallet.reserveVtxos([original.coins[0]], "taxi-transfer");
+        await original.wallet.dispose();
+
+        const secondRepository = new IndexedDBVtxoReservationRepository(dbName);
+        const resumed = await fundedWallet({ vtxoReservationRepository: secondRepository });
+        try {
+            await resumed.wallet.releaseVtxoReservation("taxi-transfer");
+            await resumed.wallet.reserveVtxos([resumed.coins[1]], "taxi-transfer");
+            await stale.release();
+            expect(await secondRepository.getReservations()).toEqual([
+                { id: "taxi-transfer", outpoints: [{ txid: resumed.coins[1].txid, vout: 0 }] },
+            ]);
+
+            const thirdRepository = new IndexedDBVtxoReservationRepository(dbName);
+            const restarted = await fundedWallet({ vtxoReservationRepository: thirdRepository });
+            try {
+                expect((await restarted.wallet.getSpendableVtxos()).map(key)).not.toContain(
+                    restarted.outpoints[1],
+                );
+            } finally {
+                await restarted.wallet.dispose();
+                await thirdRepository[Symbol.asyncDispose]();
+            }
+        } finally {
+            await resumed.wallet.dispose();
+            await firstRepository[Symbol.asyncDispose]();
+            await secondRepository[Symbol.asyncDispose]();
+        }
     });
 
     it("drops durable holds when the wallet is cleared", async () => {

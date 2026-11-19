@@ -136,7 +136,10 @@ import type {
     BatchRegistrationState,
 } from "../repositories/intentRepository";
 import { isTerminalBatchRegistrationState } from "../repositories/intentRepository";
-import type { VtxoReservationRepository } from "../repositories/vtxoReservationRepository";
+import {
+    reservationOutpointSetKey,
+    type VtxoReservationRepository,
+} from "../repositories/vtxoReservationRepository";
 import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
@@ -571,14 +574,6 @@ function coinKeys(inputs: readonly ExtendedCoin[]): string[] {
     return inputs
         .filter((input) => typeof input === "object" && input !== null)
         .map((input) => `${input.txid}:${input.vout}`);
-}
-
-/** Order-independent key of an outpoint set, to compare what two holds name. */
-function outpointSetKey(outpoints: readonly Outpoint[]): string {
-    return outpoints
-        .map(({ txid, vout }) => `${txid}:${vout}`)
-        .sort()
-        .join("|");
 }
 
 function assertNoPersistentReservation(
@@ -3412,6 +3407,20 @@ export class Wallet
     // held sets already order a hold against a spend.
     private reservationQueue: Promise<void> = Promise.resolve();
 
+    private requireReservationRepository(): VtxoReservationRepository {
+        const repository = this.reservationRepository;
+        if (!repository) throw new Error("VTXO reservation repository is required");
+        if (
+            repository.version !== 2 ||
+            typeof repository.deleteReservationIfMatches !== "function"
+        ) {
+            throw new Error(
+                "VTXO reservation repository version 2 with atomic release is required",
+            );
+        }
+        return repository;
+    }
+
     private withReservationWrite(fn: () => Promise<void>): Promise<void> {
         const run = this.reservationQueue.then(fn);
         this.reservationQueue = run.catch(() => undefined);
@@ -3426,13 +3435,13 @@ export class Wallet
 
     /** Restored before automatic spending. Reusing an owner id must name the same inputs. */
     async reserveVtxosPersistently(outpoints: readonly Outpoint[], id: string): Promise<void> {
-        if (!this.reservationRepository) throw new Error("VTXO reservation repository is required");
+        const repository = this.requireReservationRepository();
         if (typeof id !== "string" || !id) throw new Error("Reservation id is required");
         const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
         await this.withReservationWrite(async () => {
             const existing = this.persistentReservations.get(id);
             if (existing) {
-                if (outpointSetKey(existing) !== outpointSetKey(snapshot)) {
+                if (reservationOutpointSetKey(existing) !== reservationOutpointSetKey(snapshot)) {
                     throw new Error("Reservation id already holds different inputs");
                 }
                 return;
@@ -3443,7 +3452,7 @@ export class Wallet
                 this.persistentReservedOutpoints.add(`${txid}:${vout}`);
             try {
                 await assertNoIntentLockedInputs(snapshot, this.intentRepository);
-                await this.reservationRepository!.saveReservation({ id, outpoints: snapshot });
+                await repository.saveReservation({ id, outpoints: snapshot });
                 this.persistentReservations.set(id, snapshot);
             } catch (error) {
                 hold.release();
@@ -3460,11 +3469,15 @@ export class Wallet
      * newer hold under its id alone.
      */
     async releaseVtxoReservation(id: string, expected?: readonly Outpoint[]): Promise<void> {
-        if (!this.reservationRepository) throw new Error("VTXO reservation repository is required");
+        const repository = this.requireReservationRepository();
         await this.withReservationWrite(async () => {
             const outpoints = this.persistentReservations.get(id) ?? [];
-            if (expected && outpointSetKey(outpoints) !== outpointSetKey(expected)) return;
-            await this.reservationRepository!.deleteReservation(id);
+            if (
+                expected &&
+                reservationOutpointSetKey(outpoints) !== reservationOutpointSetKey(expected)
+            )
+                return;
+            if (!(await repository.deleteReservationIfMatches(id, expected ?? outpoints))) return;
             this.persistentReservations.delete(id);
             const stillNamed = new Set(
                 [...this.persistentReservations.values()]

@@ -15,8 +15,54 @@
  */
 
 // Re-export standard Bitcoin Script and opcodes from @scure/btc-signer
-import { OP, Script, type ScriptType } from "@scure/btc-signer";
-export { OP, Script, type ScriptType };
+import { OP, Script, type ScriptType as BitcoinScriptType } from "@scure/btc-signer";
+import type {
+    ArkadeArgType as ProgramArgType,
+    ArkadeArgValue as ProgramArgValue,
+    ArkadeContractParams as ProgramContractParams,
+    ArkadeFunction as ProgramFunction,
+    ArkadeParamValue as ProgramParamValue,
+    ArkadeSegment as ProgramSegment,
+    AsmToken as ProgramAsmToken,
+    CompiledProgramFunction as ProgramCompiledFunction,
+    InputDef as ProgramInputDef,
+    InputRef as ProgramInputRef,
+    Program as ProgramDefinition,
+    ProgramKeys as ProgramKeySet,
+    SignerRef as ProgramSignerRef,
+    SourceRange as ProgramSourceRange,
+    TapscriptSegment as ProgramTapscriptSegment,
+    TweakedSigner as ProgramTweakedSigner,
+    WitnessRef as ProgramWitnessRef,
+} from "./program";
+import type {
+    ArkadeService as ServiceDefinition,
+    ResolvedArkadeService as ResolvedService,
+} from "./service";
+export { OP, Script };
+
+// Local aliases keep namespace declaration bundling from treating shared-chunk
+// types as runtime values.
+export type ScriptType = BitcoinScriptType;
+export type ArkadeArgType = ProgramArgType;
+export type ArkadeArgValue = ProgramArgValue;
+export type ArkadeContractParams = ProgramContractParams;
+export type ArkadeFunction = ProgramFunction;
+export type ArkadeParamValue = ProgramParamValue;
+export type ArkadeSegment = ProgramSegment;
+export type AsmToken = ProgramAsmToken;
+export type CompiledProgramFunction = ProgramCompiledFunction;
+export type InputDef = ProgramInputDef;
+export type InputRef = ProgramInputRef;
+export type Program = ProgramDefinition;
+export type ProgramKeys = ProgramKeySet;
+export type SignerRef = ProgramSignerRef;
+export type SourceRange = ProgramSourceRange;
+export type TapscriptSegment = ProgramTapscriptSegment;
+export type TweakedSigner = ProgramTweakedSigner;
+export type WitnessRef = ProgramWitnessRef;
+export type ArkadeService = ServiceDefinition;
+export type ResolvedArkadeService = ResolvedService;
 
 export {
     ARKADE_OP,
@@ -55,10 +101,6 @@ export {
     deserializeArkadeContractParams,
     witnessRefToBytes,
     UnsupportedProgramVersionError,
-    type ArkadeContractParams,
-    type CompiledProgramFunction,
-    type ProgramKeys,
-    type SourceRange,
 } from "./program";
 export {
     Arkade,
@@ -68,21 +110,8 @@ export {
     parseArtifact,
     validateProgram,
     SUPPORTED_PROGRAM_VERSION,
-    type Program,
-    type ArkadeFunction,
     type AssetSpec,
-    type TapscriptSegment,
-    type ArkadeSegment,
-    type AsmToken,
-    type ArkadeParamValue,
-    type ArkadeArgValue,
     type ArkadeNestedValue,
-    type ArkadeArgType,
-    type InputDef,
-    type InputRef,
-    type SignerRef,
-    type TweakedSigner,
-    type WitnessRef,
     type Utxo,
     type ArkadeUnlocker,
     type ArkadeSpendResult,
@@ -97,8 +126,4 @@ export {
     type ArkadeContractSubscription,
     type ArkadeServerProvider,
 } from "./contract";
-export {
-    resolveArkadeService,
-    type ArkadeService,
-    type ResolvedArkadeService,
-} from "./service";
+export { resolveArkadeService } from "./service";

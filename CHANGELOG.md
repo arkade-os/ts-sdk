@@ -14,6 +14,11 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **Reservation repositories require atomic release.** Version 2 adds required
+  `deleteReservationIfMatches(id, expected)`, which must compare and delete in one
+  transaction and acknowledge commit. Unsupported JavaScript backends retain
+  restored holds but reject acquisition and release before writes. IndexedDB's
+  stored schema is unchanged.
 - **Service-worker pages and workers must use the same wallet request protocol.** Every wallet operation now carries its captured identity/operator/network binding, including reads used to construct quotes and transactions. Older page/worker combinations fail before wallet access; update both together. `ServiceWorkerWallet` and its readonly variant accept `expectedNetwork` to verify the configured network during bootstrap.
 - **A worker `clear()` can be refused.** `ServiceWorkerWallet.clear()` rejects while a settlement or another long-running request from a page is in flight. It also fails without wiping anything if the remaining requests take over 5s to drain; the page then reinitializes before retrying. A logout that clears unconditionally must handle the rejection.
 
@@ -114,6 +119,11 @@ style and have not been backfilled.
 
 ### Features
 
+- **Worker wallets can dispose without clearing ownership records.**
+  `ServiceWorkerReadonlyWallet.dispose()` and `ServiceWorkerWallet.dispose()`
+  revoke the scoped worker and local proxy while preserving wallet, contract,
+  intent and reservation stores. Disposed proxies cannot automatically reinitialize;
+  `clear()` remains the explicit destructive reset.
 - **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
   can import the negotiation field names, refusal code, and asset contract IDs
   without loading the client or contract builders. Existing `/protocol` exports
@@ -166,6 +176,9 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Stale reservation handles cannot delete a restarted wallet's newer hold.**
+  Durable release compares the expected outpoints and deletes the matching row
+  atomically, then updates memory only after commit.
 - **Retained service-worker proxies cannot read or spend a replacement wallet.** Wallet requests and contract-event subscriptions retain their original wallet binding. Requests capture their wallet, providers and repository before awaiting, and disposal drains admitted operations for up to 5s before closing their storage; settlements and other long-running operations are not waited for, so a re-init during a batch round is not blocked. Initialization separately drains its finite writes and finalization while pending subscription setup remains revocable; clearing revokes callbacks before draining. Reservation requests also verify the original network without changing durable hold namespaces, and timeout settings and settlement events still follow the original operation.
 
 - **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.
@@ -1595,6 +1608,13 @@ style and have not been backfilled.
 
 ### Internal
 
+- **Keep public namespace declarations valid under strict checking.** Local type
+  aliases preserve Arkade's type-only exports across declaration chunks, and the
+  SDK supplies the WebSocket declarations required by its public Electrum types.
+  The packaged ESM and CJS type smoke now checks dependency declarations too.
+- **Qualify the merged SDK for the Taxi V1 stack.** The `0.5.9-taxi-v1` candidate
+  identifies the refreshed upstream `d9e55f61` baseline separately from the
+  published `0.5.8` archive.
 - **Dev-tooling dependency overrides raised past every high and critical
   advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
   development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and
