@@ -8,11 +8,8 @@ import {
     offerContract,
     swapProgramBinding,
     swapPrograms,
-    withExitClosure,
     Offer,
 } from "../src/offer";
-import taxi0AssetArtifact from "../src/legacy/taxi-0/swap-want-asset.artifact.json";
-import taxi0BtcArtifact from "../src/legacy/taxi-0/swap-want-btc.artifact.json";
 
 // deterministic keys -> a fresh derivation must never drift (any change to the
 // program JSONs or the arg binding changes it). The solverd vectors below pin
@@ -66,48 +63,6 @@ const goldens: [Omit<Offer, "swapPkScript">, string][] = [
 ];
 
 describe("swap offer", () => {
-    it.each([undefined, EXIT_BLOCKS, { type: "seconds", value: 4096n } as RelativeTimelock])(
-        "recovers frozen taxi.0 offers without changing their tree (%s)",
-        (exitDelay) => {
-            for (const [index, [terms]] of goldens.entries()) {
-                const offer = { ...terms, ...(exitDelay && { exitDelay }) };
-                const oldBinding = swapProgramBinding(offer, operatorPubkey, "asset-swap-v2");
-                const program = arkade.programFromArtifact(
-                    (index === 0 ? taxi0AssetArtifact : taxi0BtcArtifact) as ContractArtifact,
-                );
-                const frozen = new arkade.ArkadeProgramScript(
-                    withExitClosure(program, exitDelay),
-                    oldBinding.args,
-                    oldBinding.keys,
-                );
-                const funded = decodeOffer(
-                    encodeOffer({ ...offer, swapPkScript: frozen.pkScript }),
-                );
-                for (const version of ["asset-swap-v2", "asset-swap-v3"] as const) {
-                    const rebound = offerContract(funded, operatorPubkey, version);
-                    expect(rebound.scripts).toEqual(frozen.scripts);
-                    expect(rebound.compiled).toEqual(frozen.compiled);
-                    expect(rebound.pkScript).toEqual(frozen.pkScript);
-                    expect(offerContract(offer, operatorPubkey, version).pkScript).not.toEqual(
-                        frozen.pkScript,
-                    );
-                }
-                if (exitDelay === undefined) {
-                    const address = new ArkAddress(
-                        operatorPubkey,
-                        frozen.tweakedPublicKey,
-                        "tark",
-                    ).encode();
-                    expect(address).toBe(
-                        index === 0
-                            ? "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc648qxum5ux0zjz46yyh8qvnzhrf2p4amdvrel5vharxed7x2kq9ez9lns8q"
-                            : "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65xvh8807deespfx4e5mr7c3t90ldrjac8vms6czd9eu3ss59gkphk9tn9q",
-                    );
-                }
-            }
-        },
-    );
-
     it("loads the asset-swap artifact the binding compiles", () => {
         const compilerArtifact: ContractArtifact = JSON.parse(
             readFileSync(new URL("../src/contracts/asset-swap.json", import.meta.url), "utf8"),

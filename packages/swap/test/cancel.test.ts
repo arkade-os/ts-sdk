@@ -1,18 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, arkade, asset, type IWallet } from "@arkade-os/sdk";
+import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
 import {
     cancelOffer,
     prepareOfferCancel,
     encodeOffer,
     offerContract,
-    swapProgramBinding,
     type Offer,
 } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
-import taxi0AssetArtifact from "../src/legacy/taxi-0/swap-want-asset.artifact.json";
-import taxi0BtcArtifact from "../src/legacy/taxi-0/swap-want-btc.artifact.json";
 
 // cancelOffer's guards fire before any signing: mock only the network seam
 // (Arkade.connect for the current server key, ArkadeContract for the vtxo
@@ -118,45 +115,6 @@ const pendingSwap = (over: Partial<AssetSwap> = {}): AssetSwap => ({
 });
 
 describe("cancelOffer guards", () => {
-    it.each(["asset", "btc"])(
-        "cancels a funded taxi.0 %s offer from its original script",
-        async (side) => {
-            const terms = {
-                ...binding,
-                wantAsset: side === "asset" ? binding.wantAsset : undefined,
-                offerAsset: side === "btc" ? binding.wantAsset : undefined,
-            };
-            const oldBinding = swapProgramBinding(terms, fundedOperatorKey, "asset-swap-v2");
-            const program = arkade.programFromArtifact(
-                (side === "asset" ? taxi0AssetArtifact : taxi0BtcArtifact) as Parameters<
-                    typeof arkade.programFromArtifact
-                >[0],
-            );
-            const frozen = new arkade.ArkadeProgramScript(
-                program,
-                oldBinding.args,
-                oldBinding.keys,
-            );
-            const frozenAddress = new ArkAddress(
-                fundedOperatorKey,
-                frozen.tweakedPublicKey,
-                "tark",
-            ).encode();
-            state.serverKey = rotatedOperatorKey;
-            state.utxos = [{ txid: "a".repeat(64), vout: 0, value: 10_000 }];
-            state.sends = 0;
-            const prepared = await prepareOfferCancel(
-                { ...wallet, getAddress: async () => frozenAddress } as IWallet,
-                hex.encode(encodeOffer({ ...terms, swapPkScript: frozen.pkScript })),
-                { fundingTxid: "a".repeat(64), swapAddress: frozenAddress },
-            );
-            expect(prepared.offer.swapPkScript).toEqual(frozen.pkScript);
-            expect(prepared.vtxo).toEqual(state.utxos[0]);
-            expect(await prepared.send()).toBe("cc".repeat(32));
-            expect(state.sends).toBe(1);
-        },
-    );
-
     it("diagnoses a rotated server key instead of reporting a missing VTXO", async () => {
         state.serverKey = rotatedOperatorKey;
         await expect(

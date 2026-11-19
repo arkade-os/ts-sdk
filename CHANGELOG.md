@@ -167,7 +167,7 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
-- **Funded Taxi candidate offers retain their original scripts.** Existing `0.2.0-taxi.0` offer packets select their sealed compiler artifacts by exact script, including cancel and optional exit paths. New asset RFQs use the published `contract_versions` negotiation and V2/V3 identifiers; the frozen candidate tree is never advertised or selected for a new offer.
+- **The Taxi v1 snapshot drops unshipped offer variants.** Swap retains published V2 and canonical V3 contract negotiation and recovery. The unused Taxi candidate tree and its compatibility code are removed.
 
 - **Quoted funding never donates unavoidable change.** Swap funding passes `maxChangeFee: 0`, so a send that cannot return its change fails before provider submission. Operator fees are still supported.
 

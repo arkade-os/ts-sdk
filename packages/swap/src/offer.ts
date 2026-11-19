@@ -32,11 +32,9 @@ import {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_CONTRACTS,
     ASSET_SWAP_CONTRACT_VERSIONS,
-    type AssetSwapContract,
     type AssetSwapContractVersion,
     legacySwapPrograms,
     swapPrograms,
-    taxi0SwapContract,
 } from "./program";
 import {
     promoteOfferContract,
@@ -154,8 +152,6 @@ export function swapProgramBinding(
         const binding = bindSwapProgram(offer, operatorPubkey, version);
         if (pkOf(binding) === funded) return binding;
     }
-    const frozen = bindSwapContract(offer, operatorPubkey, taxi0SwapContract);
-    if (pkOf(frozen) === funded) return frozen;
     // None matches (usually a rotated operator key): callers throw with that diagnosis.
     return bindSwapProgram(offer, operatorPubkey, contractVersion);
 }
@@ -165,14 +161,7 @@ function bindSwapProgram(
     operatorPubkey: Uint8Array,
     contractVersion: AssetSwapContractVersion,
 ): SwapProgramBinding {
-    return bindSwapContract(offer, operatorPubkey, ASSET_SWAP_CONTRACTS[contractVersion]);
-}
-
-function bindSwapContract(
-    offer: Omit<Offer, "swapPkScript">,
-    operatorPubkey: Uint8Array,
-    { programs, args }: AssetSwapContract,
-): SwapProgramBinding {
+    const { programs, args } = ASSET_SWAP_CONTRACTS[contractVersion];
     const user = offer.makerPublicKey;
     const assetId = offer.wantAsset;
     return {

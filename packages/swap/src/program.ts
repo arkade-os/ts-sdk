@@ -4,8 +4,6 @@ import assetSwapArtifact from "./contracts/asset-swap.json";
 import satsSwapArtifact from "./contracts/sats-swap.json";
 import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
 import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
-import taxi0AssetArtifact from "./legacy/taxi-0/swap-want-asset.artifact.json";
-import taxi0BtcArtifact from "./legacy/taxi-0/swap-want-btc.artifact.json";
 import { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_V3 } from "./rfq-contract";
 
 export { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_V3 } from "./rfq-contract";
@@ -80,14 +78,6 @@ export const ASSET_SWAP_CONTRACTS: Readonly<Record<AssetSwapContractVersion, Ass
             ...sharedArgs(inputs),
         }),
     },
-};
-
-export const taxi0SwapContract: AssetSwapContract = {
-    programs: {
-        wantAsset: arkade.programFromArtifact(taxi0AssetArtifact as ContractArtifact),
-        wantBtc: arkade.programFromArtifact(taxi0BtcArtifact as ContractArtifact),
-    },
-    args: ASSET_SWAP_CONTRACTS[ASSET_SWAP_V2].args,
 };
 
 /** The versions every asset RFQ advertises by default, most preferred first. */

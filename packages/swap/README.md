@@ -16,14 +16,12 @@ Construction is synchronous and inert: no network, no wallet read, no repository
 call that needs one does it.
 
 The direct-wallet API requires SDK `0.5.8`. `ServiceWorkerWallet` integrations require SDK
-`0.5.9-taxi.0` for wallet request scopes; pin that SDK candidate explicitly. The workspace
+`0.5.9-taxi-v1` for wallet request scopes; pin that SDK candidate explicitly. The workspace
 dependency alone does not qualify older worker wallets.
 
 Asset RFQs negotiate the published `contract_versions` / `contract_version` protocol:
 `asset-swap-v3` uses the compiler artifacts in `src/contracts`, and `asset-swap-v2` retains
-the published legacy tree. The unpublished `0.2.0-taxi.0` tree is recognized only from an
-existing offer's exact `swapPkScript`, including its optional exit delay. Its sealed artifacts
-are retained under `src/legacy/taxi-0` for recovery; new quotes never advertise or select it.
+the published legacy tree. These are the two supported contract versions.
 
 Market discovery needs no configuration either: the client defaults to the reference solver
 registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
