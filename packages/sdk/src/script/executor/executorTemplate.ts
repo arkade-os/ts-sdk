@@ -27,6 +27,12 @@ export interface DelegationParams {
     boardingExitDelay?: number;
 }
 
+/** A delegation as restore scans for it: the Executor's keys and the params, owner aside. */
+export interface ExecutorWatchTemplate {
+    keys: ExecutorContractKeys;
+    params: DelegationParams;
+}
+
 /** A default template: renewal holds delegated VTXOs, boarding holds on-chain deposits. */
 export type ExecutorDefault = "renewal" | "boarding";
 

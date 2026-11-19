@@ -37,6 +37,9 @@ import {
 } from "./helpers/restoreWallet";
 import { jsonResponse } from "./helpers/response";
 import { registerWalletRestoreHook } from "../src/wallet/restoreHooks";
+import { watchExecutorContracts } from "../src/wallet/executor";
+import { ExecutorContractHandler } from "../src/contracts/handlers/executor";
+import executorVectors from "./fixtures/executor/vectors.json";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -1351,6 +1354,47 @@ describe("Wallet.restore", () => {
         // ~1.7s of real HD gap-scanning in isolation, against vitest's 5s
         // default — close enough that a loaded worker pool tips it over
         // intermittently. Explicit budget rather than a moving default.
+    }, 20_000);
+
+    it("HD: finds the Executor watch of a rotated boarding key", async () => {
+        const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
+        try {
+            const keys = {
+                cosignerPubkey: executorVectors.cosignerPubkey,
+                serverPubkey: `02${hex.encode(wallet.offchainTapscript.options.serverPubKey)}`,
+                emulatorPubkey: executorVectors.emulatorPubkey,
+            };
+            const delegation = {
+                exitDelay: 0x400001,
+                renewalWindow: 86400,
+                maxFee: 500,
+                boardingExitDelay: 0x400002,
+            };
+            // the identity's watch, restored from what registration returned
+            await watchExecutorContracts(wallet, keys, delegation);
+            const descriptor = hdProvider.materializeDescriptorAt(3);
+            const renewal = ExecutorContractHandler.createScript(
+                ExecutorContractHandler.serializeParams({
+                    template: "renewal",
+                    owner: new Uint8Array([2, ...deriveDescriptorLeafPubKey(descriptor)]),
+                    ...delegation,
+                    cosignerPubKey: hex.decode(keys.cosignerPubkey),
+                    serverPubKey: hex.decode(keys.serverPubkey),
+                    emulatorPubKey: hex.decode(keys.emulatorPubkey),
+                }),
+            );
+            indexer.usedScripts.add(hex.encode(renewal.pkScript));
+
+            await wallet.restore({ gapLimit: 5 });
+
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(descriptor);
+            const [row] = await collectContracts(wallet.contractRepository, {
+                script: hex.encode(renewal.pkScript),
+            });
+            expect(row.metadata?.signingDescriptor).toBe(descriptor);
+        } finally {
+            await wallet.dispose();
+        }
     }, 20_000);
 
     it("HD: recovers history older than the delta-sync overlap window", async () => {

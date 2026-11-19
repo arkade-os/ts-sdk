@@ -7,6 +7,7 @@ import type { RelativeTimelock } from "../script/tapscript";
 import type { IndexerProvider } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
+import type { ExecutorWatchTemplate } from "../script/executor/executorTemplate";
 
 /**
  * Contract lifecycle state. Governs receive-address selection only: `inactive` does **not**
@@ -283,6 +284,7 @@ export interface DiscoveredContract {
     address: string;
     metadata?: Record<string, unknown>;
     label?: string;
+    scope?: ContractScope;
 }
 
 /**
@@ -322,6 +324,8 @@ export interface DiscoveryDeps {
     delegatePubKey?: Uint8Array;
     /** Retired delegators' keys (x-only). Discovery only, never minted. */
     retiredDelegatePubKeys?: Uint8Array[];
+    /** The wallet's Executor delegations, probed at every index; none when absent. */
+    executorWatches?: readonly ExecutorWatchTemplate[];
 }
 
 /**

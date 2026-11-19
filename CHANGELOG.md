@@ -156,6 +156,21 @@ style and have not been backfilled.
   sweep, and the boarding sweep exits it after its CSV; both send to the
   wallet's own boarding address, never back to the delegated one.
 
+- **An HD wallet gives each boarding key its own Executor watch.** A watch
+  derives from its owner key, so one registered under the identity key would
+  have kept one delegated boarding address for every deposit, linking them
+  all onchain. `registerBoarding` now registers the key of the displayed
+  boarding address. When the address rotates, through `getNewBoardingAddress()`,
+  a settle that boards a deposit, or a coin the Executor boards into the
+  displayed key's renewal contract, the wallet registers the newest live
+  watch's parameters again for the new key. If that registration fails,
+  `getBoardingAddress()` shows the new key's own address, which the wallet
+  boards once online, rather than reuse the old one. Rows of a rotated key
+  carry its `signingDescriptor`, and the signer router routes `executor`
+  inputs by it. `restore()` scans every HD index for the delegations of the
+  persisted Executor contracts, so calling `watchExecutorContracts` before it
+  also finds the watches of rotated keys. A static wallet keeps its one watch.
+
 - **The Executor's delegated contracts are a built-in contract type.**
   `ExecutorContractHandler` (`type: "executor"`) derives the renewal and
   boarding contracts of the Executor's default templates from the owner key, the

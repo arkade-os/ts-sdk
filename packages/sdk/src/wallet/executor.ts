@@ -1,4 +1,5 @@
 import { hex } from "@scure/base";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import type { IWallet } from ".";
 import type {
     ExecutorContractKeys,
@@ -8,6 +9,7 @@ import type {
 } from "../providers/executor";
 import type { Contract } from "../contracts/types";
 import { ExecutorContractHandler } from "../contracts/handlers/executor";
+import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { networkFromOperatorInfo, resolveEmulatorPubkey } from "../networks";
 import { ArkAddress } from "../script/address";
 import {
@@ -17,6 +19,7 @@ import {
     defaultVariables,
 } from "../script/executor/executorTemplate";
 import { timelockToSequence } from "../utils/timelock";
+import { newestWalletReceiveContract } from "./walletReceiveRotator";
 
 /** Metadata key: the service's status of a delegated watch. */
 export const DELEGATION_STATUS_KEY = "delegationStatus";
@@ -81,6 +84,9 @@ export type DelegatedWallet = Pick<
  * params and the service's keys, so a restored wallet finds its delegated coins without asking
  * the service. Idempotent.
  *
+ * `descriptor` names the owner key, the identity's by default. Called before `restore()`, it
+ * also lets an HD wallet find the watches of its rotated keys.
+ *
  * `registered` carries the service's answer for the template it registered: that row becomes the
  * live delegation, the others stay local companions of it (watched, never delegated to). Without
  * it (a restore) the rows carry no status.
@@ -90,12 +96,21 @@ export async function watchExecutorContracts(
     keys: ExecutorContractKeys,
     params: DelegationParams,
     registered?: ExecutorWatchMetadata,
+    descriptor?: string,
 ): Promise<Contract[]> {
     const [owner, address, manager] = await Promise.all([
-        wallet.identity.compressedPublicKey(),
+        descriptor === undefined
+            ? wallet.identity.compressedPublicKey()
+            : ownerKey(wallet.identity, descriptor),
         wallet.getAddress(),
         wallet.getContractManager(),
     ]);
+    // the identity's key needs no descriptor to sign
+    const signing =
+        descriptor === undefined ||
+        equalBytes(owner.subarray(1), await wallet.identity.xOnlyPublicKey())
+            ? undefined
+            : descriptor;
     const { hrp, serverPubKey } = ArkAddress.decode(address);
     const templates: ExecutorDefault[] =
         params.boardingExitDelay === undefined ? ["renewal"] : ["renewal", "boarding"];
@@ -112,7 +127,7 @@ export async function watchExecutorContracts(
                 // boarding deposits are onchain coins, stored by the onchain sync
                 scope: template === "boarding" ? "onchain" : "offchain",
                 label: template === "renewal" ? "Delegated renewal" : "Delegated boarding",
-                metadata: metadataFor(template, registered),
+                metadata: metadataFor(template, registered, signing),
             }),
         );
     }
@@ -121,13 +136,50 @@ export async function watchExecutorContracts(
 
 function metadataFor(
     template: ExecutorDefault,
-    registered?: ExecutorWatchMetadata,
+    registered: ExecutorWatchMetadata | undefined,
+    signingDescriptor: string | undefined,
 ): Record<string, string | number> | undefined {
-    if (registered === undefined) return undefined;
-    if (registered.template !== template) {
-        return { [DELEGATION_STATUS_KEY]: DELEGATION_LOCAL_STATUS };
+    const signing: Record<string, string> =
+        signingDescriptor === undefined ? {} : { signingDescriptor };
+    if (registered === undefined) {
+        return signingDescriptor === undefined ? undefined : signing;
     }
-    return statusMetadata({}, registered.status, registered.expiresAt);
+    if (registered.template !== template) {
+        return { ...signing, [DELEGATION_STATUS_KEY]: DELEGATION_LOCAL_STATUS };
+    }
+    return statusMetadata(signing, registered.status, registered.expiresAt);
+}
+
+/**
+ * The compressed owner key of `descriptor`. The identity's keeps its own parity, so its rows and
+ * the service's registration stay the ones made before descriptors; the scripts take the x-only
+ * key, so any other parity derives the same address.
+ */
+export async function ownerKey(
+    identity: Pick<IWallet["identity"], "compressedPublicKey">,
+    descriptor: string,
+): Promise<Uint8Array> {
+    const xOnly = deriveDescriptorLeafPubKey(descriptor);
+    const own = await identity.compressedPublicKey();
+    if (equalBytes(own.subarray(1), xOnly)) return own;
+    const key = new Uint8Array(33);
+    key[0] = 2;
+    key.set(xOnly, 1);
+    return key;
+}
+
+/**
+ * The descriptor of the displayed boarding address: the newest one the wallet rotated to, as
+ * boot resolves it, else the identity's.
+ */
+async function boardingDescriptor(
+    wallet: Pick<IWallet, "identity" | "getContractManager">,
+    serverPubKey: string,
+): Promise<string> {
+    const manager = await wallet.getContractManager();
+    const rows = await manager.getContracts({ type: "boarding", state: "active" });
+    const descriptor = newestWalletReceiveContract(rows, serverPubKey)?.metadata?.signingDescriptor;
+    return typeof descriptor === "string" ? descriptor : identityDescriptor(wallet.identity);
 }
 
 /** `updateContract` replaces metadata, so the previous expiry must not outlive a status without one. */
@@ -177,10 +229,11 @@ export interface IExecutorManager {
     /** The default template ids; throws unless the service lists them as active. */
     defaultTemplates(): Promise<Record<ExecutorDefault, string>>;
     /**
-     * Watch the boarding address of this wallet's key: the Executor boards every deposit there
+     * Watch the displayed boarding address's key: the Executor boards every deposit there
      * into the wallet's renewal contract, a virtual output the wallet spends and renews as its
      * own. The wallet watches both contracts. Without `expiresAt` the watch does not expire;
-     * registering again returns the existing watch unchanged.
+     * registering again returns the existing watch unchanged. An HD wallet registers a new watch
+     * each time it rotates the boarding address.
      *
      * The address derives from the key, `params`, the operator's exit delays when `params` omits
      * them, and the Executor's keys: registering again on a restored wallet finds the same watch
@@ -217,15 +270,23 @@ export class ExecutorManagerImpl implements IExecutorManager {
         return ids;
     }
 
-    async registerBoarding(
+    registerBoarding(
+        options: DelegationOptions,
+        registration?: RegistrationOptions,
+    ): Promise<ExecutorWatchRegistration> {
+        return this.registerBoardingAt(undefined, options, registration);
+    }
+
+    /** @internal {@link registerBoarding} for `descriptor`'s key; the displayed one by default. */
+    async registerBoardingAt(
+        descriptor: string | undefined,
         options: DelegationOptions,
         { expiresAt, emulatorPubkey }: RegistrationOptions = {},
     ): Promise<ExecutorWatchRegistration> {
-        const [info, operator, address, owner] = await Promise.all([
+        const [info, operator, address] = await Promise.all([
             this.executorProvider.getInfo(),
             this.wallet.getOperatorInfo({ requireLive: true }),
             this.wallet.getAddress(),
-            this.wallet.identity.compressedPublicKey(),
         ]);
         if (info.network !== operator.network) {
             throw new Error(
@@ -257,6 +318,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `renewalWindow ${options.renewalWindow}s must be shorter than the operator's VTXO expiry of ${lifetime}s`,
             );
         }
+        descriptor ??= await boardingDescriptor(this.wallet, server);
+        const owner = await ownerKey(this.wallet.identity, descriptor);
         const params: DelegationParams = {
             renewalWindow: options.renewalWindow,
             maxFee: options.maxFee,
@@ -296,7 +359,13 @@ export class ExecutorManagerImpl implements IExecutorManager {
             status: delegation.status,
             expiresAt: delegation.expiresAt,
         };
-        const contracts = await watchExecutorContracts(this.wallet, keys, params, registered);
+        const contracts = await watchExecutorContracts(
+            this.wallet,
+            keys,
+            params,
+            registered,
+            descriptor,
+        );
         // The row may predate this registration (the service is idempotent, the repository is
         // not): make it carry what the service just said, ended or not, so an ended watch stops
         // being advertised.

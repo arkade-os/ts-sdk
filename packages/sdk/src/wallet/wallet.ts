@@ -167,6 +167,7 @@ import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
 import type { ExecutorProvider } from "../providers/executor";
+import type { ExecutorWatchTemplate } from "../script/executor/executorTemplate";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
@@ -643,6 +644,17 @@ export interface BoardingUtxoGroup {
     coins: ExtendedCoin[];
     /** A live Executor boarding watch: the Executor boards these, settle leaves them alone. */
     delegated?: true;
+}
+
+/** An Executor boarding contract of this wallet, see {@link ReadonlyWallet.delegatedBoardingContracts}. */
+interface DelegatedBoardingWatch {
+    contract: Contract;
+    /** The owner key, x-only hex. */
+    owner: string;
+    script: DefaultVtxo.Script;
+    /** The operator key, x-only hex. */
+    signer: string;
+    live: boolean;
 }
 
 /**
@@ -1366,40 +1378,48 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * The newest boarding watch for this wallet's key and current operator that is live, see
-     * {@link delegatedBoardingContracts}.
+     * The live boarding watch of the displayed boarding key and current operator, see
+     * {@link delegatedBoardingContracts}. A rotated key without one shows its own address.
      */
     private async delegatedBoardingAddress(): Promise<string | undefined> {
         if (!this.executorProvider) return undefined;
         const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
+        const displayed = hex.encode(this._boardingTapscript.options.pubKey);
         const live = (await this.delegatedBoardingContracts()).find(
-            (c) => c.live && c.signer === server,
+            (c) => c.live && c.signer === server && c.owner === displayed,
         );
         return live?.script.onchainAddress(this.network);
     }
 
     /**
-     * The Executor boarding contracts of this wallet's key, newest first. A watch is live while
+     * The Executor boarding contracts of this wallet's keys, newest first: the identity's, or one
+     * its `signingDescriptor` derives. A watch is live while
      * the Executor registered it as active and it has not expired: the Executor boards its
      * deposits, so the wallet's own boarding leaves them alone. Read from the contract repository,
      * so it follows registrations made through any wallet front-end.
      */
-    private async delegatedBoardingContracts(): Promise<
-        { script: DefaultVtxo.Script; signer: string; live: boolean }[]
-    > {
-        const owner = hex.encode(await this.identity.xOnlyPublicKey());
+    protected async delegatedBoardingContracts(): Promise<DelegatedBoardingWatch[]> {
+        const identityKey = hex.encode(await this.identity.xOnlyPublicKey());
         const nowSeconds = Math.floor(Date.now() / 1000);
         const rows = (await collectContracts(this.contractRepository, { type: ["executor"] }))
             .filter((c) => c.params.template === "boarding")
             .sort((a, b) => b.createdAt - a.createdAt);
-        const contracts: { script: DefaultVtxo.Script; signer: string; live: boolean }[] = [];
+        const contracts: DelegatedBoardingWatch[] = [];
         for (const c of rows) {
-            if (c.params.owner?.slice(2).toLowerCase() !== owner) continue;
             try {
+                const owner = c.params.owner?.slice(2).toLowerCase();
+                const descriptor = c.metadata?.signingDescriptor;
+                const held =
+                    owner === identityKey ||
+                    (typeof descriptor === "string" &&
+                        hex.encode(deriveDescriptorLeafPubKey(descriptor)) === owner);
+                if (!held || owner === undefined) continue;
                 const script = ExecutorContractHandler.createScript(c.params);
                 if (hex.encode(script.pkScript) !== c.script) continue;
                 const expiresAt = c.metadata?.[DELEGATION_EXPIRES_KEY];
                 contracts.push({
+                    contract: c,
+                    owner,
                     script,
                     signer: toXOnlySignerHex(c.params.serverPubKey),
                     live:
@@ -2775,7 +2795,7 @@ export class Wallet
 
     override readonly identity: Identity;
     private readonly _delegateManager?: IDelegateManager;
-    private readonly _executorManager?: IExecutorManager;
+    private readonly _executorManager?: ExecutorManagerImpl;
     private _vtxoManager?: VtxoManager;
     private _vtxoManagerInitializing?: Promise<VtxoManager>;
 
@@ -2838,6 +2858,10 @@ export class Wallet
     }
 
     private _receiveRotatorInstalled = false;
+
+    /** Rotates the boarding address once the Executor boards a deposit at it. */
+    private _executorBoardUnsub?: () => void;
+    private _executorBoardChain: Promise<void> = Promise.resolve();
 
     /**
      * Descriptor-aware signer for inputs locked by rotated pubkeys (the rotator's instance).
@@ -2988,6 +3012,9 @@ export class Wallet
      * {@link maybeRotateBoardingAfterBoard} on every settle consuming a boarding UTXO; retired
      * addresses stay reachable through {@link getBoardingUtxos}.
      *
+     * While an Executor boarding watch is live, the new key gets a watch of its own, and this
+     * returns its delegated address; if that registration fails, the new key's own address.
+     *
      * @deprecated Use {@link getNewAddresses} — it mints any combination of
      * address types at one shared index, and reports the contract row behind
      * each. Note the difference in display behaviour: this method *swaps* the
@@ -2999,8 +3026,69 @@ export class Wallet
         // Persisted before the swap, so a throw leaves the previous (watched) address displayed.
         const [minted] = await this.allocateAddresses(["boarding"], false, true);
         if (!minted?.allocated) return this.getBoardingAddress();
-        if (minted.type === "boarding") this.setBoardingTapscriptForRotation(minted.tapscript);
-        return minted.address;
+        if (minted.type === "boarding") {
+            await this.extendBoardingWatch(minted.signingDescriptor);
+            this.setBoardingTapscriptForRotation(minted.tapscript);
+        }
+        return this.getBoardingAddress();
+    }
+
+    /**
+     * Register the newest live Executor boarding watch again for a rotated boarding key, so its
+     * deposits are boarded while the wallet is offline too. Best-effort: on failure the key shows
+     * its own address, which the wallet boards once online.
+     */
+    private async extendBoardingWatch(descriptor: string): Promise<void> {
+        if (!this._executorManager) return;
+        const server = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
+        const watch = (await this.delegatedBoardingContracts()).find(
+            (c) => c.live && c.signer === server,
+        );
+        if (!watch) return;
+        try {
+            const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
+            const expiresAt = watch.contract.metadata?.[DELEGATION_EXPIRES_KEY];
+            await this._executorManager.registerBoardingAt(
+                descriptor,
+                {
+                    renewalWindow: p.renewalWindow,
+                    maxFee: p.maxFee,
+                    exitDelay: p.exitDelay,
+                    boardingExitDelay: p.boardingExitDelay,
+                },
+                {
+                    expiresAt:
+                        typeof expiresAt === "number" && expiresAt > 0 ? expiresAt : undefined,
+                    // the key the watch was registered under, pinned or approved
+                    emulatorPubkey: hex.encode(p.emulatorPubKey),
+                },
+            );
+        } catch (e) {
+            console.warn("Failed to register an Executor watch for the new boarding address", e);
+        }
+    }
+
+    /**
+     * Rotate-on-board for Executor watches: the Executor boards a deposit into the renewal
+     * contract of its key, so a coin there while that key is displayed means the address was used.
+     */
+    private async installExecutorBoardRotation(): Promise<void> {
+        if (!this._descriptorProvider || !this._executorManager || this._executorBoardUnsub) return;
+        const manager = await this.getContractManager();
+        this._executorBoardUnsub = manager.onContractEvent((event) => {
+            if (event.type !== "vtxo_received" || !isContractVtxoEvent(event)) return;
+            const { type, params } = event.contract;
+            if (type !== ExecutorContractHandler.type || params.template !== "renewal") return;
+            this._executorBoardChain = this._executorBoardChain.then(async () => {
+                const displayed = hex.encode(this._boardingTapscript.options.pubKey);
+                if (params.owner?.slice(2).toLowerCase() !== displayed) return;
+                try {
+                    await this.getNewBoardingAddress();
+                } catch (e) {
+                    console.warn("Failed to rotate boarding address after Executor board", e);
+                }
+            });
+        });
     }
 
     /**
@@ -3577,6 +3665,45 @@ export class Wallet
         return this._restoreInFlight;
     }
 
+    /**
+     * The delegations of the persisted Executor contracts, owner aside, so restore finds them at
+     * every key: {@link watchExecutorContracts} before `restore()` covers the rotated ones too.
+     */
+    private async executorWatchTemplates(): Promise<ExecutorWatchTemplate[]> {
+        const rows = await collectContracts(this.contractRepository, {
+            type: [ExecutorContractHandler.type],
+        });
+        const templates = new Map<string, ExecutorWatchTemplate>();
+        for (const row of rows) {
+            try {
+                const p = ExecutorContractHandler.deserializeParams(row.params);
+                const keys = {
+                    cosignerPubkey: hex.encode(p.cosignerPubKey),
+                    serverPubkey: hex.encode(p.serverPubKey),
+                    emulatorPubkey: hex.encode(p.emulatorPubKey),
+                };
+                const id = JSON.stringify([keys, p.exitDelay, p.renewalWindow, p.maxFee]);
+                const known = templates.get(id);
+                // a renewal row's delegation is its boarding row's, minus the boarding delay
+                if (known?.params.boardingExitDelay !== undefined) continue;
+                templates.set(id, {
+                    keys,
+                    params: {
+                        exitDelay: p.exitDelay,
+                        renewalWindow: p.renewalWindow,
+                        maxFee: p.maxFee,
+                        ...(p.boardingExitDelay !== undefined
+                            ? { boardingExitDelay: p.boardingExitDelay }
+                            : {}),
+                    },
+                });
+            } catch (e) {
+                console.warn("Skipping malformed delegated contract", row.script, e);
+            }
+        }
+        return [...templates.values()];
+    }
+
     private async _runRestore(gapLimit: number): Promise<void> {
         // Keyring foreign keys sit outside the derivation tree the gap scan walks, so only the
         // unwrapped HD provider counts. `instanceof` (inside the getter), not duck-typing: a
@@ -3585,10 +3712,11 @@ export class Wallet
         const hd = provider !== undefined;
 
         // Manager init, the static identity descriptor, and operator info do not use each other.
-        const [manager, staticDescriptor, arkInfo] = await Promise.all([
+        const [manager, staticDescriptor, arkInfo, executorWatches] = await Promise.all([
             this.getContractManager(),
             hd ? undefined : identityDescriptor(this.identity),
             this.arkProvider.getInfo(),
+            this.executorWatchTemplates(),
         ]);
         const materialize = (index: number): string =>
             hd ? provider.materializeDescriptorAt(index) : staticDescriptor!;
@@ -3623,6 +3751,7 @@ export class Wallet
                 arkInfo.signerPubkey,
                 ...arkInfo.deprecatedSigners.map((s) => s.pubkey),
             ]),
+            executorWatches,
         };
 
         const result = await manager.scanContracts({
@@ -3802,6 +3931,12 @@ export class Wallet
                 }
                 this._receiveRotatorInstalled = true;
             }
+            try {
+                await this.installExecutorBoardRotation();
+            } catch (installErr) {
+                await manager.dispose();
+                throw installErr;
+            }
             this._vtxoManager = manager;
             return manager;
         } finally {
@@ -3827,6 +3962,9 @@ export class Wallet
         } catch (error) {
             rotatorError = error;
         }
+        this._executorBoardUnsub?.();
+        this._executorBoardUnsub = undefined;
+        await this._executorBoardChain;
 
         const manager =
             this._vtxoManager ??
