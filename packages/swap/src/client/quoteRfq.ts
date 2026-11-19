@@ -809,6 +809,32 @@ const quoteLightningReceive = async (
     };
 };
 
+/**
+ * The pin a solver is shown, and the claim fee folded into it. Open RFQ broadcasts the same
+ * figure, so a bid and its directed quote price one amount.
+ *
+ * **An onchain send's take pin is recipient-EXACT.** The claim's miner fee comes out of the HTLC
+ * output (`payout = utxo.amount - fee`), so with a resolvable
+ * {@link OnchainCorridorDeps.claimFeeRateSatVb} the solver is asked for `pinned.value + claimFee`
+ * (same arithmetic as the `onchain-swap` rail). No rate: verbatim, no invented fee. A give pin is
+ * untouched: the take leg is the solver's to size. The recipient's own number never reaches the
+ * wire: a solver who knew it would know what to short us by.
+ */
+export const solverFacingAmount = (
+    route: RfqQuoteInput["route"],
+    pinned: PinnedAmount,
+    corridors: CorridorSet,
+): { quoted: PinnedAmount; claimFee?: bigint } => {
+    if (route !== "arkade->onchain" || pinned.on !== "take") return { quoted: pinned };
+    const onchain = corridors.get("onchain").deps;
+    if (onchain.claimFeeRateSatVb === undefined) return { quoted: pinned };
+    const claimFee = claimFeeSats({
+        claimFeeRateSatVb: onchain.claimFeeRateSatVb,
+        claimVsize: onchain.claimVsize,
+    });
+    return { quoted: { ...pinned, value: pinned.value + claimFee }, claimFee };
+};
+
 const quoteOnchainSend = async (
     input: RfqQuoteInput,
 ): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
@@ -823,25 +849,7 @@ const quoteOnchainSend = async (
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
 
-    // **The take pin is recipient-EXACT.** The claim's miner fee comes out of the HTLC output
-    // (`payout = utxo.amount - fee`), so with a take pin and a resolvable
-    // {@link OnchainCorridorDeps.claimFeeRateSatVb} the solver is asked for
-    // `pinned.value + claimFee` (same arithmetic as the `onchain-swap` rail). No rate: verbatim,
-    // no invented fee. A give pin is untouched: the take leg is the solver's to size.
-    const onchain = input.corridors.get("onchain").deps;
-    const claimFee =
-        pinned.on === "take" && onchain.claimFeeRateSatVb !== undefined
-            ? claimFeeSats({
-                  claimFeeRateSatVb: onchain.claimFeeRateSatVb,
-                  claimVsize: onchain.claimVsize,
-              })
-            : undefined;
-    // What the SOLVER is shown and the reply is verified against. The recipient's own number
-    // never reaches the wire: a solver who knew it would know what to short us by.
-    const quoted: PinnedAmount =
-        claimFee === undefined
-            ? pinned
-            : { on: pinned.on, value: pinned.value + claimFee, source: pinned.source };
+    const { quoted, claimFee } = solverFacingAmount(input.route, pinned, input.corridors);
 
     // Two wallet keys: the claim secret (P, covenant sender role) and the L1 HTLC claim key.
     // Asking twice keeps them distinct; minting one here is what key provisioning forbids.

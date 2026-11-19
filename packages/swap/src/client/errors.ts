@@ -26,7 +26,13 @@ export { SwapRefusal };
  * transport but *run* as a check, so verification cannot be skipped by configuring a dev
  * transport that authenticates nobody. Published RFQ (§10) attributes bids by signature instead.
  */
-export type QuoteCheck = "pair" | "lockup_address" | "invoice" | "refund_window" | "responder";
+export type QuoteCheck =
+    | "pair"
+    | "lockup_address"
+    | "invoice"
+    | "refund_window"
+    | "responder"
+    | "amount";
 
 /**
  * `to` is underdetermined — it parses as nothing, as more than one thing, or as one thing the

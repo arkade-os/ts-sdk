@@ -99,6 +99,9 @@ const CURATED_ROOT: readonly string[] = [
     "SwapPolicy",
     "DEFAULT_MAX_REFUND_WINDOW_SECONDS",
     "RfqTransportFactory",
+    "OpenRfqAuction",
+    "OpenRfqOffer",
+    "OpenRfqOptions",
     // The verbs and their option/return vocabulary.
     "pay",
     "receive",
@@ -135,7 +138,6 @@ const CURATED_ROOT: readonly string[] = [
     "PinnedAmount",
     "MarketRef",
     "CardMarketRef",
-    "AuctionMarketRef",
     "RestoredMarketRef",
     "AuctionProvenance",
     "MarketBackend",

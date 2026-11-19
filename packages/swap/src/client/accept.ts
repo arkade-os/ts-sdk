@@ -258,6 +258,7 @@ const commonOf = (quote: Quote, now: number) => ({
     market: quote.market,
     ...(quote.solver === undefined ? {} : { solver: quote.solver }),
     expiresAt: quote.expiresAt,
+    ...(quote.auction === undefined ? {} : { fundingDeadline: quote.expiresAt }),
     ...(quote.artifact === undefined ? {} : { artifact: recordArtifact(quote.artifact) }),
     createdAt: now,
     updatedAt: now,
@@ -552,11 +553,24 @@ const fundAndStamp = async (
     record: SwapRecord,
     repository: AssetSwapRepository,
 ): Promise<SwapRecord> => {
+    if (
+        record.fundingDeadline !== undefined &&
+        (!Number.isSafeInteger(record.fundingDeadline) ||
+            record.fundingDeadline <= 0 ||
+            record.fundingDeadline > record.expiresAt)
+    )
+        throw new Error("invalid stored funding deadline");
     const bounds = storedFundingBounds(record.assetPayment, record.expiresAt);
     const cap =
         input.validUntil === undefined
-            ? bounds.validUntil
-            : Math.min(input.validUntil, bounds.validUntil ?? record.expiresAt);
+            ? record.fundingDeadline === undefined
+                ? bounds.validUntil
+                : Math.min(record.fundingDeadline, bounds.validUntil ?? record.expiresAt)
+            : Math.min(
+                  input.validUntil,
+                  bounds.validUntil ?? record.expiresAt,
+                  record.fundingDeadline ?? record.expiresAt,
+              );
     const validUntil = cap === undefined ? undefined : Math.min(cap, record.expiresAt);
     if (
         input.firstFundingAttempt &&
