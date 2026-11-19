@@ -382,6 +382,8 @@ export type ResponseGetContractSyncState = ResponseEnvelope & {
 };
 
 export type RequestClear = RequestEnvelope & { type: "CLEAR" };
+export type RequestDispose = RequestEnvelope & { type: "DISPOSE" };
+export type ResponseDispose = ResponseEnvelope & { type: "DISPOSE_SUCCESS" };
 export type ResponseClear = ResponseEnvelope & {
     type: "CLEAR_SUCCESS";
     payload: { cleared: boolean };
@@ -1047,6 +1049,7 @@ export type WalletRequest =
     | RequestGetStatus
     | RequestGetContractSyncState
     | RequestClear
+    | RequestDispose
     | RequestReloadWallet
     | RequestSignTransaction
     | RequestCreateContract
@@ -1121,6 +1124,7 @@ export type WalletUpdaterResponse = ResponseEnvelope & {
         | ResponseGetStatus
         | ResponseGetContractSyncState
         | ResponseClear
+        | ResponseDispose
         | ResponseReloadWallet
         | ResponseUtxoUpdate
         | ResponseVtxoUpdate
@@ -1507,6 +1511,10 @@ export class WalletMessageHandler
                     throw new Error("Invalid scoped wallet request");
                 }
                 const context = this.captureRequestContext(message.payload.binding);
+                if (request.type === "DISPOSE") {
+                    await this.stop();
+                    return this.tagged({ id: request.id, type: "DISPOSE_SUCCESS" });
+                }
                 if (request.type === "CLEAR" && this.longRunningOperations.size > 0) {
                     throw new Error(
                         "Cannot clear the wallet while a long-running operation such as a settlement is in progress",

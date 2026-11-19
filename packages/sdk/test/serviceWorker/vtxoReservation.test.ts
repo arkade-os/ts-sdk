@@ -64,6 +64,37 @@ async function setup(
 }
 
 describe("service-worker VTXO reservations", () => {
+    it("preserves durable holds across public disposal and reinitialization", async () => {
+        const original = await setup();
+        await original.proxy.reserveVtxos([original.coins[0]], "pending-funding");
+        const stored = await original.repository.getReservations();
+        await original.proxy.dispose();
+        expect(original.handler.wallet).toBeUndefined();
+        expect(original.handler.walletRequestBinding).toBeUndefined();
+        const status = await original.handler.handleMessage({
+            id: "disposed-status",
+            tag: original.handler.messageTag,
+            type: "GET_STATUS",
+        });
+        expect(status.error?.message).toMatch(/not initialized/i);
+        expect(status.payload).toBeUndefined();
+        expect(await original.repository.getReservations()).toEqual(stored);
+        await expect(original.proxy.getAddress()).rejects.toThrow(/disposed/i);
+        await expect(original.proxy.send({ address: BTC_ADDR, amount: 1_000 })).rejects.toThrow(
+            /disposed/i,
+        );
+
+        const restarted = await setup(original.dbName);
+        expect((await restarted.wallet.getSpendableVtxos()).map(key)).not.toContain(
+            original.outpoints[0],
+        );
+        await original.proxy.dispose();
+        await expect(restarted.proxy.getAddress()).resolves.toBeTruthy();
+        expect(await restarted.repository.getReservations()).toEqual(stored);
+        await restarted.proxy.clear();
+        expect(await restarted.repository.getReservations()).toEqual([]);
+    });
+
     it("excludes externally held inputs from a normal worker send until released", async () => {
         const { wallet, coins, outpoints, proxy } = await setup();
         const reservation = await proxy.reserveVtxos([coins[0]], "taxi-transfer");
@@ -340,7 +371,9 @@ describe("service-worker VTXO reservations", () => {
         expect((await wallet.getSpendableVtxos()).map(key)).toContain(outpoints[0]);
         save.mockRestore();
         const hold = await proxy.reserveVtxos([coins[0]], "taxi-transfer");
-        vi.spyOn(repository, "deleteReservation").mockRejectedValueOnce(new Error("delete failed"));
+        vi.spyOn(repository, "deleteReservationIfMatches").mockRejectedValueOnce(
+            new Error("delete failed"),
+        );
         await expect(hold.release()).rejects.toThrow("delete failed");
         expect((await wallet.getSpendableVtxos()).map(key)).not.toContain(outpoints[0]);
         expect(await repository.getReservations()).toHaveLength(1);
