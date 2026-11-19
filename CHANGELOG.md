@@ -1608,6 +1608,10 @@ style and have not been backfilled.
 
 ### Internal
 
+- **Keep public namespace declarations valid under strict checking.** Local type
+  aliases preserve Arkade's type-only exports across declaration chunks, and the
+  SDK supplies the WebSocket declarations required by its public Electrum types.
+  The packaged ESM and CJS type smoke now checks dependency declarations too.
 - **Qualify the merged SDK for the Taxi V1 stack.** The `0.5.9-taxi-v1` candidate
   identifies the refreshed upstream `d9e55f61` baseline separately from the
   published `0.5.8` archive.
