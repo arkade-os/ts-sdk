@@ -352,7 +352,9 @@ describe("open RFQ selection", () => {
         let reads = 0;
         const { client } = await setup({
             // each bid's routing preference read takes two seconds
-            beforePreferences: () => vi.setSystemTime((NOW + 2 * ++reads) * 1000),
+            beforePreferences: () => {
+                vi.setSystemTime((NOW + 2 * ++reads) * 1000);
+            },
         });
         vi.mocked(collectOpenRfqBids).mockImplementation(async (r) => [
             { ...bid(), openId: r.openId, id: "a".repeat(64), validUntil: NOW + 3 },
