@@ -3022,8 +3022,10 @@ export class Wallet
      * address types at one shared index, and reports the contract row behind
      * each. Note the difference in display behaviour: this method *swaps* the
      * advertised boarding address, where `getNewAddresses` mints side
-     * addresses and leaves {@link getBoardingAddress} alone. To keep this
-     * method's behaviour, keep calling this method.
+     * addresses and leaves {@link getBoardingAddress} alone. It also registers
+     * no Executor watch: a deposit at its boarding address waits for this
+     * wallet's own settle. To keep this method's behaviour, keep calling this
+     * method.
      */
     async getNewBoardingAddress(): Promise<string> {
         await this.onBoardChain(() => this.rotateBoarding());

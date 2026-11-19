@@ -181,6 +181,9 @@ style and have not been backfilled.
   by it. `restore()` scans every HD index for the delegations of the persisted
   Executor contracts, so calling `watchExecutorContracts` before it also finds
   the watches of rotated keys. A static wallet keeps its one watch.
+  `getNewAddresses({ types: ["boarding"] })` registers no watch: its side
+  address is the wallet's own, and a deposit there waits for the wallet's own
+  settle.
 
 - **The Executor's delegated contracts are a built-in contract type.**
   `ExecutorContractHandler` (`type: "executor"`) derives the renewal and
