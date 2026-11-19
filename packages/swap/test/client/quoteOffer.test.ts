@@ -80,6 +80,23 @@ afterEach(() => {
 });
 
 describe("the margin", () => {
+    it.each([undefined, 0n, BigInt(Number.MAX_SAFE_INTEGER) + 1n])(
+        "refuses an unknown or unusable asset deposit carrier %s",
+        async (depositCarrierSats) => {
+            const reverse = { give: ARKADE_USD, take: ARKADE_BTC };
+            const [candidate] = eligibleMarkets(snapshot, reverse);
+            await expect(
+                quoteWith({
+                    candidate,
+                    legs: reverse,
+                    endpoints: { give: endpoints.take, take: endpoints.give },
+                    amount: { value: 1_000n, on: "give", source: "caller" },
+                    depositCarrierSats,
+                }).run(),
+            ).rejects.toThrow(/deposit carrier/);
+        },
+    );
+
     it("concedes the card's fee and no cushion", async () => {
         const { quote } = await quoteWith({}).run();
         // 10_000 sats at 0.1 cents/sat is 1000 cents; 30bps is the whole

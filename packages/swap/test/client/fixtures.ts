@@ -84,6 +84,7 @@ export const CHECKPOINT_TAPSCRIPT = hex.encode(
 /** What the wallet answers `getArkadeInfo()` with. */
 export const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
+    dust: 330n,
     unilateralExitDelay: 4096n,
     network: "regtest",
     deprecatedSigners: [],
@@ -667,7 +668,7 @@ export const compressed = (fill: number): string =>
 
 // ── What `accept()` needs behind it, and nothing the quote path had ─────────
 
-/** One `wallet.send` call, exactly as the accept path issued it. */
+/** A funding recipient passed to `wallet.send`. */
 export interface SentPayment {
     address: string;
     amount?: number;
@@ -754,6 +755,7 @@ export const acceptWallet = async (
             },
             getContracts: async (filter?: { script?: string }) =>
                 contracts.filter((c) => filter?.script === undefined || c.script === filter.script),
+            getUnsupportedContracts: async () => [],
             setContractWatchState: async (script: string, state: string) => {
                 watched.push([script, state]);
             },
@@ -779,10 +781,10 @@ export const acceptWallet = async (
         // transactions for offer packets. An empty history is the honest answer
         // for a wallet that has funded nothing outside this test.
         getTransactionHistory: async () => [],
-        send: async (recipient: SentPayment) => {
+        send: async (request: SentPayment | { recipients: SentPayment[] }) => {
             const failure = over.failSend?.();
             if (failure) throw failure;
-            sent.push(recipient);
+            sent.push(...("recipients" in request ? request.recipients : [request]));
             return over.txid ?? FUNDING_TXID;
         },
     } as unknown as IWallet;

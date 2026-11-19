@@ -14,6 +14,8 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **Swap funding requires atomic repository creation.** `AssetSwapRepository` is version 6 and requires `createSwapRecordIfAbsent(record)`, which returns true only after durably inserting an absent quote ID. Only that caller may fund; existing unstamped records remain pending and reconcile positive funding evidence, including after a lost reply or restart. The four built-in repositories implement native atomic creation without a data migration; custom repositories must provide the same guarantee. Existing funded records and recovery readers remain compatible.
+
 - **Reservation repositories require atomic release.** Version 2 adds required
   `deleteReservationIfMatches(id, expected)`, which must compare and delete in one
   transaction and acknowledge commit. Unsupported JavaScript backends retain
@@ -175,6 +177,16 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **Swap public declarations install their Nostr dependency.** `nostr-tools` is a regular dependency because the root transport factory exposes its pool type, so strict TypeScript consumers resolve that type without separately installing an optional peer. Transport loading remains lazy.
+
+- **The Taxi v1 snapshot drops unshipped offer variants.** Swap retains published V2 and canonical V3 contract negotiation and recovery. The unused Taxi candidate tree and its compatibility code are removed.
+
+- **Quoted funding never donates unavoidable change.** Swap funding passes `maxChangeFee: 0`, so a send that cannot return its change fails before provider submission. Operator fees are still supported.
+
+- **Swap quotes expose the deposit carrier before funding.** `Quote.depositCarrierSats` reports the verified RFQ carrier or the feed operator's carrier in addition to the asset give leg, so consumers can show net BTC proceeds without deducting the inclusive fee twice. Feed quotes price and persist the same carrier they fund, even if operator info changes before acceptance, and canonical asset identifiers are normalized when accepting either feed direction.
+
+- **Canonical BTC market IDs retain dust validation.** The shared swap protocol now recognizes CAIP BTC identifiers as well as legacy `btc` when checking deposit and receive amounts, so direct consumers receive the same dust guard as the swap client.
 
 - **Stale reservation handles cannot delete a restarted wallet's newer hold.**
   Durable release compares the expected outpoints and deletes the matching row

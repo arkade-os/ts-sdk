@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.1.8",
+    "version": "0.2.0-taxi-v1",
     "type": "module",
     "description": "Client-side Arkade Intents asset swaps: state a route, get an outcome. Pay a bolt11 invoice, receive over Lightning, exchange assets, or withdraw onchain.",
     "repository": {
@@ -107,7 +107,8 @@
         "test:unit": "vitest run --exclude test/e2e",
         "test:integration": "vitest run --no-file-parallelism --exclude \"test/e2e/rfq*.test.ts\" test/e2e/",
         "test:integration:rfq": "vitest run --no-file-parallelism test/e2e/rfq",
-        "smoke:dist": "node scripts/smoke-dist.mjs"
+        "smoke:dist": "node scripts/smoke-dist.mjs && pnpm run smoke:types",
+        "smoke:types": "tsc --noEmit --strict --skipLibCheck false --target ES2022 --module NodeNext --moduleResolution NodeNext --lib es2022,dom scripts/public-types.mts"
     },
     "engines": {
         "node": ">=22.13.0"
@@ -128,15 +129,8 @@
         "@noble/hashes": "2.4.0",
         "@scure/base": "2.4.0",
         "@scure/btc-signer": "2.4.1",
-        "light-bolt11-decoder": "3.2.0"
-    },
-    "peerDependencies": {
+        "light-bolt11-decoder": "3.2.0",
         "nostr-tools": "2.24.1"
-    },
-    "peerDependenciesMeta": {
-        "nostr-tools": {
-            "optional": true
-        }
     },
     "publishConfig": {
         "access": "public",
@@ -144,7 +138,6 @@
     },
     "packageManager": "pnpm@10.25.0",
     "devDependencies": {
-        "fake-indexeddb": "6.2.5",
-        "nostr-tools": "2.24.1"
+        "fake-indexeddb": "6.2.5"
     }
 }

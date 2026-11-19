@@ -61,6 +61,7 @@ export interface OfferPreparation {
     /** The plan the offer covenant is built from: both amounts and both assets. */
     readonly plan: OfferPlan;
     readonly give: Side;
+    readonly carrierSats?: bigint;
 }
 
 export interface FeedQuoteInput {
@@ -69,6 +70,8 @@ export interface FeedQuoteInput {
     readonly market: CardMarketRef;
     readonly legs: { readonly give: DiscoveryLeg; readonly take: DiscoveryLeg };
     readonly endpoints: { readonly give: ResolvedEndpoint; readonly take: ResolvedEndpoint };
+    /** Required for an asset give leg and held through funding. */
+    readonly depositCarrierSats?: bigint;
     readonly amount?: PinnedAmount;
     readonly feed: FeedFetch;
     readonly policy?: SwapPolicy;
@@ -84,13 +87,20 @@ export const quoteFromFeed = async (
         // no invoice on this route can pin one; caller input, not a swap-boundary refusal
         throw new Error("an asset swap needs an amount and the side it pins");
     }
+    let depositCarrierSats: bigint | undefined;
+    if (!isBtcAsset(input.endpoints.give.asset)) {
+        const carrier = input.depositCarrierSats;
+        if (carrier === undefined || carrier <= 0n || carrier > BigInt(Number.MAX_SAFE_INTEGER))
+            throw new Error("asset deposit carrier must be a positive safe integer");
+        depositCarrierSats = carrier;
+    }
 
     const plan = await quoteOffer(candidate.card, {
         give: candidate.give,
         ...(amount.on === "give" ? { giveAmount: amount.value } : { wantAmount: amount.value }),
         // What `fund` attaches to an asset deposit and the fill pays an asset want: the plan asks
         // for it back in a BTC payout, and charges it where the card declares a delivered carrier.
-        carrierSats: ASSET_CARRIER_SATS,
+        carrierSats: depositCarrierSats ?? ASSET_CARRIER_SATS,
         ...QUOTE_OPTIONS,
         fetchImpl: input.feed.fetch,
     });
@@ -117,6 +127,7 @@ export const quoteFromFeed = async (
             id: input.quoteId,
             route,
             give: { asset: input.endpoints.give.asset, amount: plan.deposit.atomic },
+            ...(depositCarrierSats === undefined ? {} : { depositCarrierSats }),
             take: { asset: input.endpoints.take.asset, amount: plan.receive.atomic },
             market: input.market,
             expiresAt,
@@ -125,12 +136,18 @@ export const quoteFromFeed = async (
                 amount: feedSpread(
                     plan,
                     plan.receive.atomic,
-                    sellsAssetForBtc(input.endpoints) ? ASSET_CARRIER_SATS : 0n,
+                    sellsAssetForBtc(input.endpoints) ? depositCarrierSats : 0n,
                 ),
                 asset: input.endpoints.take.asset,
             },
         },
-        preparation: { backend: "feed", card: candidate.card, plan, give: candidate.give },
+        preparation: {
+            backend: "feed",
+            card: candidate.card,
+            plan,
+            give: candidate.give,
+            ...(depositCarrierSats === undefined ? {} : { carrierSats: depositCarrierSats }),
+        },
     };
 };
 

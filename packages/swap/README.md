@@ -15,6 +15,13 @@ const client = createSwapClient({ wallet, repository: new IndexedDbAssetSwapRepo
 Construction is synchronous and inert: no network, no wallet read, no repository open. The first
 call that needs one does it.
 
+This snapshot requires the matching SDK `0.5.9-taxi-v1`, including its public declaration fixes
+and scoped worker request protocol. Pin both snapshots together.
+
+Asset RFQs negotiate the published `contract_versions` / `contract_version` protocol:
+`asset-swap-v3` uses the compiler artifacts in `src/contracts`, and `asset-swap-v2` retains
+the published legacy tree. These are the two supported contract versions.
+
 Market discovery needs no configuration either: the client defaults to the reference solver
 registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
 registry instead with `discovery: { registryUrl }`, or opt out of registries entirely with
@@ -163,6 +170,9 @@ write it is the silent loss the rule exists to forbid, so `accept` refuses with
 `MissingCorridorDep("arkade", "repository")` instead. In-memory is available, explicitly, which is
 the only way ephemeral storage is on the table.
 
+Custom repositories must implement the version 6 atomic-creation contract in
+[`AssetSwapRepository`](src/repository.ts); the built-in backends provide it.
+
 Neither React Native subpath adds a dependency — they take the SDK's structural `SQLExecutor` and
 `RealmLike` handles, so you pass the database you already opened. `@arkade-os/swap/node` is the
 exception and the only entry point that imports `node:` builtins, which is why it is a subpath
@@ -242,9 +252,9 @@ custom quote flows with `acceptQuote`/`quoteViaRfq`, record reading with `record
 with the client's internals across minor versions; the root is what stays put.
 
 `./nostr` is a floor and not a deprecation: the client opens the card's rendezvous itself, and the
-subpath is what keeps that an escape hatch rather than a wall. It is a separate entry point
-because `nostr-tools` is an optional peer dependency, so a consumer who never hand-builds a
-transport never pays for it.
+subpath is what keeps that an escape hatch rather than a wall. The transport is loaded lazily;
+`nostr-tools` is a regular dependency so the pool type in the root public declarations resolves
+without a separate installation.
 
 `./protocol` is the other kind of subpath, and it is a floor rather than a staging area. Every
 name on it was the integration surface before this client — requests, covenants, records, the RFQ

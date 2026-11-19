@@ -72,7 +72,7 @@ function initDatabase(db: IDBDatabase, _oldVersion: number, transaction: IDBTran
 
 /** Browser backend over the SDK's shared IndexedDB manager. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 5 as const;
+    readonly version = 6 as const;
     private readonly connection: ManagedConnection;
 
     constructor(dbName: string = DEFAULT_DB_NAME) {
@@ -172,6 +172,31 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         await this.write(STORE_SWAP_RECORDS, (store) => {
             store.put(record);
         });
+    }
+
+    async createSwapRecordIfAbsent(record: SwapRecord): Promise<boolean> {
+        const tx = (await this.ensureDb()).transaction([STORE_SWAP_RECORDS], "readwrite");
+        const done = awaitTransaction(tx);
+        const store = tx.objectStore(STORE_SWAP_RECORDS);
+        const request = store.get(record.id);
+        let created = false;
+        let failure: unknown;
+        request.onsuccess = () => {
+            if (request.result !== undefined) return;
+            try {
+                store.add(record);
+                created = true;
+            } catch (error) {
+                failure = error;
+                tx.abort();
+            }
+        };
+        try {
+            await done;
+        } catch (error) {
+            throw failure ?? error;
+        }
+        return created;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
