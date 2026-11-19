@@ -3,10 +3,8 @@
  * `relayTransport` in `rfq.ts` are not what deployed solvers listen on. The kind, NIP-44 framing
  * and payloads are public at https://docs.arkadeos.com/intents/reference/rfq.
  *
- * A separate entry point (`@arkade-os/swap/nostr`) so `nostr-tools`, an OPTIONAL peer dependency,
- * stays out of HTTP-only consumers' module graphs. Importing it without `nostr-tools` installed
- * fails loudly at resolution, by design. A dynamic `import()` in the factory was rejected: it
- * would make construction async, and the subscription is opened eagerly.
+ * A separate entry point (`@arkade-os/swap/nostr`) keeps Nostr loading lazy for HTTP consumers.
+ * `nostrRfqTransport` opens its subscription eagerly when constructed.
  */
 import {
     SOLVER_CARD_KIND,

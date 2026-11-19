@@ -15,9 +15,8 @@ const client = createSwapClient({ wallet, repository: new IndexedDbAssetSwapRepo
 Construction is synchronous and inert: no network, no wallet read, no repository open. The first
 call that needs one does it.
 
-The direct-wallet API requires SDK `0.5.8`. `ServiceWorkerWallet` integrations require SDK
-`0.5.9-taxi-v1` for wallet request scopes; pin that SDK candidate explicitly. The workspace
-dependency alone does not qualify older worker wallets.
+This snapshot requires the matching SDK `0.5.9-taxi-v1`, including its public declaration fixes
+and scoped worker request protocol. Pin both snapshots together.
 
 Asset RFQs negotiate the published `contract_versions` / `contract_version` protocol:
 `asset-swap-v3` uses the compiler artifacts in `src/contracts`, and `asset-swap-v2` retains
@@ -253,9 +252,9 @@ custom quote flows with `acceptQuote`/`quoteViaRfq`, record reading with `record
 with the client's internals across minor versions; the root is what stays put.
 
 `./nostr` is a floor and not a deprecation: the client opens the card's rendezvous itself, and the
-subpath is what keeps that an escape hatch rather than a wall. It is a separate entry point
-because `nostr-tools` is an optional peer dependency, so a consumer who never hand-builds a
-transport never pays for it.
+subpath is what keeps that an escape hatch rather than a wall. The transport is loaded lazily;
+`nostr-tools` is a regular dependency so the pool type in the root public declarations resolves
+without a separate installation.
 
 `./protocol` is the other kind of subpath, and it is a floor rather than a staging area. Every
 name on it was the integration surface before this client — requests, covenants, records, the RFQ

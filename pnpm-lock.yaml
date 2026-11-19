@@ -86,6 +86,9 @@ importers:
       '@scure/btc-signer':
         specifier: 2.4.1
         version: 2.4.1
+      '@types/ws':
+        specifier: 8.18.2
+        version: 8.18.2
       bip68:
         specifier: 1.0.4
         version: 1.0.4
@@ -150,13 +153,13 @@ importers:
       light-bolt11-decoder:
         specifier: 3.2.0
         version: 3.2.0
+      nostr-tools:
+        specifier: 2.24.1
+        version: 2.24.1(typescript@5.9.2)
     devDependencies:
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5
-      nostr-tools:
-        specifier: 2.24.1
-        version: 2.24.1(typescript@5.9.2)
 
 packages:
 
@@ -1587,6 +1590,9 @@ packages:
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
+
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
   '@types/yargs-parser@21.0.3':
     resolution: {integrity: sha512-I4q9QU9MQv4oEOz4tAHJtNz1cwuLxn2F3xcc2iV5WdqLPpUnj30aUuxt1mAxYTG+oe8CZMV/+6rU4S4gRDzqtQ==}
@@ -5360,6 +5366,10 @@ snapshots:
   '@types/stack-utils@2.0.3': {}
 
   '@types/unist@3.0.3': {}
+
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 24.3.1
 
   '@types/yargs-parser@21.0.3': {}
 
