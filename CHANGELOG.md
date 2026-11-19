@@ -333,6 +333,8 @@ style and have not been backfilled.
 
 - **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do. `Arkade.connect` also checks the script's key against the forfeit key when the operator advertises one.
 
+- **Pending-transaction recovery co-signs a checkpoint only for a fully signed ark tx.** Before signing, `finalizePendingTxs` requires the operator's `finalArkTx` to hash to the pending txid, to spend exactly the locally rebuilt checkpoints, and to carry a valid signature from every key of each checkpoint's leaf. arkd only accepts fully signed ark txs, so honest pending entries pass; an entry that fails is skipped and retried on the next start.
+
 - **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.
 
 - **Untrusted encodings are parsed within bounds.** A batch tree that reaches a transaction twice is rejected before it is expanded, and its roots are found in one pass. CLTV leaves refuse a locktime that does not fit in 32 bits. Artifact layouts have a size budget. Asset metadata lists over 1000 entries and varints over 64 bits are rejected, as arkd rejects them.
