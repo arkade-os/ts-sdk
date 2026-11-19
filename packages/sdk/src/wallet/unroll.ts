@@ -12,6 +12,7 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
+import { providerFeeRate } from "./onchain";
 import { chainTxTypeToChainedExit } from "./exit/chain";
 import { finalizeVirtualTx } from "./exit/finalizeVirtualTx";
 import { resolveUnilateralPath } from "./exit/path";
@@ -432,10 +433,7 @@ export async function prepareUnrollTransaction(
 
     txWeightEstimator.addOutputAddress(outputAddress, wallet.network);
 
-    let feeRate = await wallet.onchainProvider.getFeeRate();
-    if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
-        feeRate = Wallet.MIN_FEE_RATE;
-    }
+    const feeRate = await providerFeeRate(wallet.onchainProvider);
     // Esplora returns a `number` and bitcoind regtest sometimes reports
     // fractional sat/vB (e.g. 1.006). `BigInt(1.006)` throws RangeError
     // — round up so we always pay AT LEAST the advertised rate and

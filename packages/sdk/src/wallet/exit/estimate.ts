@@ -7,7 +7,7 @@ import { VtxoScript } from "../../script/base";
 import { sequenceToTimelock } from "../../utils/timelock";
 import { Transaction } from "../../utils/transaction";
 import { TxWeightEstimator } from "../../utils/txSizeEstimator";
-import { OnchainWallet } from "../onchain";
+import { OnchainWallet, providerFeeRate } from "../onchain";
 import type { Wallet } from "../wallet";
 import { getNormalizedVtxos } from "../vtxo";
 import { buildExitDag, DagNode, topoSortByDeps } from "./chain";
@@ -37,7 +37,7 @@ export type ExitOptions = {
     onchainWallet: OnchainWallet;
     /** Destination for the exited funds. */
     sweepAddress: string;
-    /** sat/vB; defaults to the onchain provider estimate, floored at MIN_FEE_RATE. */
+    /** sat/vB; defaults to the onchain provider estimate, floored at MIN_FEE_RATE and capped at 1,000. */
     feeRate?: number;
     /** Defaults to all spendable VTXOs. */
     vtxos?: Outpoint[];
@@ -77,9 +77,7 @@ export function resolveNetworkName(opts: ExitOptions): NetworkName {
 
 export async function resolveFeeRate(opts: ExitOptions): Promise<number> {
     if (opts.feeRate) return Math.ceil(opts.feeRate);
-    const feeRate = await opts.wallet.onchainProvider.getFeeRate();
-    if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) return OnchainWallet.MIN_FEE_RATE;
-    return Math.ceil(feeRate);
+    return Math.ceil(await providerFeeRate(opts.wallet.onchainProvider));
 }
 
 /** The VTXO shape the exit flow needs — a coin plus its taproot tree. */

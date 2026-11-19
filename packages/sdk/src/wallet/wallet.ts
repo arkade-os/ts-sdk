@@ -87,6 +87,7 @@ import {
     WalletConfig,
 } from ".";
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
+import { providerFeeRate } from "./onchain";
 import { assertSendDeadline, captureSendDeadline } from "./sendDeadline";
 import { captureInputExpiryFloor, meetsInputExpiryFloor } from "./sendInputExpiry";
 import { toBIP371TapTree, VtxoScript } from "../script/base";
@@ -5043,7 +5044,7 @@ export class Wallet
                 .map((o) => dropped.get(o) ?? `${o} is not a known unspent onchain coin`);
             if (reasons.length > 0) throw new OnchainCosignPreflightError(reasons.join("; "));
         }
-        const feeRate = (await this.onchainProvider.getFeeRate()) ?? 1;
+        const feeRate = await providerFeeRate(this.onchainProvider);
         const tx = new SdkTransaction({ version: 2 });
 
         if (sweepTo) {
