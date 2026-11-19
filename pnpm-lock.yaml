@@ -71,6 +71,9 @@ importers:
       '@noble/curves':
         specifier: 2.4.0
         version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
       '@noble/secp256k1':
         specifier: 3.0.0
         version: 3.0.0
