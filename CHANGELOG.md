@@ -172,14 +172,15 @@ style and have not been backfilled.
   (`ExecutorProvider.registerDelegation` takes an optional `AbortSignal`);
   repeating it is safe, as the service returns the existing watch. A coin
   already there when the wallet starts, boarded while it was offline, raises
-  no event, so the start looks for one and rotates too. If a registration
-  fails or times out, `getBoardingAddress()` and `getNewBoardingAddress()`
-  show the new key's own address, which the wallet boards once online, rather
-  than reuse the old one. Rows of a rotated key carry its `signingDescriptor`,
-  and the signer router routes `executor` inputs by it. `restore()` scans every
-  HD index for the delegations of the persisted Executor contracts, so calling
-  `watchExecutorContracts` before it also finds the watches of rotated keys. A
-  static wallet keeps its one watch.
+  no event, and a lazy start writes it only during its background boot, so
+  once that boot has finished the wallet looks for one, spent or not, and
+  rotates too. If a registration fails or times out, `getBoardingAddress()` and
+  `getNewBoardingAddress()` show the new key's own address, which the wallet
+  boards once online, rather than reuse the old one. Rows of a rotated key
+  carry its `signingDescriptor`, and the signer router routes `executor` inputs
+  by it. `restore()` scans every HD index for the delegations of the persisted
+  Executor contracts, so calling `watchExecutorContracts` before it also finds
+  the watches of rotated keys. A static wallet keeps its one watch.
 
 - **The Executor's delegated contracts are a built-in contract type.**
   `ExecutorContractHandler` (`type: "executor"`) derives the renewal and

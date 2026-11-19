@@ -201,6 +201,7 @@ import {
     validateVtxosForScript,
     saveVtxosForContract,
     getVtxosForContract,
+    hasVtxosForContract,
     vtxoOutpoint,
 } from "../contracts/vtxoOwnership";
 import {
@@ -3104,7 +3105,11 @@ export class Wallet
             if (type !== ExecutorContractHandler.type || params.template !== "renewal") return;
             this.queueExecutorBoardRotation(params.owner);
         });
-        await this.rotateForExecutorCoinAtBoot();
+        // Unawaited, so lazy init stays lazy; on the chain, so dispose drains it.
+        void this.onBoardChain(async () => {
+            await manager.whenBooted?.();
+            await this.rotateForExecutorCoinAtBoot();
+        });
     }
 
     /**
@@ -3124,9 +3129,9 @@ export class Wallet
     }
 
     /**
-     * A coin that predates the subscription raises no event: boot seeds a stored one, and one
-     * boarded while offline arrives during the contract manager's own boot. Best-effort: a
-     * failed read must not fail the boot.
+     * A coin that predates the subscription raises no event: a stored one, or one the contract
+     * manager's boot sync writes, which is why this runs once that boot has finished. Any coin
+     * counts: it proves the key was used. Best-effort: a failed read must not fail the boot.
      */
     private async rotateForExecutorCoinAtBoot(): Promise<void> {
         try {
@@ -3137,10 +3142,7 @@ export class Wallet
             for (const row of rows) {
                 if (row.params.template !== "renewal") continue;
                 if (row.params.owner?.slice(2).toLowerCase() !== displayed) continue;
-                const coins = await getVtxosForContract(this.walletRepository, row, {
-                    unspentOnly: true,
-                });
-                if (coins.length === 0) continue;
+                if (!(await hasVtxosForContract(this.walletRepository, row))) continue;
                 this.queueExecutorBoardRotation(row.params.owner);
                 return;
             }
@@ -4022,7 +4024,12 @@ export class Wallet
         }
         this._executorBoardUnsub?.();
         this._executorBoardUnsub = undefined;
-        await this._executorBoardChain;
+        // A task can queue another while it runs: drain until the chain stops moving.
+        let chain: Promise<void>;
+        do {
+            chain = this._executorBoardChain;
+            await chain;
+        } while (chain !== this._executorBoardChain);
 
         const manager =
             this._vtxoManager ??

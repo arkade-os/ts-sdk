@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import {
     Batch,
+    ContractManager,
+    ContractWatcher,
     ExecutorContractHandler,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -104,9 +106,15 @@ async function walletWith(options: { executor: boolean; rows: boolean }) {
 /**
  * An HD wallet with a live watch at its identity key, and an Executor that registers more.
  * `coinAtRenewal` stores a coin at that key's renewal contract before the wallet starts. `hold`
- * leaves every registration pending until `open()`, `fail()` or its signal aborts.
+ * leaves every registration pending until `open()`, `fail()` or its signal aborts. `lazy` boots
+ * the contract manager in the background.
  */
-async function hdWalletWithWatch({ refuse = false, coinAtRenewal = false, hold = false } = {}) {
+async function hdWalletWithWatch({
+    refuse = false,
+    coinAtRenewal = false,
+    hold = false,
+    lazy = false,
+} = {}) {
     // an HD wallet subscribes to its contracts at boot
     vi.stubGlobal(
         "EventSource",
@@ -181,6 +189,7 @@ async function hdWalletWithWatch({ refuse = false, coinAtRenewal = false, hold =
         arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: { walletRepository, contractRepository },
         settlementConfig: false,
+        ...(lazy ? { lazyInitialization: true } : {}),
         executorProvider: {
             getInfo: async () => ({
                 version: "test",
@@ -193,7 +202,7 @@ async function hdWalletWithWatch({ refuse = false, coinAtRenewal = false, hold =
         } as unknown as ExecutorProvider,
     });
     const owner = hex.encode(await hd.compressedPublicKey());
-    return { wallet, renewal, boarding, registerDelegation, owner, open, fail };
+    return { wallet, renewal, boarding, registerDelegation, owner, open, fail, walletRepository };
 }
 
 /** A coin at `row`'s contract, with an outpoint named by `txidByte`. */
@@ -231,7 +240,7 @@ async function emitContractEvent(
     vtxos: ExtendedVirtualCoin[],
 ) {
     await deliverContractEvent(wallet, type, contract, vtxos);
-    await (wallet as any)._executorBoardChain;
+    await boardChainIdle(wallet);
 }
 
 // a boarding input: the non-VTXO coin a settle consumes
@@ -241,6 +250,15 @@ const boardingCoin = {
     value: 100_000,
     status: { confirmed: true },
 };
+
+/** The queued rotations, including any a running one queues. */
+async function boardChainIdle(wallet: Wallet) {
+    let chain: Promise<void>;
+    do {
+        chain = (wallet as any)._executorBoardChain;
+        await chain;
+    } while (chain !== (wallet as any)._executorBoardChain);
+}
 
 /** Stubs what a settle needs from the operator, so that it commits `commitment-txid`. */
 function stubSettle(wallet: Wallet) {
@@ -335,17 +353,60 @@ describe("delegated boarding address on an HD wallet", () => {
         const first = boarding.script.onchainAddress(networks.mutinynet);
 
         // no event: the coin was stored before the wallet subscribed
-        await (wallet as any)._executorBoardChain;
+        await boardChainIdle(wallet);
         const next = await wallet.getBoardingAddress();
         expect(next).not.toBe(first);
         expect(registerDelegation).toHaveBeenCalledOnce();
 
         // the coin stays at the old key's contract: another start must not rotate again
         await (wallet as any).rotateForExecutorCoinAtBoot();
-        await (wallet as any)._executorBoardChain;
+        await boardChainIdle(wallet);
         expect(await wallet.getBoardingAddress()).toBe(next);
         expect(registerDelegation).toHaveBeenCalledOnce();
         await wallet.dispose();
+    });
+
+    describe("with a lazy boot that writes the coin", () => {
+        /** A lazy wallet whose boot sync is held, and writes the boarded coin silently. */
+        async function lazyWalletWithBootCoin() {
+            let finishBoot!: () => void;
+            const booting = new Promise<void>((resolve) => (finishBoot = resolve));
+            vi.spyOn(ContractManager.prototype as any, "reconcileWatched").mockReturnValue(booting);
+            // nothing but the sync may report the coin
+            vi.spyOn(ContractWatcher.prototype, "startWatching").mockResolvedValue(() => {});
+            const w = await hdWalletWithWatch({ lazy: true });
+            await saveVtxosForContract(w.walletRepository, w.renewal.contract, [
+                createMockExtendedVtxo({ script: w.renewal.contract.script }),
+            ]);
+            expect(w.registerDelegation).not.toHaveBeenCalled();
+            return { ...w, finishBoot };
+        }
+
+        it("rotates once the boot has finished", async () => {
+            const { wallet, boarding, registerDelegation, finishBoot } =
+                await lazyWalletWithBootCoin();
+            const first = boarding.script.onchainAddress(networks.mutinynet);
+
+            finishBoot();
+            await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
+            await boardChainIdle(wallet);
+
+            expect(await wallet.getBoardingAddress()).not.toBe(first);
+            expect(registerDelegation).toHaveBeenCalledOnce();
+            await wallet.dispose();
+        });
+
+        it("drains the rotation the boot scan queues before it disposes", async () => {
+            const { wallet, registerDelegation, finishBoot } = await lazyWalletWithBootCoin();
+
+            const disposed = wallet.dispose();
+            // let dispose reach the drain, which waits on the held boot
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            finishBoot();
+            await disposed;
+
+            expect(registerDelegation).toHaveBeenCalledOnce();
+        });
     });
 
     describe("rotation after a settle", () => {
@@ -365,7 +426,7 @@ describe("delegated boarding address on an HD wallet", () => {
             expect(registerDelegation).toHaveBeenCalledOnce();
 
             open();
-            await (wallet as any)._executorBoardChain;
+            await boardChainIdle(wallet);
             await wallet.dispose();
         });
 
@@ -380,7 +441,7 @@ describe("delegated boarding address on an HD wallet", () => {
             expect(await wallet.getBoardingAddress()).toBe(old);
 
             open();
-            await (wallet as any)._executorBoardChain;
+            await boardChainIdle(wallet);
             const next = await wallet.getBoardingAddress();
             expect(next).not.toBe(old);
             expect(next).not.toBe(wallet.ownBoardingAddress());
@@ -399,7 +460,7 @@ describe("delegated boarding address on an HD wallet", () => {
             expect(await wallet.getBoardingAddress()).toBe(old);
 
             fail(new Error("Executor unavailable"));
-            await (wallet as any)._executorBoardChain;
+            await boardChainIdle(wallet);
             expect(await wallet.getBoardingAddress()).toBe(wallet.ownBoardingAddress());
             expect(await wallet.getBoardingAddress()).not.toBe(old);
             expect(warn).toHaveBeenCalled();
@@ -419,7 +480,7 @@ describe("delegated boarding address on an HD wallet", () => {
             ]);
 
             open();
-            await (wallet as any)._executorBoardChain;
+            await boardChainIdle(wallet);
             expect(registerDelegation).toHaveBeenCalledOnce();
             const [[, variables]] = registerDelegation.mock.calls;
             expect(variables.owner.slice(2)).toBe(
