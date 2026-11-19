@@ -168,6 +168,8 @@ export const collectOpenRfqBids = (
                                 bids.delete(worst.solverPubkey);
                             }
                             bids.set(bid.solverPubkey, bid);
+                            // A correlated bid proves a relay carried the request, whatever its ack says.
+                            accepted = true;
                             options.onBids?.(
                                 rankOpenRfqBids([...bids.values()], request.amountSide),
                             );
@@ -185,7 +187,7 @@ export const collectOpenRfqBids = (
                 const publications = pool.publish(relays, event);
                 if (!publications.length) finish(noRelay());
                 void Promise.allSettled(publications).then((results) => {
-                    accepted = results.some(
+                    accepted ||= results.some(
                         (result) =>
                             result.status === "fulfilled" &&
                             !String(result.value).startsWith("connection failure"),

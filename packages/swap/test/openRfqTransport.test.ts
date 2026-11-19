@@ -285,6 +285,31 @@ describe("open RFQ collection", () => {
         expect(f.close).toHaveBeenCalledOnce();
     });
 
+    it("keeps an admitted bid while every relay acknowledgement stalls", async () => {
+        vi.useFakeTimers();
+        const f = fixture(() => new Promise(() => {}));
+        const result = collectOpenRfqBids(request(), f.options);
+        f.bid();
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(await result).toHaveLength(1);
+    });
+
+    it("keeps an admitted bid when the relay acknowledgement later fails", async () => {
+        vi.useFakeTimers();
+        let fail!: () => void;
+        const f = fixture(
+            () =>
+                new Promise((_, reject) => {
+                    fail = () => reject(new Error("blocked"));
+                }),
+        );
+        const result = collectOpenRfqBids(request(), f.options);
+        f.bid();
+        fail();
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(await result).toHaveLength(1);
+    });
+
     it("treats a resolved connection failure as a rejected publication", async () => {
         const f = fixture(() => Promise.resolve("connection failure: offline"));
         await expect(collectOpenRfqBids(request(), f.options)).rejects.toThrow("no relay accepted");

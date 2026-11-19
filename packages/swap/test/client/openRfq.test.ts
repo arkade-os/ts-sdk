@@ -348,6 +348,21 @@ describe("open RFQ selection", () => {
         ).rejects.toThrow("original issued quote");
         await client[Symbol.asyncDispose]();
     });
+    it("drops an offer that expires while later bids are checked", async () => {
+        let reads = 0;
+        const { client } = await setup({
+            // each bid's routing preference read takes two seconds
+            beforePreferences: () => vi.setSystemTime((NOW + 2 * ++reads) * 1000),
+        });
+        vi.mocked(collectOpenRfqBids).mockImplementation(async (r) => [
+            { ...bid(), openId: r.openId, id: "a".repeat(64), validUntil: NOW + 3 },
+            { ...bid(), openId: r.openId, id: "b".repeat(64) },
+        ]);
+        const auction = await client.openRfq(input, options);
+        expect(reads).toBe(2);
+        expect(auction.bids.map((offer) => offer.id)).toEqual(["b".repeat(64)]);
+        await client[Symbol.asyncDispose]();
+    });
     it("checks expiry after asynchronous preferences before contacting a bidder", async () => {
         let expire = false;
         const { client, attempted } = await setup({

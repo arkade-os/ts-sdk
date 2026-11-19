@@ -613,7 +613,6 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                         false,
                         health,
                     );
-                    if (bid.validUntil <= Math.floor(Date.now() / 1000)) continue;
                     const candidate = eligible[0];
                     if (candidate === undefined) continue;
                     const cached = owned.get(bid.id);
@@ -632,7 +631,9 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     if (cached === undefined) owned.set(bid.id, { offer, candidate });
                     offers.push(offer);
                 }
-                return Object.freeze(offers);
+                // Later bids' policy reads can outlast earlier offers.
+                const now = Math.floor(Date.now() / 1000);
+                return Object.freeze(offers.filter((offer) => offer.expiresAt > now));
             };
             let updates = Promise.resolve();
             let progressRevision = 0;
