@@ -48,7 +48,7 @@ import type { CorridorId } from "./corridor";
 import type { SwapPolicy } from "./policy";
 import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
 import { captureAssetPayment } from "./assetPayment";
-import { quoteViaRfq } from "./quoteRfq";
+import { quoteViaRfq, solverFacingAmount } from "./quoteRfq";
 import { verifyQuoteTtl } from "./verify";
 import type { AuctionProvenance, Quote, QuoteId, QuoteInput, RouteResolution } from "./quote";
 import { resolveRoute, type ResolvedRoute } from "./resolve";
@@ -509,7 +509,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             if (input.assetPayment !== undefined)
                 throw new UnsupportedRoute("open RFQ does not publish asset-payment terms");
             const captured = Object.freeze({ ...input });
-            const { base, discovery } = await resolved();
+            const { base, corridors, discovery } = await resolved();
             let snapshot: DiscoverySnapshot;
             try {
                 snapshot = await discovery.load();
@@ -535,6 +535,12 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 take: routed.take.asset,
             });
             if (routed.amount === undefined) throw new Error("open RFQ needs a positive amount");
+            // Bids price what the directed quote will ask; offers report the recipient's net.
+            const { quoted, claimFee = 0n } = solverFacingAmount(
+                routed.pair,
+                routed.amount,
+                corridors,
+            );
             const windowMs = options.windowMs ?? config.policy?.rfq?.windowMs ?? 3_000;
             if (!Number.isSafeInteger(windowMs) || windowMs < 1 || windowMs > 30_000)
                 throw new RangeError("open RFQ windowMs must be between 1 and 30000");
@@ -553,7 +559,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 openId: hex.encode(crypto.getRandomValues(new Uint8Array(32))),
                 pair: `${routed.give.asset}~${routed.take.asset}`,
                 amountSide: routed.amount.on === "give" ? ("from" as const) : ("to" as const),
-                amount: routed.amount.value,
+                amount: quoted.value,
             };
             const controller = new AbortController();
             const abort = () => controller.abort(options.signal?.reason);
@@ -620,7 +626,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                             market: candidate.card,
                             signedCard: checked.signedCard,
                             fromAmount: bid.fromAmount,
-                            toAmount: bid.toAmount,
+                            toAmount: bid.toAmount - claimFee,
                             expiresAt: bid.validUntil,
                         });
                     if (cached === undefined) owned.set(bid.id, { offer, candidate });

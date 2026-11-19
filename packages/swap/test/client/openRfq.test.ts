@@ -16,8 +16,12 @@ import {
     solverTransport,
     arkadeAssetAnswer,
     onchainCard,
+    onchainSendAnswer,
     USD_ASSET_ID,
+    type SolverAnswer,
 } from "./fixtures";
+import { ONCHAIN_CLAIM_FEE_RATE_SATVB } from "../../src/client/corridors/deps";
+import { claimFeeSats } from "../../src/payment/onchainSwap";
 
 vi.mock("../../src/openRfqTransport", () => ({ collectOpenRfqBids: vi.fn() }));
 const NOW = 1_700_000_000;
@@ -86,6 +90,8 @@ const setup = async (
         ttlFloor?: number;
         quoteDelaySeconds?: number;
         directedExpiresAt?: number;
+        answer?: SolverAnswer;
+        corridors?: Parameters<typeof createSwapClient>[0]["corridors"];
     } = {},
 ) => {
     const attempted: string[] = [];
@@ -95,6 +101,7 @@ const setup = async (
         discovery: { snapshot: over.snapshot ?? [] },
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         fetchImpl: feedServing().fetch,
+        ...(over.corridors === undefined ? {} : { corridors: over.corridors }),
         policy: {
             drive: "manual",
             allowedRegistries: over.allowedRegistries,
@@ -115,6 +122,7 @@ const setup = async (
             attempted.push(card.solver);
             return solverTransport(
                 (payload) => {
+                    if (over.answer !== undefined) return over.answer(payload);
                     if (over.quoteDelaySeconds !== undefined)
                         vi.setSystemTime((NOW + over.quoteDelaySeconds) * 1000);
                     return arkadeAssetAnswer(payload, clockAt(NOW), {
@@ -493,6 +501,68 @@ describe("open RFQ selection", () => {
         expect(quote.auction?.winner.bidder).toBe(pubkey);
         expect(attempted).toEqual(["open-solver"]);
         expect(Object.isFrozen(auction.bids[0].market.base_asset)).toBe(true);
+        await client[Symbol.asyncDispose]();
+    });
+});
+
+describe("open RFQ onchain sends with a fixed take amount", () => {
+    const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
+    const net = 50_000n;
+    const claimFee = claimFeeSats({ claimFeeRateSatVb: ONCHAIN_CLAIM_FEE_RATE_SATVB.regtest! });
+    const send = { give, take: btcOn("bitcoin", "regtest"), to: BCRT1, amount: net };
+    // A solver that charges a flat 1_000 sat over whatever take it is asked for.
+    const pricing =
+        (spread: number): SolverAnswer =>
+        (payload) =>
+            onchainSendAnswer(payload, clockAt(NOW), {
+                quote: { from_amount: Number(payload.amount) + spread },
+            });
+    const bidsAtSpread = () =>
+        vi.mocked(collectOpenRfqBids).mockImplementation(async (r) => [
+            {
+                ...bid(),
+                openId: r.openId,
+                pair: r.pair,
+                amountSide: "to",
+                card: rawCard(onchainCard),
+                fromAmount: r.amount + 1_000n,
+                toAmount: r.amount,
+            },
+        ]);
+
+    it("broadcasts the amount the directed quote asks and offers the recipient's net", async () => {
+        const { client, attempted } = await setup({ answer: pricing(1_000) });
+        bidsAtSpread();
+        const auction = await client.openRfq({ ...send, amountOn: "take" }, options);
+        expect(vi.mocked(collectOpenRfqBids).mock.calls[0][0].amount).toBe(net + claimFee);
+        expect(auction.bids[0]).toMatchObject({
+            fromAmount: net + claimFee + 1_000n,
+            toAmount: net,
+        });
+        const quote = await client.quoteBid(auction, auction.bids[0]);
+        expect(quote.give.amount).toBe(net + claimFee + 1_000n);
+        expect(quote.take.amount).toBe(net);
+        expect(attempted).toEqual(["open-solver"]);
+        await client[Symbol.asyncDispose]();
+    });
+    it("still refuses a directed quote asking more than the bid", async () => {
+        const { client } = await setup({ answer: pricing(2_000) });
+        bidsAtSpread();
+        const auction = await client.openRfq({ ...send, amountOn: "take" }, options);
+        const error = await client.quoteBid(auction, auction.bids[0]).catch((e) => e);
+        expect(error).toBeInstanceOf(QuoteVerificationFailed);
+        expect(error.check).toBe("amount");
+        await client[Symbol.asyncDispose]();
+    });
+    it("broadcasts the recipient's amount verbatim with the claim fee disabled", async () => {
+        const { client } = await setup({
+            answer: pricing(1_000),
+            corridors: { onchain: { claimFeeRateSatVb: null } },
+        });
+        bidsAtSpread();
+        const auction = await client.openRfq({ ...send, amountOn: "take" }, options);
+        expect(vi.mocked(collectOpenRfqBids).mock.calls[0][0].amount).toBe(net);
+        expect((await client.quoteBid(auction, auction.bids[0])).take.amount).toBe(net);
         await client[Symbol.asyncDispose]();
     });
 });
