@@ -500,7 +500,11 @@ export class Arkade {
             (Object.hasOwn(networks, info.network)
                 ? getNetwork(info.network as NetworkName)
                 : DEFAULT_NETWORK);
-        const checkpoint = assertValidServerUnrollScript(info.checkpointTapscript, network);
+        const checkpoint = assertValidServerUnrollScript(
+            info.checkpointTapscript,
+            network,
+            info.forfeitPubkey ? toXOnly(hex.decode(info.forfeitPubkey), "forfeit key") : undefined,
+        );
 
         // Pinned key, NOT the emulator's own /v1/info: otherwise whatever answers that URL picks
         // the key covenants commit to. A rotation is invisible until the pin ships;

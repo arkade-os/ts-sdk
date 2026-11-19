@@ -107,6 +107,18 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
+it("Arkade.connect checks the checkpoint key against an advertised forfeit key", async () => {
+    const connect = (forfeitPubkey: string) =>
+        arkade.Arkade.connect({
+            arkade: { getInfo: async () => ({ ...info("regtest"), forfeitPubkey }) },
+            identity,
+        });
+    await expect(connect("02" + TEST_SERVER_PUB_KEY_HEX)).resolves.toBeDefined();
+    await expect(connect("02" + TEST_PUB_KEY_HEX)).rejects.toThrow(
+        /does not match the advertised forfeitPubkey/,
+    );
+});
+
 describe("resolveArkadeService", () => {
     it("network arm: default server, mainnet esplora and the default emulator", async () => {
         const getInfo = vi

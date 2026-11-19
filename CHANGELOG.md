@@ -170,7 +170,7 @@ style and have not been backfilled.
 
 - **Esplora address history includes older transactions.** `getTransactions` read only `/address/:address/txs`, which holds the newest page. It now follows `/txs/chain/:last_seen` for the rest, and keeps the first page when an explorer has no such route. `getRawTransaction` bytes must hash to the requested txid, and `getCoins` validates amounts and output indices.
 
-- **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do.
+- **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do. `Arkade.connect` also checks the script's key against the forfeit key when the operator advertises one.
 
 - **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.
 
