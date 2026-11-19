@@ -83,6 +83,35 @@ describe("Wallet", () => {
             expect(wallet.address.startsWith("bc1p")).toBe(true);
         });
 
+        it("funds an OnchainWallet P2A bump from confirmed coins only", async () => {
+            const coin = (txid: string, confirmed: boolean): Coin => ({
+                txid,
+                vout: 0,
+                value: 50_000,
+                status: { confirmed },
+            });
+            const provider = {
+                getFeeRate: async () => 1,
+                getCoins: async () => [coin("aa".repeat(32), false), coin("bb".repeat(32), true)],
+                broadcastTransaction: vi.fn(),
+            } as Partial<OnchainProvider> as OnchainProvider;
+            const wallet = await OnchainWallet.create(mockIdentity, "regtest", provider);
+            const build = vi
+                .spyOn(
+                    wallet as unknown as {
+                        buildBumpPackage: (...a: unknown[]) => Promise<unknown>;
+                    },
+                    "buildBumpPackage",
+                )
+                .mockResolvedValue({ hex: "00" });
+
+            await wallet.bumpP2A({ hex: "00" } as Parameters<OnchainWallet["bumpP2A"]>[0]);
+
+            expect((build.mock.calls[0][2] as Coin[]).map((c) => c.txid)).toEqual([
+                "bb".repeat(32),
+            ]);
+        });
+
         it("refuses a custom arkProvider whose server URL it cannot discover", async () => {
             // Falling back to the public default here would point the indexer at a server that has
             // never seen this wallet's VTXOs: phantom coins and missed receipts, no error.

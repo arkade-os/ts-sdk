@@ -920,6 +920,35 @@ describe("ElectrumOnchainProvider", () => {
             expect(wsMock.unsubscribe).toHaveBeenCalledTimes(2);
         });
 
+        it("re-delivers a known tx when its confirmation height changes", async () => {
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: TEST_TXID, height: 0 }]);
+            let notify: ((scripthash: string, status: string | null) => void) | undefined;
+            let watched = "";
+            wsMock.subscribe.mockImplementation(
+                async (
+                    _method: string,
+                    cb: (s: string, status: string | null) => void,
+                    scripthash: string,
+                ) => {
+                    notify = cb;
+                    watched = scripthash;
+                },
+            );
+            const events: unknown[] = [];
+            const stop = await provider.watchAddresses([REGTEST_ADDRESS], (txs) =>
+                events.push(txs),
+            );
+
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: TEST_TXID, height: 100 }]);
+            mockBatch(wsMock.request, [buildTestTx().txHex]);
+            wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX);
+            notify?.(watched, "confirmed");
+            for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+
+            expect(events).toHaveLength(1);
+            stop();
+        });
+
         it("re-delivers a tx on the next notification when delivery fails the first time", async () => {
             // Regression: the dedupe set must not be updated until the
             // eventCallback has fired successfully. Previously a failed

@@ -1,6 +1,7 @@
 import { DEFAULT_NETWORK_NAME, type NetworkName } from "../networks";
 import { Coin } from "../wallet";
 import { hex } from "@scure/base";
+import { Transaction } from "@scure/btc-signer";
 import { baseFetch } from "../utils/fetch";
 import { HttpResponseError } from "./errors";
 
@@ -210,7 +211,14 @@ export class EsploraProvider implements OnchainProvider {
         if (!response.ok) {
             throw new HttpResponseError("Failed to fetch UTXOs", response);
         }
-        return response.json();
+        const coins: Coin[] = await response.json();
+        const bad = coins.find(
+            (c) =>
+                !(c.value >= 0 && c.value <= 2_100_000_000_000_000 && c.vout >= 0) ||
+                ![c.value, c.vout].every(Number.isSafeInteger),
+        );
+        if (bad) throw new Error(`Invalid UTXO entry: ${JSON.stringify(bad)}`);
+        return coins;
     }
 
     async getFeeRate(): Promise<number | undefined> {
@@ -325,7 +333,17 @@ export class EsploraProvider implements OnchainProvider {
             const error = await response.text().catch(() => undefined);
             throw new HttpResponseError(`Failed to get raw transaction ${txid}`, response, error);
         }
-        return hex.decode((await response.text()).trim());
+        const raw = hex.decode((await response.text()).trim());
+        const { id } = Transaction.fromRaw(raw, {
+            allowUnknownInputs: true,
+            allowUnknownOutputs: true,
+            allowUnknownVersion: true,
+            disableScriptCheck: true,
+        });
+        if (id !== txid.toLowerCase()) {
+            throw new Error(`Esplora returned another transaction for ${txid}`);
+        }
+        return raw;
     }
 
     async getTxStatus(txid: string): Promise<

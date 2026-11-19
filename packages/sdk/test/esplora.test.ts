@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { hex } from "@scure/base";
+import { Transaction } from "@scure/btc-signer";
 import { EsploraProvider, Coin, HttpResponseError, type ExplorerTransaction } from "../src";
 import { jsonResponse, textResponse } from "./helpers/response";
 
@@ -40,6 +42,15 @@ describe("EsploraProvider", () => {
             expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/address/bc1qtest/utxo");
             expect(utxos).toEqual(mockUTXOs);
         });
+
+        it.each([{ value: -1 }, { value: 0.5 }, { value: 2_100_000_000_000_001 }, { vout: -1 }])(
+            "rejects a UTXO entry with %o",
+            async (bad) => {
+                mockFetch.mockResolvedValueOnce(jsonResponse([{ ...mockUTXOs[0], ...bad }]));
+                const provider = new EsploraProvider("http://localhost:3000");
+                await expect(provider.getCoins("bc1qtest")).rejects.toThrow(/Invalid UTXO/);
+            },
+        );
 
         it("should throw error on failed fetch", async () => {
             mockFetch.mockResolvedValueOnce({
@@ -154,16 +165,29 @@ describe("EsploraProvider", () => {
     });
 
     describe("getRawTransaction", () => {
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({ txid: new Uint8Array(32).fill(1), index: 0 });
+        tx.addOutput({ script: new Uint8Array([0x6a]), amount: 0n });
+
         it("decodes the /hex endpoint into wire bytes", async () => {
             // Esplora's plain-text response is newline-terminated on some
             // deployments; hex.decode rejects the stray byte.
-            mockFetch.mockResolvedValueOnce(textResponse("0200000001ab\n"));
+            mockFetch.mockResolvedValueOnce(textResponse(`${hex.encode(tx.unsignedTx)}\n`));
 
             const provider = new EsploraProvider("http://localhost:3000");
-            const raw = await provider.getRawTransaction("deadbeef");
+            const raw = await provider.getRawTransaction(tx.id);
 
-            expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/tx/deadbeef/hex");
-            expect(Array.from(raw)).toEqual([0x02, 0x00, 0x00, 0x00, 0x01, 0xab]);
+            expect(mockFetch).toHaveBeenCalledWith(`http://localhost:3000/tx/${tx.id}/hex`);
+            expect(raw).toEqual(tx.unsignedTx);
+        });
+
+        it("rejects bytes that hash to another txid", async () => {
+            mockFetch.mockResolvedValueOnce(textResponse(hex.encode(tx.unsignedTx)));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await expect(provider.getRawTransaction("00".repeat(32))).rejects.toThrow(
+                /another transaction/,
+            );
         });
 
         it("throws with the txid on a failed fetch", async () => {

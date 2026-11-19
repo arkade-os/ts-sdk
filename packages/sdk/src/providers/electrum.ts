@@ -1010,14 +1010,14 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             scriptHashes.map((h, i) => [h, scripts[i]]),
         );
 
-        // Track known history per script to detect new txs.
-        const knownTxids = new Map<string, Set<string>>();
+        // Known history per script, with heights, so a confirmation or reorg is reported too.
+        const knownTxids = new Map<string, Map<string, number>>();
 
         // Initialize known-set in parallel — for a wallet watching many
         // addresses this avoids n sequential round trips on first call.
         const initialHistories = await Promise.all(scripts.map((s) => this.chain.fetchHistory(s)));
         initialHistories.forEach((history, i) => {
-            knownTxids.set(scriptHashes[i], new Set(history.map((h) => h.tx_hash)));
+            knownTxids.set(scriptHashes[i], new Map(history.map((h) => [h.tx_hash, h.height])));
         });
 
         // Per-scripthash mutex serializing concurrent notifications so
@@ -1034,8 +1034,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             if (!script) return;
 
             const history = await this.chain.fetchHistory(script);
-            const known = knownTxids.get(scripthash) ?? new Set<string>();
-            const newEntries = history.filter((entry) => !known.has(entry.tx_hash));
+            const known = knownTxids.get(scripthash) ?? new Map<string, number>();
+            const newEntries = history.filter((entry) => known.get(entry.tx_hash) !== entry.height);
 
             if (newEntries.length === 0) return;
 
@@ -1048,7 +1048,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             // re-deliver them.
             const explorerTxs = await this.historyToExplorerTxs(newEntries);
             eventCallback(explorerTxs);
-            for (const entry of newEntries) known.add(entry.tx_hash);
+            for (const entry of newEntries) known.set(entry.tx_hash, entry.height);
             knownTxids.set(scripthash, known);
         };
 

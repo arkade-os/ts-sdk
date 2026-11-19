@@ -768,9 +768,9 @@ export function assertCheckpointsMatchInputs(
  * machinery. Optional {@link hooks} let the wallet mark/clear its pending-tx
  * recovery flag around the network round-trip; a stateless caller omits them.
  *
- * `options.verifyServerSignatures` is off by default, so every existing caller
- * is unchanged; see {@link VerifyServerSignatures} for what it does and does
- * not prove.
+ * `options.verifyServerSignatures` is off by default here; the wallet's send
+ * path and swap claims pass it. See {@link VerifyServerSignatures} for what it
+ * does and does not prove.
  *
  * `options.oneShot` (default on): see `WalletConfig.oneShotSubmit`.
  *
