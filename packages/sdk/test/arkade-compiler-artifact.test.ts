@@ -642,6 +642,26 @@ describe("reading an arkadec artifact", () => {
             }),
             /recursive struct/,
         ],
+        [
+            demo({
+                constructorInputs: [{ name: "x", type: "S[64]" }],
+                structs: [{ name: "S", fields: [{ name: "a", type: "int[512]" }] }],
+            }),
+            /name characters/,
+        ],
+        [
+            demo({
+                constructorInputs: [{ name: "x", type: "S0" }],
+                structs: Array.from({ length: 13 }, (_, i) => ({
+                    name: `S${i}`,
+                    fields: ["a", "b"].map((name) => ({
+                        name,
+                        type: i < 12 ? `S${i + 1}` : "int",
+                    })),
+                })),
+            }),
+            /name characters/,
+        ],
     ])("validates artifact boundaries %#", (artifact, error) => {
         expect(() => programFromArtifact(artifact as ContractArtifact)).toThrow(error as RegExp);
     });

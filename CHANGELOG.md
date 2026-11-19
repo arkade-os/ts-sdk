@@ -174,6 +174,10 @@ style and have not been backfilled.
 
 - **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.
 
+- **Untrusted encodings are parsed within bounds.** A batch tree that reaches a transaction twice is rejected before it is expanded. Artifact layouts have a size budget. Asset metadata lists over 1000 entries and varints over 64 bits are rejected, as arkd rejects them.
+
+- **BIP21 ignores an `address` query parameter**; the destination is the URI path.
+
 - **Provider fee rates are capped at 1000 sat/vB** for on-chain sends, boarding and on-chain sweeps, unilateral exits and their fee bumps, and floored at 1 sat/vB everywhere. An explicit `feeRate` argument is used as given.
 
 - **Delegation refuses a negative delegate fee or one above 10% of the delegated amount.**

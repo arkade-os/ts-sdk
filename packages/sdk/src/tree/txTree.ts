@@ -240,11 +240,20 @@ function hasChild(chunk: DecodedNode, childTxid: string): boolean {
 }
 
 // buildGraph recursively builds the TxGraph starting from the given txid
-function buildGraph(rootTxid: string, chunksByTxid: Map<string, DecodedNode>): TxTree | null {
+function buildGraph(
+    rootTxid: string,
+    chunksByTxid: Map<string, DecodedNode>,
+    visited = new Set<string>(),
+): TxTree | null {
     const chunk = chunksByTxid.get(rootTxid);
     if (!chunk) {
         return null;
     }
+    // a shared or cyclic child is otherwise rebuilt once per edge, exponentially
+    if (visited.has(rootTxid)) {
+        throw new Error(`tx ${rootTxid} is referenced more than once in the tree`);
+    }
+    visited.add(rootTxid);
 
     const rootTx = chunk.tx;
     const children = new Map<number, TxTree>();
@@ -252,7 +261,7 @@ function buildGraph(rootTxid: string, chunksByTxid: Map<string, DecodedNode>): T
     // Recursively build children graphs
     for (const [outputIndexStr, childTxid] of Object.entries(chunk.children)) {
         const outputIndex = parseInt(outputIndexStr);
-        const childGraph = buildGraph(childTxid, chunksByTxid);
+        const childGraph = buildGraph(childTxid, chunksByTxid, visited);
         if (childGraph) {
             children.set(outputIndex, childGraph);
         }
