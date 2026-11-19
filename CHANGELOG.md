@@ -325,6 +325,34 @@ style and have not been backfilled.
   `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
+- **Prepared native requests can be persisted and reconciled.** An opt-in
+  NativeExecutionJournal requires asserted persistent atomic storage, admits one
+  exact immutable proposal and keeps the slot occupied. Public indexer evidence
+  must match the saved source, signed checkpoint and full-principal payout. A
+  historical receipt commits only if the exact prepared request still matches;
+  cached reads use no RPC. There is no release, replay or shared coin ownership.
+  The caller admits from `NativeExecutor.execute()`'s `beforeEmulatorSubmit`
+  hook; the executor does not do it itself. The slot never clears, even after
+  reconciliation or for a retry of the same proposal, so a wallet repository
+  journals exactly one native execution. That limit is intentional for now.
+
+- **Opt-in SDK-native execution for a bounded delegatee template subset.**
+  NativeExecutor imports, funds and restores one-input, full-principal offchain
+  covenant plans through the existing wallet, builder and ContractManager. Locked
+  contracts stay outside generic payment selection and unsupported template
+  features reject before funding, including hash-conditioned leaves and
+  covenants that check a transaction version, locktime or input/output count
+  the executor's one-input, three-output transaction does not meet. A
+  position funded from asset-bearing coins stays spendable when the funding
+  transaction's asset packet assigns nothing to it. `delegate()` registers the
+  template and variables captured at import and watches under the ID the
+  delegatee returns. RestDelegateeProvider adds generic template and
+  watch endpoints beside the unchanged legacy DelegateProvider.
+- **Native execution can await persistence before emulator dispatch.** The
+  optional beforeEmulatorSubmit callback receives immutable exact proposal bytes;
+  rejection prevents submission. It does not establish server acceptance or retry
+  authority, and the caller owns reconciliation.
+
 - **Wallet-state updates can use an optional backend transaction.** Repository
   implementations expose `atomicWalletState`, which `updateWalletState` uses
   instead of a separate read and save, without changing storage schemas or
@@ -690,6 +718,44 @@ style and have not been backfilled.
   and failsafe polling outlived the failure. The start-up now disposes it
   before the rejection reaches the caller, which can retry as before.
 
+- **Native journal observation bounds REST bodies before parsing.** Observation
+  requests one explicit two-item page with an opt-in 4 MiB wire-byte cap, including
+  error bodies. Oversized or unstreamable replies remain unknown; legacy indexer
+  reads keep their existing defaults. Pagination whose current page exceeds its
+  total cannot acknowledge a receipt or release the occupied prepared slot.
+
+- **Indexer read limits stay fixed through pagination and journal validation.**
+  Automatic VTXO pages retain the caller's initial response-byte cap even if its
+  options change while a page is pending. Journal observations measure serialized
+  replies in UTF-8 bytes, so multibyte payloads cannot exceed the 4 MiB policy
+  while passing a string-length check.
+
+- **Native recovery accepts the indexer's final-page cursor.** A complete single
+  page may repeat its final index in `next`; malformed or nonterminal cursors still
+  leave the journal unresolved. Unreadable bounded error bodies retain status-only
+  availability retries for 429/5xx, while terminal status errors keep the bounded
+  read failure. Response byte limits and legacy defaults are unchanged.
+
+- **Native journal admission rejects an orphan receipt; observation requires a
+  1-based page.** `admit()` checked only the prepared slot, so a stored receipt
+  without a record admitted a new proposal and let it dispatch, after which every
+  read rejected it as conflicting. Admission now validates the receipt snapshot
+  first. Observation pagination must now be `{current: 1, total: 1}` with `next`
+  0 or 1; zero-based headers no longer reconcile.
+
+- **Native execution preserves its imported payout and delegation binding.**
+  Mutating a handle's destination no longer changes its spend. Remote watches
+  must match the captured template, artifact and variables; restored handles
+  require re-import before delegation. Post-submit refresh failures are reported
+  without hiding the accepted transaction result; submission failures still reject.
+  Importing onto a contract already registered without a plan, e.g. by `on()`,
+  now persists the plan, so `restore()` works after a restart.
+
+- **Native template validation rejects invalid requests before avoidable work.**
+  Missing `packets` policy is named explicitly, and delegation rejects invalid
+  expiries before any provider call. Non-covenant spends reject
+  `beforeEmulatorSubmit` before transaction assembly.
+
 - **IndexedDB wallet-state read failures no longer look like an empty wallet.**
   Read errors propagate before updates can replace persisted pending-submit, cursor
   or unrelated settings. Genuine absence still returns null.
@@ -752,6 +818,15 @@ style and have not been backfilled.
   transaction instead of joining it. A repository or serialized-executor call
   made inside a `runInTransaction` callback therefore deadlocks; after 10s the
   SDK warns with that call's stack.
+
+- **Native reconciliation accepts complete unpaged indexer replies.** The
+  server's page:null envelope is accepted without stripping metadata; malformed
+  or incomplete pagination still leaves the request unresolved.
+
+- **Queued native execution keeps its selected source.** Snapshot and validate
+  the outpoint before any wait, then use it for selection and refreshes. Native
+  executors sharing one wallet object serialize attempts; this does not coordinate
+  ordinary Wallet spends, other processes or duplicate SDK modules.
 
 - **Swap SQLite repositories accept the SDK's serialized executor.** Transaction
   callbacks use the supplied raw executor instead of enqueueing statements behind

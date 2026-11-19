@@ -318,6 +318,8 @@ import {
     submitViaEmulator,
     ArkTxInput,
     OffchainTx,
+    EmulatorSubmitProposal,
+    EmulatorSubmitOptions,
     VerifyServerSignatures,
     combineTapscriptSigs,
     isValidArkAddress,
@@ -394,6 +396,7 @@ import {
     Tx,
     Vtxo,
     PaginationOptions,
+    IndexerReadOptions,
     DEFAULT_VTXO_PAGE_SIZE,
     SubscriptionResponse,
     SubscriptionHeartbeat,
@@ -564,6 +567,14 @@ export { IndexedDBVtxoReservationRepository } from "./repositories/indexedDB/vtx
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
+export {
+    RestDelegateeProvider,
+    type DelegateeProvider,
+    type DelegateeInfo,
+    type DelegateeStatus,
+    type DelegateeDelegation,
+    type DelegateeDocument,
+} from "./providers/delegatee";
 // Also at the root, so `import { Arkade }` works without the namespace.
 export { Arkade } from "./arkade";
 export * from "./extension/emulator";
@@ -984,6 +995,13 @@ export {
     AssetManager,
 };
 
+export {
+    NativeExecutionJournal,
+    type NativeExecutionRecord,
+    type NativeExecutionObservation,
+    type NativeExecutionReceipt,
+} from "./arkade/executionJournal";
+
 export type {
     // Types and Interfaces
     RecipientArkadeAddressContext,
@@ -1027,6 +1045,8 @@ export type {
     TapscriptType,
     ArkTxInput,
     OffchainTx,
+    EmulatorSubmitProposal,
+    EmulatorSubmitOptions,
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
@@ -1095,6 +1115,7 @@ export type {
     TreeSignatureEvent,
     ScheduledSession,
     PaginationOptions,
+    IndexerReadOptions,
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
