@@ -2083,6 +2083,28 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
 
         expect(swap.state).toBe("failed");
     });
+
+    it("follows a re-claim of an RBF-replaced fill to its spend", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const replacement = { ...FILL, txid: "33".repeat(32) };
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const state: Parameters<typeof fakeChain>[0] = { utxos: [replacement], status: {} };
+        const chain = fakeChain(state);
+        const m = manager({ indexer: lockupTaken(), chain, now: SAFE_NOW, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(s.claims[0]?.utxo.txid).toBe(replacement.txid);
+        expect(swap.funding).toEqual({ txid: replacement.txid, vout: 0, amount: 100_000 });
+
+        state.utxos = [];
+        state.spend = { txHex: claim.txHex };
+        state.status = { [claim.txid]: true };
+        await m.poll();
+
+        expect(chain.spendLookups.at(-1)?.txid).toBe(replacement.txid);
+        expect(swap.state).toBe("settled");
+    });
 });
 
 describe("RfqSwapManager — the lightning-send leg", () => {

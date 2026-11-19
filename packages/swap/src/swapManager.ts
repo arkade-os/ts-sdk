@@ -1877,8 +1877,13 @@ export class RfqSwapManager {
                 utxo,
                 bump ? { bump } : undefined,
             );
-            // The first claim names the fill; later ones only re-publish it.
-            if (swap.claimTxid === undefined) {
+            // A claim names the fill it spends: after an RBF-replaced funding the recorded
+            // outpoint is gone, and its spend could never be read back as this claim.
+            if (
+                swap.funding?.txid !== utxo.txid ||
+                swap.funding.vout !== utxo.vout ||
+                swap.funding.amount === undefined
+            ) {
                 swap.funding = { txid: utxo.txid, vout: utxo.vout, amount: Number(utxo.amount) };
             }
             swap.claimTxid = txid;

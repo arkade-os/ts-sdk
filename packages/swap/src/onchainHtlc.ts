@@ -541,7 +541,12 @@ export async function classifyOnchainHtlc(
     },
 ): Promise<OnchainHtlcPhase> {
     const utxos = await chain.getScriptUtxos(input.htlc.pkScript);
-    const best = utxos.sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
+    // Largest at depth first, as in `awaitOnchainFill`: a larger output that never confirms
+    // must not hold back a confirmed fill until the solver's refund leaf opens.
+    const deep = (u: ChainUtxo) => u.confirmations >= input.minConfirmations;
+    const best = utxos.sort((a, b) =>
+        deep(a) !== deep(b) ? (deep(a) ? -1 : 1) : b.amount > a.amount ? 1 : -1,
+    )[0];
     const { funding } = input;
     let spend: { txHex: string } | null = null;
     if (funding && !utxos.some((u) => u.txid === funding.txid && u.vout === funding.vout)) {

@@ -489,6 +489,15 @@ describe("classifyOnchainHtlc", () => {
         ).toBe("unfunded");
     });
 
+    it("classifies a confirmed output ahead of a larger one that has not confirmed", async () => {
+        const decoy = { ...UTXO, txid: "22".repeat(32), amount: 1_000_000n, confirmations: 0 };
+        const phase = await classifyOnchainHtlc(
+            fakeChain({ utxos: [decoy, funded(6)], mtp: LOCKTIME - 1 }),
+            { htlc: htlc(), minConfirmations: 2, funding: { txid: UTXO.txid, vout: UTXO.vout } },
+        );
+        expect(phase).toEqual({ phase: "claimable", utxo: funded(6) });
+    });
+
     it("reads the recorded outpoint's spend past another output at its script", async () => {
         const h = htlc();
         const claim = await buildHtlcClaim({
