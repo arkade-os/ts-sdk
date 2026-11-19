@@ -1608,7 +1608,7 @@ style and have not been backfilled.
 
 ### Internal
 
-- **Qualify the merged SDK for the Taxi stack.** The `0.5.9-taxi.0` candidate
+- **Qualify the merged SDK for the Taxi V1 stack.** The `0.5.9-taxi-v1` candidate
   identifies the refreshed upstream `d9e55f61` baseline separately from the
   published `0.5.8` archive.
 - **Dev-tooling dependency overrides raised past every high and critical
