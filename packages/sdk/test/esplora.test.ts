@@ -102,6 +102,12 @@ describe("EsploraProvider", () => {
     });
 
     describe("getTransactions", () => {
+        const confirmed = (txid: string): ExplorerTransaction => ({
+            txid,
+            vout: [],
+            status: { confirmed: true, block_time: 1600000000 },
+        });
+
         it("preserves Esplora's numeric satoshi output values", async () => {
             const tx: ExplorerTransaction = {
                 txid: "deposit",
@@ -109,11 +115,41 @@ describe("EsploraProvider", () => {
                 status: { confirmed: true, block_time: 1600000000 },
             };
             mockFetch.mockResolvedValueOnce(jsonResponse([tx]));
+            mockFetch.mockResolvedValueOnce(jsonResponse([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const txs = await provider.getTransactions("bc1qtest");
 
             expect(txs[0].vout[0].value).toBe(10000);
+        });
+
+        it("pages confirmed history past the first page", async () => {
+            mockFetch
+                .mockResolvedValueOnce(jsonResponse([confirmed("newest")]))
+                .mockResolvedValueOnce(jsonResponse([confirmed("older")]))
+                .mockResolvedValueOnce(jsonResponse([]));
+
+            const txs = await new EsploraProvider("http://localhost:3000").getTransactions(
+                "bc1qtest",
+            );
+
+            expect(txs.map((tx) => tx.txid)).toEqual(["newest", "older"]);
+            expect(mockFetch.mock.calls[1][0]).toBe(
+                "http://localhost:3000/address/bc1qtest/txs/chain/newest",
+            );
+        });
+
+        it("keeps the first page when the explorer has no paging route", async () => {
+            mockFetch
+                .mockResolvedValueOnce(jsonResponse([confirmed("newest")]))
+                .mockResolvedValueOnce(textResponse("Not Found", { status: 404 }));
+
+            const txs = await new EsploraProvider("http://localhost:3000").getTransactions(
+                "bc1qtest",
+            );
+
+            expect(txs.map((tx) => tx.txid)).toEqual(["newest"]);
+            expect(mockFetch).toHaveBeenCalledTimes(2);
         });
     });
 

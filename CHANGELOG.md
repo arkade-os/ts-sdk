@@ -166,6 +166,10 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Indexer reads return every page.** arkd serves at most 100 rows per page whatever size is requested, while the readers asked for 500 and treated any shorter page as the last one. Wallet syncs, exit-data collection, HD script discovery and the Expo contract poll therefore kept only the first 100 matches per query. Every indexer page walk now follows the server's `next` cursor, ends when the cursor stops advancing, and throws after 1000 pages.
+
+- **Esplora address history includes older transactions.** `getTransactions` read only `/address/:address/txs`, which holds the newest page. It now follows `/txs/chain/:last_seen` for the rest, and keeps the first page when an explorer has no such route.
+
 - **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do.
 
 - **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.

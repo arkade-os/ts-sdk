@@ -278,7 +278,29 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     async getTransactions(address: string): Promise<ExplorerTransaction[]> {
-        const response = await baseFetch(`${this.baseUrl}/address/${address}/txs`);
+        const txs = await this.getAddressTxs(`${this.baseUrl}/address/${address}/txs`);
+        // `/txs` holds only the newest confirmed page; older history is behind `/txs/chain/:last`.
+        const seen = new Set(txs.map((tx) => tx.txid));
+        let last = txs.filter((tx) => tx.status.confirmed).at(-1)?.txid;
+        for (let pages = 1; last !== undefined; pages++) {
+            if (pages > MAX_HISTORY_PAGES) throw new Error("Esplora history paging does not end");
+            const page = await this.getAddressTxs(
+                `${this.baseUrl}/address/${address}/txs/chain/${last}`,
+            ).catch((error): ExplorerTransaction[] => {
+                // An explorer without the paging route keeps the first-page answer.
+                if (error instanceof HttpResponseError && error.status === 404) return [];
+                throw error;
+            });
+            const fresh = page.filter((tx) => !seen.has(tx.txid));
+            for (const tx of fresh) seen.add(tx.txid);
+            txs.push(...fresh);
+            last = fresh.at(-1)?.txid;
+        }
+        return txs;
+    }
+
+    private async getAddressTxs(url: string): Promise<ExplorerTransaction[]> {
+        const response = await baseFetch(url);
         if (!response.ok) {
             const error = await response.text().catch(() => undefined);
             throw new HttpResponseError("Failed to get transactions", response, error);
@@ -922,6 +944,8 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
  * while still cutting a failing explorer's load 16x.
  */
 const MAX_POLL_BACKOFF_EXPONENT = 4;
+
+const MAX_HISTORY_PAGES = 1000;
 
 /**
  * First socket reconnect delay; short because the socket is far cheaper than the polling that

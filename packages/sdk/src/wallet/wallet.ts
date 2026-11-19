@@ -43,6 +43,7 @@ import {
     fetchVtxoCreatedAtByTxid,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    indexerPages,
     isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
@@ -5940,24 +5941,24 @@ export class Wallet
 
     /** Read every page of an unfiltered VTXO query for the given scripts. */
     private async fetchAllVtxos(scripts: string[]): Promise<NormalizedVirtualCoin[]> {
-        const pageSize = 100;
         const all: NormalizedVirtualCoin[] = [];
         const seen = new Set<string>();
 
-        for (let pageIndex = 0; ; pageIndex++) {
-            const { vtxos, page } = await getNormalizedVtxos(this.indexerProvider, {
+        for await (const { vtxos } of indexerPages((pageIndex) =>
+            getNormalizedVtxos(this.indexerProvider, {
                 scripts,
                 pageIndex,
-                pageSize,
-            });
+                pageSize: 100,
+            }),
+        )) {
             for (const vtxo of vtxos) {
                 const outpoint = `${vtxo.txid}:${vtxo.vout}`;
                 if (seen.has(outpoint)) continue;
                 seen.add(outpoint);
                 all.push(vtxo);
             }
-            if (!page || vtxos.length < pageSize) return all;
         }
+        return all;
     }
 
     /**
