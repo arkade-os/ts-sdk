@@ -178,7 +178,7 @@ style and have not been backfilled.
 
 - **BIP21 ignores an `address` query parameter**; the destination is the URI path.
 
-- **Provider fee rates are capped at 1000 sat/vB** for on-chain sends, boarding and on-chain sweeps, unilateral exits and their fee bumps, and floored at 1 sat/vB everywhere. An explicit `feeRate` argument is used as given. `OnchainWallet.bumpP2A` funds its fee child from confirmed coins only, as the graph-mode bump already did.
+- **Provider fee rates are capped at 1000 sat/vB** for on-chain sends, boarding and on-chain sweeps, unilateral exits and their fee bumps, and floored at 1 sat/vB everywhere. An explicit `feeRate` argument is used as given.
 
 - **Delegation refuses a negative delegate fee or one above 10% of the delegated amount.**
 

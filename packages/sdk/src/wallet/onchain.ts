@@ -235,8 +235,7 @@ export class OnchainWallet implements AnchorBumper {
     async bumpP2A(parent: Transaction): Promise<[string, string]> {
         const feeRate = await providerFeeRate(this.provider);
 
-        const coins = (await this.getCoins()).filter((c) => c.status.confirmed);
-        const child = await this.buildBumpPackage(parent, feeRate, coins);
+        const child = await this.buildBumpPackage(parent, feeRate, await this.getCoins());
 
         try {
             await this.provider.broadcastTransaction(parent.hex, child.hex);
