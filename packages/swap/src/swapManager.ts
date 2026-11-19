@@ -1519,11 +1519,11 @@ export class RfqSwapManager {
         }
 
         if (!partiallyClaimed) {
-            if (!Number.isFinite(swap.expectedAmount)) {
+            if (!Number.isSafeInteger(swap.expectedAmount) || swap.expectedAmount <= 0) {
                 // See LightningReceiveSwap.expectedAmount. Re-checked each pass.
                 return this.block(
                     swap,
-                    `expectedAmount is not a finite number (${String(swap.expectedAmount)}), so the funded value cannot be checked — refusing to publish the preimage`,
+                    `expectedAmount is not a positive number of sats (${String(swap.expectedAmount)}), so the funded value cannot be checked — refusing to publish the preimage`,
                 );
             }
             // Swept outputs count: they are agreed money at the script. `pushClaim` refuses
@@ -1877,6 +1877,10 @@ export class RfqSwapManager {
                 utxo,
                 bump ? { bump } : undefined,
             );
+            // The first claim names the fill; later ones only re-publish it.
+            if (swap.claimTxid === undefined) {
+                swap.funding = { txid: utxo.txid, vout: utxo.vout, amount: Number(utxo.amount) };
+            }
             swap.claimTxid = txid;
             swap.claimBroadcastAt = this.config.now();
             delete swap.claimConfirmed;
