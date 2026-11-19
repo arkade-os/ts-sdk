@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
     contractHandlers,
@@ -16,7 +16,8 @@ import { ArkadeScript } from "../../../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../../../src/arkade/tweak";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import vectors from "../../fixtures/executor/vectors.json";
-import { createMockVtxo } from "../helpers";
+import { createMockIndexerProvider, createMockVtxo } from "../helpers";
+import type { DiscoveryDeps } from "../../../src/contracts/types";
 
 const keys = {
     cosignerPubkey: vectors.cosignerPubkey,
@@ -217,5 +218,69 @@ describe("ExecutorContractHandler", () => {
         });
         expect(script(resolved.selection.leaf)).toEqual(leaves("renewal")[1]);
         expect(resolved.selection.sequence).toBe(delegation.exitDelay);
+    });
+});
+
+describe("ExecutorContractHandler.discoverRange", () => {
+    // the vectors' owner is 2G; 3G owns nothing
+    const owned = `tr(${vectors.owner.slice(2)})`;
+    const other = "tr(f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9)";
+    const entries = [
+        { index: 0, descriptor: other },
+        { index: 1, descriptor: owned },
+    ];
+
+    function depsWith(found: { renewal?: boolean; boarding?: boolean }): DiscoveryDeps {
+        const indexerProvider = createMockIndexerProvider();
+        indexerProvider.getVtxos = vi.fn(async ({ scripts }: { scripts?: string[] }) => ({
+            vtxos:
+                found.renewal && scripts?.includes(vectors.renewal.pkScript)
+                    ? [createMockVtxo({ script: vectors.renewal.pkScript })]
+                    : [],
+        })) as never;
+        return {
+            indexerProvider,
+            onchainProvider: {
+                getCoins: vi.fn(async (address: string) =>
+                    found.boarding && address === vectors.boarding.address
+                        ? [{ txid: "aa".repeat(32), vout: 0, value: 1000, status: {} }]
+                        : [],
+                ),
+            } as never,
+            network: { hrp: "tark" },
+            onchainNetwork: networks.regtest,
+            serverPubKey: serverXOnly,
+            csvTimelocks: [],
+            executorWatches: [{ keys, params: delegation }],
+        };
+    }
+
+    it.each([
+        ["boarded coins at its renewal contract", { renewal: true }],
+        ["a deposit not boarded yet", { boarding: true }],
+    ])("finds both contracts of a rotated key's watch from %s", async (_, found) => {
+        const out = await ExecutorContractHandler.discoverRange!(entries, depsWith(found));
+        expect(out.get(0)).toEqual([]);
+        const contracts = out.get(1)!;
+        expect(contracts.map((c) => c.script)).toEqual([
+            vectors.renewal.pkScript,
+            vectors.boarding.pkScript,
+        ]);
+        expect(contracts[0].address).toBe(vectors.renewal.address);
+        expect(contracts.map((c) => c.scope)).toEqual(["offchain", "onchain"]);
+        expect(contracts.map((c) => c.metadata)).toEqual([
+            { signingDescriptor: owned },
+            { signingDescriptor: owned },
+        ]);
+    });
+
+    it("answers every index empty without delegations, asking nothing", async () => {
+        const deps = { ...depsWith({ renewal: true }), executorWatches: undefined };
+        const out = await ExecutorContractHandler.discoverRange!(entries, deps);
+        expect([...out.entries()]).toEqual([
+            [0, []],
+            [1, []],
+        ]);
+        expect(deps.indexerProvider.getVtxos).not.toHaveBeenCalled();
     });
 });

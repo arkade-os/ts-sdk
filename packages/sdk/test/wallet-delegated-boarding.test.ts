@@ -1,22 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import {
+    Batch,
+    ContractManager,
+    ContractWatcher,
     ExecutorContractHandler,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    MnemonicIdentity,
     RestArkProvider,
     SingleKey,
     Wallet,
     networks,
+    type Contract,
     type ExecutorProvider,
+    type ExtendedVirtualCoin,
 } from "../src";
 import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
+import { saveVtxosForContract } from "../src/contracts/vtxoOwnership";
+import { REGISTRATION_TIMEOUT_MS } from "../src/wallet/executor";
 import { getOwnBoardingAddress } from "../src/wallet/utils";
+import { createMockExtendedVtxo } from "./contracts/helpers";
 import vectors from "./fixtures/executor/vectors.json";
 import { jsonResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
-vi.mock("../src/utils/fetch", () => ({ fetch: mockFetch, baseFetch: mockFetch }));
+vi.mock("../src/utils/fetch", async (importActual) => ({
+    ...(await importActual<typeof import("../src/utils/fetch")>()),
+    fetch: mockFetch,
+    baseFetch: mockFetch,
+}));
 
 const SERVER_KEY_HEX = vectors.serverPubkey;
 const arkInfo = {
@@ -37,11 +50,16 @@ const identity = SingleKey.fromHex(
 );
 // an Executor is configured; the wallet never calls it for its addresses
 const executorProvider = {} as ExecutorProvider;
+const MNEMONIC =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
-async function executorRow(template: "renewal" | "boarding") {
+async function executorRow(
+    template: "renewal" | "boarding",
+    owner: Pick<SingleKey, "compressedPublicKey"> = identity,
+) {
     const params = ExecutorContractHandler.serializeParams({
         template,
-        owner: await identity.compressedPublicKey(),
+        owner: await owner.compressedPublicKey(),
         exitDelay: 144,
         renewalWindow: 1000,
         maxFee: 100,
@@ -84,6 +102,421 @@ async function walletWith(options: { executor: boolean; rows: boolean }) {
     });
     return { wallet, renewal, boarding };
 }
+
+/**
+ * An HD wallet with a live watch at its identity key, and an Executor that registers more.
+ * `coinAtRenewal` stores a coin at that key's renewal contract before the wallet starts. `hold`
+ * leaves every registration pending until `open()`, `fail()` or its signal aborts. `lazy` boots
+ * the contract manager in the background.
+ */
+async function hdWalletWithWatch({
+    refuse = false,
+    coinAtRenewal = false,
+    hold = false,
+    lazy = false,
+} = {}) {
+    // an HD wallet subscribes to its contracts at boot
+    vi.stubGlobal(
+        "EventSource",
+        vi.fn().mockImplementation((url: string) => ({ url, close: vi.fn() })),
+    );
+    mockFetch.mockImplementation(async (url: string) => {
+        if (url.includes("/info")) return jsonResponse(arkInfo);
+        if (url.includes("subscri")) return jsonResponse({ subscriptionId: "sub-1" });
+        if (url.includes("vtxo") || url.includes("scripts")) return jsonResponse({ vtxos: [] });
+        return jsonResponse([]);
+    });
+    const hd = MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
+    const renewal = await executorRow("renewal", hd);
+    const boarding = await executorRow("boarding", hd);
+    const contractRepository = new InMemoryContractRepository();
+    await contractRepository.saveContract(renewal.contract);
+    await contractRepository.saveContract(boarding.contract);
+    const walletRepository = new InMemoryWalletRepository();
+    if (coinAtRenewal) {
+        await saveVtxosForContract(walletRepository, renewal.contract, [
+            createMockExtendedVtxo({ script: renewal.contract.script }),
+        ]);
+    }
+    let open!: () => void;
+    let fail!: (e: unknown) => void;
+    const gate = hold
+        ? new Promise<void>((resolve, reject) => {
+              open = resolve;
+              fail = reject;
+          })
+        : undefined;
+    const registerDelegation = vi.fn(
+        async (
+            templateId: string,
+            variables: Record<string, string>,
+            options?: { signal?: AbortSignal },
+        ) => {
+            if (gate) {
+                await Promise.race([
+                    gate,
+                    new Promise<never>((_, reject) =>
+                        options?.signal?.addEventListener("abort", () =>
+                            reject(options.signal?.reason),
+                        ),
+                    ),
+                ]);
+            }
+            if (refuse) throw new Error("Executor unavailable");
+            const script = ExecutorContractHandler.createScript({
+                ...boarding.contract.params,
+                owner: variables.owner,
+            });
+            return {
+                id: 1,
+                templateId,
+                variables,
+                status: "active",
+                inputs: [
+                    {
+                        name: "board",
+                        onchain: true,
+                        script: hex.encode(script.pkScript),
+                        address: script.onchainAddress(networks.mutinynet),
+                    },
+                ],
+            };
+        },
+    );
+    const wallet = await Wallet.create({
+        identity: hd,
+        walletMode: "hd",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
+        storage: { walletRepository, contractRepository },
+        settlementConfig: false,
+        ...(lazy ? { lazyInitialization: true } : {}),
+        executorProvider: {
+            getInfo: async () => ({
+                version: "test",
+                network: "mutinynet",
+                cosignerPubkey: vectors.cosignerPubkey,
+                serverPubkey: SERVER_KEY_HEX,
+                emulatorPubkey: vectors.emulatorPubkey,
+            }),
+            registerDelegation,
+        } as unknown as ExecutorProvider,
+    });
+    const owner = hex.encode(await hd.compressedPublicKey());
+    return { wallet, renewal, boarding, registerDelegation, owner, open, fail, walletRepository };
+}
+
+/** A coin at `row`'s contract, with an outpoint named by `txidByte`. */
+function coin(row: Awaited<ReturnType<typeof executorRow>>, txidByte: string) {
+    return createMockExtendedVtxo({
+        script: row.contract.script,
+        txid: txidByte.repeat(32),
+    });
+}
+
+/** Delivers a contract event to the wallet's subscribers, as the watcher does. */
+async function deliverContractEvent(
+    wallet: Wallet,
+    type: "vtxo_received" | "vtxo_spent",
+    contract: Contract,
+    vtxos: ExtendedVirtualCoin[],
+) {
+    const manager = await wallet.getContractManager();
+    for (const cb of (manager as any).eventCallbacks as Set<(e: unknown) => void>) {
+        cb({
+            type,
+            contractScript: contract.script,
+            contract,
+            vtxos: vtxos.map((v) => ({ ...v, contractScript: contract.script })),
+            timestamp: Date.now(),
+        });
+    }
+}
+
+/** {@link deliverContractEvent}, then the rotation it queued. */
+async function emitContractEvent(
+    wallet: Wallet,
+    type: "vtxo_received" | "vtxo_spent",
+    contract: Contract,
+    vtxos: ExtendedVirtualCoin[],
+) {
+    await deliverContractEvent(wallet, type, contract, vtxos);
+    await boardChainIdle(wallet);
+}
+
+// a boarding input: the non-VTXO coin a settle consumes
+const boardingCoin = {
+    txid: "ab".repeat(32),
+    vout: 0,
+    value: 100_000,
+    status: { confirmed: true },
+};
+
+/** The queued rotations, including any a running one queues. */
+async function boardChainIdle(wallet: Wallet) {
+    let chain: Promise<void>;
+    do {
+        chain = (wallet as any)._executorBoardChain;
+        await chain;
+    } while (chain !== (wallet as any)._executorBoardChain);
+}
+
+/** Stubs what a settle needs from the operator, so that it commits `commitment-txid`. */
+function stubSettle(wallet: Wallet) {
+    const w = wallet as any;
+    w.arkProvider.getEventStream = vi.fn().mockReturnValue((async function* () {})());
+    w.makeRegisterIntentSignature = vi.fn().mockResolvedValue({ proof: "", message: {} });
+    w.makeDeleteIntentSignature = vi.fn().mockResolvedValue({ proof: "", message: {} });
+    w.safeRegisterIntent = vi.fn().mockResolvedValue("intent-id");
+    w.persistIntentSnapshot = vi.fn();
+    w.createBatchHandler = vi.fn().mockReturnValue({});
+    w.updateDbAfterSettle = vi.fn();
+    return vi.spyOn(Batch, "join").mockResolvedValue("commitment-txid");
+}
+
+/** Whether `promise` settled within a few turns of the event loop. */
+async function settlesSoon(promise: Promise<unknown>): Promise<boolean> {
+    let settled = false;
+    promise.then(
+        () => (settled = true),
+        () => (settled = true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return settled;
+}
+
+describe("delegated boarding address on an HD wallet", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it("gives a rotated boarding key a watch of its own", async () => {
+        const { wallet, boarding, registerDelegation, owner } = await hdWalletWithWatch();
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+        expect(await wallet.getBoardingAddress()).toBe(first);
+
+        const next = await wallet.getNewBoardingAddress();
+        expect(next).not.toBe(first);
+        expect(next).not.toBe(wallet.ownBoardingAddress());
+        expect(await wallet.getBoardingAddress()).toBe(next);
+        const [[, variables]] = registerDelegation.mock.calls;
+        expect(variables.owner.slice(2)).toBe(hex.encode(wallet.boardingTapscript.options.pubKey));
+        expect(variables.owner).not.toBe(owner);
+        // the first watch's deposits are still the wallet's
+        expect(await wallet.getBoardingAddresses()).toContain(first);
+        await wallet.dispose();
+    });
+
+    it("shows the rotated key's own address when the Executor refuses it a watch", async () => {
+        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+            refuse: true,
+        });
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+
+        const next = await wallet.getNewBoardingAddress();
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        expect(next).toBe(wallet.ownBoardingAddress());
+        expect(next).not.toBe(first);
+        await wallet.dispose();
+    });
+
+    it("rotates once the Executor boards a deposit at the displayed key", async () => {
+        const { wallet, boarding, renewal, registerDelegation } = await hdWalletWithWatch();
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [coin(renewal, "aa")]);
+        expect(await wallet.getBoardingAddress()).not.toBe(first);
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        await wallet.dispose();
+    });
+
+    it("does not rotate again when the Executor renews the coin it boarded", async () => {
+        const { wallet, boarding, renewal, registerDelegation } = await hdWalletWithWatch();
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+        const boarded = coin(renewal, "aa");
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [boarded]);
+        const next = await wallet.getBoardingAddress();
+        expect(next).not.toBe(first);
+
+        // the renewal spends the outpoint and locks a new one back at the same script
+        await emitContractEvent(wallet, "vtxo_spent", renewal.contract, [boarded]);
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [coin(renewal, "bb")]);
+        expect(await wallet.getBoardingAddress()).toBe(next);
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        await wallet.dispose();
+    });
+
+    it("rotates at boot for a coin already at the displayed key's renewal contract", async () => {
+        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+            coinAtRenewal: true,
+        });
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+
+        // no event: the coin was stored before the wallet subscribed
+        await boardChainIdle(wallet);
+        const next = await wallet.getBoardingAddress();
+        expect(next).not.toBe(first);
+        expect(registerDelegation).toHaveBeenCalledOnce();
+
+        // the coin stays at the old key's contract: another start must not rotate again
+        await (wallet as any).rotateForExecutorCoinAtBoot();
+        await boardChainIdle(wallet);
+        expect(await wallet.getBoardingAddress()).toBe(next);
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        await wallet.dispose();
+    });
+
+    describe("with a lazy boot that writes the coin", () => {
+        /** A lazy wallet whose boot sync is held, and writes the boarded coin silently. */
+        async function lazyWalletWithBootCoin() {
+            let finishBoot!: () => void;
+            const booting = new Promise<void>((resolve) => (finishBoot = resolve));
+            vi.spyOn(ContractManager.prototype as any, "reconcileWatched").mockReturnValue(booting);
+            // nothing but the sync may report the coin
+            vi.spyOn(ContractWatcher.prototype, "startWatching").mockResolvedValue(() => {});
+            const w = await hdWalletWithWatch({ lazy: true });
+            await saveVtxosForContract(w.walletRepository, w.renewal.contract, [
+                createMockExtendedVtxo({ script: w.renewal.contract.script }),
+            ]);
+            expect(w.registerDelegation).not.toHaveBeenCalled();
+            return { ...w, finishBoot };
+        }
+
+        it("rotates once the boot has finished", async () => {
+            const { wallet, boarding, registerDelegation, finishBoot } =
+                await lazyWalletWithBootCoin();
+            const first = boarding.script.onchainAddress(networks.mutinynet);
+
+            finishBoot();
+            await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
+            await boardChainIdle(wallet);
+
+            expect(await wallet.getBoardingAddress()).not.toBe(first);
+            expect(registerDelegation).toHaveBeenCalledOnce();
+            await wallet.dispose();
+        });
+
+        it("drains the rotation the boot scan queues before it disposes", async () => {
+            const { wallet, registerDelegation, finishBoot } = await lazyWalletWithBootCoin();
+
+            const disposed = wallet.dispose();
+            // let dispose reach the drain, which waits on the held boot
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            finishBoot();
+            await disposed;
+
+            expect(registerDelegation).toHaveBeenCalledOnce();
+        });
+    });
+
+    describe("rotation after a settle", () => {
+        it("returns the commitment and frees the tx lock while the watch is still registering", async () => {
+            const { wallet, registerDelegation, open } = await hdWalletWithWatch({ hold: true });
+            stubSettle(wallet);
+
+            const first = wallet.settle({ inputs: [boardingCoin as any], outputs: [] });
+            expect(await settlesSoon(first)).toBe(true);
+            await expect(first).resolves.toBe("commitment-txid");
+            await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
+
+            // the lock is free: a second settle proceeds, behind the first rotation
+            const second = wallet.settle({ inputs: [boardingCoin as any], outputs: [] });
+            expect(await settlesSoon(second)).toBe(true);
+            await expect(second).resolves.toBe("commitment-txid");
+            expect(registerDelegation).toHaveBeenCalledOnce();
+
+            open();
+            await boardChainIdle(wallet);
+            await wallet.dispose();
+        });
+
+        it("keeps the old delegated address until the new watch is registered", async () => {
+            const { wallet, boarding, registerDelegation, open } = await hdWalletWithWatch({
+                hold: true,
+            });
+            const old = boarding.script.onchainAddress(networks.mutinynet);
+
+            await (wallet as any).maybeRotateBoardingAfterBoard([boardingCoin]);
+            await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
+            expect(await wallet.getBoardingAddress()).toBe(old);
+
+            open();
+            await boardChainIdle(wallet);
+            const next = await wallet.getBoardingAddress();
+            expect(next).not.toBe(old);
+            expect(next).not.toBe(wallet.ownBoardingAddress());
+            await wallet.dispose();
+        });
+
+        it("shows the new key's own address when its registration fails", async () => {
+            const { wallet, boarding, registerDelegation, fail } = await hdWalletWithWatch({
+                hold: true,
+            });
+            const old = boarding.script.onchainAddress(networks.mutinynet);
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            await (wallet as any).maybeRotateBoardingAfterBoard([boardingCoin]);
+            await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
+            expect(await wallet.getBoardingAddress()).toBe(old);
+
+            fail(new Error("Executor unavailable"));
+            await boardChainIdle(wallet);
+            expect(await wallet.getBoardingAddress()).toBe(wallet.ownBoardingAddress());
+            expect(await wallet.getBoardingAddress()).not.toBe(old);
+            expect(warn).toHaveBeenCalled();
+            await wallet.dispose();
+        });
+
+        it("does not rotate a second time for a deposit the Executor boards meanwhile", async () => {
+            const { wallet, renewal, registerDelegation, open } = await hdWalletWithWatch({
+                hold: true,
+            });
+
+            await (wallet as any).maybeRotateBoardingAfterBoard([boardingCoin]);
+            await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
+            // a deposit at the old key, still displayed, which the Executor boards
+            await deliverContractEvent(wallet, "vtxo_received", renewal.contract, [
+                coin(renewal, "aa"),
+            ]);
+
+            open();
+            await boardChainIdle(wallet);
+            expect(registerDelegation).toHaveBeenCalledOnce();
+            const [[, variables]] = registerDelegation.mock.calls;
+            expect(variables.owner.slice(2)).toBe(
+                hex.encode(wallet.boardingTapscript.options.pubKey),
+            );
+            await wallet.dispose();
+        });
+
+        it("waits for a pending registration before it disposes", async () => {
+            const { wallet, registerDelegation, open } = await hdWalletWithWatch({ hold: true });
+
+            await (wallet as any).maybeRotateBoardingAfterBoard([boardingCoin]);
+            await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
+            const disposed = wallet.dispose();
+            expect(await settlesSoon(disposed)).toBe(false);
+
+            open();
+            await disposed;
+        });
+    });
+
+    it("shows the rotated key's own address once a registration times out", async () => {
+        const { wallet, registerDelegation } = await hdWalletWithWatch({ hold: true });
+        const deadline = new AbortController();
+        const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        const next = wallet.getNewBoardingAddress();
+        await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
+        expect(timeout).toHaveBeenCalledWith(REGISTRATION_TIMEOUT_MS);
+        deadline.abort(new Error("timed out"));
+
+        expect(await next).toBe(wallet.ownBoardingAddress());
+        await wallet.dispose();
+    });
+});
 
 describe("delegated boarding address", () => {
     beforeEach(() => {

@@ -4,22 +4,27 @@ import { RestExecutorProvider } from "../src/providers/executor";
 import { ExecutorRequestError } from "../src/providers/executor";
 import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/executor/executorTemplate";
 import { ExecutorManagerImpl, watchExecutorContracts } from "../src/wallet/executor";
+import { ExecutorContractHandler } from "../src/contracts/handlers/executor";
+import { WALLET_RECEIVE_SOURCE } from "../src/contracts/metadata";
 import { rateGate } from "../src/providers/rateGate";
 import { ContractManager, InMemoryContractRepository, InMemoryWalletRepository } from "../src";
 import { ArkAddress } from "../src/script/address";
-import { REGTEST_EMULATOR_PUBKEY } from "../src/networks";
+import { REGTEST_EMULATOR_PUBKEY, networks } from "../src/networks";
 import { createMockIndexerProvider, createMockVtxo } from "./contracts/helpers";
 import vectors from "./fixtures/executor/vectors.json";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 
-vi.mock("../src/utils/fetch", () => ({
+vi.mock("../src/utils/fetch", async (importActual) => ({
+    ...(await importActual<typeof import("../src/utils/fetch")>()),
     fetch: mockFetch,
     baseFetch: mockFetch,
 }));
 
 describe("RestExecutorProvider", () => {
-    beforeEach(() => mockFetch.mockReset());
+    beforeEach(() => {
+        mockFetch.mockReset();
+    });
 
     it("fetches info without a query and ignores stale covenant fields", async () => {
         const info = makeInfo();
@@ -103,6 +108,23 @@ describe("RestExecutorProvider", () => {
         await expect(
             new RestExecutorProvider("https://executor.test").registerDelegation("tpl-1", {}),
         ).rejects.toThrow("template disabled");
+    });
+
+    it("rejects a registration whose signal aborts", async () => {
+        mockFetch.mockImplementation(
+            (_url: string, init: RequestInit) =>
+                new Promise((_, reject) =>
+                    init.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+                ),
+        );
+        const controller = new AbortController();
+        const pending = new RestExecutorProvider("https://executor.test").registerDelegation(
+            "tpl-1",
+            {},
+            { signal: controller.signal },
+        );
+        controller.abort(new Error("timed out"));
+        await expect(pending).rejects.toThrow("timed out");
     });
 
     it("parses a delegation's coins, rejecting an unknown status, bad variables and amounts", async () => {
@@ -231,7 +253,7 @@ describe("ExecutorManagerImpl.register", () => {
         expect(provider.registerDelegation).toHaveBeenCalledWith(
             BOARDING_ID,
             vectors.boarding.variables,
-            { expiresAt: 9 },
+            { expiresAt: 9, signal: expect.any(AbortSignal) },
         );
         // the wallet watches the boarding contract and the renewal contract it boards to
         expect(contractManager.createContract.mock.calls.map(([c]) => c.script)).toEqual([
@@ -263,7 +285,7 @@ describe("ExecutorManagerImpl.register", () => {
         expect(provider.registerDelegation).toHaveBeenCalledWith(
             BOARDING_ID,
             vectors.boarding.variables,
-            { expiresAt: undefined },
+            { expiresAt: undefined, signal: expect.any(AbortSignal) },
         );
         expect(wallet.getOperatorInfo).toHaveBeenCalledWith({ requireLive: true });
         // resolved, so watchExecutorContracts restores the watch without the operator
@@ -367,6 +389,51 @@ describe("ExecutorManagerImpl.register", () => {
             `Executor's emulator key ${vectors.emulatorPubkey} is not the trusted ${REGTEST_EMULATOR_PUBKEY}`,
         );
         expect(provider.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it("registers the key of the displayed rotated boarding address", async () => {
+        // the x-only key of 3G, the newest boarding key the wallet rotated to
+        const rotated = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+        const descriptor = `tr(${rotated})`;
+        const server = hex.encode(ArkAddress.decode(vectors.renewal.address).serverPubKey);
+        contractManager.getContracts.mockResolvedValueOnce([
+            {
+                type: "boarding",
+                params: { pubKey: "11".repeat(32), serverPubKey: server },
+                metadata: { source: WALLET_RECEIVE_SOURCE, signingDescriptor: "tr(old)" },
+                createdAt: 1,
+            },
+            {
+                type: "boarding",
+                params: { pubKey: rotated, serverPubKey: server },
+                metadata: { source: WALLET_RECEIVE_SOURCE, signingDescriptor: descriptor },
+                createdAt: 2,
+            },
+        ]);
+        const script = ExecutorContractHandler.createScript(
+            ExecutorContractHandler.serializeParams({
+                template: "boarding",
+                owner: hex.decode(`02${rotated}`),
+                ...params,
+                cosignerPubKey: hex.decode(vectors.cosignerPubkey),
+                serverPubKey: hex.decode(vectors.serverPubkey),
+                emulatorPubKey: hex.decode(vectors.emulatorPubkey),
+            }),
+        );
+        const address = script.onchainAddress(networks.regtest);
+        const provider = makeProvider({ inputs: [{ ...boardingInput, address }] });
+
+        const registration = await new ExecutorManagerImpl(provider, wallet).registerBoarding(
+            params,
+            trusted,
+        );
+        expect(registration.address).toBe(address);
+        expect(registration.variables.owner).toBe(`02${rotated}`);
+        // its rows carry the descriptor, so the wallet signs for them
+        expect(contractManager.createContract.mock.calls.map(([c]) => c.metadata)).toEqual([
+            { signingDescriptor: descriptor, delegationStatus: "local" },
+            { signingDescriptor: descriptor, delegationStatus: "active" },
+        ]);
     });
 
     it("refuses a service on another network than the wallet's operator", async () => {
@@ -483,8 +550,13 @@ const respond = (body: unknown, status = 200) =>
     });
 
 const BOARDING_ID = ids.boarding;
-const identity = { compressedPublicKey: async () => hex.decode(vectors.owner) };
+const identity = {
+    compressedPublicKey: async () => hex.decode(vectors.owner),
+    xOnlyPublicKey: async () => hex.decode(vectors.owner).subarray(1),
+};
 const contractManager = {
+    // no rotated boarding row: the identity's key is displayed
+    getContracts: vi.fn(async (): Promise<unknown[]> => []),
     createContract: vi.fn(async (c: { script: string; metadata?: Record<string, unknown> }) => ({
         ...c,
         state: "active",

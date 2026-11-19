@@ -1,5 +1,5 @@
 /**
- * Thrown when a descriptor-capable contract (default, delegate, or boarding)
+ * Thrown when a descriptor-capable contract (default, delegate, boarding or executor)
  * cannot be routed to any signer: its owner key (`params.pubKey`) is not this
  * wallet's baseline signing key, and the record carries no
  * `metadata.signingDescriptor` to send it to a descriptor-aware signer.
@@ -11,7 +11,7 @@ export class MissingSigningDescriptorError extends Error {
 
     constructor(
         readonly contractScript: string,
-        readonly contractType: "default" | "delegate" | "boarding",
+        readonly contractType: "default" | "delegate" | "boarding" | "executor",
     ) {
         super(
             `Cannot sign input for ${contractType} contract ${contractScript}: ` +
