@@ -2796,6 +2796,7 @@ export class Wallet
 
     override readonly identity: Identity;
     private readonly _delegateManager?: IDelegateManager;
+    // the class, not the interface: `registerBoardingAt` is @internal
     private readonly _executorManager?: ExecutorManagerImpl;
     private _vtxoManager?: VtxoManager;
     private _vtxoManagerInitializing?: Promise<VtxoManager>;
@@ -3057,7 +3058,8 @@ export class Wallet
 
     /**
      * Register the newest live Executor boarding watch again for a rotated boarding key, so its
-     * deposits are boarded while the wallet is offline too. Best-effort: on failure the key shows
+     * deposits are boarded while the wallet is offline too. Not the displayed key's own watch: it
+     * may have none, and the parameters are wallet policy. Best-effort: on failure the key shows
      * its own address, which the wallet boards once online.
      */
     private async extendBoardingWatch(descriptor: string): Promise<void> {
@@ -3107,7 +3109,7 @@ export class Wallet
         });
         // Unawaited, so lazy init stays lazy; on the chain, so dispose drains it.
         void this.onBoardChain(async () => {
-            await manager.whenBooted?.();
+            await manager.whenBooted?.().catch(() => undefined);
             await this.rotateForExecutorCoinAtBoot();
         });
     }
