@@ -218,8 +218,6 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
-- **`getNewBoardingAddress()` answers the delegated boarding address while an Executor boarding watch is live.** An HD wallet minted a fresh boarding address of its own and returned it, though `getBoardingAddress()` kept answering the delegated one: a deposit there waited for the wallet to come online, since the Executor does not watch it. The rotation after each boarding settle did the same, burning an HD index each time. While the watch is live, both now return the delegated address and burn no index.
-
 - **A new onchain contract is synced when it is created.** `createContract`
   and `createContracts` hydrated a new contract from the indexer only, so the
   coins of an onchain-scoped one, such as a rotated boarding address or an

@@ -1369,7 +1369,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * The newest boarding watch for this wallet's key and current operator that is live, see
      * {@link delegatedBoardingContracts}.
      */
-    protected async delegatedBoardingAddress(): Promise<string | undefined> {
+    private async delegatedBoardingAddress(): Promise<string | undefined> {
         if (!this.executorProvider) return undefined;
         const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
         const live = (await this.delegatedBoardingContracts()).find(
@@ -2988,9 +2988,6 @@ export class Wallet
      * {@link maybeRotateBoardingAfterBoard} on every settle consuming a boarding UTXO; retired
      * addresses stay reachable through {@link getBoardingUtxos}.
      *
-     * While an Executor boarding watch is live, returns its delegated address and burns no index:
-     * a fresh own address is one the Executor does not watch.
-     *
      * @deprecated Use {@link getNewAddresses} — it mints any combination of
      * address types at one shared index, and reports the contract row behind
      * each. Note the difference in display behaviour: this method *swaps* the
@@ -2999,8 +2996,6 @@ export class Wallet
      * method's behaviour, keep calling this method.
      */
     async getNewBoardingAddress(): Promise<string> {
-        const delegated = await this.delegatedBoardingAddress();
-        if (delegated) return delegated;
         // Persisted before the swap, so a throw leaves the previous (watched) address displayed.
         const [minted] = await this.allocateAddresses(["boarding"], false, true);
         if (!minted?.allocated) return this.getBoardingAddress();

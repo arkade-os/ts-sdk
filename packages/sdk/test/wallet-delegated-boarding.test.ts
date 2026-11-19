@@ -4,7 +4,6 @@ import {
     ExecutorContractHandler,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    MnemonicIdentity,
     RestArkProvider,
     SingleKey,
     Wallet,
@@ -36,18 +35,13 @@ const arkInfo = {
 const identity = SingleKey.fromHex(
     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
 );
-const MNEMONIC =
-    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 // an Executor is configured; the wallet never calls it for its addresses
 const executorProvider = {} as ExecutorProvider;
 
-async function executorRow(
-    template: "renewal" | "boarding",
-    owner: Pick<SingleKey, "compressedPublicKey"> = identity,
-) {
+async function executorRow(template: "renewal" | "boarding") {
     const params = ExecutorContractHandler.serializeParams({
         template,
-        owner: await owner.compressedPublicKey(),
+        owner: await identity.compressedPublicKey(),
         exitDelay: 144,
         renewalWindow: 1000,
         maxFee: 100,
@@ -104,49 +98,6 @@ describe("delegated boarding address", () => {
             boarding.script.onchainAddress(networks.mutinynet),
         );
         expect(await wallet.getAddress()).toBe(wallet.arkAddress.encode());
-    });
-
-    it("answers the delegated boarding address on rotation, burning no HD index", async () => {
-        // an HD wallet subscribes to its contracts at boot
-        vi.stubGlobal(
-            "EventSource",
-            vi.fn().mockImplementation((url: string) => ({ url, close: vi.fn() })),
-        );
-        mockFetch.mockImplementation(async (url: string) => {
-            if (url.includes("/info")) return jsonResponse(arkInfo);
-            if (url.includes("subscri")) return jsonResponse({ subscriptionId: "sub-1" });
-            if (url.includes("vtxo") || url.includes("scripts")) return jsonResponse({ vtxos: [] });
-            return jsonResponse([]);
-        });
-        const hd = MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
-        const boarding = await executorRow("boarding", hd);
-        const contractRepository = new InMemoryContractRepository();
-        await contractRepository.saveContract(boarding.contract);
-        const walletRepository = new InMemoryWalletRepository();
-        const wallet = await Wallet.create({
-            identity: hd,
-            walletMode: "hd",
-            arkProvider: new RestArkProvider("http://localhost:7070"),
-            storage: { walletRepository, contractRepository },
-            settlementConfig: false,
-            executorProvider,
-        });
-        const before = (await walletRepository.getWalletState())?.settings?.hd?.lastIndexUsed;
-
-        const delegated = boarding.script.onchainAddress(networks.mutinynet);
-        expect(await wallet.getNewBoardingAddress()).toBe(delegated);
-        expect(await wallet.getBoardingAddress()).toBe(delegated);
-        expect((await walletRepository.getWalletState())?.settings?.hd?.lastIndexUsed).toBe(before);
-
-        await contractRepository.saveContract({
-            ...boarding.contract,
-            metadata: { delegationStatus: "expired" },
-        });
-        const own = await wallet.getNewBoardingAddress();
-        expect(own).not.toBe(delegated);
-        expect(await wallet.getBoardingAddress()).toBe(own);
-        await wallet.dispose();
-        vi.unstubAllGlobals();
     });
 
     it("keeps the wallet's own boarding address without an Executor", async () => {
