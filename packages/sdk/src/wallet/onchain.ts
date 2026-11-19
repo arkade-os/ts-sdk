@@ -235,6 +235,8 @@ export class OnchainWallet implements AnchorBumper {
     async bumpP2A(parent: Transaction): Promise<[string, string]> {
         const feeRate = await providerFeeRate(this.provider);
 
+        // Unconfirmed coins stay eligible, unlike in `bumpAnchor`: `Unroll.Session` funds a later
+        // level's bump from an earlier bump's change before that change confirms.
         const child = await this.buildBumpPackage(parent, feeRate, await this.getCoins());
 
         try {

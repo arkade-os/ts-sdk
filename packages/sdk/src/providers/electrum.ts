@@ -746,6 +746,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                     const candidateTx = Transaction.fromRaw(hex.decode(rawHex), {
                         allowUnknownOutputs: true,
                         allowUnknownInputs: true,
+                        allowUnknownVersion: true,
                         disableScriptCheck: true,
                     });
                     let found = false;
