@@ -59,9 +59,14 @@ export const mockArkInfo = {
  * `afterEach`.
  */
 export function installRestoreHarness(): void {
+    installRestoreHarnessWithInfo(mockArkInfo);
+}
+
+/** {@link installRestoreHarness} answering `/info` with `info`. */
+export function installRestoreHarnessWithInfo(info: object): void {
     const mockFetch = vi.fn().mockImplementation((url: string) => {
         const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
-        if (url.includes("/info")) return reply(mockArkInfo);
+        if (url.includes("/info")) return reply(info);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
         return reply([]);

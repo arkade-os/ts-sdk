@@ -12,6 +12,7 @@ import {
     Network,
     NetworkName,
     networkFromOperatorInfo,
+    retiredDelegatePubKeys,
 } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
@@ -175,6 +176,7 @@ import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } fro
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
 import { DefaultContractHandler } from "../contracts/handlers/default";
+import { delegateDiscoveryKeys } from "../contracts/handlers/delegate";
 import { arkadeServiceUrl, resolveArkadeService } from "../arkade/service";
 import type {
     ContractManagerConfig,
@@ -975,6 +977,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
         this._deprecatedSigners = next;
+    }
+
+    /** Arkade's retired delegator keys when this wallet's operator is Arkade's. Discovery only. */
+    protected retiredDelegateKeys(): Uint8Array[] {
+        return retiredDelegatePubKeys(this.network, [
+            hex.encode(this.offchainTapscript.options.serverPubKey),
+            ...this._deprecatedSigners.keys(),
+        ]);
     }
 
     /** Boarding WATCH/HISTORY signer set: current ∪ deprecated (spend stays current-only). */
@@ -2583,10 +2593,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // The matrix also fans the OPERATOR-signer axis (current + every deprecated signer), so funds
             // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
             // by scriptHex.
-            const delegatePubKey =
-                this.offchainTapscript instanceof DelegateVtxo.Script
-                    ? this.offchainTapscript.options.delegatePubKey
-                    : undefined;
+            // Delegate rows fan over the configured key and Arkade's retired ones.
+            const delegatePubKeys = delegateDiscoveryKeys({
+                delegatePubKey:
+                    this.offchainTapscript instanceof DelegateVtxo.Script
+                        ? this.offchainTapscript.options.delegatePubKey
+                        : undefined,
+                retiredDelegatePubKeys: this.retiredDelegateKeys(),
+            });
             const baselineSigners = [
                 this.offchainTapscript.options.serverPubKey,
                 ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
@@ -2620,7 +2634,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         });
                     }
 
-                    if (delegatePubKey) {
+                    for (const delegatePubKey of delegatePubKeys) {
                         const delegateScript = new DelegateVtxo.Script({
                             pubKey: baselinePubkey,
                             serverPubKey,
@@ -2905,6 +2919,7 @@ export class Wallet
                 this.offchainTapscript instanceof DelegateVtxo.Script
                     ? this.offchainTapscript.options.delegatePubKey
                     : undefined,
+            retiredDelegatePubKeys: this.retiredDelegateKeys(),
         };
     }
 
@@ -3603,6 +3618,11 @@ export class Wallet
             boardingTimelock:
                 this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK,
             delegatePubKey,
+            // Raw hex: the lookup skips malformed signers rather than failing the restore.
+            retiredDelegatePubKeys: retiredDelegatePubKeys(this.network, [
+                arkInfo.signerPubkey,
+                ...arkInfo.deprecatedSigners.map((s) => s.pubkey),
+            ]),
         };
 
         const result = await manager.scanContracts({

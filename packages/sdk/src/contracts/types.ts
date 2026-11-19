@@ -318,8 +318,10 @@ export interface DiscoveryDeps {
      * no-ops.
      */
     boardingTimelock?: RelativeTimelock;
-    /** Present only for delegate wallets. */
+    /** The configured delegator's key (x-only), the one new `delegate` contracts are minted with. */
     delegatePubKey?: Uint8Array;
+    /** Retired delegators' keys (x-only). Discovery only, never minted. */
+    retiredDelegatePubKeys?: Uint8Array[];
 }
 
 /**
@@ -328,7 +330,10 @@ export interface DiscoveryDeps {
  * {@link Discoverable.candidatesAt} serves the scan and the look-ahead band.
  */
 export type CandidateDeps = Pick<DiscoveryDeps, "network" | "serverPubKey" | "csvTimelocks"> &
-    Pick<Partial<DiscoveryDeps>, "deprecatedSignerPubKeys" | "delegatePubKey">;
+    Pick<
+        Partial<DiscoveryDeps>,
+        "deprecatedSignerPubKeys" | "delegatePubKey" | "retiredDelegatePubKeys"
+    >;
 
 /**
  * Optional {@link ContractHandler} capability for `wallet.restore()`'s gap-limit scan. The scanner

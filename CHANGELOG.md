@@ -259,6 +259,8 @@ style and have not been backfilled.
   itself, now reading `Unexpected status when fetching SSE stream: … (<status>)`.
   A body that fails to cancel no longer masks the error in `getFeeRate`.
 
+- **Wallets restored without a delegator now find coins held at Arkade's retired delegator contracts.** A `delegate` contract commits to the delegator's key, and discovery derived those scripts only from a configured, reachable `delegateProvider`, so once the Executor replaced the delegator, a restore or a new device missed every coin still sitting at one. The SDK now pins Arkade's delegator keys per network (bitcoin, mutinynet) and adds them to the boot baseline, the `restore()` scan and the HD look-ahead band whenever the wallet's operator is Arkade's (its current or a deprecated signer matches). Discovery only: no receive address is ever minted on a retired key, and wallets on any other operator see no change. The coins spend through their forfeit leaf, so no delegator is needed to send or renew them. Apps passing Arkade's `delegateUrl` only to keep these coins visible can drop it.
+
 - **A malformed explorer history no longer leaves the address watch's baseline as an unhandled rejection.** The baseline guarded the history fetch but not the loop that keys its entries, so an entry without `status` threw `Cannot read properties of undefined (reading 'block_time')` out of a floating promise. Seeding now sits inside the same failure handling as the fetch, so a bad response takes the existing "first poll pass establishes the baseline" fallback.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription
