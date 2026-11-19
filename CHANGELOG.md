@@ -182,7 +182,7 @@ style and have not been backfilled.
 
 - **Delegation refuses a negative delegate fee or one above 10% of the delegated amount.**
 
-- **`ElectrumOnchainProvider` fixes.** An unknown txid now reads as not found rather than unconfirmed, so unilateral exit broadcasts instead of waiting forever. Chain time fails when the median-time-past headers cannot be read instead of falling back to the tip's own timestamp, and a confirmation whose header is not yet indexed reads as unconfirmed. Fetched transactions must hash to the requested txid. `listunspent` amounts and indices are validated. A single history candidate is checked before it is reported as an output's spender. Status notifications for the same script are coalesced.
+- **`ElectrumOnchainProvider` fixes.** An unknown txid now reads as not found rather than unconfirmed, so unilateral exit broadcasts instead of waiting forever. Chain time fails when the median-time-past headers cannot be read instead of falling back to the tip's own timestamp, and a confirmation whose header is not yet indexed reads as unconfirmed. Fetched transactions must hash to the requested txid. `listunspent` amounts and indices are validated. Every history candidate, a lone one included, must spend the output before it is reported as its spender, whatever scripts its outputs pay. Status notifications for the same script are coalesced.
 
 - **`@arkade-os/swap`: amount and HTLC checks.** Quotes, claims and stored receive swaps with a non-positive amount are refused before the preimage is published. On-chain HTLC tracking follows the recorded funding outpoint rather than the largest output paid to the script. Refund locktimes must fit in 32 bits.
 

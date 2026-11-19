@@ -154,17 +154,18 @@ const SPENDER_HASH = new Uint8Array(20).fill(0xcc);
 const SPENDER_SCRIPT = p2wpkhScript(SPENDER_HASH);
 
 // Build a tx that spends output `vout` of `parentTxid`.
-function buildSpendingTx(parentTxid: string, vout: number): string {
+function buildSpendingTx(parentTxid: string, vout: number, script = SPENDER_SCRIPT): string {
     const tx = new Transaction({
         allowUnknownOutputs: true,
         allowUnknownInputs: true,
+        disableScriptCheck: true,
     });
     tx.addInput({
         txid: hex.decode(parentTxid),
         index: vout,
         sequence: 0xffffffff,
     });
-    tx.addOutput({ script: SPENDER_SCRIPT, amount: 5_000n });
+    tx.addOutput({ script, amount: 5_000n });
     return hex.encode(tx.toBytes(false, false));
 }
 
@@ -1173,6 +1174,28 @@ describe("ElectrumOnchainProvider", () => {
             mockBatch(wsMock.request, [payHex]);
 
             expect(await provider.getTxOutspend(parentTxid, 0)).toEqual({ spent: false, txid: "" });
+        });
+
+        it("names a lone spender that pays a bare public key", async () => {
+            const bareKey = hex.decode(
+                "210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+            );
+            const spenderHex = buildSpendingTx(parentTxid, 0, bareKey);
+            const spenderTxid = hex.encode(sha256(sha256(hex.decode(spenderHex))).reverse());
+            mockBatch(wsMock.request, [txHex]);
+            mockBatch(wsMock.request, [[]]);
+            mockBatch(wsMock.request, [
+                [
+                    { tx_hash: parentTxid, height: 100 },
+                    { tx_hash: spenderTxid, height: 101 },
+                ],
+            ]);
+            mockBatch(wsMock.request, [spenderHex]);
+
+            expect(await provider.getTxOutspend(parentTxid, 0)).toEqual({
+                spent: true,
+                txid: spenderTxid,
+            });
         });
 
         it("reports a vout the tx does not have as unspent, reading no script", async () => {
