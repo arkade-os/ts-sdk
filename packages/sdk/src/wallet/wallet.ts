@@ -3071,6 +3071,8 @@ export class Wallet
     /**
      * Rotate-on-board for Executor watches: the Executor boards a deposit into the renewal
      * contract of its key, so a coin there while that key is displayed means the address was used.
+     * Renewals land there too, and the trigger is still correct: the coin proves the address was
+     * used.
      */
     private async installExecutorBoardRotation(): Promise<void> {
         if (!this._descriptorProvider || !this._executorManager || this._executorBoardUnsub) return;
@@ -3079,16 +3081,48 @@ export class Wallet
             if (event.type !== "vtxo_received" || !isContractVtxoEvent(event)) return;
             const { type, params } = event.contract;
             if (type !== ExecutorContractHandler.type || params.template !== "renewal") return;
-            this._executorBoardChain = this._executorBoardChain.then(async () => {
-                const displayed = hex.encode(this._boardingTapscript.options.pubKey);
-                if (params.owner?.slice(2).toLowerCase() !== displayed) return;
-                try {
-                    await this.getNewBoardingAddress();
-                } catch (e) {
-                    console.warn("Failed to rotate boarding address after Executor board", e);
-                }
-            });
+            this.queueExecutorBoardRotation(params.owner);
         });
+        await this.rotateForExecutorCoinAtBoot();
+    }
+
+    /** Serialized, and re-checked when it runs: the displayed key may have moved since. */
+    private queueExecutorBoardRotation(owner: string | undefined): void {
+        this._executorBoardChain = this._executorBoardChain.then(async () => {
+            const displayed = hex.encode(this._boardingTapscript.options.pubKey);
+            if (owner?.slice(2).toLowerCase() !== displayed) return;
+            try {
+                await this.getNewBoardingAddress();
+            } catch (e) {
+                console.warn("Failed to rotate boarding address after Executor board", e);
+            }
+        });
+    }
+
+    /**
+     * A coin that predates the subscription raises no event: boot seeds a stored one, and one
+     * boarded while offline arrives during the contract manager's own boot. Best-effort: a
+     * failed read must not fail the boot.
+     */
+    private async rotateForExecutorCoinAtBoot(): Promise<void> {
+        try {
+            const displayed = hex.encode(this._boardingTapscript.options.pubKey);
+            const rows = await collectContracts(this.contractRepository, {
+                type: [ExecutorContractHandler.type],
+            });
+            for (const row of rows) {
+                if (row.params.template !== "renewal") continue;
+                if (row.params.owner?.slice(2).toLowerCase() !== displayed) continue;
+                const coins = await getVtxosForContract(this.walletRepository, row, {
+                    unspentOnly: true,
+                });
+                if (coins.length === 0) continue;
+                this.queueExecutorBoardRotation(row.params.owner);
+                return;
+            }
+        } catch (e) {
+            console.warn("Failed to look for an Executor board at boot", e);
+        }
     }
 
     /**

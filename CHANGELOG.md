@@ -163,7 +163,9 @@ style and have not been backfilled.
   boarding address. When the address rotates, through `getNewBoardingAddress()`,
   a settle that boards a deposit, or a coin the Executor boards into the
   displayed key's renewal contract, the wallet registers the newest live
-  watch's parameters again for the new key. If that registration fails,
+  watch's parameters again for the new key. A coin already there when the
+  wallet starts, boarded while it was offline, raises no event, so the start
+  looks for one and rotates too. If that registration fails,
   `getBoardingAddress()` shows the new key's own address, which the wallet
   boards once online, rather than reuse the old one. Rows of a rotated key
   carry its `signingDescriptor`, and the signer router routes `executor`

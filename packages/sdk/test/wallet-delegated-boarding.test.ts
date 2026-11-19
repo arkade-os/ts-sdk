@@ -9,10 +9,14 @@ import {
     SingleKey,
     Wallet,
     networks,
+    type Contract,
     type ExecutorProvider,
+    type ExtendedVirtualCoin,
 } from "../src";
 import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
+import { saveVtxosForContract } from "../src/contracts/vtxoOwnership";
 import { getOwnBoardingAddress } from "../src/wallet/utils";
+import { createMockExtendedVtxo } from "./contracts/helpers";
 import vectors from "./fixtures/executor/vectors.json";
 import { jsonResponse } from "./helpers/response";
 
@@ -91,8 +95,11 @@ async function walletWith(options: { executor: boolean; rows: boolean }) {
     return { wallet, renewal, boarding };
 }
 
-/** An HD wallet with a live watch at its identity key, and an Executor that registers more. */
-async function hdWalletWithWatch(refuse = false) {
+/**
+ * An HD wallet with a live watch at its identity key, and an Executor that registers more.
+ * `coinAtRenewal` stores a coin at that key's renewal contract before the wallet starts.
+ */
+async function hdWalletWithWatch({ refuse = false, coinAtRenewal = false } = {}) {
     // an HD wallet subscribes to its contracts at boot
     vi.stubGlobal(
         "EventSource",
@@ -110,6 +117,12 @@ async function hdWalletWithWatch(refuse = false) {
     const contractRepository = new InMemoryContractRepository();
     await contractRepository.saveContract(renewal.contract);
     await contractRepository.saveContract(boarding.contract);
+    const walletRepository = new InMemoryWalletRepository();
+    if (coinAtRenewal) {
+        await saveVtxosForContract(walletRepository, renewal.contract, [
+            createMockExtendedVtxo({ script: renewal.contract.script }),
+        ]);
+    }
     const registerDelegation = vi.fn(
         async (templateId: string, variables: Record<string, string>) => {
             if (refuse) throw new Error("Executor unavailable");
@@ -137,7 +150,7 @@ async function hdWalletWithWatch(refuse = false) {
         identity: hd,
         walletMode: "hd",
         arkProvider: new RestArkProvider("http://localhost:7070"),
-        storage: { walletRepository: new InMemoryWalletRepository(), contractRepository },
+        storage: { walletRepository, contractRepository },
         settlementConfig: false,
         executorProvider: {
             getInfo: async () => ({
@@ -152,6 +165,34 @@ async function hdWalletWithWatch(refuse = false) {
     });
     const owner = hex.encode(await hd.compressedPublicKey());
     return { wallet, renewal, boarding, registerDelegation, owner };
+}
+
+/** A coin at `row`'s contract, with an outpoint named by `txidByte`. */
+function coin(row: Awaited<ReturnType<typeof executorRow>>, txidByte: string) {
+    return createMockExtendedVtxo({
+        script: row.contract.script,
+        txid: txidByte.repeat(32),
+    });
+}
+
+/** Delivers a contract event to the wallet's subscribers, as the watcher does. */
+async function emitContractEvent(
+    wallet: Wallet,
+    type: "vtxo_received" | "vtxo_spent",
+    contract: Contract,
+    vtxos: ExtendedVirtualCoin[],
+) {
+    const manager = await wallet.getContractManager();
+    for (const cb of (manager as any).eventCallbacks as Set<(e: unknown) => void>) {
+        cb({
+            type,
+            contractScript: contract.script,
+            contract,
+            vtxos: vtxos.map((v) => ({ ...v, contractScript: contract.script })),
+            timestamp: Date.now(),
+        });
+    }
+    await (wallet as any)._executorBoardChain;
 }
 
 describe("delegated boarding address on an HD wallet", () => {
@@ -177,7 +218,9 @@ describe("delegated boarding address on an HD wallet", () => {
     });
 
     it("shows the rotated key's own address when the Executor refuses it a watch", async () => {
-        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch(true);
+        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+            refuse: true,
+        });
         const first = boarding.script.onchainAddress(networks.mutinynet);
 
         const next = await wallet.getNewBoardingAddress();
@@ -190,27 +233,44 @@ describe("delegated boarding address on an HD wallet", () => {
     it("rotates once the Executor boards a deposit at the displayed key", async () => {
         const { wallet, boarding, renewal, registerDelegation } = await hdWalletWithWatch();
         const first = boarding.script.onchainAddress(networks.mutinynet);
-        const manager = await wallet.getContractManager();
-        const emit = async (contract: typeof renewal.contract) => {
-            for (const cb of (manager as any).eventCallbacks as Set<(e: unknown) => void>) {
-                cb({
-                    type: "vtxo_received",
-                    contractScript: contract.script,
-                    contract,
-                    vtxos: [],
-                    timestamp: Date.now(),
-                });
-            }
-            await (wallet as any)._executorBoardChain;
-        };
 
-        await emit(renewal.contract);
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [coin(renewal, "aa")]);
+        expect(await wallet.getBoardingAddress()).not.toBe(first);
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        await wallet.dispose();
+    });
+
+    it("does not rotate again when the Executor renews the coin it boarded", async () => {
+        const { wallet, boarding, renewal, registerDelegation } = await hdWalletWithWatch();
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+        const boarded = coin(renewal, "aa");
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [boarded]);
+        const next = await wallet.getBoardingAddress();
+        expect(next).not.toBe(first);
+
+        // the renewal spends the outpoint and locks a new one back at the same script
+        await emitContractEvent(wallet, "vtxo_spent", renewal.contract, [boarded]);
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [coin(renewal, "bb")]);
+        expect(await wallet.getBoardingAddress()).toBe(next);
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        await wallet.dispose();
+    });
+
+    it("rotates at boot for a coin already at the displayed key's renewal contract", async () => {
+        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+            coinAtRenewal: true,
+        });
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+
+        // no event: the coin was stored before the wallet subscribed
+        await (wallet as any)._executorBoardChain;
         const next = await wallet.getBoardingAddress();
         expect(next).not.toBe(first);
         expect(registerDelegation).toHaveBeenCalledOnce();
 
-        // a late coin at the first key's renewal contract does not rotate again
-        await emit(renewal.contract);
+        // the coin stays at the old key's contract: another start must not rotate again
+        await (wallet as any).rotateForExecutorCoinAtBoot();
+        await (wallet as any)._executorBoardChain;
         expect(await wallet.getBoardingAddress()).toBe(next);
         expect(registerDelegation).toHaveBeenCalledOnce();
         await wallet.dispose();
