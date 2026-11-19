@@ -2071,6 +2071,10 @@ style and have not been backfilled.
   `programFromArtifact` and `ArkadeProgramScript`, and the existing path
   helpers share the Executor CSV lookup with onchain preflight.
 
+- **Keep public namespace declarations valid under strict checking.** Local type
+  aliases preserve Arkade's type-only exports across declaration chunks, and the
+  SDK supplies the WebSocket declarations required by its public Electrum types.
+  The packaged ESM and CJS type smoke now checks dependency declarations too.
 - **Dev-tooling dependency overrides raised past every high and critical
   advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
   development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and
