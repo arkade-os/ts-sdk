@@ -456,8 +456,8 @@ const quoteArkadeAsset = async (
         };
     }
     if (assetPayment !== undefined) deepFreeze(assetPayment);
-    // The solver's own carrier, parsed before anything is derived; a card that charges for it
-    // prices the reference below with it.
+    // The solver's carrier for an asset deposit, parsed before anything is derived. A BTC
+    // deposit funds none, so its wire `carrier_sats` is deliberately not read.
     const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
     // Before deriving: a failed feed or a mismatched pair refuses with no covenant built.
     const reference = await quoteOffer(input.candidate.card, {
