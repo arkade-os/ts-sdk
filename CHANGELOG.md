@@ -193,6 +193,17 @@ style and have not been backfilled.
   passing a pool that verifies nothing could have the client's echoed request
   accepted as the solver's answer.
 
+- **`@arkade-os/swap`: an asset RFQ quote prices a carrier-charging card in
+  either direction.** A market declaring `charges_delivered_carrier` refuses to
+  plan without `carrierSats`, but the negotiated asset path passed it only when
+  the client gave the asset — so every BTC-to-asset quote on such a card threw
+  "this market charges for the delivered carrier" out of the reference plan,
+  after the RFQ had already gone out. The plan is now always given a carrier
+  (`ASSET_CARRIER_SATS` where the solver publishes none of its own, as the
+  feed-priced path already did). What the trader funds is unchanged: the quote's
+  fee and the swap record still carry a carrier only for an asset deposit, so a
+  BTC deposit is still funded as plain sats.
+
 - **Retained service-worker proxies cannot read or spend a replacement wallet.** Wallet requests and contract-event subscriptions retain their original wallet binding. Requests capture their wallet, providers and repository before awaiting, and disposal drains admitted operations for up to 5s before closing their storage; settlements and other long-running operations are not waited for, so a re-init during a batch round is not blocked. Initialization separately drains its finite writes and finalization while pending subscription setup remains revocable; clearing revokes callbacks before draining. Reservation requests also verify the original network without changing durable hold namespaces, and timeout settings and settlement events still follow the original operation.
 
 - **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.

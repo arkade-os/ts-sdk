@@ -26,7 +26,12 @@ import { deepFreeze } from "../jointGraph";
 import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
-import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
+import {
+    ASSET_CARRIER_SATS,
+    deriveOffer,
+    resolveReceivePkScript,
+    type DerivedOffer,
+} from "../offer";
 import { ASSET_SWAP_CONTRACT_VERSIONS } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
@@ -458,7 +463,9 @@ const quoteArkadeAsset = async (
     const reference = await quoteOffer(input.candidate.card, {
         give: input.candidate.give,
         giveAmount: parsed.give,
-        ...(carrierSats === undefined ? {} : { carrierSats }),
+        // Unconditional: a card charging for the delivered carrier refuses to price without
+        // it whichever leg gives, and a BTC deposit funds none of its own to publish.
+        carrierSats: carrierSats ?? ASSET_CARRIER_SATS,
         ...QUOTE_OPTIONS,
         fetchImpl: input.feed.fetch,
     });
