@@ -1,0 +1,30 @@
+pragma arkade ^0.1.0;
+
+// The output at this input's index pays `receiver` at least `amount` of the asset,
+// and only `taker` can make that spend.
+contract AssetSwap(
+    pubkey receiver,
+    int amount,
+    bytes32 assetTxid,
+    int assetGroupIndex,
+    pubkey user,
+    pubkey taker
+) {
+    function fulfill() {
+        int i = this.activeInputIndex;
+        require(tx.outputs[i].assets.lookup(assetTxid, assetGroupIndex) >= amount);
+        let paid = tx.outputs[i].script;
+        require(paid.version == 1);
+        require(paid.program == receiver);
+    }
+
+    // Replaces the synthesized collaborative leaf: the quoting solver is a third
+    // conjunct, so an observer who reads the deposit cannot complete it.
+    function fulfill(signature takerSig, signature serverSig, signature emulatorSig) tapscript {
+        require(checkMultisig([taker, server, emulator], [takerSig, serverSig, emulatorSig], 3));
+    }
+
+    function cancel(signature userSig, signature serverSig) tapscript {
+        require(checkMultisig([user, server], [userSig, serverSig], 2));
+    }
+}
