@@ -21,7 +21,12 @@ import {
     Recipient,
     SendParams,
     SendOnchainParams,
+    Outpoint,
 } from "..";
+import type { VtxoReservation } from "../wallet";
+import { vtxoReservationScope } from "../vtxoReservationScope";
+import { requiresWalletScope, walletOperation, type WalletRequestBinding } from "./wallet-request";
+import { getNetwork, type NetworkName } from "../../networks";
 import {
     OperatorInfo,
     INFO_FETCH_TIMEOUT_MS,
@@ -108,7 +113,6 @@ import {
     ResponseReloadWallet,
     ResponseUpdateContract,
     ResponseCreateContract,
-    ResponseContractEvent,
     WalletUpdaterRequest,
     WalletUpdaterResponse,
     RequestGetAllSpendingPaths,
@@ -116,6 +120,8 @@ import {
     RequestGetUnsupportedContracts,
     ResponseGetUnsupportedContracts,
     RequestSend,
+    RequestReserveVtxos,
+    RequestReleaseVtxos,
     RequestSendWithDeadline,
     RequestSendWithInputExpiryFloor,
     ResponseSend,
@@ -169,7 +175,12 @@ import {
     RequestGetStoredContractsWithVtxos,
     ResponseGetStoredContractsWithVtxos,
     DEFAULT_MESSAGE_TAG,
+    RequestArkadeCash,
+    ResponseArkadeCash,
+    isLongRunningCashAction,
     deserializeAggregateError,
+    deserializeArkadeCashCreateError,
+    isSerializedArkadeCashCreateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
 import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
@@ -242,6 +253,11 @@ type RequestType = WalletUpdaterRequest["type"];
 
 export type MessageTimeouts = Partial<Record<RequestType, number>>;
 
+export type WalletUpdate = Extract<
+    WalletUpdaterResponse,
+    { type: "CONTRACT_EVENT" | "VTXO_UPDATE" | "UTXO_UPDATE" }
+>;
+
 export type ServiceWorkerWalletMode = "auto" | "static" | "hd";
 
 export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
@@ -298,6 +314,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are treated as long-running on both sides of the bus: the values below
     // are retained only for type completeness and are never enforced.
     SEND: 50_000,
+    RESERVE_SCOPED_VTXOS: 10_000,
+    RELEASE_SCOPED_VTXOS: 10_000,
     SEND_WITH_DEADLINE: 50_000,
     SEND_WITH_INPUT_EXPIRY_FLOOR: 50_000,
     SETTLE: 50_000,
@@ -312,6 +330,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     RECOVER_VTXOS: 50_000,
     RENEW_VTXOS: 50_000,
     SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    // Only `get`/`activities`/`reveal`: `create` and `claim` stream with no deadline.
+    ARKADE_CASH: 50_000,
     COSIGN_ONCHAIN_TX: 50_000,
     SEND_ONCHAIN: 50_000,
     // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
@@ -324,6 +344,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
 
     // Misc writes
     INIT_WALLET: 30_000,
+    SCOPED_WALLET_REQUEST_V1: 30_000,
     CLEAR: 10_000,
     SIGN_TRANSACTION: 30_000,
     CREATE_CONTRACT: 30_000,
@@ -486,6 +507,8 @@ interface ServiceWorkerWalletOptions {
     storage?: StorageConfig;
     /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
+    /** Refuse a worker on another network before exposing a usable proxy. */
+    expectedNetwork?: NetworkName;
     /** Optional delegation service URL. */
     delegateUrl?: string;
     /**
@@ -616,12 +639,49 @@ const initializeMessageBus = (
 };
 
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
+    readonly arkadeCash = (
+        request: import("../../arkadeCash/messages").ArkadeCashRequest,
+    ): Promise<import("../../arkadeCash/messages").ArkadeCashResponse | undefined> =>
+        this.cashRequest(request);
+
+    private async cashRequest(
+        request: import("../../arkadeCash/messages").ArkadeCashRequest,
+    ): Promise<import("../../arkadeCash/messages").ArkadeCashResponse | undefined> {
+        const message: RequestArkadeCash = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "ARKADE_CASH",
+            payload: request,
+        };
+        // `create` and `claim` run sends and sweeps with no deadline on either
+        // side (see `WalletMessageHandler.isLongRunning`); the rest are reads.
+        try {
+            const response = isLongRunningCashAction(request)
+                ? await this.sendMessageWithRetry(message, {
+                      onEvent: () => {},
+                      isComplete: (resp) => resp.type === "ARKADE_CASH",
+                  })
+                : await this.sendMessage(message);
+            return (response as ResponseArkadeCash).payload;
+        } catch (error) {
+            // Rejects like an in-process `Wallet.createCash`: the funded token
+            // rides on the error's `cash`.
+            if (isSerializedArkadeCashCreateError(error)) {
+                throw deserializeArkadeCashCreateError(error);
+            }
+            throw error;
+        }
+    }
+
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
     readonly activity = createDefaultActivityRegistry();
     private readonly _readonlyAssetManager: IReadonlyAssetManager;
     protected initConfig: MessageBusInitConfig | null = null;
+    protected expectedWalletScope?: string;
+    protected expectedNetwork?: NetworkName;
+    protected walletRequestBinding?: WalletRequestBinding;
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;
     protected messageBusTimeoutMs?: number;
     protected messageTimeouts: Record<RequestType, number> = DEFAULT_MESSAGE_TIMEOUTS as Record<
@@ -653,7 +713,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     private getTimeoutForRequest(request: WalletUpdaterRequest): number {
-        return this.messageTimeouts[request.type] ?? 30_000;
+        return this.messageTimeouts[walletOperation(request)?.type ?? request.type] ?? 30_000;
     }
 
     /**
@@ -699,7 +759,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         serializedWallet: SerializedIdentity,
         busConfig: Omit<MessageBusInitConfig, "wallet" | "arkServer" | "messageTimeouts">,
     ): Promise<W> {
-        const arkServer = options.arkServer ?? { url: DEFAULT_ARKADE_SERVER_URL };
+        const arkServer = { ...(options.arkServer ?? { url: DEFAULT_ARKADE_SERVER_URL }) };
+        wallet.expectedWalletScope = vtxoReservationScope(
+            arkServer.url,
+            await wallet.identity.xOnlyPublicKey(),
+        );
+        wallet.expectedNetwork = options.expectedNetwork;
         const initWalletPayload = {
             lazyBoarding: options.lazyBoarding,
             arkServerUrl: arkServer.url,
@@ -744,8 +809,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             payload: initWalletPayload,
         };
 
-        await wallet.sendMessage(initMessage);
-
         // Persist the full init config (including messageTimeouts) so
         // reinitialize() re-sends the same map to a restarted worker.
         wallet.initConfig = busInitConfig;
@@ -756,6 +819,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         // Refuse to return a wallet bound to a different identity than the
         // worker ended up with (e.g. a stale/queued init rebinding it).
         await wallet.assertWorkerIdentityMatches();
+        await wallet.sendMessage(initMessage);
 
         return wallet;
     }
@@ -805,7 +869,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 cleanup();
                 reject(
                     new ServiceWorkerTimeoutError(
-                        `Service worker message timed out (${request.type})`,
+                        `Service worker message timed out (${walletOperation(request)?.type ?? request.type})`,
                     ),
                 );
             }, timeoutMs);
@@ -817,18 +881,19 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
 
                 if (response.type === "SEND_DEADLINE_EXCEEDED") {
+                    const operation = walletOperation(request);
                     if (event.source !== this.serviceWorker || response.tag !== request.tag) return;
                     cleanup();
                     if (
-                        (request.type === "SEND_WITH_DEADLINE" ||
-                            request.type === "SEND_WITH_INPUT_EXPIRY_FLOOR") &&
+                        (operation?.type === "SEND_WITH_DEADLINE" ||
+                            operation?.type === "SEND_WITH_INPUT_EXPIRY_FLOOR") &&
                         response.error instanceof Error &&
                         (response.broadcast === undefined || response.broadcast === false) &&
                         Number.isSafeInteger(response.payload?.validUntil) &&
                         response.payload.validUntil > 0 &&
-                        response.payload.validUntil === request.payload.validUntil
+                        response.payload.validUntil === operation.payload.validUntil
                     ) {
-                        reject(new SendDeadlineExceededError(request.payload.validUntil));
+                        reject(new SendDeadlineExceededError(operation.payload.validUntil));
                     } else {
                         reject(new Error("Invalid timed-send refusal response"));
                     }
@@ -947,6 +1012,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             isComplete: (response: WalletUpdaterResponse) => boolean;
         },
     ): Promise<WalletUpdaterResponse> {
+        request = this.scopeRequest(request);
         if (this.initConfig) {
             try {
                 await this.pingServiceWorker();
@@ -968,7 +1034,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
-                // If init is already in flight in the worker, wait for it
                 if (isMessageBusInitializingError(error)) {
                     if (initWaits >= MAX_INIT_WAITS) throw error;
                     await sleep(initWaitBackoffMs(initWaits++));
@@ -978,10 +1043,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
-
                 await this.reinitialize();
             }
         }
+    }
+
+    private scopeRequest(request: WalletUpdaterRequest): WalletUpdaterRequest {
+        if (request.type !== "SCOPED_WALLET_REQUEST_V1" && requiresWalletScope(request)) {
+            const binding = this.walletRequestBinding;
+            if (!binding)
+                throw new Error("Scoped wallet requests require SDK factory initialization");
+            return {
+                type: "SCOPED_WALLET_REQUEST_V1",
+                tag: request.tag,
+                id: request.id,
+                payload: { binding, request },
+            };
+        }
+        return request;
     }
 
     /** The init config cached by `create()`; manually constructed wallets have none. */
@@ -1015,8 +1094,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 payload,
             };
 
-            await this.sendMessageDirect(initMessage, this.getTimeoutForRequest(initMessage));
             await this.assertWorkerIdentityMatches();
+            await this.sendMessageDirect(
+                this.scopeRequest(initMessage),
+                this.getTimeoutForRequest(initMessage),
+            );
         })().finally(() => {
             this.reinitPromise = null;
         });
@@ -1054,6 +1136,25 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 `Service worker identity mismatch: expected ${expected}, got ${actual}`,
             );
         }
+        const binding = response.payload.walletRequestBinding;
+        if (!binding) {
+            throw new Error("Worker does not support scoped wallet requests");
+        }
+        if (!this.expectedWalletScope || binding.scope !== this.expectedWalletScope) {
+            throw new Error("Worker wallet request scope differs from the configured operator");
+        }
+        getNetwork(binding.network);
+        if (this.expectedNetwork !== undefined && binding.network !== this.expectedNetwork) {
+            throw new Error("Worker wallet mutation network differs from the configured network");
+        }
+        if (
+            this.walletRequestBinding &&
+            (this.walletRequestBinding.scope !== binding.scope ||
+                this.walletRequestBinding.network !== binding.network)
+        ) {
+            throw new Error("Worker wallet request scope changed during reinitialization");
+        }
+        this.walletRequestBinding ??= Object.freeze({ ...binding });
     }
 
     /** This tells the service worker to wipe all locally persisted wallet data. */
@@ -1345,6 +1446,29 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         } catch (error) {
             throw new Error(`Failed to reload wallet: ${error}`);
         }
+    }
+
+    /** Subscribe to contract and coin updates bound to this proxy's wallet. */
+    onWalletUpdate(callback: (update: WalletUpdate) => void): () => void {
+        const binding = this.walletRequestBinding;
+        const tag = this.messageTag;
+        const messageHandler = (event: MessageEvent) => {
+            const response = event.data as WalletUpdate | undefined;
+            if (
+                !binding ||
+                !response ||
+                response.tag !== tag ||
+                response.broadcast !== true ||
+                !["CONTRACT_EVENT", "VTXO_UPDATE", "UTXO_UPDATE"].includes(response.type) ||
+                response.walletRequestBinding?.scope !== binding.scope ||
+                response.walletRequestBinding?.network !== binding.network
+            ) {
+                return;
+            }
+            callback(response);
+        };
+        navigator.serviceWorker.addEventListener("message", messageHandler);
+        return () => navigator.serviceWorker.removeEventListener("message", messageHandler);
     }
 
     async getContractManager(): Promise<IContractManager> {
@@ -1686,22 +1810,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             },
 
             onContractEvent(callback: ContractEventCallback): () => void {
-                const messageHandler = (event: MessageEvent) => {
-                    const response = event.data as WalletUpdaterResponse;
-                    if (response.type !== "CONTRACT_EVENT") {
-                        return;
-                    }
-                    if (response.tag !== messageTag) {
-                        return;
-                    }
-                    callback((response as ResponseContractEvent).payload.event);
-                };
-
-                navigator.serviceWorker.addEventListener("message", messageHandler);
-
-                return () => {
-                    navigator.serviceWorker.removeEventListener("message", messageHandler);
-                };
+                return wallet.onWalletUpdate((update) => {
+                    if (update.type === "CONTRACT_EVENT") callback(update.payload.event);
+                });
             },
 
             async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
@@ -2161,6 +2272,47 @@ export class ServiceWorkerWallet
             }
             throw error;
         }
+    }
+
+    /**
+     * Durable across tabs and worker restarts. Persist the application operation id before calling;
+     * release only after proving settlement or non-submission. SDK sends cannot spend this hold.
+     */
+    async reserveVtxos(
+        outpoints: readonly Outpoint[],
+        reservationId: string,
+    ): Promise<VtxoReservation> {
+        if (typeof reservationId !== "string" || !reservationId) {
+            throw new Error("Reservation id is required");
+        }
+        const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
+        const config = await this.buildInitConfig();
+        const scope = vtxoReservationScope(
+            config.arkServer.url,
+            await this.identity.xOnlyPublicKey(),
+        );
+        const message: RequestReserveVtxos = {
+            tag: this.messageTag,
+            type: "RESERVE_SCOPED_VTXOS",
+            id: getRandomId(),
+            payload: { outpoints: snapshot, reservationId, scope },
+        };
+        await this.sendMessage(message);
+        let released = false;
+        return {
+            outpoints: snapshot.map((outpoint) => ({ ...outpoint })),
+            release: async () => {
+                if (released) return;
+                const request: RequestReleaseVtxos = {
+                    tag: this.messageTag,
+                    type: "RELEASE_SCOPED_VTXOS",
+                    id: getRandomId(),
+                    payload: { reservationId, scope, outpoints: snapshot },
+                };
+                await this.sendMessage(request);
+                released = true;
+            },
+        };
     }
 
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {

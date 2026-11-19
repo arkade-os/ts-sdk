@@ -111,10 +111,10 @@ const assetCovenantHTLC = {
     ],
     functions: {
         claim: {
-            inputs: [{ name: "preimage", type: "bytes" }] as const,
             tapscript: {
                 signers: ["$server"],
                 asm: ["HASH160", "$hash", "EQUAL"],
+                inputs: [{ name: "preimage", type: "bytes" }] as const,
                 witness: ["preimage"],
             },
             arkadeScript: {
@@ -192,10 +192,10 @@ const scriptV2Shaped = {
     ],
     functions: {
         claim: {
-            inputs: [{ name: "preimage", type: "bytes" }] as const,
             tapscript: {
                 signers: ["$server"],
                 asm: ["HASH160", "$hash", "EQUAL"],
+                inputs: [{ name: "preimage", type: "bytes" }] as const,
                 witness: ["preimage"],
             },
             arkadeScript: {
@@ -349,7 +349,7 @@ describe("asset-denominated non-interactive covenant", () => {
         // flag is what the VERIFY pops.
         await expect(
             contract.functions
-                .claim(PREIMAGE)
+                .claim({ tapscript: [PREIMAGE] })
                 .withAsset({
                     assetId,
                     inputs: [{ vin: 0, amount: ASSET_LOCKED }],
@@ -368,7 +368,7 @@ describe("asset-denominated non-interactive covenant", () => {
         // exactly the clause a decorative covenant drops.
         await expect(
             contract.functions
-                .claim(PREIMAGE)
+                .claim({ tapscript: [PREIMAGE] })
                 .withAsset({
                     assetId,
                     inputs: [{ vin: 0, amount: ASSET_LOCKED }],
@@ -388,7 +388,7 @@ describe("asset-denominated non-interactive covenant", () => {
         // were two assets in play nothing could tell whether that bound existed.
         await expect(
             contract.functions
-                .claim(PREIMAGE)
+                .claim({ tapscript: [PREIMAGE] })
                 .withAsset({
                     assetId,
                     inputs: [{ vin: 0, amount: ASSET_LOCKED }],
@@ -401,7 +401,7 @@ describe("asset-denominated non-interactive covenant", () => {
 
         // (1) Pay the asset through, and the spend is accepted.
         const { txid } = await contract.functions
-            .claim(PREIMAGE)
+            .claim({ tapscript: [PREIMAGE] })
             .withAsset({
                 assetId,
                 inputs: [{ vin: 0, amount: ASSET_LOCKED }],
@@ -507,7 +507,7 @@ describe("asset-denominated non-interactive covenant", () => {
         // misdirection cases live on the probe artifact, which differs from this
         // only in the index literal and the sat clause form.
         const { txid } = await contract.functions
-            .claim(PREIMAGE)
+            .claim({ tapscript: [PREIMAGE] })
             .withAsset({
                 assetId,
                 inputs: [{ vin: 0, amount: ASSET_LOCKED }],

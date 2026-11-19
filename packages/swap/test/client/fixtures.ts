@@ -567,8 +567,8 @@ export const arkadeAssetAnswer = (
     });
     const to = over.toAmount ?? plan.receive.atomic;
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
-    // As the solver negotiates: first advertised covenant it serves, echoed only when asked.
-    const covenant = (payload.covenant_versions as string[] | undefined)?.find(
+    // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
+    const version = (payload.contract_versions as string[] | undefined)?.find(
         (v) => v === ASSET_SWAP_V3 || v === ASSET_SWAP_V2,
     );
     const script = offerContract(
@@ -583,7 +583,7 @@ export const arkadeAssetAnswer = (
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
         },
         OPERATOR_PUBKEY,
-        covenant === ASSET_SWAP_V3 ? "current" : "previous",
+        version === ASSET_SWAP_V3 ? "asset-swap-v3" : "asset-swap-v2",
     );
     return {
         v: 1,
@@ -596,7 +596,7 @@ export const arkadeAssetAnswer = (
         to_amount: to.toString(),
         solver_pubkey: hex.encode(SOLVER_PUBKEY),
         valid_until: clock.validUntil,
-        ...(covenant === undefined ? {} : { covenant_version: covenant }),
+        ...(version === undefined ? {} : { contract_version: version }),
         // No `refund_locktime`: an offer covenant carries no timelock, so
         // `valid_until` is this route's only clock.
         profile: {
@@ -755,6 +755,7 @@ export const acceptWallet = async (
             },
             getContracts: async (filter?: { script?: string }) =>
                 contracts.filter((c) => filter?.script === undefined || c.script === filter.script),
+            getUnsupportedContracts: async () => [],
             setContractWatchState: async (script: string, state: string) => {
                 watched.push([script, state]);
             },

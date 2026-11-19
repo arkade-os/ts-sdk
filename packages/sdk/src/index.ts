@@ -10,7 +10,7 @@ export {
     PasskeyCancelled,
     PasskeyUnconfirmed,
 } from "./identity/passkey";
-export type { WebAuthnClient } from "./identity/passkey";
+export type { WebAuthnClient, PrfUnavailableReason } from "./identity/passkey";
 export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
 export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
@@ -234,7 +234,11 @@ import {
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
 } from "./wallet/serviceWorker/wallet";
-import type { MessageTimeouts, ServiceWorkerWalletMode } from "./wallet/serviceWorker/wallet";
+import type {
+    MessageTimeouts,
+    ServiceWorkerWalletMode,
+    WalletUpdate,
+} from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./worker/browser/utils";
 import {
@@ -347,6 +351,17 @@ import { Intent, Proof, type IntentCoin, type ProofInput } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
+export type { ArkadeCashRequest, ArkadeCashResponse } from "./arkadeCash/messages";
+export type { ArkadeCashRecord, ArkadeCashAction, ArkadeCashTx } from "./arkadeCash/tracker";
+export type { ArkadeCashStatus, ArkadeCashStatusReport } from "./arkadeCash/status";
+export {
+    addArkadeCashRecord,
+    arkadeCashId,
+    arkadeCashResolver,
+    createArkadeCashTracker,
+    mergeArkadeCashRecord,
+} from "./arkadeCash/tracker";
+export { readArkadeCash } from "./arkadeCash/status";
 import {
     getNetwork,
     networkFromOperatorInfo,
@@ -438,6 +453,7 @@ import type {
 import {
     ArkError,
     ArkErrorName,
+    HttpResponseError,
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
@@ -535,6 +551,16 @@ export {
 } from "./repositories/walletRepository";
 export { collectContracts } from "./repositories/contractRepository";
 export { collectBatchRegistrations, collectIntents } from "./repositories/intentRepository";
+export {
+    classifyBoardingExpiry,
+    decodeBoardingExit,
+    type BoardingExpiry,
+} from "./utils/arkTransaction";
+export type {
+    StoredVtxoReservation,
+    VtxoReservationRepository,
+} from "./repositories/vtxoReservationRepository";
+export { IndexedDBVtxoReservationRepository } from "./repositories/indexedDB/vtxoReservationRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
@@ -892,6 +918,7 @@ export {
     maybeArkError,
     OnchainCosignPreflightError,
     isCosignFallback,
+    HttpResponseError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
@@ -1196,6 +1223,7 @@ export type {
     ResponseEnvelope,
     MessageTimeouts,
     ServiceWorkerWalletMode,
+    WalletUpdate,
     // Arkade types
     ArkadeBatchInput,
     ArkadeExtendedCoin,

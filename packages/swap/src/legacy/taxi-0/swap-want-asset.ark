@@ -1,0 +1,20 @@
+pragma arkade ^0.1.0;
+
+contract SwapWantAsset(
+  pubkey makerWP,
+  int wantAmount,
+  bytes32 wantAssetTxid,
+  int wantAssetGroupIndex,
+  pubkey user
+) {
+  function fulfill() {
+    require(tx.outputs[0].assets.lookup(wantAssetTxid, wantAssetGroupIndex) >= wantAmount);
+    let recipient = tx.outputs[0].script;
+    require(recipient.version == 1);
+    require(recipient.program == makerWP);
+  }
+
+  function cancel(signature userSig, signature serverSig) tapscript {
+    require(checkMultisig([user, server], [userSig, serverSig], 2));
+  }
+}

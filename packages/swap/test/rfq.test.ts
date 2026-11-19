@@ -38,7 +38,13 @@ import {
     type RfqQuote,
 } from "../src/rfq";
 import { CHF_ID, USD_ID } from "./fixtures";
-import { ASSET_SWAP_V2, ASSET_SWAP_V3, offerGenerationFor } from "../src/program";
+import {
+    ASSET_SWAP_CONTRACTS,
+    ASSET_SWAP_CONTRACT_VERSIONS,
+    ASSET_SWAP_V2,
+    ASSET_SWAP_V3,
+    assetSwapContractVersion,
+} from "../src/program";
 import { asset } from "@arkade-os/sdk";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
@@ -522,7 +528,7 @@ describe("requests", () => {
         });
     });
 
-    it("adds covenant_versions only when the trader advertises them", () => {
+    it("adds contract_versions only when the trader advertises them", () => {
         const base = {
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID),
@@ -531,21 +537,27 @@ describe("requests", () => {
             makerPublicKey: key(1),
         };
         const plain = arkadeSwapRequest(base) as Record<string, unknown>;
-        expect("covenant_versions" in plain).toBe(false);
+        expect("contract_versions" in plain).toBe(false);
         const advertised = arkadeSwapRequest({
             ...base,
-            covenantVersions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
+            contractVersions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
         }) as Record<string, unknown>;
-        expect(advertised.covenant_versions).toEqual([ASSET_SWAP_V3, ASSET_SWAP_V2]);
+        expect(advertised.contract_versions).toEqual([ASSET_SWAP_V3, ASSET_SWAP_V2]);
         expect(advertised.profile).toEqual(plain.profile);
     });
 
-    it("maps a negotiated covenant to a generation, defaulting to the previous tree", () => {
-        expect(offerGenerationFor(ASSET_SWAP_V3)).toBe("current");
-        expect(offerGenerationFor(ASSET_SWAP_V2)).toBe("previous");
-        expect(offerGenerationFor(undefined)).toBe("previous");
-        expect(() => offerGenerationFor("asset-swap-v999")).toThrow(
-            "unknown covenant asset-swap-v999",
+    it("resolves a contract version, defaulting to asset-swap-v2", () => {
+        expect(assetSwapContractVersion(ASSET_SWAP_V3)).toBe(ASSET_SWAP_V3);
+        expect(assetSwapContractVersion(ASSET_SWAP_V2)).toBe(ASSET_SWAP_V2);
+        expect(assetSwapContractVersion(undefined)).toBe(ASSET_SWAP_V2);
+        expect(() => assetSwapContractVersion("asset-swap-v999")).toThrow(
+            "unknown contract version asset-swap-v999",
+        );
+    });
+
+    it("advertises exactly the contract versions it can derive", () => {
+        expect([...ASSET_SWAP_CONTRACT_VERSIONS].sort()).toEqual(
+            Object.keys(ASSET_SWAP_CONTRACTS).sort(),
         );
     });
 

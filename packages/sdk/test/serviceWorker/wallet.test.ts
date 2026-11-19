@@ -28,24 +28,49 @@ import {
 import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../src/worker/errors";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../src/networks";
 import { registerWalletRestoreHook } from "../../src/wallet/restoreHooks";
+import {
+    bindTestWallet,
+    scopedRequestMatching,
+    testWalletBinding,
+    walletRequestOf,
+} from "../helpers/walletRequest";
 
 type MessageHandler = (event: { data: any }) => void;
 
 const STUB_XONLY_PUBLIC_KEY = new Uint8Array(32).fill(0xab);
 
+const transportWallet = (sendMessageDirect: ReturnType<typeof vi.fn>) =>
+    bindTestWallet(
+        Object.assign(Object.create(ServiceWorkerWallet.prototype), {
+            messageTag: DEFAULT_MESSAGE_TAG,
+            sendMessageDirect,
+            messageTimeouts: {},
+            inflightRequests: new Map(),
+        }) as ServiceWorkerWallet,
+        testWalletBinding(STUB_XONLY_PUBLIC_KEY),
+    );
+
 it("forwards an offchain change fee cap through the worker request", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ payload: { txid: "txid" } });
-    const proxy = { messageTag: DEFAULT_MESSAGE_TAG, sendMessage };
+    const proxy = transportWallet(sendMessage);
 
     await (ServiceWorkerWallet.prototype.send as any).call(proxy, {
         recipients: [{ address: "ark1example", amount: 505 }],
         maxChangeFee: 111,
     });
 
-    expect(sendMessage.mock.calls[0][0].payload).toEqual({
-        recipients: [{ address: "ark1example", amount: 505 }],
-        maxChangeFee: 111,
-    });
+    expect(sendMessage).toHaveBeenCalledWith(
+        scopedRequestMatching(
+            expect.objectContaining({
+                type: "SEND",
+                payload: {
+                    recipients: [{ address: "ark1example", amount: 505 }],
+                    maxChangeFee: 111,
+                },
+            }),
+        ),
+        expect.any(Number),
+    );
 });
 
 it("normalizes renamed balance buckets from service-worker payloads", async () => {
@@ -58,7 +83,7 @@ it("normalizes renamed balance buckets from service-worker payloads", async () =
         boarding: { confirmed: 5, unconfirmed: 0, total: 5 },
     };
     const sendMessage = vi.fn().mockResolvedValue({ payload });
-    const proxy = { messageTag: DEFAULT_MESSAGE_TAG, sendMessage };
+    const proxy = transportWallet(sendMessage);
 
     await expect(
         ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
@@ -131,8 +156,13 @@ const createServiceWorkerHarness = (
         }),
     };
 
+    let operatorUrl = DEFAULT_ARKADE_SERVER_URL;
     const serviceWorker = {
-        postMessage: vi.fn((message: any) => {
+        postMessage: vi.fn((wireMessage: any) => {
+            if (wireMessage.tag === "INITIALIZE_MESSAGE_BUS") {
+                operatorUrl = wireMessage.config.arkServer.url;
+            }
+            const message = walletRequestOf(wireMessage);
             if (handlePing && message.tag === "PING") {
                 listeners.forEach((handler) =>
                     handler({
@@ -157,6 +187,7 @@ const createServiceWorkerHarness = (
                             payload: {
                                 walletInitialized: true,
                                 xOnlyPublicKey: getStatusKey,
+                                walletRequestBinding: testWalletBinding(getStatusKey!, operatorUrl),
                             },
                         },
                     }),
@@ -189,13 +220,16 @@ const createServiceWorkerHarness = (
 };
 
 const createWallet = (serviceWorker: ServiceWorker, messageTag: string = DEFAULT_MESSAGE_TAG) =>
-    new (ServiceWorkerReadonlyWallet as any)(
-        serviceWorker,
-        { xOnlyPublicKey: async () => STUB_XONLY_PUBLIC_KEY } as any,
-        new InMemoryWalletRepository(),
-        new InMemoryContractRepository(),
-        messageTag,
-    ) as ServiceWorkerReadonlyWallet;
+    bindTestWallet(
+        new (ServiceWorkerReadonlyWallet as any)(
+            serviceWorker,
+            { xOnlyPublicKey: async () => STUB_XONLY_PUBLIC_KEY } as any,
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            messageTag,
+        ) as ServiceWorkerReadonlyWallet,
+        testWalletBinding(STUB_XONLY_PUBLIC_KEY),
+    );
 
 describe("ServiceWorkerReadonlyWallet", () => {
     const handler = new WalletMessageHandler();
@@ -245,10 +279,12 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await expect(wallet.getAddress()).resolves.toBe("bc1-test");
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                tag: messageTag,
-                type: "GET_ADDRESS",
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    tag: messageTag,
+                    type: "GET_ADDRESS",
+                }),
+            ),
         );
     });
 
@@ -345,7 +381,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         // No GET_VTXOS fallback: degrading to the ungated read would make the
         // gate advisory for the whole worker-activation window of every deploy.
         expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
-            expect.objectContaining({ type: "GET_VTXOS" }),
+            scopedRequestMatching(expect.objectContaining({ type: "GET_VTXOS" })),
         );
     });
 
@@ -376,7 +412,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const wallet = createWallet(serviceWorker as any, messageTag);
         await expect(wallet.getOperatorInfo()).resolves.toEqual(info);
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ type: "GET_OPERATOR_INFO" }),
+            scopedRequestMatching(expect.objectContaining({ type: "GET_OPERATOR_INFO" })),
         );
     });
 
@@ -398,14 +434,20 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         await expect(wallet.getOperatorInfo({ requireLive: true })).resolves.toEqual(info);
         expect(serviceWorker.postMessage).toHaveBeenLastCalledWith(
-            expect.objectContaining({
-                type: "GET_OPERATOR_INFO",
-                payload: { requireLive: true },
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    type: "GET_OPERATOR_INFO",
+                    payload: { requireLive: true },
+                }),
+            ),
         );
 
         await expect(wallet.getOperatorInfo()).resolves.toEqual(info);
-        const last = (serviceWorker.postMessage as any).mock.calls.at(-1)[0];
+        const lastWire = (serviceWorker.postMessage as any).mock.calls.at(-1)[0];
+        expect(lastWire).toEqual(
+            scopedRequestMatching(expect.objectContaining({ type: "GET_OPERATOR_INFO" })),
+        );
+        const last = walletRequestOf(lastWire);
         expect(last.type).toBe("GET_OPERATOR_INFO");
         expect("payload" in last).toBe(false);
     });
@@ -454,14 +496,16 @@ describe("ServiceWorkerReadonlyWallet", () => {
             commitmentTxIds: [],
         });
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: "INDEXER_GET_VTXOS",
-                payload: { opts: { scripts: ["5120aa"] } },
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    type: "INDEXER_GET_VTXOS",
+                    payload: { opts: { scripts: ["5120aa"] } },
+                }),
+            ),
         );
         // never the wallet-scoped read
         expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
-            expect.objectContaining({ type: "GET_VTXOS" }),
+            scopedRequestMatching(expect.objectContaining({ type: "GET_VTXOS" })),
         );
 
         await expect(reader.getVirtualTxs(["cd".repeat(32)])).resolves.toEqual({
@@ -629,16 +673,20 @@ describe("ServiceWorkerReadonlyWallet", () => {
             manager.getContractsWithVtxos({} as any, undefined, { requireSynced: true }),
         ).rejects.toThrow("Failed to get contracts with vtxos");
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: "GET_CONTRACTS_WITH_VTXOS",
-                payload: { filter: {}, options: { maxSyncAgeMs: 60_000, unspentOnly: true } },
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    type: "GET_CONTRACTS_WITH_VTXOS",
+                    payload: { filter: {}, options: { maxSyncAgeMs: 60_000, unspentOnly: true } },
+                }),
+            ),
         );
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: "GET_CONTRACTS_WITH_VTXOS",
-                payload: expect.objectContaining({ options: { requireSynced: true } }),
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    type: "GET_CONTRACTS_WITH_VTXOS",
+                    payload: expect.objectContaining({ options: { requireSynced: true } }),
+                }),
+            ),
         );
         await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
@@ -649,10 +697,12 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await expect(manager.getUnsupportedContracts()).resolves.toEqual(contracts);
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                tag: messageTag,
-                type: "CREATE_CONTRACT",
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    tag: messageTag,
+                    type: "CREATE_CONTRACT",
+                }),
+            ),
         );
     });
 
@@ -673,6 +723,8 @@ describe("ServiceWorkerReadonlyWallet", () => {
         emit({
             tag: messageTag,
             type: "CONTRACT_EVENT",
+            broadcast: true,
+            walletRequestBinding: testWalletBinding(STUB_XONLY_PUBLIC_KEY),
             payload: { event: { type: "connection_reset", timestamp: 1 } },
         });
 
@@ -685,6 +737,8 @@ describe("ServiceWorkerReadonlyWallet", () => {
         emit({
             tag: messageTag,
             type: "CONTRACT_EVENT",
+            broadcast: true,
+            walletRequestBinding: testWalletBinding(STUB_XONLY_PUBLIC_KEY),
             payload: { event: { type: "connection_reset", timestamp: 2 } },
         });
 
@@ -842,14 +896,17 @@ const createSWWallet = (
     messageTag: string = DEFAULT_MESSAGE_TAG,
     hasDelegate: boolean = false,
 ) =>
-    new (ServiceWorkerWallet as any)(
-        serviceWorker,
-        { toHex: () => "deadbeef", xOnlyPublicKey: async () => STUB_XONLY_PUBLIC_KEY } as any,
-        new InMemoryWalletRepository(),
-        new InMemoryContractRepository(),
-        messageTag,
-        hasDelegate,
-    ) as ServiceWorkerWallet;
+    bindTestWallet(
+        new (ServiceWorkerWallet as any)(
+            serviceWorker,
+            { toHex: () => "deadbeef", xOnlyPublicKey: async () => STUB_XONLY_PUBLIC_KEY } as any,
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            messageTag,
+            hasDelegate,
+        ) as ServiceWorkerWallet,
+        testWalletBinding(STUB_XONLY_PUBLIC_KEY),
+    );
 
 describe("ServiceWorkerWallet", () => {
     const handler = new WalletMessageHandler();
@@ -892,18 +949,22 @@ describe("ServiceWorkerWallet", () => {
 
         await expect(broadcaster.submitTx("70736274ff", ["aa"])).resolves.toEqual(submitted);
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: "SUBMIT_TX",
-                payload: { signedArkTx: "70736274ff", checkpointTxs: ["aa"] },
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    type: "SUBMIT_TX",
+                    payload: { signedArkTx: "70736274ff", checkpointTxs: ["aa"] },
+                }),
+            ),
         );
 
         await expect(broadcaster.finalizeTx("cd".repeat(32), ["bb"])).resolves.toBeUndefined();
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: "FINALIZE_TX",
-                payload: { arkTxid: "cd".repeat(32), finalCheckpointTxs: ["bb"] },
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    type: "FINALIZE_TX",
+                    payload: { arkTxid: "cd".repeat(32), finalCheckpointTxs: ["bb"] },
+                }),
+            ),
         );
     });
 
@@ -960,10 +1021,12 @@ describe("ServiceWorkerWallet", () => {
 
         await expect(manager!.getDelegateInfo()).resolves.toEqual(delegateInfo);
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                tag: messageTag,
-                type: "GET_DELEGATE_INFO",
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    tag: messageTag,
+                    type: "GET_DELEGATE_INFO",
+                }),
+            ),
         );
 
         const result = await manager!.delegate([{ txid: "abc", vout: 0 }] as any, "dest-addr");
@@ -972,10 +1035,12 @@ describe("ServiceWorkerWallet", () => {
             failed: [],
         });
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                tag: messageTag,
-                type: "DELEGATE",
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    tag: messageTag,
+                    type: "DELEGATE",
+                }),
+            ),
         );
     });
 
@@ -1000,7 +1065,14 @@ describe("ServiceWorkerWallet", () => {
         const params = { outputs: [], sweepTo: "bc1-dest" };
         await expect(wallet.sendOnchain(params)).resolves.toBe("tx-SEND_ONCHAIN");
 
-        const sent = serviceWorker.postMessage.mock.calls.map((c: any[]) => c[0]);
+        const wireMessages = serviceWorker.postMessage.mock.calls.map((c: any[]) => c[0]);
+        expect(wireMessages).toEqual(
+            expect.arrayContaining([
+                scopedRequestMatching(expect.objectContaining({ type: "COSIGN_ONCHAIN_TX" })),
+                scopedRequestMatching(expect.objectContaining({ type: "SEND_ONCHAIN" })),
+            ]),
+        );
+        const sent = wireMessages.map(walletRequestOf);
         const cosign = sent.find((m: any) => m.type === "COSIGN_ONCHAIN_TX");
         expect(cosign.payload.psbt).toBe(base64.encode(tx.toPSBT()));
         expect(sent.find((m: any) => m.type === "SEND_ONCHAIN").payload).toEqual(params);
@@ -1117,11 +1189,13 @@ describe("ServiceWorkerWallet", () => {
         const wallet = createSWWallet(serviceWorker as any, messageTag);
         await expect(wallet.restore({ gapLimit: 30 })).resolves.toBeUndefined();
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                tag: messageTag,
-                type: "RESTORE_WALLET",
-                payload: { gapLimit: 30 },
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    tag: messageTag,
+                    type: "RESTORE_WALLET",
+                    payload: { gapLimit: 30 },
+                }),
+            ),
         );
     });
 
@@ -1139,10 +1213,12 @@ describe("ServiceWorkerWallet", () => {
         const wallet = createSWWallet(serviceWorker as any, messageTag);
         await expect(wallet.restore()).resolves.toBeUndefined();
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: "RESTORE_WALLET",
-                payload: {},
-            }),
+            scopedRequestMatching(
+                expect.objectContaining({
+                    type: "RESTORE_WALLET",
+                    payload: {},
+                }),
+            ),
         );
     });
 
@@ -1218,7 +1294,7 @@ describe("ServiceWorkerWallet", () => {
             manager.renewVtxos(undefined, { split: { maxOutputs: 4, plan: () => [1000n] } }),
         ).rejects.toThrow("split is not supported over the service worker");
         expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
-            expect.objectContaining({ type: "RENEW_VTXOS" }),
+            scopedRequestMatching(expect.objectContaining({ type: "RENEW_VTXOS" })),
         );
     });
 
@@ -1280,7 +1356,7 @@ describe("ServiceWorkerWallet", () => {
         expect(hook).toHaveBeenCalledOnce();
         expect(
             serviceWorker.postMessage.mock.calls.filter(
-                ([message]) => message.type === "RESTORE_WALLET",
+                ([wire]) => walletRequestOf(wire).type === "RESTORE_WALLET",
             ),
         ).toHaveLength(1);
     });
@@ -1326,6 +1402,10 @@ describe("sendMessage reinitialize on SW restart", () => {
 
     const createWalletWithConfig = (serviceWorker: ServiceWorker, tag = messageTag) => {
         const wallet = createWallet(serviceWorker, tag);
+        bindTestWallet(
+            wallet,
+            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.arkServer.url),
+        );
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
         return wallet;
@@ -1333,6 +1413,10 @@ describe("sendMessage reinitialize on SW restart", () => {
 
     const createSWWalletWithConfig = (serviceWorker: ServiceWorker, tag = messageTag) => {
         const wallet = createSWWallet(serviceWorker, tag);
+        bindTestWallet(
+            wallet,
+            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.arkServer.url),
+        );
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
         return wallet;
@@ -1409,7 +1493,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                     type: "WALLET_INITIALIZED",
                 };
             }
-            // Let the post-init identity assertion pass so reinitialize()
+            // Let the pre-init identity assertion pass so reinitialize()
             // succeeds and GET_ADDRESS exhausts its own retry budget.
             if (message.type === "GET_STATUS") {
                 return {
@@ -1419,6 +1503,10 @@ describe("sendMessage reinitialize on SW restart", () => {
                     payload: {
                         walletInitialized: true,
                         xOnlyPublicKey: STUB_XONLY_PUBLIC_KEY,
+                        walletRequestBinding: testWalletBinding(
+                            STUB_XONLY_PUBLIC_KEY,
+                            "https://ark.test",
+                        ),
                     },
                 };
             }
@@ -1439,7 +1527,7 @@ describe("sendMessage reinitialize on SW restart", () => {
 
         // Should have tried 3 times (1 initial + 2 retries)
         const addressCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_ADDRESS",
+            ([wire]: any) => walletRequestOf(wire).type === "GET_ADDRESS",
         );
         expect(addressCalls).toHaveLength(3);
     });
@@ -1531,7 +1619,7 @@ describe("sendMessage reinitialize on SW restart", () => {
 
         // Should have tried only once (no retry for unrelated errors)
         const addressCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_ADDRESS",
+            ([wire]: any) => walletRequestOf(wire).type === "GET_ADDRESS",
         );
         expect(addressCalls).toHaveLength(1);
     });
@@ -1628,7 +1716,7 @@ describe("in-flight request deduplication", () => {
         expect(b2.total).toBe(100);
 
         const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_BALANCE",
+            ([wire]: any) => walletRequestOf(wire).type === "GET_BALANCE",
         );
         expect(balanceCalls).toHaveLength(1);
     });
@@ -1657,7 +1745,7 @@ describe("in-flight request deduplication", () => {
         ]);
 
         const sendCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "SEND",
+            ([wire]: any) => walletRequestOf(wire).type === "SEND",
         );
         expect(sendCalls).toHaveLength(2);
     });
@@ -1686,7 +1774,7 @@ describe("in-flight request deduplication", () => {
         ]);
 
         const vtxoCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_VTXOS",
+            ([wire]: any) => walletRequestOf(wire).type === "GET_VTXOS",
         );
         expect(vtxoCalls).toHaveLength(1);
     });
@@ -1715,7 +1803,7 @@ describe("in-flight request deduplication", () => {
         ]);
 
         const vtxoCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_VTXOS",
+            ([wire]: any) => walletRequestOf(wire).type === "GET_VTXOS",
         );
         expect(vtxoCalls).toHaveLength(2);
     });
@@ -1751,7 +1839,7 @@ describe("in-flight request deduplication", () => {
         await wallet.getBalance();
 
         const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_BALANCE",
+            ([wire]: any) => walletRequestOf(wire).type === "GET_BALANCE",
         );
         expect(balanceCalls).toHaveLength(2);
     });
@@ -1781,7 +1869,7 @@ describe("in-flight request deduplication", () => {
         expect((results[1] as PromiseRejectedResult).reason.message).toContain("server exploded");
 
         const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_BALANCE",
+            ([wire]: any) => walletRequestOf(wire).type === "GET_BALANCE",
         );
         expect(balanceCalls).toHaveLength(1);
     });
@@ -1804,6 +1892,10 @@ describe("preflight ping", () => {
 
     const createWalletWithConfig = (serviceWorker: ServiceWorker, tag = messageTag) => {
         const wallet = createWallet(serviceWorker, tag);
+        bindTestWallet(
+            wallet,
+            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.arkServer.url),
+        );
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
         return wallet;
@@ -1994,7 +2086,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         return null;
     };
 
-    // Answer the post-init identity assertion's GET_STATUS with the identity's
+    // Answer the pre-init identity assertion's GET_STATUS with the identity's
     // own x-only key so create() resolves. Tests that omit the identity fall
     // back to the stub key (only used by paths that reject before GET_STATUS).
     const setup = async (identity?: { xOnlyPublicKey(): Promise<Uint8Array> }) => {
@@ -2035,10 +2127,13 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         postMessage: ReturnType<typeof vi.fn>;
     }): any => {
         const call = serviceWorker.postMessage.mock.calls.find(
-            ([msg]: any) => msg?.type === "INIT_WALLET",
+            ([wire]: any) => walletRequestOf(wire)?.type === "INIT_WALLET",
         );
         expect(call).toBeDefined();
-        return call![0];
+        expect(call![0]).toEqual(
+            scopedRequestMatching(expect.objectContaining({ type: "INIT_WALLET" })),
+        );
+        return walletRequestOf(call![0]);
     };
 
     afterEach(() => {
@@ -2422,6 +2517,7 @@ describe("ServiceWorker identity boundary assertion", () => {
                     payload: {
                         walletInitialized: true,
                         xOnlyPublicKey: initCount >= 2 ? otherKey : expectedKey,
+                        walletRequestBinding: testWalletBinding(expectedKey, "https://ark.test"),
                     },
                 };
             }
@@ -2448,7 +2544,7 @@ describe("ServiceWorker identity boundary assertion", () => {
         // The mismatch is detected inside reinitialize(), so the original
         // GET_ADDRESS is never retried against the wrong identity.
         const addressCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_ADDRESS",
+            ([wire]: any) => walletRequestOf(wire).type === "GET_ADDRESS",
         );
         expect(addressCalls).toHaveLength(1);
     });

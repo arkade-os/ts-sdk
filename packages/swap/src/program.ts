@@ -4,6 +4,11 @@ import assetSwapArtifact from "./contracts/asset-swap.json";
 import satsSwapArtifact from "./contracts/sats-swap.json";
 import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
 import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
+import taxi0AssetArtifact from "./legacy/taxi-0/swap-want-asset.artifact.json";
+import taxi0BtcArtifact from "./legacy/taxi-0/swap-want-btc.artifact.json";
+import { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_V3 } from "./rfq-contract";
+
+export { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_V3 } from "./rfq-contract";
 
 // json imports widen "type": "pubkey" to string; the parsers validate at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -27,19 +32,70 @@ export const legacySwapPrograms: typeof swapPrograms = {
     wantBtc: arkade.parseArtifact(wantBtcProgramV1 as Artifact),
 };
 
-/** Covenant version ids for the arkade↔arkade corridor; mirror the solver's RFQ vocabulary.
- * One id covers both trees: `asset-swap` and `sats-swap` move between versions together. */
-export const ASSET_SWAP_V3 = "asset-swap-v3";
-export const ASSET_SWAP_V2 = "asset-swap-v2";
+export type AssetSwapContractVersion = typeof ASSET_SWAP_V2 | typeof ASSET_SWAP_V3;
 
-/** The covenants this build can derive, most preferred first: the list every asset RFQ
- * advertises by default. Keep in step with `offerGenerationFor`. */
-export const ASSET_SWAP_COVENANT_VERSIONS = [ASSET_SWAP_V3, ASSET_SWAP_V2] as const;
+/** What a version's constructor args are built from; asset fields are in internal byte order. */
+export interface AssetSwapArgInputs {
+    receiver: Uint8Array;
+    amount: bigint;
+    asset?: { txid: Uint8Array; groupIndex: number };
+    user: Uint8Array;
+    server: Uint8Array;
+    exitDelay?: bigint;
+}
 
-/** No version is `asset-swap-v2`: a solver that did not negotiate (it predates the field, or
- * was asked without the list) fills only that tree. An id this build cannot derive throws. */
-export const offerGenerationFor = (covenantVersion: string | undefined): "current" | "previous" => {
-    if (covenantVersion === ASSET_SWAP_V3) return "current";
-    if (covenantVersion === undefined || covenantVersion === ASSET_SWAP_V2) return "previous";
-    throw new Error(`unknown covenant ${covenantVersion}`);
+export interface AssetSwapContract {
+    programs: typeof swapPrograms;
+    args(inputs: AssetSwapArgInputs): ConstructorParameters<typeof arkade.ArkadeProgramScript>[1];
+}
+
+const sharedArgs = ({ user, server, exitDelay }: AssetSwapArgInputs) => ({
+    user,
+    server,
+    ...(exitDelay && { exitDelay }),
+});
+
+export const ASSET_SWAP_CONTRACTS: Readonly<Record<AssetSwapContractVersion, AssetSwapContract>> = {
+    [ASSET_SWAP_V2]: {
+        programs: legacySwapPrograms,
+        args: (inputs) => ({
+            makerWP: inputs.receiver,
+            wantAmount: inputs.amount,
+            ...(inputs.asset && {
+                wantAssetTxid: inputs.asset.txid,
+                wantAssetGroupIndex: inputs.asset.groupIndex,
+            }),
+            ...sharedArgs(inputs),
+        }),
+    },
+    [ASSET_SWAP_V3]: {
+        programs: swapPrograms,
+        args: (inputs) => ({
+            receiver: inputs.receiver,
+            amount: inputs.amount,
+            ...(inputs.asset && {
+                assetTxid: inputs.asset.txid,
+                assetGroupIndex: inputs.asset.groupIndex,
+            }),
+            ...sharedArgs(inputs),
+        }),
+    },
+};
+
+export const taxi0SwapContract: AssetSwapContract = {
+    programs: {
+        wantAsset: arkade.programFromArtifact(taxi0AssetArtifact as ContractArtifact),
+        wantBtc: arkade.programFromArtifact(taxi0BtcArtifact as ContractArtifact),
+    },
+    args: ASSET_SWAP_CONTRACTS[ASSET_SWAP_V2].args,
+};
+
+/** The versions every asset RFQ advertises by default, most preferred first. */
+export const ASSET_SWAP_CONTRACT_VERSIONS = [ASSET_SWAP_V3, ASSET_SWAP_V2] as const;
+
+/** Absent means {@link ASSET_SWAP_BASELINE}; an id this build cannot derive throws. */
+export const assetSwapContractVersion = (id: string | undefined): AssetSwapContractVersion => {
+    if (id === undefined) return ASSET_SWAP_BASELINE;
+    if (Object.hasOwn(ASSET_SWAP_CONTRACTS, id)) return id as AssetSwapContractVersion;
+    throw new Error(`unknown contract version ${id}`);
 };

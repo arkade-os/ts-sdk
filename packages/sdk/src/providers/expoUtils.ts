@@ -1,4 +1,5 @@
 import { baseFetch, fetch } from "../utils/fetch";
+import { HttpResponseError } from "./errors";
 import { readSseFrames } from "./sseFrames";
 import { streamFailureError } from "./utils";
 
@@ -68,7 +69,8 @@ export async function* sseStreamIterator<T>(
         });
 
         if (!response.ok) {
-            throw new Error(`Unexpected status ${response.status} when fetching SSE stream`);
+            await response.body?.cancel().catch(() => {});
+            throw new HttpResponseError("Unexpected status when fetching SSE stream", response);
         }
 
         if (!response.body) {

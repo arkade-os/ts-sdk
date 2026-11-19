@@ -909,7 +909,7 @@ one output.
 
 #### Holding VTXOs for your own use
 
-`reserveVtxos` keeps VTXOs out of every pick the SDK makes for you — `send`, `settle()`, exits,
+`Wallet.reserveVtxos` keeps VTXOs out of every pick the SDK makes for you — `send`, `settle()`, exits,
 renewal, payment-router rails and swap funding — until you release them. You can still spend them
 by naming them. It works with or without `concurrentSpending`.
 
@@ -927,7 +927,16 @@ Held VTXOs stay in `getVtxos()` and in `getBalance().total`, and move from `avai
 already picked a VTXO when you hold it, that spend throws `VtxoReservedError` (`holder: "held"`)
 instead of spending it; exits and renewal pick again or retry on their own.
 
-Limits:
+For `ServiceWorkerWallet`, use `await workerWallet.reserveVtxos(coins, operationId)` after saving
+that operation id durably in your application. The worker persists the hold under its identity
+and operator URL before acknowledging it, and restores holds before automatic spending starts.
+Retry the same id and inputs after a lost reply or restart. These holds also block explicitly
+selected SDK sends and settlements; they are for transactions the application builds externally.
+Await `hold.release()` only after proving settlement or non-submission. An ambiguous submission
+must keep its hold. Acquire and release require a worker supporting scoped reservations; a retained
+handle cannot release a different identity/operator/network's hold after worker reinitialization.
+
+Direct wallet limits:
 
 - Reservations are in memory, per `Wallet` instance. Two processes or two `Wallet` instances on one
   seed do not see each other's reservations; the operator refuses whichever spend loses.
@@ -937,8 +946,7 @@ Limits:
   long-lived hold before the VTXO expires, or the operator sweeps it and it comes back only through
   recovery.
 - `toReadonly()` views and the service worker's balance reads do not see reservations.
-- `reserveVtxos` is on `Wallet`; the service-worker and Expo wallets accept `concurrentSpending`
-  but do not expose holds yet.
+- Expo wallets accept `concurrentSpending` but do not expose holds yet.
 
 If your app keeps its own reserved-outpoint set, call `reserveVtxos` where you add to it and
 `release()` where you remove, then let the SDK pick: plain `send`, router payments without
@@ -1237,6 +1245,16 @@ const balance = await wallet.getBalance()
 
 For watch-only wallets, use `ServiceWorkerReadonlyWallet` with a
 `ReadonlySingleKey` identity instead.
+
+Deploy the page and worker from the same SDK version. Each proxy stays bound to its original
+identity, operator URL and network, including reads used to prepare transactions. If another tab
+reinitializes the worker for a different wallet, the old proxy rejects requests. Pass
+`expectedNetwork: 'regtest'` (or your configured network) to `setup` or `create` to verify it during
+bootstrap. Mixed protocol versions reject requests and require a worker update.
+
+Use `wallet.onWalletUpdate(update => { ... })` to subscribe to contract and coin updates, and call
+its returned function to unsubscribe. It filters `CONTRACT_EVENT`, `VTXO_UPDATE` and `UTXO_UPDATE`
+by the same captured wallet binding; raw service-worker message listeners do not provide that check.
 
 ### Faster startup without changing existing reads
 
@@ -1579,7 +1597,7 @@ await contract.register({ label: 'Hashlock' })
 
 const funded = await contract.on('vtxo_received', async () => {
   funded.off()
-  const { txid } = await contract.functions.claim(preimage)
+  const { txid } = await contract.functions.claim({ arkadeScript: [preimage] })
     .to(ArkAddress.decode(recipientAddress).pkScript, 10_000n)
     .send()
 })
@@ -1592,7 +1610,7 @@ await wallet.send({ address: contract.address, amount: 10_000 })
 
 The connected operator supplies `<SERVER_KEY>` (the reserved `server` parameter in normalized Programs) and `<SERVER_EXIT_DELAY>`; conflicting overrides fail, and time-based delays that are not multiples of 512 seconds fail rather than changing the advertised delay. Resolved bindings are persisted, so restoring the contract keeps its script through server key or policy changes. A declared constructor named `user` defaults to the connected identity; other constructor keys remain caller-provided. Pass a struct or array param whole by its source name, such as `{ owners: [{ key }, { key }] }`; the flattened names it binds, such as `owners.0.key`, are also accepted, and a missing, extra or duplicated field fails with its full name. Child-output placeholders remain explicit `bytes32` constructor bindings. Leaf call inputs used as script operands cannot produce a fixed address and are rejected; raw CSV operands must be canonical BIP68 encodings.
 
-For compiler-derived programs, call arguments are covenant inputs in declaration order, followed by non-signature leaf inputs in declaration order, one argument per source parameter: a struct or array input is passed whole, as in `contract.functions.spend(request, oracles)`. Same-named inputs in the two scopes remain separate positional arguments. Leaf signatures are PSBT signatures, not condition arguments: `send()` supports the connected identity and infrastructure signers; additional identities and covenant-tweaked leaf keys require explicit PSBT signing via `build()`. Covenant signature arguments remain caller-provided; transaction-bound Arkade `checkSig` signatures require an Arkade-specific digest helper, which is deferred. CSV leaves require aged onchain outputs and cannot use this offchain builder. Typed call validation and these spending limits apply to every normalized Program. The public `SignerRef` union is unchanged; version 1 programs store emulator signer placement in optional `emulatorIndex` metadata.
+Call arguments are grouped by the script whose witness they fill: `arkadeScript` holds the covenant inputs, which go into the emulator packet, and `tapscript` holds the non-signature leaf inputs, which go into the leaf's `ConditionWitness`, as in `contract.functions.claim({ arkadeScript: [preimage, flag], tapscript: [leafPreimage] })`. Each list follows declaration order with one argument per source parameter, so a struct or array input is passed whole, as in `contract.functions.spend({ arkadeScript: [request, oracles] })`. Omit the key of a segment without inputs, and call a function without inputs with no arguments. Same-named inputs in the two scopes stay independent. Hand-written programs declare inputs on the segment whose `witness` names them (`tapscript.inputs`, `arkadeScript.inputs`). Leaf signatures are PSBT signatures, not condition arguments: `send()` supports the connected identity and infrastructure signers; additional identities and covenant-tweaked leaf keys require explicit PSBT signing via `build()`. Covenant signature arguments remain caller-provided; transaction-bound Arkade `checkSig` signatures require an Arkade-specific digest helper, which is deferred. CSV leaves require aged onchain outputs and cannot use this offchain builder. Typed call validation and these spending limits apply to every normalized Program. The public `SignerRef` union is unchanged; version 1 programs store emulator signer placement in optional `emulatorIndex` metadata.
 
 #### Compiling Arkade source
 

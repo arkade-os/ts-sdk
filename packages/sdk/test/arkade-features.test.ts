@@ -53,10 +53,10 @@ function claimProgram(): arkade.Program {
         ],
         functions: {
             claim: {
-                inputs: [{ name: "preimage", type: "bytes" }],
                 tapscript: {
                     signers: ["$server"],
                     asm: ["HASH160", "$h", "EQUALVERIFY"],
+                    inputs: [{ name: "preimage", type: "bytes" }],
                     witness: ["preimage"],
                 },
                 arkadeScript: { asm: payTo, witness: [0] },
@@ -228,7 +228,7 @@ describe("ArkadeContract — extended features", () => {
         });
 
         await c.functions
-            .claim(new Uint8Array(32).fill(0x42))
+            .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
             .from(COIN)
             .fund([fundingCoin(60_000)])
             .to(p2tr(receiver), AMOUNT)
@@ -262,7 +262,7 @@ describe("ArkadeContract — extended features", () => {
         const sourceTx = new Uint8Array(64).fill(7);
 
         const { arkTx, checkpoints } = await c.functions
-            .claim(preimage)
+            .claim({ tapscript: [preimage] })
             .from([COIN, { ...COIN2, sourceTx }])
             .to(p2tr(receiver), AMOUNT)
             .change(p2tr())
@@ -323,7 +323,7 @@ describe("ArkadeContract — extended features", () => {
         );
 
         await htlc.functions
-            .claim(new Uint8Array(32).fill(0x42))
+            .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
             .from(COIN)
             .from(COIN2, vault.unlock.spend())
             .to([
@@ -374,8 +374,8 @@ describe("ArkadeContract — extended features", () => {
 
         await ark
             .transaction()
-            .from(COIN, a.unlock.claim(preimage))
-            .from(COIN2, b.unlock.claim(preimage))
+            .from(COIN, a.unlock.claim({ tapscript: [preimage] }))
+            .from(COIN2, b.unlock.claim({ tapscript: [preimage] }))
             .to([
                 { script: p2tr(receiver), amount: AMOUNT },
                 { script: p2tr(receiver), amount: 5_000n },
@@ -405,7 +405,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await connect();
         const c = ark.contract(claimProgram(), args);
         const other = (await connect()).contract(claimProgram(), args);
-        const claim = () => c.functions.claim(new Uint8Array(32).fill(0x42));
+        const claim = () => c.functions.claim({ tapscript: [new Uint8Array(32).fill(0x42)] });
 
         expect(() => claim().from([])).toThrow(/no coins/);
         expect(() => claim().from(COIN).from([COIN])).toThrow(/already an input/);
@@ -435,9 +435,9 @@ describe("ArkadeContract — extended features", () => {
         expect(() => claim().from({ ...COIN, script: hex.encode(p2tr()) })).toThrow(
             /not locked by the contract of claim/,
         );
-        expect(() => claim().from(COIN, other.unlock.claim(new Uint8Array(32).fill(0x42)))).toThrow(
-            /another Arkade client/,
-        );
+        expect(() =>
+            claim().from(COIN, other.unlock.claim({ tapscript: [new Uint8Array(32).fill(0x42)] })),
+        ).toThrow(/another Arkade client/);
     });
 
     it("rejects an emulator reply carrying another ark tx", async () => {
@@ -460,7 +460,7 @@ describe("ArkadeContract — extended features", () => {
 
         await expect(
             c.functions
-                .claim(new Uint8Array(32).fill(0x42))
+                .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
                 .from(COIN)
                 .to(p2tr(receiver), AMOUNT)
                 .send(),
@@ -483,7 +483,7 @@ describe("ArkadeContract — extended features", () => {
         const funding = fundingCoin(60_000);
 
         const { arkTx, checkpoints } = await c.functions
-            .claim(new Uint8Array(32).fill(0x42))
+            .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
             .from(COIN)
             .fund([funding])
             .to(p2tr(receiver), AMOUNT)
@@ -525,7 +525,7 @@ describe("ArkadeContract — extended features", () => {
         const sourceTx = new Uint8Array(64).fill(7);
 
         await c.functions
-            .claim(new Uint8Array(32).fill(0x42))
+            .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
             .from({ ...COIN, sourceTx })
             .to(p2tr(receiver), AMOUNT)
             .send();
@@ -556,7 +556,7 @@ describe("ArkadeContract — extended features", () => {
 
         await expect(
             c.functions
-                .claim(new Uint8Array(32).fill(0x42))
+                .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
                 .from(COIN)
                 .to(p2tr(receiver), AMOUNT)
                 .send(),
@@ -595,7 +595,7 @@ describe("ArkadeContract — extended features", () => {
         // outputs require 10_000 → must pick `big` (5_000 can't cover, 11_000 expired, 12_000 swept,
         // 15_000 carries assets the spend doesn't route)
         await c.functions
-            .claim(new Uint8Array(32).fill(0x42))
+            .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
             .to(p2tr(receiver), AMOUNT)
             .change(p2tr()) // surplus from the 20_000 coin
             .send();
@@ -811,10 +811,10 @@ describe("ArkadeContract — extended features", () => {
             ],
             functions: {
                 claim: {
-                    inputs: [{ name: "preimage", type: "bytes" }],
                     tapscript: {
                         signers: ["$server"],
                         asm: ["HASH160", "$h", "EQUALVERIFY"],
+                        inputs: [{ name: "preimage", type: "bytes" }],
                         witness: ["preimage"],
                     },
                     arkadeScript: {
@@ -969,7 +969,7 @@ describe("ArkadeContract — extended features", () => {
         ).rejects.toThrow(refused);
         await expect(
             htlc.functions
-                .claim(new Uint8Array(32).fill(0x42))
+                .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
                 .from(COIN)
                 .from(COIN2, c.unlock.serverOnly())
                 .to(p2tr(receiver), 15_000n)
@@ -998,13 +998,17 @@ describe("ArkadeContract — extended features", () => {
 
         // surplus (25_000 in, 10_000 out) with no change → throws
         await expect(
-            c.functions.claim(preimage).from(bigCoin).to(p2tr(receiver), AMOUNT).send(),
+            c.functions
+                .claim({ tapscript: [preimage] })
+                .from(bigCoin)
+                .to(p2tr(receiver), AMOUNT)
+                .send(),
         ).rejects.toThrow(/surplus/i);
 
         // with change → succeeds, surplus routed to the change script
         const changeScript = p2tr();
         await c.functions
-            .claim(preimage)
+            .claim({ tapscript: [preimage] })
             .from(bigCoin)
             .change(changeScript)
             .to(p2tr(receiver), AMOUNT)
@@ -1044,7 +1048,7 @@ describe("ArkadeContract — extended features", () => {
         // arkd refuses an input whose assets the spend does not route.
         await expect(
             c.functions
-                .claim(new Uint8Array(32).fill(0x42))
+                .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
                 .from(assetCoin)
                 .to(p2tr(receiver), AMOUNT)
                 .send(),
@@ -1054,7 +1058,7 @@ describe("ArkadeContract — extended features", () => {
         // build() leaves routing to the caller, and the caller's own asset packet routes it.
         const claim = () =>
             c.functions
-                .claim(new Uint8Array(32).fill(0x42))
+                .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
                 .from(assetCoin)
                 .to(p2tr(receiver), AMOUNT);
         await expect(claim().build()).resolves.toBeDefined();
@@ -1073,7 +1077,7 @@ describe("ArkadeContract — extended features", () => {
         expect(emulator.submitTx).toHaveBeenCalledTimes(1);
 
         await c.functions
-            .claim(new Uint8Array(32).fill(0x42))
+            .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
             .from(assetCoin)
             .to(p2tr(receiver), AMOUNT)
             .withAsset({
@@ -1117,7 +1121,7 @@ describe("ArkadeContract — extended features", () => {
         const terms = new Uint8Array(40).fill(7);
 
         await c.functions
-            .claim(new Uint8Array(32).fill(0x42))
+            .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
             .from(COIN)
             .to(p2tr(receiver), AMOUNT)
             .withPacket(new UnknownPacket(77, terms))
@@ -1145,7 +1149,7 @@ describe("ArkadeContract — extended features", () => {
 
         await expect(
             c.functions
-                .claim(new Uint8Array(32).fill(0x42))
+                .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
                 .from(COIN)
                 .to(p2tr(receiver), AMOUNT)
                 .withPacket(new UnknownPacket(1, new Uint8Array(1)))

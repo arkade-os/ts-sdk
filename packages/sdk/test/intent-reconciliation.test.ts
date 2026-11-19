@@ -1,16 +1,19 @@
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi } from "vitest";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
 import {
     reconcileIntents,
     releaseIntents,
     type IntentReconcilerIndexer,
 } from "../src/wallet/intentReconciliation";
-import type { ArkIntent, ArkIntentState } from "../src/repositories/intentRepository";
+import type {
+    BatchRegistration,
+    BatchRegistrationState,
+} from "../src/repositories/intentRepository";
 import type { VirtualCoin } from "../src/wallet";
 import { ArkError } from "../src/providers/errors";
 
-const intent = (over: Partial<ArkIntent>): ArkIntent => ({
+const intent = (over: Partial<BatchRegistration>): BatchRegistration => ({
     proofTxId: "i1",
     state: "waiting_for_batch",
     createdAt: 1,
@@ -32,18 +35,21 @@ const indexerReturning = (vtxos: VirtualCoin[]): IntentReconcilerIndexer => ({
     getVtxos: vi.fn().mockResolvedValue({ vtxos }),
 });
 
-const seed = async (repo: InMemoryIntentRepository, i: ArkIntent) => {
+const seed = async (repo: InMemoryBatchRegistrationRepository, i: BatchRegistration) => {
     await repo.saveBatchRegistration(i);
     return repo;
 };
 
-const stateOf = async (repo: InMemoryIntentRepository, id = "i1"): Promise<ArkIntentState> =>
-    (await collectIntents(repo, { proofTxIds: [id] }))[0].state;
+const stateOf = async (
+    repo: InMemoryBatchRegistrationRepository,
+    id = "i1",
+): Promise<BatchRegistrationState> =>
+    (await collectBatchRegistrations(repo, { proofTxIds: [id] }))[0].state;
 
 describe("reconcileIntents", () => {
     it("marks batch_succeeded when all inputs are consumed by a batch", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_for_batch" }),
         );
         const indexerProvider = indexerReturning([
@@ -52,7 +58,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("commitment-tx");
         // Succeeded intent no longer locks its inputs.
@@ -61,28 +67,28 @@ describe("reconcileIntents", () => {
 
     it("preserves an existing commitment id when the input lacks settledBy", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_for_batch", commitmentTransactionId: "known-ctx" }),
         );
         const indexerProvider = indexerReturning([coin("v", 0, { isSpent: true })]);
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("known-ctx");
     });
 
     it("keeps waiting_to_submit locked when registration acknowledgement may have been lost", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_to_submit" }),
         );
         const indexerProvider = indexerReturning([coin("v", 0, { isSpent: false })]);
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("waiting_to_submit");
         expect(done.cancellationReason).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
@@ -90,7 +96,7 @@ describe("reconcileIntents", () => {
 
     it("leaves an active server-held intent locked (unspent, submitted, not expired)", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_for_batch" }),
         );
         const indexerProvider = indexerReturning([coin("v", 0, { isSpent: false })]);
@@ -104,7 +110,7 @@ describe("reconcileIntents", () => {
 
     it("cancels an expired intent whose inputs are still unspent", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_for_batch", validUntil: 500 }),
         );
         const indexerProvider = indexerReturning([coin("v", 0, { isSpent: false })]);
@@ -115,14 +121,14 @@ describe("reconcileIntents", () => {
             now: () => 1000,
         });
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/expired/i);
     });
 
     it("does not touch terminal intents (never fetched from the store)", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "batch_succeeded", commitmentTransactionId: "ctx" }),
         );
         const getVtxos = vi.fn().mockResolvedValue({ vtxos: [] });
@@ -135,7 +141,7 @@ describe("reconcileIntents", () => {
 
     it("is a no-op (no throw) when the indexer read fails", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_for_batch" }),
         );
         const indexerProvider: IntentReconcilerIndexer = {
@@ -150,7 +156,7 @@ describe("reconcileIntents", () => {
     });
 
     it("is a no-op (no throw) when the intent store read fails", async () => {
-        const repo = new InMemoryIntentRepository();
+        const repo = new InMemoryBatchRegistrationRepository();
         vi.spyOn(repo, "getBatchRegistrationsPage").mockRejectedValueOnce(new Error("db corrupt"));
         const getVtxos = vi.fn();
 
@@ -161,7 +167,7 @@ describe("reconcileIntents", () => {
     });
 
     it("reconciles a mixed batch in one pass with a single indexer round-trip", async () => {
-        const repo = new InMemoryIntentRepository();
+        const repo = new InMemoryBatchRegistrationRepository();
         await repo.saveBatchRegistration(
             intent({
                 proofTxId: "done",
@@ -201,7 +207,7 @@ describe("reconcileIntents", () => {
 
     it("cancels a submitted, unexpired intent whose input was unilaterally exited", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_for_batch" }),
         );
         // The wire shape of an exit: onchain now, but never consumed offchain.
@@ -209,7 +215,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/unilaterally exited/i);
         // The whole point: without the exit branch these stay locked forever.
@@ -218,7 +224,7 @@ describe("reconcileIntents", () => {
 
     it("reports batch_succeeded when an input both settled and unrolled", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_for_batch" }),
         );
         const indexerProvider = indexerReturning([
@@ -227,14 +233,14 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("commitment-tx");
     });
 
     it("treats a spentBy-only input as consumed", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({
                 state: "waiting_for_batch",
                 proofInputs: [
@@ -251,7 +257,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
@@ -259,7 +265,7 @@ describe("reconcileIntents", () => {
 
     it("does not treat an empty settledBy as consumed", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             intent({ state: "waiting_for_batch" }),
         );
         // "" is the wire convention for "unset", not a commitment txid.
@@ -267,7 +273,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("waiting_for_batch");
         expect(done.commitmentTransactionId).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
@@ -276,14 +282,14 @@ describe("reconcileIntents", () => {
 
 describe("reconcileIntents: releasing stale intents from the server", () => {
     const deleteMessage = { type: "delete", expire_at: 0 } as const;
-    const stale = (over: Partial<ArkIntent> = {}) =>
+    const stale = (over: Partial<BatchRegistration> = {}) =>
         intent({ deleteProofMessage: JSON.stringify(deleteMessage), ...over });
     const unspent = () => indexerReturning([coin("v", 0, { isSpent: false })]);
     const noMatch = () =>
         new ArkError(23, "no matching intents found for intent proof", "INVALID_INTENT_PROOF");
 
     it("deletes a submitted intent left by a dead process and cancels it", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), stale());
         const deleteIntent = vi.fn().mockResolvedValue(undefined);
 
         await reconcileIntents({
@@ -293,14 +299,14 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         });
 
         expect(deleteIntent).toHaveBeenCalledWith({ proof: "dp", message: deleteMessage });
-        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
+        const done = (await collectBatchRegistrations(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/released from the server/i);
         expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
     });
 
     it("cancels when the server no longer holds the intent", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), stale());
         const deleteIntent = vi.fn().mockRejectedValue(noMatch());
 
         await reconcileIntents({
@@ -314,7 +320,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
 
     it("releases a truly unsent waiting_to_submit row after the no-match response", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             stale({ state: "waiting_to_submit" }),
         );
         const deleteIntent = vi.fn().mockRejectedValue(noMatch());
@@ -329,7 +335,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
     });
 
     it("keeps the intent locked when the delete fails for another reason", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), stale());
         const deleteIntent = vi.fn().mockRejectedValue(new Error("network down"));
 
         await reconcileIntents({
@@ -343,7 +349,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
     });
 
     it("keeps the intent locked on INVALID_INTENT_PROOF with another message", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), stale());
         const deleteIntent = vi
             .fn()
             .mockRejectedValue(new ArkError(23, "invalid intent proof", "INVALID_INTENT_PROOF"));
@@ -358,7 +364,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
     });
 
     it("does not delete an intent whose batch already succeeded", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), stale());
         const deleteIntent = vi.fn();
         const indexerProvider = indexerReturning([
             coin("v", 0, { isSpent: true, settledBy: "ctx" }),
@@ -370,27 +376,28 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         expect(await stateOf(repo)).toBe("batch_succeeded");
     });
 
-    it.each<ArkIntentState>(["waiting_to_submit", "waiting_for_batch", "batch_in_progress"])(
-        "leaves a %s intent with an in-flight input to its live settle",
-        async (state) => {
-            const repo = await seed(new InMemoryIntentRepository(), stale({ state }));
-            const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+    it.each<BatchRegistrationState>([
+        "waiting_to_submit",
+        "waiting_for_batch",
+        "batch_in_progress",
+    ])("leaves a %s intent with an in-flight input to its live settle", async (state) => {
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), stale({ state }));
+        const deleteIntent = vi.fn().mockRejectedValue(noMatch());
 
-            await reconcileIntents({
-                intentRepository: repo,
-                indexerProvider: unspent(),
-                deleteIntent,
-                isOutpointInFlight: (o) => o.txid === "v" && o.vout === 0,
-            });
+        await reconcileIntents({
+            intentRepository: repo,
+            indexerProvider: unspent(),
+            deleteIntent,
+            isOutpointInFlight: (o) => o.txid === "v" && o.vout === 0,
+        });
 
-            expect(deleteIntent).not.toHaveBeenCalled();
-            expect(await stateOf(repo)).toBe(state);
-        },
-    );
+        expect(deleteIntent).not.toHaveBeenCalled();
+        expect(await stateOf(repo)).toBe(state);
+    });
 
     it("does not delete a stale intent sharing an input with a live settle", async () => {
         const repo = await seed(
-            new InMemoryIntentRepository(),
+            new InMemoryBatchRegistrationRepository(),
             stale({
                 proofInputs: [
                     { txid: "v", vout: 0 },
@@ -413,13 +420,13 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
 });
 
 describe("releaseIntents", () => {
-    const pending = (over: Partial<ArkIntent> = {}) =>
+    const pending = (over: Partial<BatchRegistration> = {}) =>
         intent({ deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }), ...over });
 
     it("is true when every non-terminal intent is deleted, skipping terminal ones", async () => {
-        const repo = new InMemoryIntentRepository();
-        await repo.saveIntent(pending());
-        await repo.saveIntent(pending({ proofTxId: "done", state: "batch_succeeded" }));
+        const repo = new InMemoryBatchRegistrationRepository();
+        await repo.saveBatchRegistration(pending());
+        await repo.saveBatchRegistration(pending({ proofTxId: "done", state: "batch_succeeded" }));
         const deleteIntent = vi.fn().mockResolvedValue(undefined);
 
         expect(await releaseIntents({ intentRepository: repo, deleteIntent })).toBe(true);
@@ -427,7 +434,7 @@ describe("releaseIntents", () => {
     });
 
     it("is true when the server no longer holds the intent", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), pending());
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), pending());
         const deleteIntent = vi
             .fn()
             .mockRejectedValue(
@@ -442,14 +449,14 @@ describe("releaseIntents", () => {
     });
 
     it("is false when a delete fails", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), pending());
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), pending());
         const deleteIntent = vi.fn().mockRejectedValue(new Error("network down"));
 
         expect(await releaseIntents({ intentRepository: repo, deleteIntent })).toBe(false);
     });
 
     it("is false for an intent a live settle owns", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), pending());
+        const repo = await seed(new InMemoryBatchRegistrationRepository(), pending());
         const deleteIntent = vi.fn();
 
         expect(
@@ -463,10 +470,13 @@ describe("releaseIntents", () => {
     });
 
     it("without deleteIntent, is true only when nothing is pending", async () => {
-        const empty = await seed(new InMemoryIntentRepository(), pending({ state: "cancelled" }));
+        const empty = await seed(
+            new InMemoryBatchRegistrationRepository(),
+            pending({ state: "cancelled" }),
+        );
         expect(await releaseIntents({ intentRepository: empty })).toBe(true);
 
-        const held = await seed(new InMemoryIntentRepository(), pending());
+        const held = await seed(new InMemoryBatchRegistrationRepository(), pending());
         expect(await releaseIntents({ intentRepository: held })).toBe(false);
     });
 });
