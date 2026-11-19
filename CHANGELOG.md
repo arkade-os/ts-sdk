@@ -163,15 +163,23 @@ style and have not been backfilled.
   boarding address. When the address rotates, through `getNewBoardingAddress()`,
   a settle that boards a deposit, or a coin the Executor boards into the
   displayed key's renewal contract, the wallet registers the newest live
-  watch's parameters again for the new key. A coin already there when the
-  wallet starts, boarded while it was offline, raises no event, so the start
-  looks for one and rotates too. If that registration fails,
-  `getBoardingAddress()` shows the new key's own address, which the wallet
-  boards once online, rather than reuse the old one. Rows of a rotated key
-  carry its `signingDescriptor`, and the signer router routes `executor`
-  inputs by it. `restore()` scans every HD index for the delegations of the
-  persisted Executor contracts, so calling `watchExecutorContracts` before it
-  also finds the watches of rotated keys. A static wallet keeps its one watch.
+  watch's parameters again for the new key. After a settle that happens in the
+  background, so the settle never waits on the Executor or holds the
+  transaction lock for it; until the new watch is registered the old delegated
+  address stays displayed, still watched, so a deposit there is still boarded.
+  `getNewBoardingAddress()` waits for the registration, so it now depends on
+  the network. A registration stops after 30 seconds
+  (`ExecutorProvider.registerDelegation` takes an optional `AbortSignal`);
+  repeating it is safe, as the service returns the existing watch. A coin
+  already there when the wallet starts, boarded while it was offline, raises
+  no event, so the start looks for one and rotates too. If a registration
+  fails or times out, `getBoardingAddress()` and `getNewBoardingAddress()`
+  show the new key's own address, which the wallet boards once online, rather
+  than reuse the old one. Rows of a rotated key carry its `signingDescriptor`,
+  and the signer router routes `executor` inputs by it. `restore()` scans every
+  HD index for the delegations of the persisted Executor contracts, so calling
+  `watchExecutorContracts` before it also finds the watches of rotated keys. A
+  static wallet keeps its one watch.
 
 - **The Executor's delegated contracts are a built-in contract type.**
   `ExecutorContractHandler` (`type: "executor"`) derives the renewal and

@@ -18,8 +18,12 @@ import {
     type DelegationParams,
     defaultVariables,
 } from "../script/executor/executorTemplate";
+import { timeoutSignal } from "../utils/fetch";
 import { timelockToSequence } from "../utils/timelock";
 import { newestWalletReceiveContract } from "./walletReceiveRotator";
+
+/** Bounds a registration: a write has no `fetch` deadline of its own. */
+export const REGISTRATION_TIMEOUT_MS = 30_000;
 
 /** Metadata key: the service's status of a delegated watch. */
 export const DELEGATION_STATUS_KEY = "delegationStatus";
@@ -337,9 +341,11 @@ export class ExecutorManagerImpl implements IExecutorManager {
             contractParams("boarding", owner, keys, params),
         ).onchainAddress(network);
         const templateId = DEFAULT_TEMPLATE_IDS.boarding;
-        // Registration is idempotent on the service: repeating it returns the existing watch.
+        // Idempotent on the service (repeating returns the existing watch), so a call aborted
+        // with its outcome unknown is safe to repeat.
         const delegation = await this.executorProvider.registerDelegation(templateId, variables, {
             expiresAt,
+            signal: timeoutSignal(REGISTRATION_TIMEOUT_MS),
         });
         // The service fills <COSIGNER_KEY> with its key: the same address proves it is GetInfo's,
         // and commits to the same tapscripts. Checked before anything is persisted.

@@ -15,13 +15,16 @@ import vectors from "./fixtures/executor/vectors.json";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 
-vi.mock("../src/utils/fetch", () => ({
+vi.mock("../src/utils/fetch", async (importActual) => ({
+    ...(await importActual<typeof import("../src/utils/fetch")>()),
     fetch: mockFetch,
     baseFetch: mockFetch,
 }));
 
 describe("RestExecutorProvider", () => {
-    beforeEach(() => mockFetch.mockReset());
+    beforeEach(() => {
+        mockFetch.mockReset();
+    });
 
     it("fetches info without a query and ignores stale covenant fields", async () => {
         const info = makeInfo();
@@ -105,6 +108,23 @@ describe("RestExecutorProvider", () => {
         await expect(
             new RestExecutorProvider("https://executor.test").registerDelegation("tpl-1", {}),
         ).rejects.toThrow("template disabled");
+    });
+
+    it("rejects a registration whose signal aborts", async () => {
+        mockFetch.mockImplementation(
+            (_url: string, init: RequestInit) =>
+                new Promise((_, reject) =>
+                    init.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+                ),
+        );
+        const controller = new AbortController();
+        const pending = new RestExecutorProvider("https://executor.test").registerDelegation(
+            "tpl-1",
+            {},
+            { signal: controller.signal },
+        );
+        controller.abort(new Error("timed out"));
+        await expect(pending).rejects.toThrow("timed out");
     });
 
     it("parses a delegation's coins, rejecting an unknown status, bad variables and amounts", async () => {
@@ -233,7 +253,7 @@ describe("ExecutorManagerImpl.register", () => {
         expect(provider.registerDelegation).toHaveBeenCalledWith(
             BOARDING_ID,
             vectors.boarding.variables,
-            { expiresAt: 9 },
+            { expiresAt: 9, signal: expect.any(AbortSignal) },
         );
         // the wallet watches the boarding contract and the renewal contract it boards to
         expect(contractManager.createContract.mock.calls.map(([c]) => c.script)).toEqual([
@@ -265,7 +285,7 @@ describe("ExecutorManagerImpl.register", () => {
         expect(provider.registerDelegation).toHaveBeenCalledWith(
             BOARDING_ID,
             vectors.boarding.variables,
-            { expiresAt: undefined },
+            { expiresAt: undefined, signal: expect.any(AbortSignal) },
         );
         expect(wallet.getOperatorInfo).toHaveBeenCalledWith({ requireLive: true });
         // resolved, so watchExecutorContracts restores the watch without the operator

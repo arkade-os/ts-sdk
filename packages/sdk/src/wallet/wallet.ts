@@ -3013,7 +3013,8 @@ export class Wallet
      * addresses stay reachable through {@link getBoardingUtxos}.
      *
      * While an Executor boarding watch is live, the new key gets a watch of its own, and this
-     * returns its delegated address; if that registration fails, the new key's own address.
+     * returns its delegated address; if that registration fails or times out, the new key's own
+     * address. It waits for the registration, unlike the rotation after a settle.
      *
      * @deprecated Use {@link getNewAddresses} — it mints any combination of
      * address types at one shared index, and reports the contract row behind
@@ -3023,14 +3024,34 @@ export class Wallet
      * method's behaviour, keep calling this method.
      */
     async getNewBoardingAddress(): Promise<string> {
-        // Persisted before the swap, so a throw leaves the previous (watched) address displayed.
-        const [minted] = await this.allocateAddresses(["boarding"], false, true);
-        if (!minted?.allocated) return this.getBoardingAddress();
-        if (minted.type === "boarding") {
-            await this.extendBoardingWatch(minted.signingDescriptor);
-            this.setBoardingTapscriptForRotation(minted.tapscript);
-        }
+        await this.onBoardChain(() => this.rotateBoarding());
         return this.getBoardingAddress();
+    }
+
+    /**
+     * Allocate the next boarding key, register its Executor watch, then swap the display.
+     * Persisted before the swap, so a throw leaves the previous (watched) address displayed. The
+     * row is tagged at allocation: a restart before the swap boots on the new key's own address,
+     * as after a failed registration.
+     */
+    private async rotateBoarding(): Promise<void> {
+        const [minted] = await this.allocateAddresses(["boarding"], false, true);
+        if (minted?.type !== "boarding" || !minted.allocated) return;
+        await this.extendBoardingWatch(minted.signingDescriptor);
+        this.setBoardingTapscriptForRotation(minted.tapscript);
+    }
+
+    /**
+     * Runs `task` after the rotations queued before it; its failure reaches only its caller. Never
+     * call {@link getNewBoardingAddress} from a task: it would wait on itself.
+     */
+    private onBoardChain<T>(task: () => Promise<T>): Promise<T> {
+        const run = this._executorBoardChain.then(task);
+        this._executorBoardChain = run.then(
+            () => undefined,
+            () => undefined,
+        );
+        return run;
     }
 
     /**
@@ -3086,13 +3107,16 @@ export class Wallet
         await this.rotateForExecutorCoinAtBoot();
     }
 
-    /** Serialized, and re-checked when it runs: the displayed key may have moved since. */
+    /**
+     * Re-checked when it runs: an earlier rotation may have moved the displayed key, and the
+     * deposit's own rotation must then not burn another index.
+     */
     private queueExecutorBoardRotation(owner: string | undefined): void {
-        this._executorBoardChain = this._executorBoardChain.then(async () => {
+        void this.onBoardChain(async () => {
             const displayed = hex.encode(this._boardingTapscript.options.pubKey);
             if (owner?.slice(2).toLowerCase() !== displayed) return;
             try {
-                await this.getNewBoardingAddress();
+                await this.rotateBoarding();
             } catch (e) {
                 console.warn("Failed to rotate boarding address after Executor board", e);
             }
@@ -4686,6 +4710,10 @@ export class Wallet
      * Boarding has no on-chain receive event (the watcher sees only the L2 indexer), so a settle
      * consuming a boarding UTXO (a non-VTXO, non-arknote input) is the trigger. No-op without a
      * descriptor provider. Best-effort: the settle has committed, so failures are only logged.
+     *
+     * With an Executor the rotation runs in the background, as its watch is a network round the
+     * settle (and the tx lock it holds) must not wait on. The old key's delegated address stays
+     * displayed, still watched, until the new watch exists: the brief reuse is intended.
      */
     private async maybeRotateBoardingAfterBoard(inputs: SettleParams["inputs"]): Promise<void> {
         if (!this._descriptorProvider) return;
@@ -4693,11 +4721,14 @@ export class Wallet
             (input) => typeof input !== "string" && !isVirtualCoin(input),
         );
         if (!consumedBoarding) return;
-        try {
-            await this.getNewBoardingAddress();
-        } catch (e) {
-            console.warn("Failed to rotate boarding address after board", e);
-        }
+        const rotation = this.onBoardChain(async () => {
+            try {
+                await this.rotateBoarding();
+            } catch (e) {
+                console.warn("Failed to rotate boarding address after board", e);
+            }
+        });
+        if (!this._executorManager) await rotation;
     }
 
     private async handleSettlementFinalizationEvent(

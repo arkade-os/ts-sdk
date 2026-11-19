@@ -67,7 +67,7 @@ export interface ExecutorProvider {
     registerDelegation(
         templateId: string,
         variables: Record<string, string>,
-        options?: { expiresAt?: number },
+        options?: { expiresAt?: number; signal?: AbortSignal },
     ): Promise<ExecutorDelegation>;
     getDelegation(address: string): Promise<ExecutorDelegationDetails>;
 }
@@ -108,7 +108,7 @@ export class RestExecutorProvider implements ExecutorProvider {
     async registerDelegation(
         templateId: string,
         variables: Record<string, string>,
-        options: { expiresAt?: number } = {},
+        options: { expiresAt?: number; signal?: AbortSignal } = {},
     ): Promise<ExecutorDelegation> {
         const body: Record<string, unknown> = { templateId, variables };
         if (options.expiresAt !== undefined) {
@@ -119,6 +119,7 @@ export class RestExecutorProvider implements ExecutorProvider {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
+            signal: options.signal,
         });
         if (response.status === 429) {
             rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
