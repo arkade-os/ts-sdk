@@ -1,12 +1,16 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
+import { generateMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    MnemonicIdentity,
     RestArkProvider,
     RestExecutorProvider,
     SingleKey,
+    type Identity,
     Wallet,
     timelockToSequence,
     watchExecutorContracts,
@@ -30,9 +34,13 @@ if (!reachable) {
     console.warn(`Executor e2e skipped: no Executor at ${EXECUTOR_URL}`);
 }
 
-const createWallet = (identity = SingleKey.fromRandomBytes()) =>
+const createWallet = (
+    identity: Identity = SingleKey.fromRandomBytes(),
+    extra: { walletMode?: "hd" } = {},
+) =>
     Wallet.create({
         identity,
+        ...extra,
         arkProvider: new RestArkProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider(ESPLORA_URL, {
             forcePolling: true,
@@ -137,6 +145,76 @@ describe.skipIf(!reachable).sequential("Executor non-interactive boarding", () =
         await waitFor(async () => (await restored.getBalance()).available === 19_000, {
             timeout: 30_000,
         });
+    });
+});
+
+// An HD wallet rotates its boarding key once a deposit is boarded, and each key needs a watch of
+// its own: what only the daemon, arkd and the indexer can confirm is that the daemon derives the
+// rotated key's address, boards there, accepts the child key's renewal and is found by restore().
+describe.skipIf(!reachable).sequential("Executor boarding on an HD wallet", () => {
+    const mnemonic = generateMnemonic(wordlist);
+    const hd = () =>
+        createWallet(MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: false }), {
+            walletMode: "hd",
+        });
+    const daemon = new RestExecutorProvider(EXECUTOR_URL);
+    let alice: Wallet;
+    let first = "";
+    let second = "";
+
+    const atExecutor = async (wallet: Wallet) => {
+        const cm = await wallet.getContractManager();
+        const scripts = new Set(
+            (await cm.getContracts({ type: ["executor"] })).map((c) => c.script),
+        );
+        return (await wallet.getVtxos()).filter((v) => !v.isSpent && scripts.has(v.script));
+    };
+
+    beforeAll(async () => {
+        alice = await hd();
+    }, 60_000);
+
+    it("rotates to a key the daemon watches once it boards a deposit", {
+        timeout: 240_000,
+    }, async () => {
+        first = (await (await alice.getExecutorManager())!.registerBoarding(options)).address;
+        faucetOnchain(first, 10_000);
+        await waitFor(async () => (await alice.getBalance()).available === 10_000, {
+            timeout: 170_000,
+            interval: 2_000,
+        });
+        // the rotation registers the new key's watch before it swaps the displayed address
+        await waitFor(async () => (await alice.getBoardingAddress()) !== first, {
+            timeout: 60_000,
+        });
+        second = await alice.getBoardingAddress();
+        expect((await daemon.getDelegation(second)).delegation.inputs[0].address).toBe(second);
+    });
+
+    it("boards a deposit at the rotated address", { timeout: 180_000 }, async () => {
+        faucetOnchain(second, 7_000);
+        await waitFor(async () => (await alice.getBalance()).available === 17_000, {
+            timeout: 170_000,
+            interval: 2_000,
+        });
+    });
+
+    it("finds the coins of both keys from the seed, after registering again", {
+        timeout: 120_000,
+    }, async () => {
+        const restored = await hd();
+        await (await restored.getExecutorManager())!.registerBoarding(options);
+        await restored.restore();
+        await waitFor(async () => (await restored.getBalance()).available === 17_000, {
+            timeout: 60_000,
+        });
+        // each coin sits at its own key's renewal contract
+        expect(new Set((await atExecutor(restored)).map((v) => v.script)).size).toBe(2);
+
+        // renewing spends both through the keys' own descriptors
+        await (await restored.getVtxoManager()).renewVtxos();
+        await waitFor(async () => (await atExecutor(restored)).length === 0, { timeout: 60_000 });
+        expect((await restored.getBalance()).available).toBe(17_000);
     });
 });
 
