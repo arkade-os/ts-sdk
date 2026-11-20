@@ -3095,7 +3095,8 @@ export class Wallet
                 {
                     expiresAt:
                         typeof expiresAt === "number" && expiresAt > 0 ? expiresAt : undefined,
-                    // the key the watch was registered under, pinned or approved
+                    // The watch's own key, checked against the pin or approved when first
+                    // registered; registerAt refuses an Executor that no longer holds it.
                     emulatorPubkey: hex.encode(p.emulatorPubKey),
                 },
             );
@@ -3121,7 +3122,7 @@ export class Wallet
                         typeof renewalExpiresAt === "number" && renewalExpiresAt > 0
                             ? renewalExpiresAt
                             : undefined,
-                    // the key the renewal watch was registered under, pinned or approved
+                    // As for boarding: the renewal watch's own, checked key.
                     emulatorPubkey: hex.encode(renewalParams.emulatorPubKey),
                 },
             );

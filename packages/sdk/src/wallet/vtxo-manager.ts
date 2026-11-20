@@ -1726,6 +1726,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 const expiresAt = vtxo.expiresAt?.getTime();
                 if (expiresAt === undefined) return true;
                 const remaining = expiresAt - now.timestamp.getTime();
+                // Half the window, in ms. delegatedContracts parsed the params: never NaN.
                 return remaining <= Number(watch.contract.params.renewalWindow) * 500;
             });
         } catch (e) {

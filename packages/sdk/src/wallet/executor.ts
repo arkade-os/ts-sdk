@@ -595,7 +595,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 {
                     expiresAt:
                         typeof expiresAt === "number" && expiresAt > 0 ? expiresAt : undefined,
-                    // the key the watch was registered under, pinned or approved
+                    // The watch's own key, checked against the pin or approved when first
+                    // registered; registerAt refuses an Executor that no longer holds it.
                     emulatorPubkey: hex.encode(p.emulatorPubKey),
                 },
                 template,
@@ -747,7 +748,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
         });
         // The scripts derive from the owner, the params and the operator and emulator keys, not the
         // cosigner key: a matching address proves those and commits to the same tapscripts, and
-        // says nothing of the cosigner key. Checked before anything is persisted.
+        // says nothing of the cosigner key. That is safe while the cosigner key is in no leaf; a
+        // template that gives it one must check it here. Checked before anything is persisted.
         const [input] = delegation.inputs;
         if (
             delegation.inputs.length !== 1 ||

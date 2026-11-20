@@ -29,6 +29,7 @@ export interface ExecutorDelegation {
     status: "active" | "cancelled" | "expired" | "done";
     templateId: string;
     variables: Record<string, string>;
+    /** Unix seconds, as the service's `service.openapi.json` defines it. */
     expiresAt?: number;
 }
 
