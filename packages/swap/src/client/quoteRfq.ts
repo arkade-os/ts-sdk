@@ -42,7 +42,7 @@ import {
     type OnchainNetwork,
 } from "../onchainHtlc";
 import { claimFeeSats } from "../payment/onchainSwap";
-import { ASSET_SWAP_V4 } from "../rfq-contract";
+import { ASSET_SWAP_DIRECTED } from "../rfq-contract";
 import {
     arkadeSwapRequest,
     deriveLightningReceive,
@@ -413,7 +413,7 @@ const quoteArkadeAsset = async (
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);
     const taker =
-        contractVersion === ASSET_SWAP_V4
+        contractVersion === ASSET_SWAP_DIRECTED
             ? verifyTaker({
                   attested: input.transport.attestedResponder,
                   solverPubkey: parsed.solver,

@@ -96,8 +96,7 @@ export {
     ASSET_SWAP_CONTRACT_VERSIONS,
     ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_V2,
-    ASSET_SWAP_V3,
-    ASSET_SWAP_V4,
+    ASSET_SWAP_DIRECTED,
     type AssetSwapContractVersion,
     assetSwapContractVersion,
 } from "./program";

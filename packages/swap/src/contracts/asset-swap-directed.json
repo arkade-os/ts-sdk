@@ -21,6 +21,10 @@
     {
       "name": "user",
       "type": "pubkey"
+    },
+    {
+      "name": "taker",
+      "type": "pubkey"
     }
   ],
   "functions": [
@@ -50,6 +54,11 @@
           "name": "fulfill",
           "witness": [
             {
+              "name": "takerSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
               "name": "serverSig",
               "type": "signature",
               "encoding": "schnorr-64",
@@ -63,6 +72,8 @@
             }
           ],
           "asm": [
+            "<taker>",
+            "OP_CHECKSIGVERIFY",
             "<SERVER_KEY>",
             "OP_CHECKSIGVERIFY",
             "<EMULATOR_KEY:fulfill>",
@@ -100,9 +111,9 @@
     }
   ],
   "source": {
-    "entry": "asset-swap.ark",
+    "entry": "asset-swap-directed.ark",
     "files": {
-      "asset-swap.ark": "pragma arkade ^0.1.0;\n\n// The output at this input's index pays `receiver` at least `amount` of the asset.\n// Coordination of who funds it lives outside the contract.\ncontract AssetSwap(\n    pubkey receiver,\n    int amount,\n    bytes32 assetTxid,\n    int assetGroupIndex,\n    pubkey user\n) {\n    function fulfill() {\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].assets.lookup(assetTxid, assetGroupIndex) >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
+      "asset-swap-directed.ark": "pragma arkade ^0.1.0;\n\n// The output at this input's index pays `receiver` at least `amount` of the asset,\n// and only `taker` can make that spend.\ncontract AssetSwap(\n    pubkey receiver,\n    int amount,\n    bytes32 assetTxid,\n    int assetGroupIndex,\n    pubkey user,\n    pubkey taker\n) {\n    function fulfill() {\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].assets.lookup(assetTxid, assetGroupIndex) >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    // Replaces the synthesized collaborative leaf: the quoting solver is a third\n    // conjunct, so an observer who reads the deposit cannot complete it.\n    function fulfill(signature takerSig, signature serverSig, signature emulatorSig) tapscript {\n        require(checkMultisig([taker, server, emulator], [takerSig, serverSig, emulatorSig], 3));\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
     }
   },
   "compiler": {
@@ -112,6 +123,6 @@
       "optimize": true
     }
   },
-  "updatedAt": "2026-11-02T17:43:42.615113722+00:00",
-  "fingerprint": "sha256:e2b80add6237f6c7e2c69a96ae46d55abe6de5f71c3718106f4d5b22ac9e6d0a"
+  "updatedAt": "2026-11-19T20:57:50.605738400+00:00",
+  "fingerprint": "sha256:d830de32cd1d286a0a1fac698ff114a6c8ef5338a69f9f813717d1038ab2fb4a"
 }

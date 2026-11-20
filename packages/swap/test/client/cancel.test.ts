@@ -427,6 +427,27 @@ describe("cancel() — the pinned operator key", () => {
     });
 });
 
+describe("cancel() — a deposit funded on the removed asset-swap-v3", () => {
+    // OFFER's terms as a 0.1.8 client stored them on v3, which this build no longer compiles.
+    const v3 = {
+        offerHex:
+            "0100225120ef465a053b7f0ad8e1c6f7099cccbf0f3853274d6949775e6d7c7d37a98971860200080000000000001388030022f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1050022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7070020a8397a935f0dfceba6ba9618f6451ef4d80637abf4e6af2669fbc9de6a8fd2ac08002056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+        swapAddress:
+            "tark1qpf3lesxsy69q0f8yvfnyf7gv7kglfkg83fhaxjyc0zmm0wtrl3n0m6xtgznklc2mrsudacfnnxt7rec2vn5662fwa0x6lrax75cjuvxqqnp78",
+        swapPkScript: "5120ef465a053b7f0ad8e1c6f7099cccbf0f3853274d6949775e6d7c7d37a9897186",
+    };
+
+    it("still lists it, and names the mismatch before any broadcast", async () => {
+        const h = await build({ record: record(v3) });
+        expect(h.drive.swap("o1")?.outcome).toBe("open");
+
+        await expect(h.cancel()).rejects.toBeInstanceOf(OfferCovenantMismatchError);
+        expect(state.sends).toBe(0);
+        expect((await h.stored()).status).toBe("pending");
+        await h.drive.dispose();
+    });
+});
+
 describe("the drive cancels a directed deposit its quote let lapse", () => {
     const { swapPkScript: _, ...terms } = OFFER;
     const taker = key(30);
@@ -498,7 +519,7 @@ describe("the drive cancels a directed deposit its quote let lapse", () => {
         const h = await drive([
             lapsed({ id: "inside", expiresAt: NOW - 59 }),
             offerRecord({
-                id: "v3",
+                id: "undirected",
                 offerHex: OFFER_HEX,
                 fundingTxid: "cd".repeat(32),
                 expiresAt: 0,
@@ -508,7 +529,8 @@ describe("the drive cancels a directed deposit its quote let lapse", () => {
         await h.swapDrive.start();
         await h.swapDrive.idle();
         expect(state.sends).toBe(0);
-        for (const id of ["inside", "v3", "restored"]) expect(await h.status(id)).toBe("pending");
+        for (const id of ["inside", "undirected", "restored"])
+            expect(await h.status(id)).toBe("pending");
         await h.swapDrive.dispose();
     });
 

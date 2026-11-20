@@ -15,7 +15,7 @@ import {
 import { migrateV0OfferRows } from "../src/migrateOfferRows";
 import {
     encodeOffer,
-    legacySwapPrograms,
+    swapPrograms,
     restoreOfferCoverage,
     withExitClosure,
     type Offer,
@@ -121,7 +121,7 @@ const makeOffer = (wantAsset: boolean, exitDelay?: RelativeTimelock): Offer => {
         emulatorKey: binding.emulatorPubkey,
     };
     const program = withExitClosure(
-        wantAsset ? legacySwapPrograms.wantAsset : legacySwapPrograms.wantBtc,
+        wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
         exitDelay,
     );
     return {
