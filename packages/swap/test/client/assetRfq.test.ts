@@ -14,6 +14,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
+import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { createSwapClient } from "../../src/client/client";
 import {
     collectSwapRecords,
@@ -68,6 +69,12 @@ const BTC = "arkade:regtest/slip44:1";
 
 /** The card's own formula at the fixture price: 10_000 sats, less 30bps. */
 const CARD_PAYOUT = 997n;
+
+/** Canonical, because the plan recognises a carrier-riding leg only by its CAIP-19 `/asset:` id. */
+const carrierChargingCard: DiscoveredMarket = {
+    ...canonicalAssetCard,
+    charges_delivered_carrier: true,
+};
 
 const setup = async (
     over: {
@@ -377,6 +384,39 @@ describe("quote() on a negotiated asset market", () => {
         expect(fromFeed.market.backend).toBe("feed");
         expect(fromFeed.take.amount).toBe(CARD_PAYOUT);
     });
+
+    it("quotes a BTC deposit on a card that charges for the delivered carrier", async () => {
+        const { client, transport } = await setup({ snapshot: [carrierChargingCard] });
+        const quote = await client.quote(buy());
+
+        expect(quote.market.backend).toBe("rfq");
+        expect(quote.give).toEqual({ asset: BTC, amount: 10_000n });
+        expect(quote.take).toEqual({ asset: USD, amount: CARD_PAYOUT });
+        expect(transport.sent[0]).toMatchObject({ pair: ASSET_BUY_PAIR });
+    });
+
+    it("quotes a BTC deposit the same with the carrier charge absent", async () => {
+        const charging = await setup({ snapshot: [carrierChargingCard] });
+        const absent = await setup({ snapshot: [canonicalAssetCard] });
+
+        const flagged = await charging.client.quote(buy());
+        const plain = await absent.client.quote(buy());
+
+        expect(flagged.give).toEqual(plain.give);
+        expect(flagged.take).toEqual(plain.take);
+        expect(flagged.fee).toEqual(plain.fee);
+    });
+
+    it("prices the reverse direction on a carrier-charging card unchanged", async () => {
+        const charging = await setup({ snapshot: [carrierChargingCard] });
+        const absent = await setup({ snapshot: [canonicalAssetCard] });
+
+        const flagged = await charging.client.quote(sell());
+        const plain = await absent.client.quote(sell());
+
+        expect(flagged.take).toEqual(plain.take);
+        expect(flagged.fee).toEqual(plain.fee);
+    });
 });
 
 describe("quote() refuses before it discloses anything", () => {
@@ -607,6 +647,19 @@ describe("accept() on a negotiated asset market", () => {
 
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(stored.carrierSats).toBeUndefined();
+    });
+
+    it("records no carrier for a BTC deposit the card charges a delivered carrier on", async () => {
+        // What the plan prices with is not what the trader funds: `accept` would send it as sats.
+        const wallet = await acceptWallet();
+        const { client, repository } = await setup({ wallet, snapshot: [carrierChargingCard] });
+        const quote = await client.quote(buy());
+        await client.accept(quote);
+
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.carrierSats).toBeUndefined();
+        expect(wallet.sent[0]).toMatchObject({ amount: 10_000 });
+        expect(wallet.sent[0]?.assets).toBeUndefined();
     });
 
     it("settles one exchange() through one RFQ round trip", async () => {

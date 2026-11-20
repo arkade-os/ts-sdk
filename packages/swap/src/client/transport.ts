@@ -68,7 +68,7 @@ export const createNostrTransportFactory = (
 
 /**
  * The default: the card's own Nostr rendezvous. It attests the discovery key because
- * `nostrRfqTransport` subscribes with `authors: [solverPubkey]` and decrypts against that key — any
- * other reply is filtered by the relay or fails to decrypt.
+ * `nostrRfqTransport` drops any reply that is not a valid event signed by that key, whatever pool
+ * delivered it.
  */
 export const nostrTransportFactory: RfqTransportFactory = createNostrTransportFactory();
