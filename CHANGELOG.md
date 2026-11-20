@@ -163,6 +163,164 @@ style and have not been backfilled.
 
 ### Features
 
+- **Non-interactive boarding through the Executor.** `executorProvider` on
+  `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
+  worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
+  follow Executor watches. A `Wallet`, and the service-worker wallet, also get a
+  `getExecutorManager()`; a `ReadonlyWallet` has none and only follows the
+  watches a `Wallet` registered. Everything about the Executor is opt-in: a
+  wallet without one behaves as before. `registerBoarding({ renewalWindow, maxFee })`
+  registers the wallet's key under the Executor's `boarding` template, exit
+  delays defaulting to the operator's; the manager refuses an Executor on
+  another network or operator, or one whose single onchain input derives a
+  different address, compared without regard to case (it needs Executor
+  `v0.0.4` or later), and a
+  `renewalWindow` as long as the operator's VTXO expiry, under which every
+  renewed coin would be due again at once and pay `maxFee` each batch. It also
+  refuses an emulator key other than the network's pinned one, as
+  `Arkade.connect` does: with an emulator key of its own, the Executor could
+  sign the covenant leaf itself and move the coins with the operator alone. A
+  private emulator, or a network with none pinned, is trusted by passing
+  `emulatorPubkey` in the registration options. While the watch is active,
+  `getBoardingAddress()` answers the delegated boarding address: the Executor
+  boards every deposit there into the wallet's renewal contract while the wallet
+  is offline. A boarded coin is the wallet's own: it counts, spends and renews
+  like any other, migrates off a deprecated operator signer, and incoming-funds
+  subscribers hear of it. The VtxoManager leaves its coins to the Executor
+  while the renewal watch is live (see the next entry). A restored wallet finds
+  it by registering again with
+  the same parameters, which returns the existing watch, but only while the
+  operator's exit delays and the Executor's keys are unchanged: the address
+  derives from them. The registration returns its resolved `params`, which with
+  its `keys` restore the watch through `watchExecutorContracts` regardless.
+  `getAddress()` does not change. A watch registered without `expiresAt` has no
+  deadline of its own, but the Executor (`v0.0.4`) expires one that never
+  receives a coin 168 hours after its creation, without reporting it, and
+  registering again does not extend an active one. The wallet therefore asks the
+  Executor about its live watches at most once a day, reloads included: every
+  wallet with an Executor when it starts, and one whose VtxoManager polls also
+  while it runs. With `settlementConfig: false` a session that stays open
+  refreshes only at its next start. A wallet with no live watch asks neither
+  the Executor nor the operator, and a refresh the Executor could not answer is
+  retried on the next start. It registers an expired one again, which revives the same
+  address, and stops showing one it cannot revive, so it boards those deposits
+  itself. A revived watch keeps its registration time, so reviving an older
+  one does not move the boarding address back to its params. A wallet offline for longer than that after its last rotation can
+  still show an address nobody watches until it is back online. A subscription
+  started before
+  the registration watches the delegated address too:
+  `ContractManagerConfig.onOnchainContractCreated` fires when a new
+  onchain-scoped contract is saved, and the wallet re-subscribes on it. A
+  callback that throws is logged and does not fail `createContract`. A new
+  Executor boarding watch's deposits are stored, and its address watched, as
+  soon as `createContract` or `createContracts` returns, best-effort like the
+  indexer hydration, rather than at the next `syncOnchain`.
+
+- **Executor renewal delegation: `registerRenewal`, and a VtxoManager that
+  defers to a live watch.** The manager gains `registerRenewal({ renewalWindow,
+  maxFee })`. Params can change between registrations, for it and for
+  `registerBoarding`: new params register a new watch beside the old one, which
+  stays live and keeps covering the coins already at its contract. Each watch
+  row records when it was last registered (`delegationRegisteredAt`), and the
+  boarding address follows the most recent, so an app that rolls back a release
+  gets its earlier address back. A boarding watch pays into the renewal contract
+  of its own params, so when the key already has a live renewal watch,
+  `registerBoarding` registers renewal under the new params too. That is
+  best-effort: a failure is logged and never undoes the boarding watch, and
+  `registerRenewal` retries it. `registerRenewal` registers the displayed boarding
+  key under the params it is given, first, and throws at once if that fails. It
+  then registers each live boarding watch under the current operator, under
+  that watch's own params, so the deposits an HD wallet boarded at earlier
+  rotated keys, and at earlier params, are covered too. A watch under another
+  emulator key than the Executor's, or with a window no longer shorter than the
+  operator's VTXO expiry, cannot be registered: it is skipped with a warning,
+  and the wallet renews its coins itself. Like boarding it is idempotent, so
+  apps call it at startup. A call the stored watches already cover (each key's
+  newest live watch, under the same params) asks the Executor nothing, and its
+  result has no `delegation`; otherwise each key costs one Executor call. It tries all of
+  the others before throwing and names the keys that failed, so a retry covers
+  the rest. A boarding rotation extends the new key with both watches while a
+  live renewal watch exists. While a renewal watch is live, the VtxoManager
+  leaves the coins at its renewal contract to the Executor, which renews them in
+  place while the wallet is offline. It renews them itself again — the fallback — inside half the
+  `renewalWindow` before expiry, and always for a recoverable, subdust or
+  `maxFee + dust`-or-less coin, which the Executor cannot renew. `renewVtxos()`
+  skips the delegated coins too, including a manual call; `settle()` still moves
+  them when the user asks. A send's change returns to the live renewal contract
+  of its first delegated input, so it stays covered. The wallet's own renewals,
+  from `renewVtxos()` and the periodic settle (with the deposits that settle
+  boards), pay into the newest live renewal contract under the current
+  operator: a coin received at `getAddress()` is covered from its first renewal
+  on, and until then the wallet renews it itself. On an HD wallet a contract
+  the displayed boarding key does not own comes first, since a coin at that
+  key's contract rotates the boarding address. Both stay at the wallet's own
+  address for `maxFee + dust` or less, when a renewed coin carries assets, and
+  when the watches cannot be read. A renewal that spends a coin at a live
+  renewal contract also pays to the wallet's own address, the fallback
+  included: the Executor missed that coin, and paying it back there would only
+  repeat the miss. Under an Executor that keeps failing, a coin therefore
+  alternates: one fallback renewal out, one ordinary renewal back in, so half
+  its renewals are late where every one would have been. A wallet with no
+  Executor watches pays one repository read for all this, in a send and in a
+  renewal pass, and makes no operator or identity-key lookup.
+
+- **Deposits waiting for the Executor are the wallet's boarding coins.** A
+  deposit at a delegated boarding address shows in `getBoardingUtxos`,
+  `getStoredBoardingUtxos`, `getBoardingAddresses` and the live and stored
+  boarding balances before the Executor boards it: the boarding contract is
+  `onchain`-scoped, so the onchain sync stores its coins. While its watch is
+  active and unexpired, `settle()`, the periodic settle and `sendOnchain`
+  without named inputs leave it to the Executor; once the watch ends, the wallet
+  boards or cosigns it itself through the owner's forfeit leaf. Either way, one
+  still unboarded near its cosign cut-off is renewed by the automatic cosign
+  sweep, and the boarding sweep exits it after its CSV; both send to the
+  wallet's own boarding address, never back to the delegated one.
+
+- **An HD wallet gives each boarding key its own Executor watch.** A watch
+  derives from its owner key, so one registered under the identity key would
+  have kept one delegated boarding address for every deposit, linking them
+  all onchain. `registerBoarding` now registers the key of the displayed
+  boarding address. When the address rotates, through `getNewBoardingAddress()`,
+  a settle that boards a deposit, or a coin the Executor boards into the
+  displayed key's renewal contract, the wallet registers the newest live
+  watch's parameters again for the new key. After a settle that happens in the
+  background, so the settle never waits on the Executor or holds the
+  transaction lock for it; until the new watch is registered the old delegated
+  address stays displayed, still watched, so a deposit there is still boarded.
+  `getNewBoardingAddress()` waits for the registration, so it now depends on
+  the network. A registration request stops after 30 seconds
+  (`ExecutorProvider.registerDelegation` takes an optional `AbortSignal`);
+  repeating it is safe, as the service returns the existing watch. A coin
+  already there when the wallet starts, boarded while it was offline, raises
+  no event, and a lazy start writes it only during its background boot, so
+  once that boot has finished the wallet looks for one, spent or not, and
+  rotates too. If a registration fails or times out, `getBoardingAddress()` and
+  `getNewBoardingAddress()` show the new key's own address, which the wallet
+  boards once online, rather than reuse the old one. Rows of a rotated key
+  carry its `signingDescriptor`, and the signer router routes `executor` inputs
+  by it. `restore()` scans HD indices for the delegations of the persisted
+  Executor contracts, as far as its `gapLimit` of consecutive unused indices
+  reaches, so calling `watchExecutorContracts` before it also finds the watches
+  of rotated keys. A static wallet keeps its one watch.
+  `getNewAddresses({ types: ["boarding"] })` registers no watch: its side
+  address is the wallet's own, and a deposit there waits for the wallet's own
+  settle.
+
+- **The Executor's delegated contracts are a built-in contract type.**
+  `ExecutorContractHandler` (`type: "executor"`) derives the renewal and
+  boarding contracts of the Executor's default templates from the owner key, the
+  `DelegationParams` and the Executor's keys, so a restored wallet finds its
+  delegated coins without the service. It offers the owner's forfeit and exit
+  paths, never the emulator-enforced leaf the Executor spends with, and counts
+  as generic spending: coins the Executor boards are the wallet's own. The
+  onchain cosign preflight reads its exit delay, so an unrolled delegated coin
+  spends through `sendOnchain` and `cosignOnchainTx`. The bundled templates and
+  their artifacts live under `script/executor/`, in the `template/v1` format the
+  Executor ships from its template/v1 release on: a `proof` type with the
+  schedule under `delegation`. An Executor still on the earlier documents lists
+  other template ids, and `defaultTemplates()` refuses it. `DefaultVtxo.Script`
+  takes extra leaves after forfeit and exit.
+
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,
   completed usage (`completedSolverUsage`) or amount-aware advertised cost, after
@@ -404,6 +562,8 @@ style and have not been backfilled.
   backs off on; on `ExpoIndexerProvider` the stream throws the `HttpResponseError`
   itself, now reading `Unexpected status when fetching SSE stream: … (<status>)`.
   A body that fails to cancel no longer masks the error in `getFeeRate`.
+
+- **Wallets restored without a delegator now find coins held at Arkade's retired delegator contracts.** A `delegate` contract commits to the delegator's key, and discovery derived those scripts only from a configured, reachable `delegateProvider`, so once the Executor replaced the delegator, a restore or a new device missed every coin still sitting at one. The SDK now pins Arkade's delegator keys per network (bitcoin, mutinynet) and adds them to the boot baseline, the `restore()` scan and the HD look-ahead band whenever the wallet's operator is Arkade's (its current or a deprecated signer matches) and the wallet has an Executor (`executorProvider` or `executorUrl`). Discovery only: no receive address is ever minted on a retired key, and wallets on any other operator, or without an Executor, see no change. The coins spend through their forfeit leaf, so no delegator is needed to send or renew them. Apps passing Arkade's `delegateUrl` only to keep these coins visible can drop it once they configure the Executor.
 
 - **A malformed explorer history no longer leaves the address watch's baseline as an unhandled rejection.** The baseline guarded the history fetch but not the loop that keys its entries, so an entry without `status` threw `Cannot read properties of undefined (reading 'block_time')` out of a floating promise. Seeding now sits inside the same failure handling as the fetch, so a bad response takes the existing "first poll pass establishes the baseline" fallback.
 
@@ -1793,6 +1953,12 @@ style and have not been backfilled.
   received more than one deposit. Output is unchanged.
 
 ### Internal
+
+- **Executor contracts reuse the SDK compiler and spending paths.** The
+  Executor's duplicate artifact assembler and forfeit/exit selection could
+  drift from the core implementation. Template bindings now feed
+  `programFromArtifact` and `ArkadeProgramScript`, and the existing path
+  helpers share the Executor CSV lookup with onchain preflight.
 
 - **Dev-tooling dependency overrides raised past every high and critical
   advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in

@@ -45,9 +45,18 @@ describe("VtxoManager and a concurrent spend", () => {
                     return () => {};
                 }),
                 refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+                getContracts: vi.fn().mockResolvedValue([]),
             }),
             settle: vi.fn().mockRejectedValue(reserved()),
             dustAmount: 1000n,
+            identity: {
+                xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32).fill(1)),
+                compressedPublicKey: vi.fn().mockResolvedValue(new Uint8Array(33).fill(2)),
+            },
+            getOperatorInfo: vi.fn().mockResolvedValue({
+                network: "regtest",
+                signerPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            }),
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} }, vtxoMaxAmount: -1n }),
             },

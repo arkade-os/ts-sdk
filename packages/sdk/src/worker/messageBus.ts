@@ -5,6 +5,7 @@ import { OperatorProvider, RestOperatorProvider } from "../providers/ark";
 import { assertTimerMs } from "../utils/time";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";
+import { RestExecutorProvider } from "../providers/executor";
 import type { OnchainProvider } from "../providers/onchain";
 import type { NetworkName } from "../networks";
 import {
@@ -181,6 +182,7 @@ type Initialize = {
             publicKey?: string;
         };
         delegateUrl?: string;
+        executorUrl?: string;
         settlementConfig?: SettlementConfig | false;
         /** @see WalletConfig.concurrentSpending */
         concurrentSpending?: boolean;
@@ -553,6 +555,9 @@ export class MessageBus {
             ? new RestDelegateProvider(config.delegateUrl)
             : undefined;
         const indexerProvider = new RestIndexerProvider(config.arkServer.url);
+        const executorProvider = config.executorUrl
+            ? new RestExecutorProvider(config.executorUrl)
+            : undefined;
 
         const serialized = normalizeSerializedIdentity(config.wallet);
 
@@ -582,6 +587,7 @@ export class MessageBus {
                     vtxoReservationRepository: this.reservationStore.repository,
                 },
                 delegateProvider,
+                executorProvider,
                 settlementConfig: config.settlementConfig,
                 concurrentSpending: config.concurrentSpending,
                 walletMode: config.walletMode,
@@ -612,6 +618,7 @@ export class MessageBus {
             onchainProvider: this.onchainProvider,
             storage,
             delegateProvider,
+            executorProvider,
             watcherConfig: config.watcherConfig,
         });
         return {
