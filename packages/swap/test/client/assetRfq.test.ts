@@ -241,7 +241,7 @@ describe("quote() on a negotiated asset market", () => {
 
         expect(transport.sent[0]).toMatchObject({ amount: "9007199254740993" });
         expect(quote.give.amount).toBe(huge);
-        expect(quote.take.amount).toBe(898_017_765_697_677n);
+        expect(quote.take.amount).toBe(898_017_765_697_676n);
     });
 
     describe("contract version negotiation", () => {

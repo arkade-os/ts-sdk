@@ -4,7 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertReleaseDependencies } from "./release-dependencies.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -675,12 +674,6 @@ function dryRun(args) {
 
 function release(args) {
     const plan = computeTargetVersions(args);
-    const selectedKeys = selectedInDependencyOrder(plan);
-    const swapManifest = JSON.parse(fs.readFileSync(PACKAGE_BY_KEY.swap.pkgJson, "utf8"));
-    assertReleaseDependencies(
-        selectedKeys,
-        swapManifest.dependencies?.["@arkade-os/solver-discovery"],
-    );
     assertReleaseBranch(plan, args.allowAnyBranch);
     summarizePlan({ ...args, plan });
 
@@ -691,6 +684,7 @@ function release(args) {
     console.log("Running unit tests...");
     run("pnpm", ["run", "test:unit"]);
 
+    const selectedKeys = selectedInDependencyOrder(plan);
     const state = {
         selected: selectedKeys,
         originalVersions: Object.fromEntries(selectedKeys.map((k) => [k, plan.get(k).current])),

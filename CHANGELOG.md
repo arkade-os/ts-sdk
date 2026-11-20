@@ -315,6 +315,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap` depends on the published `@arkade-os/solver-discovery`
+  0.4.0.** Its want amount rounds in the solver's favour at both steps: the
+  conversion floors to a whole atomic unit, then the conceded bps share rounds
+  up. One combined division could land a unit above what the solver pays, and
+  the solver refused it. A feed-priced amount can now be one atomic unit lower.
+
 - **Indexer reads return every page.** arkd serves at most 100 rows per page whatever size is requested, while the readers asked for 500 and treated any shorter page as the last one. Wallet syncs, exit-data collection, HD script discovery and the Expo contract poll therefore kept only the first 100 matches per query. Every indexer page walk now follows the server's `next` cursor, ends when the cursor stops advancing, and throws after 1000 pages.
 
 - **Esplora address history includes older transactions.** `getTransactions` read only `/address/:address/txs`, which holds the newest page. It now follows `/txs/chain/:last_seen` for the rest, and keeps the first page when an explorer has no such route. `getRawTransaction` bytes must hash to the requested txid, and `getCoins` validates amounts and output indices.
@@ -1053,14 +1059,6 @@ style and have not been backfilled.
   coin-selection reads no longer fetch a header for every distinct coin height.
   Transaction-history reads still fetch block timestamps where they are needed;
   boarding expiry uses consensus median-time-past.
-
-### Internal
-
-- **Releases refuse swap while its discovery dependency is vendored.**
-  `@arkade-os/swap` depends on a `file:` snapshot of `@arkade-os/solver-discovery`
-  until the routing exports are published. `release.mjs` stops before changing
-  versions or tags when the selection includes swap and that dependency is still
-  a `file:` path.
 
 ### Breaking Changes
 
