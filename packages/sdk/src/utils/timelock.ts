@@ -5,11 +5,12 @@ import type { RelativeTimelock } from "../script/tapscript";
  * Convert RelativeTimelock to BIP68 sequence number.
  */
 export function timelockToSequence(timelock: RelativeTimelock): number {
-    return bip68.encode(
-        timelock.type === "blocks"
-            ? { blocks: Number(timelock.value) }
-            : { seconds: Number(timelock.value) },
-    );
+    const value = Number(timelock.value);
+    // bip68 checks only the maximum; a negative value compiles to another CSV or a failing one.
+    if (!Number.isSafeInteger(value) || value < 0) {
+        throw new Error(`invalid ${timelock.type} timelock ${timelock.value}`);
+    }
+    return bip68.encode(timelock.type === "blocks" ? { blocks: value } : { seconds: value });
 }
 
 /**
