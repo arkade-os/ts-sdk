@@ -176,7 +176,8 @@ style and have not been backfilled.
   Executor about its live watches when it starts and once a day while the
   VtxoManager polls, registers an expired one again, which revives the same
   address, and stops showing one it cannot revive, so it boards those deposits
-  itself. A wallet offline for longer than that after its last rotation can
+  itself. A revived watch keeps its registration time, so reviving an older
+  one does not move the boarding address back to its params. A wallet offline for longer than that after its last rotation can
   still show an address nobody watches until it is back online. A subscription
   started before
   the registration watches the delegated address too:

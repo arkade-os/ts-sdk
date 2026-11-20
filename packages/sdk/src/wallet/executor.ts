@@ -279,12 +279,13 @@ function statusMetadata(
     metadata: Record<string, unknown>,
     status: string,
     expiresAt: number | undefined,
+    registeredAtMs: number = Date.now(),
 ): Record<string, string | number> {
     const { [DELEGATION_EXPIRES_KEY]: _stale, ...rest } = metadata;
     return {
         ...(rest as Record<string, string | number>),
         [DELEGATION_STATUS_KEY]: status,
-        [DELEGATION_REGISTERED_KEY]: Date.now(),
+        [DELEGATION_REGISTERED_KEY]: registeredAtMs,
         ...(expiresAt !== undefined ? { [DELEGATION_EXPIRES_KEY]: expiresAt } : {}),
     };
 }
@@ -536,7 +537,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
      * Register again the live watches the Executor no longer holds. It expires a client delegation
      * that never held a coin after an idle window, and reports no deadline for it: the row stays
      * live, and the wallet keeps advertising an address nobody watches. Registering an expired
-     * watch again revives it at the same address. One that cannot be revived stops being live, and
+     * watch again revives it at the same address, keeping its registration time: only an explicit
+     * registration moves the boarding address. One that cannot be revived stops being live, and
      * the wallet boards its deposits itself. A failing watch leaves the others to be tried.
      *
      * Throws when the Executor or the operator cannot be reached.
@@ -597,12 +599,18 @@ export class ExecutorManagerImpl implements IExecutorManager {
                     emulatorPubkey: hex.encode(p.emulatorPubKey),
                 },
                 template,
+                true,
             );
         } catch (e) {
             // Whatever failed, the service said it no longer holds the watch: stop advertising it.
             const manager = await this.wallet.getContractManager();
             await manager.updateContract(watch.contract.script, {
-                metadata: statusMetadata(watch.contract.metadata ?? {}, status, undefined),
+                metadata: statusMetadata(
+                    watch.contract.metadata ?? {},
+                    status,
+                    undefined,
+                    registeredAt(watch.contract),
+                ),
             });
             throw e;
         }
@@ -689,6 +697,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
         options: DelegationOptions,
         { expiresAt, emulatorPubkey }: RegistrationOptions = {},
         template: ExecutorDefault,
+        /** A refresh keeps the row's registration time, which picks the boarding address. */
+        refresh = false,
     ): Promise<ExecutorWatchRegistration> {
         // Pinned, as in Arkade.connect: holding the emulator key, the Executor could sign the
         // emulator-enforced leaf itself, past its covenant. Matching addresses cannot show it.
@@ -777,6 +787,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                     row.metadata ?? {},
                     delegation.status,
                     delegation.expiresAt,
+                    refresh ? registeredAt(row) : undefined,
                 ),
             });
         }

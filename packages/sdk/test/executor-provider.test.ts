@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RestExecutorProvider } from "../src/providers/executor";
 import { ExecutorRequestError } from "../src/providers/executor";
 import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/executor/executorTemplate";
-import { ExecutorManagerImpl, watchExecutorContracts } from "../src/wallet/executor";
+import {
+    delegatedContracts,
+    ExecutorManagerImpl,
+    watchExecutorContracts,
+} from "../src/wallet/executor";
 import { ExecutorContractHandler } from "../src/contracts/handlers/executor";
 import { WALLET_RECEIVE_SOURCE } from "../src/contracts/metadata";
 import { rateGate } from "../src/providers/rateGate";
@@ -976,6 +980,33 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                 { expiresAt: undefined, signal: expect.any(AbortSignal) },
             );
             expect(await rowsOf(manager, "boarding")).toEqual([`${OWNER}/500/active`]);
+        });
+
+        it("keeps the newer params first when it registers an older watch again", async () => {
+            const { executor, provider, manager } = await renewingWallet();
+            await new Promise((r) => setTimeout(r, 5));
+            await executor.registerBoarding(changed, trusted);
+            const liveFees = async () =>
+                (await delegatedContracts(identity, (f) => manager.getContracts(f), "boarding"))
+                    .filter((w) => w.live)
+                    .map((w) => w.contract.params.maxFee);
+            const order = [`${changed.maxFee}`, `${params.maxFee}`];
+            expect(await liveFees()).toEqual(order);
+            // the older watch, never funded, lapsed on the Executor
+            provider.getDelegation.mockImplementation(async (address: string) => ({
+                delegation: { status: address === vectors.boarding.address ? "expired" : "active" },
+                coins: [],
+            }));
+            provider.registerDelegation.mockClear();
+            await new Promise((r) => setTimeout(r, 5));
+
+            await executor.refreshWatches();
+
+            expect(provider.registerDelegation).toHaveBeenCalledOnce();
+            expect(provider.registerDelegation.mock.calls[0][1]).toEqual(
+                vectors.boarding.variables,
+            );
+            expect(await liveFees()).toEqual(order);
         });
 
         it("registers a renewal watch again too", async () => {
