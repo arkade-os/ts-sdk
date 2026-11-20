@@ -2409,6 +2409,36 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             await manager.dispose();
         });
 
+        it("asks the wallet to refresh its Executor watches on each poll", async () => {
+            const wallet = createMockWalletWithBoarding([], { groups: [] });
+            wallet.refreshExecutorWatches = vi.fn().mockResolvedValue(undefined);
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+            await (manager as any).pollBoardingUtxos();
+
+            // the wallet throttles it; the poll only asks
+            expect(wallet.refreshExecutorWatches).toHaveBeenCalledTimes(2);
+            await manager.dispose();
+        });
+
+        it("does not back off when the Executor refresh fails", async () => {
+            const wallet = createMockWalletWithBoarding([], { groups: [] });
+            wallet.refreshExecutorWatches = vi.fn().mockRejectedValue(new Error("offline"));
+            const error = vi.spyOn(console, "error").mockImplementation(() => {});
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+
+            expect(error).toHaveBeenCalledWith(
+                "Error refreshing the Executor watches:",
+                expect.any(Error),
+            );
+            error.mockRestore();
+            expect((manager as any).consecutivePollFailures).toBe(0);
+            await manager.dispose();
+        });
+
         it("rediscovers boarding coins when the signer changes during discovery", async () => {
             const nextSigner = new Uint8Array(32).fill(0x04);
             const staleCoin = createMockBoardingUtxo(10_000, Math.floor(Date.now() / 1000) - 60);

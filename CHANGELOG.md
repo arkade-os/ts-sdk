@@ -140,9 +140,16 @@ style and have not been backfilled.
   operator's exit delays and the Executor's keys are unchanged: the address
   derives from them. The registration returns its resolved `params`, which with
   its `keys` restore the watch through `watchExecutorContracts` regardless.
-  `getAddress()` does not change. A watch registered without `expiresAt` does
-  not expire, and
-  registering again does not change its expiry. A subscription started before
+  `getAddress()` does not change. A watch registered without `expiresAt` has no
+  deadline of its own, but the Executor (`v0.0.4`) expires one that never
+  receives a coin 168 hours after its creation, without reporting it, and
+  registering again does not extend an active one. The wallet therefore asks the
+  Executor about its live watches when it starts and once a day while the
+  VtxoManager polls, registers an expired one again, which revives the same
+  address, and stops showing one it cannot revive, so it boards those deposits
+  itself. A wallet offline for longer than that after its last rotation can
+  still show an address nobody watches until it is back online. A subscription
+  started before
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new
   onchain-scoped contract is saved, and the wallet re-subscribes on it.
