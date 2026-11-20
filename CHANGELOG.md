@@ -315,6 +315,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
+  subscribed from the client's clock and dropped any bid stamped before the
+  open, so a client a second or two ahead of the solver received no bids at
+  all. Bid stamps are now trusted within 30 seconds either way; the bid's `e`
+  tag still binds it to this open.
+
 - **`@arkade-os/swap`: an offer swap record names its covenant.** `OfferSwapRecord`
   now requires `offerHex`, `binding`, or both (the new `OfferCovenant` type), so
   code that builds a record with neither no longer compiles. The restore scan

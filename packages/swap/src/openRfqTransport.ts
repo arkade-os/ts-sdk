@@ -24,6 +24,8 @@ const MAX_BIDS = 64;
 const MAX_AUTHENTICATED_REPLY_DECRYPTIONS = 256;
 const MAX_EVENT_CONTENT = 100_000;
 const MAX_WINDOW_MS = 30_000;
+/** A bid's `created_at` is the solver's clock; the `#e` tag, not the stamp, ties it to this open. */
+const CLOCK_SKEW_SECONDS = 30;
 
 /**
  * Raw bids, authenticated by their Nostr event signature only. Card validation, registry policy
@@ -90,7 +92,12 @@ export const collectOpenRfqBids = (
         try {
             subscription = pool.subscribeMany(
                 relays,
-                { kinds: [RFQ_DIRECTED_KIND], "#p": [clientPubkey], "#e": [event.id], since: now },
+                {
+                    kinds: [RFQ_DIRECTED_KIND],
+                    "#p": [clientPubkey],
+                    "#e": [event.id],
+                    since: now - CLOCK_SKEW_SECONDS,
+                },
                 {
                     onevent(reply: Event) {
                         const current = Math.floor(Date.now() / 1000);
@@ -119,8 +126,8 @@ export const collectOpenRfqBids = (
                             reply.kind !== RFQ_DIRECTED_KIND ||
                             reply.content.length > MAX_EVENT_CONTENT ||
                             !Number.isSafeInteger(reply.created_at) ||
-                            reply.created_at < event.created_at ||
-                            reply.created_at > current + 5 ||
+                            reply.created_at < event.created_at - CLOCK_SKEW_SECONDS ||
+                            reply.created_at > current + CLOCK_SKEW_SECONDS ||
                             reply.created_at >= request.bidsUntil ||
                             seen.has(reply.id) ||
                             seen.size >= MAX_AUTHENTICATED_REPLY_DECRYPTIONS
