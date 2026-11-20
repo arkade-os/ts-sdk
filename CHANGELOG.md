@@ -186,6 +186,13 @@ style and have not been backfilled.
 
 - **`@arkade-os/swap`: amount and HTLC checks.** Quotes, claims and stored receive swaps with a non-positive amount are refused before the preimage is published. On-chain HTLC tracking reads the spend of the recorded funding outpoint even when other outputs sit at the script, and a claim of an RBF-replaced funding re-records the outpoint it spends. A confirmed output is claimed ahead of a larger unconfirmed one, so a solver cannot stall the claim past its refund locktime by paying the script an output that never confirms. Refund locktimes must fit in 32 bits.
 
+- **`@arkade-os/swap`: a directed RFQ reply must be signed by the solver it was
+  addressed to.** The Nostr transport now drops any reply whose author is not
+  the solver's key, or whose event signature does not verify, whichever pool
+  delivered it. Before, it relied on the default pool's own checks, so a caller
+  passing a pool that verifies nothing could have the client's echoed request
+  accepted as the solver's answer.
+
 - **Retained service-worker proxies cannot read or spend a replacement wallet.** Wallet requests and contract-event subscriptions retain their original wallet binding. Requests capture their wallet, providers and repository before awaiting, and disposal drains admitted operations for up to 5s before closing their storage; settlements and other long-running operations are not waited for, so a re-init during a batch round is not blocked. Initialization separately drains its finite writes and finalization while pending subscription setup remains revocable; clearing revokes callbacks before draining. Reservation requests also verify the original network without changing durable hold namespaces, and timeout settings and settlement events still follow the original operation.
 
 - **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.

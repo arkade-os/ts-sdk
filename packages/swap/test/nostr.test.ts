@@ -5,7 +5,14 @@
  * package beside `httpTransport` and `relayTransport`.
  */
 import { describe, it, expect, vi } from "vitest";
-import { generateSecretKey, getPublicKey, nip44, SimplePool, type Event } from "nostr-tools";
+import {
+    finalizeEvent,
+    generateSecretKey,
+    getPublicKey,
+    nip44,
+    SimplePool,
+    type Event,
+} from "nostr-tools";
 import { SwapRefusal } from "../src/rfq";
 import {
     RFQ_DIRECTED_KIND,
@@ -41,21 +48,30 @@ const fakePool = (solverSecret: Uint8Array, outcome?: () => Promise<string>) => 
         },
         close() {},
     };
+    /** Signed, then off the wire: the round trip drops `finalizeEvent`'s cached "verified" mark. */
+    const signedReply = (signer: Uint8Array, clientPubkey: string, payload: unknown): Event =>
+        JSON.parse(
+            JSON.stringify(
+                finalizeEvent(
+                    {
+                        kind: RFQ_DIRECTED_KIND,
+                        created_at: Math.floor(Date.now() / 1000),
+                        tags: [["p", clientPubkey]],
+                        content: nip44.v2.encrypt(
+                            JSON.stringify(payload),
+                            nip44.v2.utils.getConversationKey(solverSecret, clientPubkey),
+                        ),
+                    },
+                    signer,
+                ),
+            ),
+        );
+    const deliver = (event: Event) => onevent?.(event);
     /** Answer as the solver, encrypted to the client that published last. */
-    const solverReplies = (clientPubkey: string, payload: unknown) => {
-        const key = nip44.v2.utils.getConversationKey(solverSecret, clientPubkey);
-        onevent?.({
-            kind: RFQ_DIRECTED_KIND,
-            pubkey: getPublicKey(solverSecret),
-            content: nip44.v2.encrypt(JSON.stringify(payload), key),
-            tags: [["p", clientPubkey]],
-            created_at: Math.floor(Date.now() / 1000),
-            id: "x",
-            sig: "y",
-        } as Event);
-    };
+    const solverReplies = (clientPubkey: string, payload: unknown) =>
+        deliver(signedReply(solverSecret, clientPubkey, payload));
     const dropEveryRelay = (reasons: unknown[]) => onclose?.(reasons);
-    return { pool, published, seenFilters, solverReplies, dropEveryRelay };
+    return { pool, published, seenFilters, signedReply, deliver, solverReplies, dropEveryRelay };
 };
 
 describe("RFQ kinds", () => {
@@ -420,5 +436,50 @@ describe("nostrRfqTransport", () => {
         const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
         await transport.close();
         await expect(pending).rejects.toBeInstanceOf(TransportClosed);
+    });
+
+    /** The responder `client/transport.ts` attests, enforced here rather than left to `pool`. */
+    describe("replies the subscription must refuse", () => {
+        const setup = () => {
+            const solverSecret = generateSecretKey();
+            const secretKey = generateSecretKey();
+            const fake = fakePool(solverSecret);
+            const transport = nostrRfqTransport({
+                relays: ["wss://x"],
+                solverPubkey: getPublicKey(solverSecret),
+                secretKey,
+                pool: fake.pool as never,
+                timeoutMs: 60,
+            });
+            return { ...fake, solverSecret, secretKey, transport };
+        };
+
+        it("takes the solver's correctly signed quote", async () => {
+            const { transport, signedReply, deliver, solverSecret, secretKey } = setup();
+            const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+            deliver(signedReply(solverSecret, getPublicKey(secretKey), quote("abc")));
+            await expect(pending).resolves.toMatchObject({ rfq_id: "abc" });
+            await transport.close();
+        });
+
+        it("ignores a quote whose signature does not check out", async () => {
+            const { transport, signedReply, deliver, solverSecret, secretKey } = setup();
+            const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+            const forged = signedReply(solverSecret, getPublicKey(secretKey), quote("abc"));
+            // Only the sig, so the id still matches and the ciphertext stays decryptable.
+            forged.sig = "00".repeat(64);
+            deliver(forged);
+            await expect(pending).rejects.toThrow(/no solver reply/);
+            await transport.close();
+        });
+
+        it("ignores a quote authored by a key other than the solver's", async () => {
+            const { transport, signedReply, deliver, secretKey } = setup();
+            const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+            // Signed by the client's own key: it decrypts and verifies, only the author differs.
+            deliver(signedReply(secretKey, getPublicKey(secretKey), quote("abc")));
+            await expect(pending).rejects.toThrow(/no solver reply/);
+            await transport.close();
+        });
     });
 });
