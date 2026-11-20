@@ -342,7 +342,7 @@ const compilerProbe = (load, expected) => `
     const root = ${load}("@arkade-os/sdk");
     if (Object.keys(root).length === 0) throw new Error("root SDK has no exports");
     const { compile } = ${load}("@arkade-os/sdk/compiler");
-    const source = "contract A(pubkey user) { function spend(signature s) tapscript { require(older(serverExitDelay)); require(checkSig(s, user)); } }";
+    const source = "contract A(pubkey user) { function spend(signature s) tapscript { require(older(operatorExitDelay)); require(checkSig(s, user)); } }";
     const outcome = await compile({ entry: "a.ark", files: { "a.ark": source } }).then(
         (r) => (r.program.functions.spend ? "compiled" : "no spend function"),
         (e) => (/npm install --save-exact @arkade-os\\/compiler/.test(e.message) ? "hinted" : e.stack),

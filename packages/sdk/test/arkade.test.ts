@@ -35,7 +35,8 @@ describe("Arkade Opcodes", () => {
     // them. A one-way lookup yields an unspendable script, so every opcode
     // round-trips instead of a hand-picked few. The byte values are ARKADE_OP's
     // own: the emulator's opcode table stays the reference for those.
-    it.each(Object.entries(ARKADE_OP) as [keyof typeof ARKADE_OPS, number][])(
+    const named = Object.entries(ARKADE_OP).filter(([name]) => name !== "MERKLEBRANCHVERIFY");
+    it.each(named as [keyof typeof ARKADE_OPS, number][])(
         "should round-trip OP_%s",
         (name, value) => {
             expect(getOpcodeName(value)).toBe(`OP_${name}`);
@@ -47,6 +48,13 @@ describe("Arkade Opcodes", () => {
             expect(toASM(fromASM(`OP_${name}`))).toBe(`OP_${name}`);
         },
     );
+
+    it("encodes the alias OP_MERKLEBRANCHVERIFY and decodes it as OP_MERKLEBRANCHROOT", () => {
+        expect(getOpcodeValue("OP_MERKLEBRANCHVERIFY")).toBe(0xb3);
+        expect(ArkadeScript.decode(ArkadeScript.encode(fromASM("OP_MERKLEBRANCHVERIFY")))).toEqual([
+            "MERKLEBRANCHROOT",
+        ]);
+    });
 });
 
 describe("Script Encoding/Decoding", () => {
