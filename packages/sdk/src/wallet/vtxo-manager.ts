@@ -910,6 +910,24 @@ function isRecoveryContractCapable(
 }
 
 /**
+ * A wallet that registers its Executor watches again when the service lets them lapse. Duck-typed
+ * like {@link MigrationCapableWallet}: proxy wallets, and wallets without an Executor, have none.
+ */
+interface ExecutorRefreshCapableWallet {
+    /** Throttled and best-effort: safe to call on every poll. */
+    refreshExecutorWatches(): Promise<void>;
+}
+
+function isExecutorRefreshCapable(
+    wallet: IWallet,
+): wallet is IWallet & ExecutorRefreshCapableWallet {
+    return (
+        typeof (wallet as Partial<ExecutorRefreshCapableWallet>).refreshExecutorWatches ===
+        "function"
+    );
+}
+
+/**
  * Whether a contract's server signer classifies as non-`CURRENT` against the
  * fresh signer set. Mirrors the per-contract classification inside
  * `anyInputUnderDeprecatedSigner` (a missing `serverPubKey` contributes
@@ -3022,6 +3040,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // never throws) so it neither stacks the poll backoff nor
                 // affects the wallet's own settle above.
                 await this.recoverImportedContracts();
+
+                // Self-contained and throttled by the wallet, so a lapsed Executor watch is
+                // registered again without stacking the poll backoff.
+                if (isExecutorRefreshCapable(this.wallet)) {
+                    await this.wallet.refreshExecutorWatches().catch((e) => {
+                        console.error("Error refreshing the Executor watches:", e);
+                    });
+                }
             });
         } catch (e) {
             hadError = true;
