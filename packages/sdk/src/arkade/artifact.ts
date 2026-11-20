@@ -290,7 +290,11 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
         if (inner.startsWith("VTXO:")) {
             fail(`'${token}' is not a placeholder; the compiler emits <CONTRACT:…>`);
         }
-        if (inner === "SERVER_KEY" || inner.startsWith("EMULATOR_KEY:")) {
+        if (
+            inner === "SERVER_KEY" ||
+            inner.startsWith("EMULATOR_KEY:") ||
+            inner.split(":")[0] === "OPERATOR_KEY"
+        ) {
             fail(`${token} is a signer role and cannot appear in a covenant`);
         }
         return `$${inner}`;
@@ -332,6 +336,25 @@ function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegme
     return timelock;
 }
 
+/**
+ * Expands each `<OPERATOR_KEY:f>` into `<OPERATOR_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:f>`: the
+ * untweaked server key arkd requires in every forfeit leaf, then the emulator key tweaked by `f`'s
+ * covenant. A leaf that already holds an untweaked `<OPERATOR_KEY>` or rc.1 `<SERVER_KEY>` gets no
+ * second copy.
+ * ponytail: exists only until arkd and the emulator move to the single operator key; delete it then,
+ * so `<OPERATOR_KEY:f>` maps to the operator directly.
+ */
+function legacyOperatorLeaf(asm: string[]): string[] {
+    const server = asm.some((token) => token === "<OPERATOR_KEY>" || token === "<SERVER_KEY>")
+        ? []
+        : ["<OPERATOR_KEY>", "OP_CHECKSIGVERIFY"];
+    return asm.flatMap((token) =>
+        token.startsWith("<OPERATOR_KEY:")
+            ? [...server, token.replace("OPERATOR_KEY:", "EMULATOR_KEY:")]
+            : [token],
+    );
+}
+
 /** `condition? · timelock? · N-of-N`. Anything else is refused. */
 function parseLeaf(
     leaf: ArtifactLeaf,
@@ -339,7 +362,7 @@ function parseLeaf(
     instantiations: Map<string, string>,
     extras: ArtifactWitnessElement[],
 ): TapscriptSegment {
-    const asm = leaf.asm;
+    const asm = legacyOperatorLeaf(leaf.asm);
     let index = 0;
 
     let condition: AsmToken[] | undefined;
@@ -358,10 +381,14 @@ function parseLeaf(
     let csv: TapscriptSegment["csv"];
     let cltv: TapscriptSegment["cltv"];
     if (asm.length >= index + 3 && asm[index + 2] === "OP_DROP") {
+        // `<OPERATOR_EXIT_DELAY>` binds the same reserved param as `<SERVER_EXIT_DELAY>`, the name
+        // persisted bindings use.
         const operand =
-            asm[index].startsWith("<") && asm[index].endsWith(">")
-                ? `$${asm[index].slice(1, -1)}`
-                : BigInt(asm[index]);
+            asm[index] === "<OPERATOR_EXIT_DELAY>"
+                ? "$SERVER_EXIT_DELAY"
+                : asm[index].startsWith("<") && asm[index].endsWith(">")
+                  ? `$${asm[index].slice(1, -1)}`
+                  : BigInt(asm[index]);
         if (asm[index + 1] === "OP_CHECKSEQUENCEVERIFY") csv = csvTimelock(leaf.name, operand);
         else if (asm[index + 1] === "OP_CHECKLOCKTIMEVERIFY") cltv = operand;
         else fail(`leaf '${leaf.name}': unexpected timelock opcode ${asm[index + 1]}`);
@@ -385,7 +412,7 @@ function parseLeaf(
             fail(`leaf '${leaf.name}': unsupported key operand '${key}'`);
         }
         const inner = key.slice(1, -1);
-        if (inner === "SERVER_KEY") signers.push("$server");
+        if (inner === "SERVER_KEY" || inner === "OPERATOR_KEY") signers.push("$server");
         else if (inner.startsWith("TWEAK:")) {
             const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
             if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);

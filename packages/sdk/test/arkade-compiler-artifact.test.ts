@@ -160,6 +160,83 @@ describe("reading an arkadec artifact", () => {
         );
     });
 
+    it("reads 0.1.0 default leaves into the same escrow program", () => {
+        const operator: ContractArtifact = {
+            ...artifact,
+            functions: artifact.functions.map((group) =>
+                group.arkade
+                    ? {
+                          ...group,
+                          leaves: [
+                              {
+                                  name: group.name,
+                                  witness: [
+                                      {
+                                          name: "operatorSig",
+                                          type: "signature",
+                                          encoding: "schnorr-64",
+                                          injected: true,
+                                      },
+                                  ],
+                                  asm: [`<OPERATOR_KEY:${group.name}>`, "OP_CHECKSIG"],
+                              },
+                          ],
+                      }
+                    : group,
+            ),
+        };
+        expect(programFromArtifact(operator)).toEqual(programFromArtifact(artifact));
+    });
+
+    it.each([
+        [
+            "between other keys",
+            ["<owner>", "<OPERATOR_KEY:claim>", "<taker>"],
+            ["<owner>", "<SERVER_KEY>", "<EMULATOR_KEY:claim>", "<taker>"],
+        ],
+        [
+            "beside the untweaked key",
+            ["<OPERATOR_KEY>", "<OPERATOR_KEY:claim>"],
+            ["<SERVER_KEY>", "<EMULATOR_KEY:claim>"],
+        ],
+        [
+            "beside the rc.1 server key",
+            ["<SERVER_KEY>", "<OPERATOR_KEY:claim>"],
+            ["<SERVER_KEY>", "<EMULATOR_KEY:claim>"],
+        ],
+    ])(
+        "reads an operator key %s as one server key and the emulator key",
+        (_label, keys, legacy) => {
+            const read = (operands: string[]) =>
+                programFromArtifact(
+                    demo({
+                        constructorInputs: [
+                            { name: "owner", type: "pubkey" },
+                            { name: "taker", type: "pubkey" },
+                        ],
+                        functions: [
+                            {
+                                name: "claim",
+                                arkade: { inputs: [], asm: ["OP_1"] },
+                                leaves: [
+                                    {
+                                        name: "claim",
+                                        asm: operands.flatMap((operand, i) => [
+                                            operand,
+                                            i === operands.length - 1
+                                                ? "OP_CHECKSIG"
+                                                : "OP_CHECKSIGVERIFY",
+                                        ]),
+                                    },
+                                ],
+                            },
+                        ],
+                    }),
+                );
+            expect(read(keys)).toEqual(read(legacy));
+        },
+    );
+
     it("keeps every leaf in a multi-leaf covenant group", () => {
         const program = programFromArtifact(
             demo({
@@ -991,6 +1068,32 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
             /emulator or a tweaked constructor key/,
+        ],
+        [
+            "an operator key in a covenant",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["<OPERATOR_KEY:spend>", "OP_DROP", "OP_1"] },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+            /signer role/,
+        ],
+        [
+            "an operator key tweaked by another group's covenant",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["OP_1"] },
+                        leaves: [{ name: "spend", asm: ["<OPERATOR_KEY:other>", "OP_CHECKSIG"] }],
+                    },
+                ],
+            }),
+            /must match group/,
         ],
         [
             "two child outputs that sanitize to one name",

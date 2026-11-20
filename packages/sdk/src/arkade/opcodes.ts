@@ -12,8 +12,10 @@ import { OP } from "@scure/btc-signer";
 export { OP };
 
 export const ARKADE_OP = {
-    // Merkle Branch Verification (0xb3 — repurposed NOP4 slot)
+    // Merkle root (0xb3 — repurposed NOP4 slot). MERKLEBRANCHVERIFY is the emulator's alias and the
+    // 0.1.0-rc.1 compiler's name; the later key names the byte when decoding.
     MERKLEBRANCHVERIFY: 0xb3,
+    MERKLEBRANCHROOT: 0xb3,
 
     PUT: 0xbb,
 
@@ -100,15 +102,13 @@ export const ARKADE_OP = {
     INSPECTINTENTMESSAGE: 0xf8,
 } as const;
 
-export const ARKADE_OPCODES: number[] = Object.values(ARKADE_OP);
+export const ARKADE_OPCODES: number[] = [...new Set(Object.values(ARKADE_OP))];
 
 export const ARKADE_OPCODE_NAMES: Record<number, string> = Object.fromEntries(
     Object.entries(ARKADE_OP).map(([name, value]) => [value, name]),
 );
 
-export const ARKADE_OPCODE_VALUES: Record<string, number> = Object.fromEntries(
-    Object.entries(ARKADE_OPCODE_NAMES).map(([value, name]) => [name, Number(value)]),
-);
+export const ARKADE_OPCODE_VALUES: Record<string, number> = { ...ARKADE_OP };
 
 function buildBitcoinOpcodeNames(): Record<number, string> {
     const names: Record<number, string> = {};
