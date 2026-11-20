@@ -25,6 +25,11 @@ const MAX_AUTHENTICATED_REPLY_DECRYPTIONS = 256;
 const MAX_EVENT_CONTENT = 100_000;
 const MAX_WINDOW_MS = 30_000;
 
+/**
+ * Raw bids, authenticated by their Nostr event signature only. Card validation, registry policy
+ * and routing preferences live in the swap client (`openBidCandidates`); a direct caller must
+ * apply equivalent checks before treating a bid as a solver's quote.
+ */
 export const collectOpenRfqBids = (
     request: OpenRfqRequest,
     options: CollectOpenRfqOptions,

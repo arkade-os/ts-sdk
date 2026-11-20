@@ -6,6 +6,7 @@ import { AmountMismatch, QuoteVerificationFailed } from "../../src/client/errors
 import type { SwapPolicy } from "../../src/client/policy";
 import { completedSolverUsage, SolverRoutesUnavailable } from "../../src/client/solverRouting";
 import { SolverUnavailable } from "../../src/transportErrors";
+import { RFQ_CONTRACT_VERSION_UNSUPPORTED } from "../../src/rfq-contract";
 import { createSolverHealth } from "../../src/client/solverHealth";
 import { solverDirectionKey, solverId } from "@arkade-os/solver-discovery";
 import { collectSwapRecords, InMemoryAssetSwapRepository } from "../../src/repository";
@@ -152,6 +153,16 @@ describe("solver quote failover", () => {
                 direction: solverDirectionKey(first, "base", "regtest"),
             }),
         ).toEqual([]);
+    });
+
+    it("fails over past a solver that does not serve the directed covenant", async () => {
+        const { client, attempted } = await setup({
+            failure: new SwapRefusal("unsupported_payload", undefined, {
+                errorCode: RFQ_CONTRACT_VERSION_UNSUPPORTED,
+            }),
+        });
+        expect((await client.quote(input())).market).toMatchObject({ solver: "second" });
+        expect(attempted).toEqual(["first", "second"]);
     });
 
     it("tries the next solver before accepting and keeps its preparation pinned", async () => {

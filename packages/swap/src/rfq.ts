@@ -790,12 +790,15 @@ export const requestVersionedQuote = async (
         quote = await transport.requestQuote(sent);
     }
     const selected = quote[RFQ_CONTRACT_VERSION_KEY];
+    // A version this client cannot take condemns this solver's reply, not the swap: routing tries the next.
     if (sent !== request && selected !== undefined) {
-        throw new Error(`solver chose contract version ${selected}, but none was advertised`);
+        throw new SolverResponseInvalid(
+            `solver chose contract version ${selected}, but none was advertised`,
+        );
     }
     const version = selected ?? ASSET_SWAP_BASELINE;
     if (!advertised.includes(version)) {
-        throw new Error(
+        throw new SolverResponseInvalid(
             selected === undefined
                 ? `solver negotiated no contract version; advertised ${advertised.join(", ")}`
                 : `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,

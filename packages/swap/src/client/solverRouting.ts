@@ -8,6 +8,7 @@ import {
 import type { NetworkName } from "@arkade-os/sdk";
 import { ASSET_CARRIER_SATS } from "../offer";
 import { SwapRefusal } from "../rfq";
+import { RFQ_CONTRACT_VERSION_UNSUPPORTED } from "../rfq-contract";
 import { SolverUnavailable } from "../transportErrors";
 import { QuoteExpired, QuoteVerificationFailed } from "./errors";
 import type { MarketCandidate } from "./market";
@@ -34,7 +35,9 @@ export interface SolverRoutingPolicy {
     /** Try another candidate on solver-local quote failure; defaults to true. Every candidate
      * passes full verification before funding. Custom transports throw {@link SolverUnavailable}
      * for retryable failures; exhausted attempts throw {@link SolverRoutesUnavailable}.
-     * Attempts may disclose the same invoice or request details to multiple solvers.
+     * Each attempt discloses the request to that solver: a Lightning send's BOLT11 (payment
+     * hash, amount, route hints) reaches every solver tried before a verified quote lands. Set
+     * false to limit that to one solver.
      * Feed/fetchImpl failures are retryable; AbortError stops the operation. Authenticate before
      * quoting, or set false to surface feed errors. Explicit `selectMarket` disables failover. */
     readonly failover?: boolean;
@@ -110,7 +113,8 @@ export const canFailoverQuote = (error: unknown): boolean => {
     if (error.errorCode !== undefined) {
         return (
             error.errorCode === "amount_side_unsupported" ||
-            error.errorCode === "exact_out_unsupported"
+            error.errorCode === "exact_out_unsupported" ||
+            error.errorCode === RFQ_CONTRACT_VERSION_UNSUPPORTED
         );
     }
     return [
