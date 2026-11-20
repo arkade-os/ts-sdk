@@ -8,7 +8,7 @@ import {
 
 const request: OpenRfqRequest = {
     openId: "a".repeat(64),
-    pair: "arkade:bitcoin/slip44:0~arkade:bitcoin/asset:abcd",
+    pair: "arkade:bitcoin/slip44:0->arkade:bitcoin/asset:abcd",
     amountSide: "from",
     amount: 10_000n,
     bidsUntil: 1_000,
@@ -116,7 +116,10 @@ describe("open RFQ prices", () => {
 
     it("rejects invalid requests before serialization", () => {
         expect(() => openRfqPayload({ ...request, amount: 0n })).toThrow();
-        expect(() => openRfqPayload({ ...request, pair: "same~same~other" })).toThrow();
+        expect(() => openRfqPayload({ ...request, pair: "same->same->other" })).toThrow();
+        expect(() =>
+            openRfqPayload({ ...request, pair: request.pair.replace("->", "~") }),
+        ).toThrow();
         expect(() => openRfqPayload({ ...request, bidsUntil: 1.5 })).toThrow();
     });
 
