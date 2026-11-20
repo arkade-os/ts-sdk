@@ -114,6 +114,15 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: the directed asset-swap covenant, `asset-swap-v4`.** Its
+  `fulfill` leaf adds the quoting solver's `taker` key to the server and emulator,
+  so only that solver can complete a funded deposit; `cancel` and `exit` are
+  v3's and need no solver. `ASSET_SWAP_DERIVABLE_VERSIONS` lists every version
+  this build derives (v4, v3, v2). `ASSET_SWAP_CONTRACT_VERSIONS`, what a quote
+  advertises by default, is unchanged at v3 then v2, so nothing funds v4 unless a
+  caller asks for it. v4 refuses to compile without a taker, and v2 and v3 refuse
+  one.
+
 - **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
   can import the negotiation field names, refusal code, and asset contract IDs
   without loading the client or contract builders. Existing `/protocol` exports
