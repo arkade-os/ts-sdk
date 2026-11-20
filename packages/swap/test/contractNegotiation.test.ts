@@ -5,6 +5,8 @@ import { requestArkadeSwap, requestVersionedQuote, SwapRefusal, type RfqQuote } 
 import { createOffer, decodeOffer, deriveOffer, offerContract } from "../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED, type AssetSwapContractVersion } from "../src/program";
 import type { AttestingRfqTransport } from "../src/client/transport";
+import { canFailoverQuote } from "../src/client/solverRouting";
+import { SolverResponseInvalid } from "../src/transportErrors";
 import { acceptWallet, SOLVER_DISCOVERY_KEY } from "./client/fixtures";
 
 vi.mock("../src/offer", async (original) => {
@@ -98,7 +100,10 @@ describe("requestArkadeSwap contract version negotiation", () => {
 
     it("refuses a quote that names no contract version, before creating the offer", async () => {
         const f = await setup(ASSET_SWAP_V2);
-        await expect(f.request()).rejects.toThrow("solver negotiated no contract version");
+        const error = await f.request().catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(SolverResponseInvalid);
+        expect(canFailoverQuote(error)).toBe(true);
+        expect((error as Error).message).toContain("solver negotiated no contract version");
         expect(createOffer).not.toHaveBeenCalled();
     });
 

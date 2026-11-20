@@ -14,6 +14,8 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **Inert open-RFQ placeholders are removed.** `SwapPolicy.selectBid`, `RfqAuctionPolicy.freshTransportKey` and `AuctionMarketRef` (a `MarketRef` member) were exported since 0.1.0 but never read or populated. Remove references to them; `openRfq()` and `quoteBid()` replace the auction they reserved, and an auction-closed quote keeps a card `MarketRef` with its `quote.auction` provenance.
+
 - **`@arkade-os/swap`: `asset-swap-v3` is removed.** It never saw use:
   mutinynet had two v3 quotes, both lapsed unfilled, and mainnet none. This
   build no longer derives, cancels or restores a v3 deposit, and reads
@@ -161,6 +163,24 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
+  `policy.solverRouting`, a direction's solvers are ordered by saved priority,
+  completed usage (`completedSolverUsage`) or amount-aware advertised cost, after
+  an optional `preferFirst` solver; paused solvers are left out.
+  `client.candidates()` returns that order without negotiating. When a solver
+  fails for a reason local to it (no reply, relay outage, invalid or expired
+  quote, unavailable feed, unsupported amount), `quote()` tries the next one and
+  throws `SolverRoutesUnavailable` once all have failed. Two consecutive
+  failures move a solver behind healthy ones for a minute, doubling up to
+  fifteen; a verified quote or thirty quiet minutes reset it
+  (`createSolverHealth`, in memory unless storage is passed). Failover ends at
+  the quote: issued quotes and accepted swaps keep their solver, and an explicit
+  `selectMarket` turns it off. Without `solverRouting` the client behaves as
+  before, except that nostr transport failures now throw `SolverUnavailable`
+  (`RelayUnavailable` extends it) and mismatched replies `SolverResponseInvalid`.
+
+- **Open RFQ discovers signed solver offers before selection.** The swap client broadcasts only canonical pair and atomic size, collects sealed exact-amount bids on the current version-1 wire, then verifies a chosen bidder through the existing directed quote and acceptance path. Routing pauses and registry policies still apply; selection never fails over or silently accepts worse terms. An onchain send with a fixed take amount broadcasts the claim-fee-inclusive amount its directed quote asks, and its offers report what the recipient nets. Auction funding dispatch deadlines survive reloads, while funded-swap reconciliation and recovery remain available after expiry. Collection keeps the best 64 bids within a fixed budget of 256 authenticated-reply decryptions. Returned offers are rechecked for expiry, and a received bid proves a relay carried the request even when its acknowledgement stalls or fails. Existing directed requests are unchanged. Open pairs join their two CAIP-19 legs with `->`, the separator directed pairs use.
+
 - **`@arkade-os/swap`: the drive cancels a directed deposit its quote let lapse.**
   Only the quoting solver can fill an `asset-swap-directed` deposit, and it fills
   nothing past `valid_until`, so once 60 seconds beyond it have passed with the
@@ -294,6 +314,12 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **`@arkade-os/swap` depends on the published `@arkade-os/solver-discovery`
+  0.4.0.** Its want amount rounds in the solver's favour at both steps: the
+  conversion floors to a whole atomic unit, then the conceded bps share rounds
+  up. One combined division could land a unit above what the solver pays, and
+  the solver refused it. A feed-priced amount can now be one atomic unit lower.
 
 - **Indexer reads return every page.** arkd serves at most 100 rows per page whatever size is requested, while the readers asked for 500 and treated any shorter page as the last one. Wallet syncs, exit-data collection, HD script discovery and the Expo contract poll therefore kept only the first 100 matches per query. Every indexer page walk now follows the server's `next` cursor, ends when the cursor stops advancing, and throws after 1000 pages.
 

@@ -903,6 +903,77 @@ describe("accept() — what the record carries", () => {
 });
 
 describe("accept funding deadline", () => {
+    it("reconciles a funded auction-origin record after its dispatch deadline", async () => {
+        const h = await setup();
+        const ordinary = await quoteFor(h, "spot");
+        const quote: Quote = {
+            ...ordinary,
+            auction: {
+                marketKey: "pair",
+                closedAt: NOW,
+                winner: {
+                    bidder: "a".repeat(64),
+                    amount: ordinary.take.amount,
+                    amountOn: "take",
+                    expiresAt: ordinary.expiresAt,
+                },
+                losers: [],
+            },
+        };
+        const swap = await h.client.accept(quote);
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+        expect((await h.client.accept(quote)).id).toBe(swap.id);
+        expect(h.wallet.sent).toHaveLength(1);
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingDeadline).toBe(quote.expiresAt);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it.each(FUNDING_ROUTES)(
+        "keeps an auction quote's expiry through slow persistence on %s",
+        async (route) => {
+            const h = await setup();
+            const ordinary = await quoteFor(h, route);
+            const quote: Quote = {
+                ...ordinary,
+                auction: {
+                    marketKey: "pair",
+                    closedAt: NOW,
+                    winner: {
+                        bidder: "a".repeat(64),
+                        amount: ordinary.take.amount,
+                        amountOn: "take",
+                        expiresAt: ordinary.expiresAt,
+                    },
+                    losers: [],
+                },
+            };
+            const save = h.repository.saveSwapRecord.bind(h.repository);
+            vi.spyOn(h.repository, "saveSwapRecord").mockImplementation(async (record) => {
+                await save(record);
+                vi.setSystemTime((quote.expiresAt + 1) * 1000);
+            });
+            let dispatched = 0;
+            vi.spyOn(h.wallet.wallet, "send").mockImplementation(async (...args) => {
+                const recipient = args[0];
+                expect(recipient).toHaveProperty("validUntil", quote.expiresAt);
+                const params = recipient as { validUntil?: number };
+                if (
+                    params.validUntil !== undefined &&
+                    params.validUntil <= Math.floor(Date.now() / 1000)
+                )
+                    throw new SendDeadlineExceededError(params.validUntil);
+                dispatched += 1;
+                return FUNDING_TXID;
+            });
+            await expect(h.client.accept(quote)).rejects.toBeInstanceOf(SendDeadlineExceededError);
+            expect(dispatched).toBe(0);
+            expect(
+                (await h.repository.getSwapRecord(quote.id))?.fundingNotSubmitted?.validUntil,
+            ).toBe(quote.expiresAt);
+            await h.client[Symbol.asyncDispose]();
+        },
+    );
+
     it.each(FUNDING_ROUTES)(
         "preserves the recipient and caps the deadline on %s",
         async (route) => {
@@ -995,20 +1066,44 @@ describe("accept funding deadline", () => {
         await h.client[Symbol.asyncDispose]();
     });
 
-    it("reconciles an observed deposit before applying a retry deadline", async () => {
-        const h = await setup({ failSend: () => new Error("lost response") });
-        const quote = await quoteFor(h, "spot");
-        await expect(h.client.accept(quote)).rejects.toThrow("lost response");
-        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
-        h.wallet.deposits.set(stored.swapPkScript, [
-            { txid: FUNDING_TXID, value: Number(stored.give.amount) },
-        ]);
-        vi.setSystemTime((quote.expiresAt + 1) * 1000);
-        const swap = await h.client.accept(quote, { validUntil: NOW + 1 });
-        expect(swap.fundingTxid).toBe(FUNDING_TXID);
-        expect((await h.repository.getSwapRecord(quote.id))?.fundingNotSubmitted).toBeUndefined();
-        await h.client[Symbol.asyncDispose]();
-    });
+    it.each([false, true])(
+        "reconciles an observed deposit before applying a retry deadline (auction=%s)",
+        async (auction) => {
+            const h = await setup({ failSend: () => new Error("lost response") });
+            const ordinary = await quoteFor(h, "spot");
+            const quote: Quote = auction
+                ? {
+                      ...ordinary,
+                      auction: {
+                          marketKey: "pair",
+                          closedAt: NOW,
+                          winner: {
+                              bidder: "a".repeat(64),
+                              amount: ordinary.take.amount,
+                              amountOn: "take",
+                              expiresAt: ordinary.expiresAt,
+                          },
+                          losers: [],
+                      },
+                  }
+                : ordinary;
+            await expect(h.client.accept(quote)).rejects.toThrow("lost response");
+            const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+            h.wallet.deposits.set(stored.swapPkScript, [
+                { txid: FUNDING_TXID, value: Number(stored.give.amount) },
+            ]);
+            vi.setSystemTime((quote.expiresAt + 1) * 1000);
+            const swap = await h.client.accept(quote, { validUntil: NOW + 1 });
+            expect(swap.fundingTxid).toBe(FUNDING_TXID);
+            expect(
+                (await h.repository.getSwapRecord(quote.id))?.fundingNotSubmitted,
+            ).toBeUndefined();
+            expect((await h.repository.getSwapRecord(quote.id))?.fundingDeadline).toBe(
+                auction ? quote.expiresAt : undefined,
+            );
+            await h.client[Symbol.asyncDispose]();
+        },
+    );
 });
 
 describe("unsent funding coverage", () => {
