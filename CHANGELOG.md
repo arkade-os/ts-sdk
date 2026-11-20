@@ -323,6 +323,8 @@ style and have not been backfilled.
 
 - **A negative or non-integer relative timelock is rejected** instead of encoding a different or unspendable CSV. `Wallet.create` now fails against an operator that advertises one as its exit delay.
 
+- **`OnchainWallet.bumpP2A` funds the fee child from confirmed coins first**, falling back to unconfirmed ones only when confirmed coins cannot pay, as a TRUC child relays only on confirmed fee inputs. Coin selection for both P2A bumps now prices the fee at the number of inputs it selects and keeps the change above dust.
+
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the
   open, so a client a second or two ahead of the solver received no bids at
