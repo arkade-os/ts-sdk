@@ -12,7 +12,7 @@ import type { OpenRfqRequest } from "../src/openRfq";
 
 const request = (): OpenRfqRequest => ({
     openId: "a".repeat(64),
-    pair: "arkade:bitcoin/slip44:0~arkade:bitcoin/asset:abcd",
+    pair: "arkade:bitcoin/slip44:0->arkade:bitcoin/asset:abcd",
     amountSide: "from",
     amount: 10_000n,
     bidsUntil: Math.floor(Date.now() / 1000) + 10,
@@ -173,7 +173,7 @@ describe("open RFQ collection", () => {
         );
         f.bid({}, { kind: 24860 });
         f.bid({}, { created_at: Math.floor(Date.now() / 1000) - 60 });
-        f.bid({ pair: "arkade:bitcoin/slip44:0~bolt11:bitcoin/slip44:0" });
+        f.bid({ pair: "arkade:bitcoin/slip44:0->bolt11:bitcoin/slip44:0" });
         f.bid({ valid_until: Math.floor(Date.now() / 1000) });
         f.bid({ from_amount: "9999" });
         await vi.advanceTimersByTimeAsync(1_000);
