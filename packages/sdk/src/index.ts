@@ -546,6 +546,7 @@ import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 import {
     DELEGATION_EXPIRES_KEY,
     DELEGATION_LOCAL_STATUS,
+    DELEGATION_REGISTERED_KEY,
     DELEGATION_STATUS_KEY,
     DelegatedWallet,
     DelegationOptions,
@@ -766,6 +767,7 @@ export {
     watchExecutorContracts,
     DELEGATION_EXPIRES_KEY,
     DELEGATION_LOCAL_STATUS,
+    DELEGATION_REGISTERED_KEY,
     DELEGATION_STATUS_KEY,
     ExecutorRequestError,
     RestExecutorProvider,

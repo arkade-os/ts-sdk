@@ -63,6 +63,7 @@ import {
 } from "./utils";
 import { providerFeeRate } from "./onchain";
 import { logExcludedVtxos, outpointExclusion, outpointReasons } from "../contracts/spendability";
+import { delegatedContracts } from "./executor";
 
 /**
  * Outpoints (`txid:vout`) of VTXOs whose contract signer is past its cutoff (`EXPIRED`) and that
@@ -1677,6 +1678,47 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet), tip);
     }
 
+    /**
+     * Keep Executor-renewable delegated coins out of wallet renewal, with a safety fallback:
+     * fail-open, so an unreadable watch renews as before rather than leaving coins to a dead
+     * Executor.
+     */
+    private async deferToExecutor(
+        vtxos: NormalizedExtendedVirtualCoin[],
+        now: TimeHeight,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        // The periodic pass calls this every poll; with nothing expiring there is nothing to defer.
+        if (vtxos.length === 0) return vtxos;
+        try {
+            const [watches, operator] = await Promise.all([
+                delegatedContracts(
+                    this.wallet.identity,
+                    // repository-backed: `getContracts` reads rows without the manager's indexer sync
+                    async (filter) => (await this.wallet.getContractManager()).getContracts(filter),
+                    "renewal",
+                ),
+                // getOperatorInfo may throw synchronously; deferred, so Promise.all observes
+                // both rejections and the catch below keeps the delegatedContracts promise.
+                Promise.resolve().then(() => this.wallet.getOperatorInfo()),
+            ]);
+            const signer = toXOnlySignerHex(operator.signerPubkey);
+            const dust = getDustAmount(this.wallet);
+            const live = watches.filter((w) => w.live && w.signer === signer);
+            return vtxos.filter((vtxo) => {
+                const watch = live.find((w) => w.contract.script === vtxo.script);
+                if (!watch || canRecoverOnchain(vtxo, now) || isSubdust(vtxo, dust)) return true;
+                if (BigInt(vtxo.value) <= BigInt(watch.contract.params.maxFee) + dust) return true;
+                const expiresAt = vtxo.expiresAt?.getTime();
+                if (expiresAt === undefined) return true;
+                const remaining = expiresAt - now.timestamp.getTime();
+                return remaining <= Number(watch.contract.params.renewalWindow) * 500;
+            });
+        } catch (e) {
+            console.warn("Unable to inspect Executor renewal watches", e);
+            return vtxos;
+        }
+    }
+
     /** Outpoints {@link warnHeldExpiring} last reported, so each is reported once while held. */
     private heldExpiringWarned = new Set<string>();
 
@@ -1710,7 +1752,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /**
      * Renew expiring virtual outputs (including recoverable ones) by settling them back to the
-     * wallet's address, refreshing their expiration time.
+     * wallet's address, refreshing their expiration time. Coins covered by a live Executor renewal
+     * watch are skipped, including for a manual call; use {@link IWallet.settle} to force them.
      *
      * @param eventCallback - Optional callback for settlement events
      * @param options - Optional per-call overrides; see {@link RenewVtxosOptions}
@@ -1778,6 +1821,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // One chain tip for the whole pass — see `selectExpiringVtxos`.
             const now = await fetchTimeHeight(this.wallet);
             let vtxos = await this.selectExpiringVtxos(threshold, now);
+            vtxos = await this.deferToExecutor(vtxos, now);
 
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
@@ -3024,6 +3068,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             try {
                 now = await fetchTimeHeight(this.wallet);
                 expiringVtxos = await this.selectExpiringVtxos(undefined, now);
+                expiringVtxos = await this.deferToExecutor(expiringVtxos, now);
                 expiringVtxos = await this.revalidateBeforeSettle(expiringVtxos, undefined, now);
             } catch (e) {
                 // Non-fatal: fall back to boarding-only settle.
