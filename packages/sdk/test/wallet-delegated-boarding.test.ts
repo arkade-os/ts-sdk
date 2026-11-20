@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
+import { ScriptNum } from "@scure/btc-signer";
 import {
     Batch,
     ContractManager,
@@ -172,14 +173,17 @@ async function hdWalletWithWatch({
             if (refuse) throw new Error("Executor unavailable");
             const template = templateId === DEFAULT_TEMPLATE_IDS.boarding ? "boarding" : "renewal";
             if (failRenewal && template === "renewal") throw new Error("Executor unavailable");
+            const num = (name: string) => Number(ScriptNum().decode(hex.decode(variables[name])));
             const script = ExecutorContractHandler.createScript(
                 ExecutorContractHandler.serializeParams({
                     template,
                     owner: hex.decode(variables.owner),
-                    exitDelay: 144,
-                    renewalWindow: 1000,
-                    maxFee: 100,
-                    ...(template === "boarding" ? { boardingExitDelay: 144 } : {}),
+                    exitDelay: num("exit_delay"),
+                    renewalWindow: num("renewal_window"),
+                    maxFee: num("max_fee"),
+                    ...(template === "boarding"
+                        ? { boardingExitDelay: num("boarding_exit_delay") }
+                        : {}),
                     cosignerPubKey: hex.decode(vectors.cosignerPubkey),
                     serverPubKey: hex.decode(SERVER_KEY_HEX),
                     emulatorPubKey: hex.decode(vectors.emulatorPubkey),
@@ -309,8 +313,35 @@ async function settlesSoon(promise: Promise<unknown>): Promise<boolean> {
 
 describe("delegated boarding address on an HD wallet", () => {
     afterEach(() => {
+        vi.useRealTimers();
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
+    });
+
+    it("follows the most recently registered params, and back to the first on a rollback", async () => {
+        // registrations a millisecond apart would order by their rows' creation instead
+        vi.useFakeTimers({ toFake: ["Date"] });
+        const { wallet, boarding } = await hdWalletWithWatch();
+        const executor = (await wallet.getExecutorManager())!;
+        const register = (maxFee: number) =>
+            executor.registerBoarding(
+                { renewalWindow: 1000, maxFee, exitDelay: 144, boardingExitDelay: 144 },
+                { emulatorPubkey: vectors.emulatorPubkey },
+            );
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+        expect(await wallet.getBoardingAddress()).toBe(first);
+
+        vi.setSystemTime(Date.now() + 1000);
+        const changed = (await register(200)).address;
+        expect(changed).not.toBe(first);
+        expect(await wallet.getBoardingAddress()).toBe(changed);
+
+        vi.setSystemTime(Date.now() + 1000);
+        expect((await register(100)).address).toBe(first);
+        expect(await wallet.getBoardingAddress()).toBe(first);
+        // the other watch's deposits are still the wallet's
+        expect(await wallet.getBoardingAddresses()).toContain(changed);
+        await wallet.dispose();
     });
 
     it("gives a rotated boarding key a watch of its own", async () => {

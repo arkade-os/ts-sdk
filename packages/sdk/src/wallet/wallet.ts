@@ -1383,10 +1383,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * The Executor contracts of this wallet's keys, newest first: the identity's, or one its
-     * `signingDescriptor` derives. Read from the contract repository, not the contract manager: a
-     * boarding or renewal read must not start its indexer sync. Reads follow registrations made
-     * through any wallet front-end.
+     * The Executor contracts of this wallet's keys, most recently registered first: the
+     * identity's, or one its `signingDescriptor` derives. Read from the contract repository, not
+     * the contract manager: a boarding or renewal read must not start its indexer sync. Reads
+     * follow registrations made through any wallet front-end.
      */
     protected delegatedExecutorContracts(
         template: ExecutorDefault,
@@ -3019,10 +3019,10 @@ export class Wallet
     }
 
     /**
-     * Register the newest live Executor boarding watch again for a rotated boarding key, so its
-     * deposits are boarded while the wallet is offline too. Not the displayed key's own watch: it
-     * may have none, and the parameters are wallet policy. Best-effort: on failure the key shows
-     * its own address, which the wallet boards once online.
+     * Register the most recently registered live Executor boarding watch again for a rotated
+     * key, so its deposits are boarded while the wallet is offline too. Not the displayed key's
+     * own watch: it may have none, and the parameters are wallet policy. Best-effort: on failure
+     * the key shows its own address, which the wallet boards once online.
      */
     private async extendBoardingWatch(descriptor: string): Promise<void> {
         if (!this._executorManager) return;

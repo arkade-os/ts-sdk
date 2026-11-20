@@ -24,12 +24,13 @@ function renewalRow(
     ownerXOnly: string,
     metadata: Record<string, unknown> = { delegationStatus: "active" },
     signerPubkey = SIGNER_PUBKEY,
+    renewalWindow = RENEWAL_WINDOW,
 ): Contract {
     const params = ExecutorContractHandler.serializeParams({
         template: "renewal",
         owner: hex.decode(`02${ownerXOnly}`),
         exitDelay: 144,
-        renewalWindow: RENEWAL_WINDOW,
+        renewalWindow,
         maxFee: MAX_FEE,
         cosignerPubKey: hex.decode(vectors.cosignerPubkey),
         serverPubKey: hex.decode(signerPubkey),
@@ -204,6 +205,19 @@ describe("VtxoManager defers Executor-renewable delegated coins", () => {
 
         await expect(manager.renewVtxos()).rejects.toThrow("No VTXOs available to renew");
         expect(wallet.settle).not.toHaveBeenCalled();
+    });
+
+    it("defers each coin by its own watch's window when a key has several live renewal watches", async () => {
+        // one key under two params; a coin with 600 s left is inside the longer window's margin
+        const short = renewalRow(IDENTITY_X_ONLY);
+        const long = renewalRow(IDENTITY_X_ONLY, undefined, undefined, RENEWAL_WINDOW * 2);
+        const deferred = coin(short.script, { txid: "11".repeat(32) });
+        const due = coin(long.script, { txid: "22".repeat(32) });
+        const wallet = walletWith([short, long], [deferred, due]);
+        const manager = new VtxoManager(wallet, {});
+
+        await manager.renewVtxos();
+        expect(settleInputs(wallet).map((v: { txid: string }) => v.txid)).toEqual([due.txid]);
     });
 
     it("still lists a skipped coin among the expiring VTXOs", async () => {

@@ -1,4 +1,5 @@
 import { hex } from "@scure/base";
+import { ScriptNum } from "@scure/btc-signer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RestExecutorProvider } from "../src/providers/executor";
 import { ExecutorRequestError } from "../src/providers/executor";
@@ -264,12 +265,14 @@ describe("ExecutorManagerImpl.register", () => {
             { delegationStatus: "local" },
             {
                 delegationStatus: "active",
+                delegationRegisteredAt: expect.any(Number),
                 delegationExpiresAt: 9,
             },
         ]);
         expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
             metadata: {
                 delegationStatus: "active",
+                delegationRegisteredAt: expect.any(Number),
                 delegationExpiresAt: 9,
             },
         });
@@ -309,6 +312,7 @@ describe("ExecutorManagerImpl.register", () => {
             metadata: {
                 note: "kept",
                 delegationStatus: "active",
+                delegationRegisteredAt: expect.any(Number),
             },
         });
     });
@@ -322,6 +326,7 @@ describe("ExecutorManagerImpl.register", () => {
         expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
             metadata: {
                 delegationStatus: "expired",
+                delegationRegisteredAt: expect.any(Number),
             },
         });
     });
@@ -432,7 +437,11 @@ describe("ExecutorManagerImpl.register", () => {
         // its rows carry the descriptor, so the wallet signs for them
         expect(contractManager.createContract.mock.calls.map(([c]) => c.metadata)).toEqual([
             { signingDescriptor: descriptor, delegationStatus: "local" },
-            { signingDescriptor: descriptor, delegationStatus: "active" },
+            {
+                signingDescriptor: descriptor,
+                delegationStatus: "active",
+                delegationRegisteredAt: expect.any(Number),
+            },
         ]);
     });
 
@@ -469,9 +478,14 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         contractManager.updateContract.mockClear();
     });
 
-    /** A provider that answers each renewal registration with the address of the owner it named. */
+    /**
+     * A provider that answers each registration with the address of the variables it received.
+     * `fail` lists the owners and template ids it refuses, read at call time.
+     */
     function derivingProvider({ fail = [] }: { fail?: string[] } = {}) {
         const server = hex.decode(vectors.serverPubkey).subarray(1);
+        const num = (variables: Record<string, string>, name: string) =>
+            Number(ScriptNum().decode(hex.decode(variables[name])));
         return {
             getInfo: vi.fn().mockResolvedValue({
                 ...makeInfo(),
@@ -481,17 +495,19 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
             }),
             registerDelegation: vi.fn(
                 async (templateId: string, variables: Record<string, string>) => {
-                    if (fail.includes(variables.owner)) throw new Error("Executor unavailable");
-                    const owner = hex.decode(variables.owner);
+                    if (fail.includes(variables.owner) || fail.includes(templateId)) {
+                        throw new Error("Executor unavailable");
+                    }
+                    const template = templateId === ids.boarding ? "boarding" : "renewal";
                     const script = ExecutorContractHandler.createScript(
                         ExecutorContractHandler.serializeParams({
-                            template: templateId === ids.boarding ? "boarding" : "renewal",
-                            owner,
-                            exitDelay: params.exitDelay,
-                            renewalWindow: params.renewalWindow,
-                            maxFee: params.maxFee,
-                            ...(templateId === ids.boarding
-                                ? { boardingExitDelay: params.boardingExitDelay }
+                            template,
+                            owner: hex.decode(variables.owner),
+                            exitDelay: num(variables, "exit_delay"),
+                            renewalWindow: num(variables, "renewal_window"),
+                            maxFee: num(variables, "max_fee"),
+                            ...(template === "boarding"
+                                ? { boardingExitDelay: num(variables, "boarding_exit_delay") }
                                 : {}),
                             cosignerPubKey: hex.decode(vectors.cosignerPubkey),
                             serverPubKey: hex.decode(vectors.serverPubkey),
@@ -504,7 +520,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                         variables,
                         status: "active" as const,
                         inputs: [
-                            templateId === ids.boarding
+                            template === "boarding"
                                 ? {
                                       name: "board",
                                       onchain: true,
@@ -549,19 +565,61 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         };
     }
 
-    /** Persist a live boarding watch for `descriptor`'s key, as an earlier registration would. */
-    async function holdBoardingWatch(wallet: any, descriptor: string) {
+    /**
+     * Persist a live boarding watch for `descriptor`'s key (the identity's when undefined), as an
+     * earlier registration would, under other params or an older Executor key if given.
+     */
+    async function holdBoardingWatch(
+        wallet: any,
+        descriptor: string | undefined,
+        held: { params?: typeof params; keys?: Partial<Record<string, string>> } = {},
+    ) {
         await watchExecutorContracts(
             wallet,
             {
                 cosignerPubkey: vectors.cosignerPubkey,
                 serverPubkey: vectors.serverPubkey,
                 emulatorPubkey: vectors.emulatorPubkey,
+                ...held.keys,
             },
-            params,
+            held.params ?? params,
             { template: "boarding", status: "active", expiresAt: 0 },
             descriptor,
         );
+    }
+
+    /** The renewal calls the provider received, as `owner/maxFee`. */
+    const renewalCalls = (provider: ReturnType<typeof derivingProvider>) =>
+        provider.registerDelegation.mock.calls
+            .filter(([id]) => id === ids.renewal)
+            .map(([, v]) => `${v.owner.slice(2, 6)}/${v.max_fee}`);
+
+    /** The rows of `template` as `owner/maxFee/status`, sorted. */
+    async function rowsOf(manager: ContractManager, template: "renewal" | "boarding") {
+        return (await manager.getContracts({ type: ["executor"] }))
+            .filter((c) => c.params.template === template)
+            .map(
+                (c) =>
+                    `${c.params.owner.slice(2, 6)}/${c.params.maxFee}/${c.metadata?.delegationStatus}`,
+            )
+            .sort();
+    }
+
+    // maxFee 500 and 501, as the service's ScriptNum variables
+    const FEE = "f401";
+    const CHANGED_FEE = "f501";
+    const changed = { ...params, maxFee: params.maxFee + 1 };
+    const OWNER = vectors.owner.slice(2, 6);
+    const HELD = heldKeys.map((k) => k.slice(0, 4));
+
+    /** A wallet whose displayed key has boarding and renewal both live under `params`. */
+    async function renewingWallet(fail: string[] = []) {
+        const ctx = await managedWallet(fail);
+        const executor = new ExecutorManagerImpl(ctx.provider, ctx.wallet);
+        await executor.registerBoarding(params, trusted);
+        await executor.registerRenewal(params, trusted);
+        ctx.provider.registerDelegation.mockClear();
+        return { ...ctx, executor };
     }
 
     it("accepts an offchain input addressed as the v0 Ark address of (hrp, server key, tap key)", async () => {
@@ -616,27 +674,157 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         expect(contractManager.updateContract).not.toHaveBeenCalled();
     });
 
-    it("refuses params that differ from the key's rows, naming them", async () => {
-        const { wallet: managed, provider } = await managedWallet();
-        await new ExecutorManagerImpl(provider, managed).registerBoarding(params, trusted);
-        const renew = (options: Record<string, unknown>) =>
-            new ExecutorManagerImpl(provider, managed).registerRenewal(
-                options as typeof params,
+    describe("when the params change", () => {
+        it("registers a new boarding and renewal pair and leaves the old pair live", async () => {
+            const { manager, provider, executor } = await renewingWallet();
+
+            await executor.registerBoarding(changed, trusted);
+            expect(provider.registerDelegation.mock.calls.map(([id]) => id)).toEqual([
+                ids.boarding,
+                ids.renewal,
+            ]);
+            expect(await rowsOf(manager, "boarding")).toEqual([
+                `${OWNER}/500/active`,
+                `${OWNER}/501/active`,
+            ]);
+            expect(await rowsOf(manager, "renewal")).toEqual([
+                `${OWNER}/500/active`,
+                `${OWNER}/501/active`,
+            ]);
+        });
+
+        it("does not register the renewal watch again when it is already live", async () => {
+            const { provider, executor } = await renewingWallet();
+
+            await executor.registerBoarding(params, trusted);
+            expect(provider.registerDelegation.mock.calls.map(([id]) => id)).toEqual([
+                ids.boarding,
+            ]);
+        });
+
+        it("registers no renewal for a key without a live renewal watch", async () => {
+            const { wallet: managed, manager, provider } = await managedWallet();
+            const executor = new ExecutorManagerImpl(provider, managed);
+            await executor.registerBoarding(params, trusted);
+            await executor.registerBoarding(changed, trusted);
+
+            expect(provider.registerDelegation.mock.calls.map(([id]) => id)).toEqual([
+                ids.boarding,
+                ids.boarding,
+            ]);
+            // the companions stay local: the wallet renews what they receive itself
+            expect(await rowsOf(manager, "renewal")).toEqual([
+                `${OWNER}/500/local`,
+                `${OWNER}/501/local`,
+            ]);
+        });
+
+        it("keeps the boarding watch when the renewal paired with it fails", async () => {
+            const fail: string[] = [];
+            const { manager, executor } = await renewingWallet(fail);
+            fail.push(ids.renewal);
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            const registration = await executor.registerBoarding(changed, trusted);
+            expect(registration.params.maxFee).toBe(changed.maxFee);
+            expect(await rowsOf(manager, "boarding")).toContain(`${OWNER}/501/active`);
+            expect(await rowsOf(manager, "renewal")).toContain(`${OWNER}/501/local`);
+            expect(warn).toHaveBeenCalled();
+            warn.mockRestore();
+
+            // registerRenewal retries it
+            fail.length = 0;
+            await executor.registerRenewal(params, trusted);
+            expect(await rowsOf(manager, "renewal")).toContain(`${OWNER}/501/active`);
+        });
+
+        it("registers renewal for each live boarding watch under its own params", async () => {
+            const { wallet: managed, manager, provider } = await managedWallet();
+            const executor = new ExecutorManagerImpl(provider, managed);
+            await executor.registerBoarding(params, trusted);
+            await holdBoardingWatch(managed, `tr(${heldKeys[0]})`);
+            provider.registerDelegation.mockClear();
+
+            await executor.registerRenewal(changed, trusted);
+            const calls = renewalCalls(provider);
+            // the displayed key under the options first, then the watches' own params
+            expect(calls[0]).toBe(`${OWNER}/${CHANGED_FEE}`);
+            expect(calls.slice(1).sort()).toEqual([`${HELD[0]}/${FEE}`, `${OWNER}/${FEE}`].sort());
+            expect(await rowsOf(manager, "renewal")).toEqual(
+                [`${OWNER}/500/active`, `${OWNER}/501/active`, `${HELD[0]}/500/active`].sort(),
+            );
+        });
+
+        it("registers a renewal contract once, however many boarding watches pay into it", async () => {
+            const { wallet: managed, provider } = await managedWallet();
+            const executor = new ExecutorManagerImpl(provider, managed);
+            await executor.registerBoarding(params, trusted);
+            // only the boarding exit delay differs: the renewal contract is the same
+            await executor.registerBoarding(
+                { ...params, boardingExitDelay: params.boardingExitDelay + 1 },
                 trusted,
             );
+            provider.registerDelegation.mockClear();
+
+            await executor.registerRenewal(params, trusted);
+            expect(renewalCalls(provider)).toEqual([`${OWNER}/${FEE}`]);
+        });
+    });
+
+    it("skips a boarding watch under another emulator key, warning with its key", async () => {
+        const { wallet: managed, manager, provider } = await managedWallet();
+        // its coins sit in a contract the Executor's current emulator key does not derive
+        await holdBoardingWatch(managed, `tr(${heldKeys[0]})`, {
+            keys: { emulatorPubkey: vectors.cosignerPubkey },
+        });
+        await holdBoardingWatch(managed, `tr(${heldKeys[1]})`);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
         await expect(
-            renew({ renewalWindow: params.renewalWindow + 1, maxFee: params.maxFee }),
-        ).rejects.toThrow("Executor registration parameters differ: renewalWindow");
+            new ExecutorManagerImpl(provider, managed).registerRenewal(params, trusted),
+        ).resolves.toBeDefined();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(heldKeys[0]));
+        warn.mockRestore();
+
+        // the other key was registered; the old contract was not
+        expect(provider.registerDelegation.mock.calls.map(([, v]) => v.owner)).toEqual([
+            vectors.owner,
+            `02${heldKeys[1]}`,
+        ]);
+        expect(await rowsOf(manager, "renewal")).not.toContain(`${HELD[0]}/500/active`);
+    });
+
+    it("skips a boarding watch whose window is past the VTXO expiry, warning with its key", async () => {
+        const { wallet: managed, provider } = await managedWallet();
+        const operator = await managed.getOperatorInfo();
+        managed.getOperatorInfo.mockResolvedValue({ ...operator, vtxoTreeExpiry: 172800n });
+        // registered when the operator's expiry was longer
+        await holdBoardingWatch(managed, `tr(${heldKeys[0]})`, {
+            params: { ...params, renewalWindow: 172800 },
+        });
+        await holdBoardingWatch(managed, `tr(${heldKeys[1]})`);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
         await expect(
-            renew({ renewalWindow: params.renewalWindow, maxFee: params.maxFee + 1 }),
-        ).rejects.toThrow("Executor registration parameters differ: maxFee");
+            new ExecutorManagerImpl(provider, managed).registerRenewal(params, trusted),
+        ).resolves.toBeDefined();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(heldKeys[0]));
+        warn.mockRestore();
+
+        expect(provider.registerDelegation.mock.calls.map(([, v]) => v.owner)).toEqual([
+            vectors.owner,
+            `02${heldKeys[1]}`,
+        ]);
+    });
+
+    it("throws at once when the displayed key fails, trying no other", async () => {
+        const { wallet: managed, provider } = await managedWallet([vectors.owner]);
+        await holdBoardingWatch(managed, `tr(${heldKeys[0]})`);
+
         await expect(
-            renew({
-                renewalWindow: params.renewalWindow,
-                maxFee: params.maxFee,
-                exitDelay: params.exitDelay + 1,
-            }),
-        ).rejects.toThrow("Executor registration parameters differ: exitDelay");
+            new ExecutorManagerImpl(provider, managed).registerRenewal(params, trusted),
+        ).rejects.toThrow("Executor unavailable");
+        expect(provider.registerDelegation).toHaveBeenCalledOnce();
     });
 
     it("activates the renewal row when renewal is registered after boarding", async () => {
