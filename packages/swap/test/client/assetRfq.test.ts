@@ -641,6 +641,16 @@ describe("accept() on a negotiated asset market", () => {
         ]);
     });
 
+    it("funds a negotiated swap with no packet when asked", async () => {
+        const { client, repository, wallet } = await harness();
+        const quote = await client.quote(buy());
+        await client.accept(quote, { attachOfferPacket: false });
+
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.attachOfferPacket).toBe(false);
+        expect(wallet.sent).toEqual([{ address: stored.swapAddress, amount: 10_000 }]);
+    });
+
     it("persists before it funds", async () => {
         const { client, repository, wallet } = await harness({
             failSend: () => new Error("send exploded"),

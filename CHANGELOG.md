@@ -122,6 +122,14 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: `accept(quote, { attachOfferPacket: false })` funds an offer
+  without its packet.** The funding then shows only a payment to a taproot
+  output, and the terms stay off-chain until the deposit is spent. The packet
+  is also how a wallet restored from its seed alone finds an unfilled deposit,
+  so the default stays `true`, and a record funded without it is not found by a
+  seed-only restore. The choice is written on the record before funding, so a
+  resumed funding makes the same one. Unset, the funding is unchanged.
+
 - **`@arkade-os/swap`: asset quotes can ask for the directed `asset-swap-v4`.**
   `SwapPolicy.assetSwapContractVersions` sets what an asset quote advertises; it
   defaults to `ASSET_SWAP_CONTRACT_VERSIONS`, so nothing changes until a caller
