@@ -203,6 +203,17 @@ export function classifyDepositSpend(
     return "indeterminate";
 }
 
+/** Whether packet bytes encode `offer`'s covenant, `swapPkScript` included. The ratios are reserved
+ * wire space no binding carries, so they alone may differ. */
+const encodesOffer = (offerHex: string, offer: Offer): boolean => {
+    try {
+        const { ratioNum: _num, ratioDen: _den, ...terms } = decodeOffer(hex.decode(offerHex));
+        return hex.encode(encodeOffer(terms)) === hex.encode(encodeOffer(offer));
+    } catch {
+        return false;
+    }
+};
+
 /** A way to learn of a deposit this wallet funded but holds no record for. */
 export interface OfferRecoverySource {
     readonly name: string;
@@ -330,8 +341,22 @@ export async function restoreAssetSwaps(
             const fundingTx = byTxid.get(fundingTxid);
             // first source wins; an answer for a txid nobody asked about is ignored
             if (!fundingTx || claimed.has(fundingTxid)) continue;
+            let offer: Offer;
+            try {
+                offer = offerFromBinding(binding);
+            } catch (error) {
+                console.warn(`[swap] ${recovery.name} sent a binding that does not compile`, error);
+                continue;
+            }
+            // Only the binding is proven, by the deposit at its script, so packet bytes are kept
+            // only if they encode exactly that covenant; else they are derived from it.
+            if (offerHex !== undefined && !encodesOffer(offerHex, offer)) {
+                console.warn(`[swap] ${recovery.name} sent a packet its binding does not match`);
+                continue;
+            }
             claimed.add(fundingTxid);
-            found.push({ fundingTx, offer: offerFromBinding(binding), source: binding, offerHex });
+            const packet = offerHex ?? hex.encode(encodeOffer(offer));
+            found.push({ fundingTx, offer, source: binding, offerHex: packet });
         }
     }
     const answered = [...claimed, ...[...declined].filter((txid) => !claimed.has(txid))];

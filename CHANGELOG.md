@@ -128,6 +128,11 @@ style and have not been backfilled.
   default is `[packetRecoverySource(indexer)]`, the funding tx's own `0x03`
   packet, so a restore with no sources passed finds what it found before. Answers
   merge by funding txid, first source first, and a source that throws is skipped.
+  A source's binding is proven by the deposit at its script, and nothing else it
+  sends is trusted: packet bytes are kept only if they encode exactly that
+  covenant, an answer whose packet or binding does not hold up is dropped for
+  the next source or a later scan, and a binding sent without bytes has them
+  derived from it.
   One case now scans differently: a funding whose `0x03` packet is present but
   does not decode is left unscanned, so a later build gets a second look, rather
   than marked answered for good. A funding with no packet, or another packet

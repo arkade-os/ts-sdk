@@ -4,6 +4,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
 import {
     bindingFromOffer,
+    decodeOffer,
     encodeOffer,
     offerContract,
     Offer,
@@ -11,6 +12,7 @@ import {
     recordOfferBinding,
     type OfferBinding,
 } from "../src/offer";
+import { ASSET_SWAP_V4 } from "../src/program";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -813,6 +815,85 @@ describe("restoreAssetSwaps — recovery sources", () => {
         ]);
 
         expect(restored).toHaveLength(1);
+    });
+
+    // A source's binding is proven by the deposit at its script; the packet bytes it sends beside
+    // it are not, and a v2/v3 record is rebuilt from those bytes.
+    const answering = (found: Awaited<ReturnType<OfferRecoverySource["discover"]>>["found"]) => ({
+        name: "answering",
+        discover: async () => ({ found, declined: [] }),
+    });
+
+    it("persists no packet that does not encode the binding it came with", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundedWith(offer);
+        const binding = bindingFromOffer(offer, OPERATOR_KEY);
+        const tampered = hex.encode(encodeOffer({ ...offer, wantAmount: BigInt(1) }));
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored, scannedTxids } = await restoreWith(indexer, funding.txid, [
+            answering([{ fundingTxid: funding.txid, binding, offerHex: tampered }]),
+        ]);
+
+        expect(restored.filter((swap) => swap.offerHex === tampered)).toEqual([]);
+        expect(restored).toEqual([]);
+        expect(scannedTxids).toEqual([]);
+    });
+
+    it("lets a later source answer once an inconsistent answer is refused", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const binding = bindingFromOffer(offer, OPERATOR_KEY);
+        const tampered = hex.encode(encodeOffer({ ...offer, wantAmount: BigInt(1) }));
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored } = await restoreWith(indexer, funding.txid, [
+            answering([{ fundingTxid: funding.txid, binding, offerHex: tampered }]),
+            packetRecoverySource(indexer),
+        ]);
+
+        expect(restored).toMatchObject([{ offerHex: hex.encode(encodeOffer(offer)) }]);
+    });
+
+    it("skips an answer whose binding does not compile, and keeps the rest", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+        const takerless: OfferBinding = {
+            ...bindingFromOffer(offer, OPERATOR_KEY),
+            version: ASSET_SWAP_V4,
+        };
+
+        const { restored } = await restoreWith(indexer, funding.txid, [
+            answering([{ fundingTxid: funding.txid, binding: takerless }]),
+            packetRecoverySource(indexer),
+        ]);
+
+        expect(restored).toMatchObject([{ offerHex: hex.encode(encodeOffer(offer)) }]);
+    });
+
+    it("restores a ratio-carrying solverd packet byte for byte", async () => {
+        // solverd's own encoder; a binding carries no ratio, so re-encoding one would drop them
+        const vector =
+            "0100225120b2a1cd158c7a7e2e6346b6d2d0c323eae90d9d6b8c6e2245de4170d953e2bca6020008000000000000c350030022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa09000800000000000000010a0008000000000000000405002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
+        const operator = hex.decode(
+            "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        );
+        const offer = decodeOffer(hex.decode(vector));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored } = await restoreAssetSwaps(
+            indexer,
+            [walletTx(funding.txid, "sent")],
+            new Set(),
+            {
+                operatorPubkey: operator,
+            },
+        );
+
+        expect(offer.ratioNum).toBe(BigInt(1));
+        expect(restored).toMatchObject([{ offerHex: vector }]);
     });
 });
 
