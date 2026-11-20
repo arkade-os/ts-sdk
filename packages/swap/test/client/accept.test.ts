@@ -278,7 +278,36 @@ describe("accept() — the offer extension packet", () => {
         // against.
         const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(hex.encode(payment?.extensions?.[0]?.payload as Uint8Array)).toBe(stored.offerHex);
-        expect(decodeOffer(hex.decode(stored.offerHex)).wantAmount).toBe(quote.take.amount);
+        expect(decodeOffer(hex.decode(stored.offerHex!)).wantAmount).toBe(quote.take.amount);
+    });
+
+    it("records nothing for the default, so the funding is the one above", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "spot");
+        await h.client.accept(quote);
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect("attachOfferPacket" in stored).toBe(false);
+        expect(h.wallet.sent[0]?.extensions).toHaveLength(1);
+    });
+
+    it("funds with no packet when asked, and keeps that choice on a resume", async () => {
+        let failing = true;
+        const h = await setup({
+            failSend: () => (failing ? new Error("send exploded") : (undefined as never)),
+        });
+        const quote = await quoteFor(h, "spot");
+        await expect(h.client.accept(quote, { attachOfferPacket: false })).rejects.toThrow(
+            /send exploded/,
+        );
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.attachOfferPacket).toBe(false);
+        failing = false;
+
+        await h.client.accept(quote);
+
+        expect(h.wallet.sent).toHaveLength(1);
+        expect(h.wallet.sent[0]?.address).toBe(stored.swapAddress);
+        expect(h.wallet.sent[0]?.extensions).toBeUndefined();
     });
 
     it("sends the asset leg as an asset, not as sats", async () => {

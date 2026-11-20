@@ -6,6 +6,7 @@
  * BTC -> asset only: `createOffer` refuses anything but BTC<->asset, and
  * keying `findMarket` on BTC is what enforces that.
  */
+import { hex } from "@scure/base";
 import type { DiscoveredMarket, OfferPlan, Side } from "@arkade-os/solver-discovery";
 import type { Asset, PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
 import {
@@ -53,7 +54,7 @@ export interface CrossAssetRailDeps {
     btcBalance(): Promise<bigint>;
     dust(): Promise<bigint>;
     /** Before every irreversible step and once after the last. See
-     *  {@link CrossAssetPhase}. Keyed by `offerHex`. */
+     *  {@link CrossAssetPhase}. Keyed by `swapPkScript`. */
     persist(swap: CrossAssetSwap): Promise<void>;
     /** Resolve once a filler has delivered the asset to this wallet.
      *
@@ -195,7 +196,7 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
                         const result = {
                             railId: CROSS_ASSET_RAIL,
                             txid,
-                            swapId: offer.offerHex,
+                            swapId: hex.encode(offer.swapPkScript),
                         };
                         emit({ status: "settled", result });
                         return result;

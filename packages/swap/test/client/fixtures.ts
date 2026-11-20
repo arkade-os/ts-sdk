@@ -29,7 +29,7 @@ import {
     type TransportCard,
 } from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
-import { ASSET_SWAP_V2, ASSET_SWAP_V3 } from "../../src/program";
+import { ASSET_SWAP_V2, ASSET_SWAP_V3, ASSET_SWAP_V4 } from "../../src/program";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -552,6 +552,8 @@ export const arkadeAssetAnswer = (
         price?: number;
         /** Override the payout, to price the double off its own card. */
         toAmount?: bigint;
+        /** Quotes and derives `asset-swap-v4` under this key; default, the one the transport attests. */
+        taker?: Uint8Array;
     } = {},
 ): RfqQuote => {
     const profile = profileOf(payload);
@@ -568,8 +570,10 @@ export const arkadeAssetAnswer = (
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
     // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
     const version = (payload.contract_versions as string[] | undefined)?.find(
-        (v) => v === ASSET_SWAP_V3 || v === ASSET_SWAP_V2,
+        (v) => v === ASSET_SWAP_V4 || v === ASSET_SWAP_V3 || v === ASSET_SWAP_V2,
     );
+    const taker =
+        version === ASSET_SWAP_V4 ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY)) : undefined;
     const script = offerContract(
         {
             // The covenant binds what the fill must DELIVER, so the wanted
@@ -580,9 +584,10 @@ export const arkadeAssetAnswer = (
             makerPublicKey: hex.decode(profile.maker_public_key as string),
             emulatorPubkey: EMULATOR_PUBKEY,
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
+            ...(taker && { taker }),
         },
         OPERATOR_PUBKEY,
-        version === ASSET_SWAP_V3 ? "asset-swap-v3" : "asset-swap-v2",
+        version === ASSET_SWAP_V3 || version === ASSET_SWAP_V4 ? version : ASSET_SWAP_V2,
     );
     return {
         v: 1,
@@ -593,7 +598,7 @@ export const arkadeAssetAnswer = (
         // knowable client-side, so this wire carries no JSON numbers.
         from_amount: from.toString(),
         to_amount: to.toString(),
-        solver_pubkey: hex.encode(SOLVER_PUBKEY),
+        solver_pubkey: hex.encode(taker ?? SOLVER_PUBKEY),
         valid_until: clock.validUntil,
         ...(version === undefined ? {} : { contract_version: version }),
         // No `refund_locktime`: an offer covenant carries no timelock, so

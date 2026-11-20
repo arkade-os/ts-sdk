@@ -6,6 +6,7 @@ import {
     prepareOfferCancel,
     encodeOffer,
     offerContract,
+    OfferCovenantMismatchError,
     type Offer,
 } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
@@ -122,6 +123,20 @@ describe("cancelOffer guards", () => {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("signing key has likely rotated");
+    });
+
+    it("diagnoses a taker-bearing offer whose script no tree reproduces", async () => {
+        state.serverKey = fundedOperatorKey;
+        state.utxos = [{ txid: "a".repeat(64), vout: 0, value: 10_000 }];
+        const taker = hex.decode(
+            "531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+        );
+        const onV3 = encodeOffer({ ...binding, taker, swapPkScript: contract.pkScript });
+        await expect(
+            cancelOffer(wallet, hex.encode(onV3), {
+                repository: new InMemoryAssetSwapRepository(),
+            }),
+        ).rejects.toBeInstanceOf(OfferCovenantMismatchError);
     });
 
     it("proceeds past a rotation when swapAddress pins the funded server key", async () => {
