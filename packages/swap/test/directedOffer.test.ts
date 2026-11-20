@@ -15,15 +15,24 @@ import {
     bindingFromOffer,
     bindingProgram,
     decodeOffer,
+    deriveOffer,
     encodeOffer,
+    offerBindingOf,
     offerContract,
     offerFromBinding,
     OfferCovenantMismatchError,
     prepareOfferCancel,
+    recordOfferBinding,
     swapProgramBinding,
     withExitClosure,
     type Offer,
+    type RecordedOfferBinding,
 } from "../src/offer";
+import { InMemoryAssetSwapRepository } from "../src/repository";
+import { getAssetSwapsOrThrow, type AssetSwap } from "../src/store";
+import { readableRecord } from "../src/client/drive";
+import { legacyOfferDepositsToAdopt } from "../src/client/legacyRecords";
+import { offerRecord } from "./client/driveFixtures";
 import {
     ASSET_SWAP_CONTRACTS,
     ASSET_SWAP_CONTRACT_VERSIONS,
@@ -298,6 +307,90 @@ describe("the offer binding", () => {
         expect(() => bindingFromOffer(offer, keys.emulatorPubkey)).toThrow(
             OfferCovenantMismatchError,
         );
+    });
+});
+
+describe("a recorded binding", () => {
+    const [, terms, golden] = directions[0];
+    const binding = bindingFromOffer(
+        { ...terms, taker: TAKER, swapPkScript: hex.decode(golden) },
+        operatorPubkey,
+    );
+
+    it("survives JSON and rebuilds the binding it recorded", () => {
+        const stored = JSON.parse(JSON.stringify(recordOfferBinding(binding)));
+        expect(offerBindingOf(stored)).toEqual(binding);
+    });
+
+    it.each([
+        ["an unknown version", { version: "asset-swap-v9" }],
+        ["no version", { version: undefined }],
+        ["a negative amount", { amount: "-1" }],
+        ["a fractional amount", { amount: "1.5" }],
+    ])("refuses %s", (_, over) => {
+        const corrupt = { ...recordOfferBinding(binding), ...over } as RecordedOfferBinding;
+        expect(() => offerBindingOf(corrupt)).toThrow();
+    });
+});
+
+describe("deriveOffer with a taker", () => {
+    it("derives the directed tree and hands back its binding", async () => {
+        const [, terms, golden] = directions[0];
+        const derived = await deriveOffer({} as IWallet, {
+            wantAmount: terms.wantAmount,
+            wantAsset: terms.wantAsset,
+            emulatorPubkey: `02${hex.encode(keys.emulatorPubkey)}`,
+            info: {
+                signerPubkey: `02${hex.encode(operatorPubkey)}`,
+                unilateralExitDelay: EXIT.value,
+                network: "regtest",
+            } as never,
+            maker: { pkScript: keys.makerPkScript, publicKey: keys.makerPublicKey },
+            taker: TAKER,
+        });
+        expect(hex.encode(derived.swapPkScript)).toBe(golden);
+        expect(derived.offerBinding.version).toBe(ASSET_SWAP_V4);
+        expect(derived.offerBinding).toEqual(
+            bindingFromOffer(decodeOffer(hex.decode(derived.offerHex)), operatorPubkey),
+        );
+    });
+});
+
+describe("a record that carries a binding in place of offerHex", () => {
+    const [, terms, golden] = directions[0];
+    const offer: Offer = { ...terms, taker: TAKER, swapPkScript: hex.decode(golden) };
+    const txid = "a".repeat(64);
+    const shapes: [string, { offerHex?: string; binding?: RecordedOfferBinding }][] = [
+        ["offerHex", { offerHex: hex.encode(encodeOffer(offer)) }],
+        ["binding", { binding: recordOfferBinding(bindingFromOffer(offer, operatorPubkey)) }],
+        ["neither", {}],
+    ];
+    const v1Row = (shape: (typeof shapes)[number][1]) =>
+        ({
+            id: txid,
+            fromAsset: "btc",
+            toAsset: testAsset.toString(),
+            fromAmount: "6000",
+            toAmount: "50000",
+            swapAddress: "",
+            swapPkScript: golden,
+            fundingTxid: txid,
+            status: "pending",
+            createdAt: 1,
+            ...shape,
+        }) as AssetSwap;
+
+    it.each(shapes)("lists and adopts a v1 row with %s only if it can rebuild", async (n, s) => {
+        const repository = new InMemoryAssetSwapRepository();
+        await repository.saveSwap(v1Row(s));
+        const usable = n !== "neither";
+        expect(await getAssetSwapsOrThrow(repository)).toHaveLength(usable ? 1 : 0);
+        expect([...(await legacyOfferDepositsToAdopt(repository))]).toEqual(usable ? [txid] : []);
+    });
+
+    it.each(shapes)("reads a v2 record with %s only if it can rebuild", (name, shape) => {
+        const record = offerRecord({ offerHex: undefined, ...shape });
+        expect(readableRecord(record)).toBe(name !== "neither");
     });
 });
 

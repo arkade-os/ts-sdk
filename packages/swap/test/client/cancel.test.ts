@@ -21,11 +21,18 @@ import { cancelSwap } from "../../src/client/cancel";
 import { createSwapDrive, type SwapDrive } from "../../src/client/drive";
 import type { SwapUpdate } from "../../src/client/outcome";
 import type { OfferSwapRecord } from "../../src/client/record";
-import { OfferCovenantMismatchError, encodeOffer, offerContract } from "../../src/offer";
+import {
+    OfferCovenantMismatchError,
+    bindingFromOffer,
+    encodeOffer,
+    offerContract,
+    recordOfferBinding,
+} from "../../src/offer";
 import { InMemoryAssetSwapRepository } from "../../src/repository";
 import {
     HRP,
     OFFER,
+    OFFER_ADDRESS,
     OFFER_SCRIPT,
     OPERATOR,
     PAYOUT,
@@ -252,6 +259,33 @@ describe("cancel() — the ordering", () => {
         await expect(h.cancel({ status: "cancelling" })).resolves.toEqual({ outcome: "cancelled" });
         expect((await h.stored()).spentTxid).toBe(CANCEL_TXID);
         expect(state.sends).toBe(1);
+        await h.drive.dispose();
+    });
+});
+
+describe("cancel() — a record that carries only its binding", () => {
+    const bound = (): OfferSwapRecord =>
+        offerRecord({
+            offerHex: undefined,
+            binding: recordOfferBinding(bindingFromOffer(OFFER, OPERATOR)),
+            swapAddress: OFFER_ADDRESS,
+            fundingTxid: FUNDING_TXID,
+        });
+
+    it("cancels from the binding's own operator key across a rotation", async () => {
+        const h = await build({ record: bound() });
+        state.serverKey = key(4);
+        await expect(h.cancel()).resolves.toEqual({ outcome: "cancelled" });
+        expect(state.sends).toBe(1);
+        await h.drive.dispose();
+    });
+
+    it("reads a fill that won the race off the binding's leaves", async () => {
+        const spend = spendPsbt("fulfill");
+        const h = await build({ record: bound(), vtxos: [spentDeposit(spend.txid)], txs: [spend] });
+        state.utxos = [];
+        await expect(h.cancel()).resolves.toEqual({ outcome: "filled" });
+        expect((await h.stored()).status).toBe("fulfilled");
         await h.drive.dispose();
     });
 });

@@ -69,6 +69,7 @@ import {
     fateMoved,
     offerFactsOf,
     offerRecordSource,
+    reopenedDeposit,
     restoredCorridorRecord,
     restoredOfferRecord,
     rfqRecordOf,
@@ -235,7 +236,10 @@ export const readableRecord = (record: SwapRecord): boolean => {
     if (record.family === "rfq") {
         return typeof record.rfqId === "string" && typeof record.lockupAddress === "string";
     }
-    return record.family === "offer" && typeof record.offerHex === "string";
+    return (
+        record.family === "offer" &&
+        (typeof record.offerHex === "string" || record.binding !== undefined)
+    );
 };
 
 export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
@@ -812,11 +816,22 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             reopened.size === 0
                 ? scanned
                 : new Set([...scanned].filter((txid) => !reopened.has(txid)));
+        // A directed deposit may be funded with no packet for the history scan to find, so a
+        // record that holds a binding answers for its own deposit.
+        const bound = [...records.values()].flatMap((record) =>
+            record.family === "offer" &&
+            record.binding !== undefined &&
+            record.fundingTxid !== undefined &&
+            !RETIRABLE.includes(record.status)
+                ? [reopenedDeposit(record, record.fundingTxid)]
+                : [],
+        );
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, txs, new Set(), {
             operatorPubkey,
             scanned: cursor,
             hrp,
             recoveredIn,
+            reopen: bound,
         });
 
         // After the scan: a record `accept()` persisted meanwhile is matched, not rebuilt.

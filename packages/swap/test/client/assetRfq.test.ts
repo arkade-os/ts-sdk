@@ -26,7 +26,14 @@ import {
     QuoteVerificationFailed,
     UnsupportedRoute,
 } from "../../src/client/errors";
-import { deriveOffer, OFFER_PACKET_TYPE, offerContract } from "../../src/offer";
+import {
+    bindingFromOffer,
+    decodeOffer,
+    deriveOffer,
+    OFFER_PACKET_TYPE,
+    offerContract,
+    recordOfferBinding,
+} from "../../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_V3, type AssetSwapContractVersion } from "../../src/program";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
@@ -36,6 +43,7 @@ import {
     ASSET_SELL_PAIR,
     EMULATOR_PUBKEY_HEX,
     FUNDING_TXID,
+    OPERATOR_PUBKEY,
     SOLVER_DISCOVERY_KEY,
     SOLVER_PUBKEY,
     USD_ASSET_ID,
@@ -539,7 +547,7 @@ describe("accept() on a negotiated asset market", () => {
             {
                 address: stored.swapAddress,
                 amount: 10_000,
-                extensions: [{ type: OFFER_PACKET_TYPE, payload: hex.decode(stored.offerHex) }],
+                extensions: [{ type: OFFER_PACKET_TYPE, payload: hex.decode(stored.offerHex!) }],
             },
         ]);
     });
@@ -556,6 +564,24 @@ describe("accept() on a negotiated asset market", () => {
         expect(stored).toBeDefined();
         expect(stored?.fundingTxid).toBeUndefined();
         expect(wallet.sent).toHaveLength(0);
+    });
+
+    it("resumes a record that carries only its binding with the packet it encodes", async () => {
+        let failing = true;
+        const { client, repository, wallet } = await harness({
+            failSend: () => (failing ? new Error("send exploded") : (undefined as never)),
+        });
+        const quote = await client.quote(buy());
+        await expect(client.accept(quote)).rejects.toThrow(/send exploded/);
+        const { offerHex, ...rest } = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        const packet = hex.decode(offerHex ?? "");
+        const offer = bindingFromOffer(decodeOffer(packet), OPERATOR_PUBKEY);
+        await repository.saveSwapRecord({ ...rest, binding: recordOfferBinding(offer) });
+        failing = false;
+
+        await client.accept(quote);
+
+        expect(wallet.sent[0]?.extensions).toEqual([{ type: OFFER_PACKET_TYPE, payload: packet }]);
     });
 
     it("leaves nothing durable when registration fails", async () => {

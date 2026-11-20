@@ -37,7 +37,14 @@ import {
     type IWallet,
     type Recipient,
 } from "@arkade-os/sdk";
-import { createOffer, OFFER_PACKET_TYPE, registerDerivedOffer } from "../offer";
+import {
+    createOffer,
+    encodeOffer,
+    OFFER_PACKET_TYPE,
+    offerFromBinding,
+    registerDerivedOffer,
+    storedOffer,
+} from "../offer";
 import { promoteOfferContract } from "../coverage";
 import { registerLockupContract } from "../lockupContract";
 import { onchainReceiveProfile, onchainSendProfile } from "../rfqCorridors";
@@ -664,13 +671,19 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
 };
 
 /**
- * The offer packet, rebuilt from the record's own TLV, so a resumed funding attaches exactly
- * what the *stored* covenant commits to.
+ * The offer packet, rebuilt from the record's own TLV, or encoded from its binding when it keeps
+ * none, so a resumed funding attaches exactly what the *stored* covenant commits to.
  */
-const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uint8Array } => ({
-    type: OFFER_PACKET_TYPE,
-    payload: hex.decode(record.offerHex),
-});
+const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uint8Array } => {
+    const stored = storedOffer(record);
+    return {
+        type: OFFER_PACKET_TYPE,
+        payload:
+            record.offerHex !== undefined
+                ? hex.decode(record.offerHex)
+                : encodeOffer("version" in stored ? offerFromBinding(stored) : stored),
+    };
+};
 
 /**
  * The deposit a crashed accept may already have made (sent, then died before stamping the txid);

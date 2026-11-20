@@ -15,11 +15,15 @@ import {
     type ArkTransaction,
 } from "@arkade-os/sdk";
 import {
+    bindingFromOffer,
     bindingProgram,
     decodeOffer,
     Offer,
     OFFER_PACKET_TYPE,
     offerContract,
+    offerFromBinding,
+    recordOfferBinding,
+    storedOffer,
     type OfferBinding,
 } from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
@@ -55,7 +59,9 @@ export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtx
 type Found = {
     fundingTx: Tx;
     offer: Offer;
-    offerHex: string;
+    /** What classifies the spend: the binding when the record has one, which pins its own key. */
+    source: Offer | OfferBinding;
+    offerHex?: string;
     existing?: AssetSwap;
 };
 
@@ -232,10 +238,11 @@ export async function restoreAssetSwaps(
     const reopened: Found[] = [];
     for (const swap of reopen) {
         try {
+            const source = storedOffer(swap);
             reopened.push({
                 fundingTx: { type: "sent", redeemTxid: swap.fundingTxid },
-                offer: decodeOffer(hex.decode(swap.offerHex)),
-                offerHex: swap.offerHex,
+                offer: "version" in source ? offerFromBinding(source) : source,
+                source,
                 existing: swap,
             });
         } catch {}
@@ -266,11 +273,8 @@ export async function restoreAssetSwaps(
             const packet = Extension.fromTx(parsed).getPacketByType(OFFER_PACKET_TYPE);
             if (!packet) continue;
             const payload = packet.serialize();
-            found.push({
-                fundingTx,
-                offer: decodeOffer(payload),
-                offerHex: hex.encode(payload),
-            });
+            const offer = decodeOffer(payload);
+            found.push({ fundingTx, offer, source: offer, offerHex: hex.encode(payload) });
         } catch {
             // no extension, foreign packet or malformed offer: not a swap funding
         }
@@ -304,7 +308,7 @@ export async function restoreAssetSwaps(
 
     const restored: AssetSwap[] = [];
     const unresolved = new Set<string>();
-    for (const { fundingTx, offer, offerHex, existing } of found) {
+    for (const { fundingTx, offer, source, offerHex, existing } of found) {
         const swapPkScript = hex.encode(offer.swapPkScript);
         const vtxo = vtxoByScriptAndTxid.get(`${swapPkScript}:${fundingTx.redeemTxid}`);
         if (!vtxo) {
@@ -358,7 +362,7 @@ export async function restoreAssetSwaps(
             const spendTxs = spendTxidsOf(vtxo)
                 .map((id) => spendTxByTxid.get(id))
                 .filter((tx): tx is Transaction => tx !== undefined);
-            const kind = classifyDepositSpend(offer, operatorPubkey, spendTxs, {
+            const kind = classifyDepositSpend(source, operatorPubkey, spendTxs, {
                 txid: vtxo.txid,
                 vout: vtxo.vout,
             });
@@ -382,6 +386,7 @@ export async function restoreAssetSwaps(
         }
 
         let swapAddress = "";
+        let covenant: Pick<AssetSwap, "offerHex" | "binding">;
         try {
             const compiled = offerContract(offer, operatorPubkey);
             // A mismatch is a rotated operator key: leave the deposit unresolved
@@ -395,6 +400,11 @@ export async function restoreAssetSwaps(
             if (hrp !== undefined) {
                 swapAddress = compiled.address(hrp, operatorPubkey).encode();
             }
+            // a directed record holds its binding alone, as accept() writes one
+            covenant =
+                offer.taker === undefined
+                    ? { offerHex }
+                    : { binding: recordOfferBinding(bindingFromOffer(offer, operatorPubkey)) };
         } catch {
             unresolved.add(fundingTx.redeemTxid);
             continue;
@@ -408,7 +418,7 @@ export async function restoreAssetSwaps(
             toAmount: offer.wantAmount.toString(),
             swapAddress,
             swapPkScript,
-            offerHex,
+            ...covenant,
             fundingTxid: fundingTx.redeemTxid,
             spentTxid,
             status,

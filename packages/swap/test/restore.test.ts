@@ -8,6 +8,7 @@ import {
     offerContract,
     Offer,
     OFFER_PACKET_TYPE,
+    recordOfferBinding,
 } from "../src/offer";
 import {
     classifyDepositSpend,
@@ -317,6 +318,27 @@ describe("restoreAssetSwaps", () => {
             createdAt: 1_700_000_000_000,
             completedAt: 1_700_000_100_000,
         });
+    });
+
+    it("rebuilds a directed swap from its packet as a binding, with no TLV kept", async () => {
+        const { swapPkScript: _, ...terms } = makeOffer("want-asset", BigInt(992));
+        const taker = key("66");
+        const offer: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored } = await scan(indexer, [walletTx(funding.txid, "sent")]);
+
+        expect(restored).toHaveLength(1);
+        expect(restored[0].offerHex).toBeUndefined();
+        expect(restored[0].binding).toEqual(
+            recordOfferBinding(bindingFromOffer(offer, OPERATOR_KEY)),
+        );
+        expect(restored[0].status).toBe("pending");
     });
 
     it("marks a spend that took the cancel leaf as cancelled", async () => {
@@ -729,6 +751,29 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
         const result = await reask(indexer, [record(offer, funding.txid)]);
 
         expect(result.restored).toMatchObject([{ status: "fulfilled", spentTxid: fill.txid }]);
+    });
+
+    it("re-answers a directed record that carries only its binding", async () => {
+        const { swapPkScript: _, ...terms } = makeOffer("want-asset", BigInt(992));
+        const taker = key("66");
+        const offer: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const funding = fundingPsbt(offer);
+        const deposit = { txid: funding.txid, vout: 0 };
+        const fill = spendPsbt([{ offer, deposit, via: "fulfill" }]);
+        const indexer = makeIndexer([fill], [spentVtxo(offer, funding.txid, fill.txid)]);
+        const binding = recordOfferBinding(bindingFromOffer(offer, OPERATOR_KEY));
+
+        const result = await reask(indexer, [
+            record(offer, funding.txid, { offerHex: undefined, binding }),
+        ]);
+
+        expect(result.restored).toMatchObject([
+            { status: "fulfilled", spentTxid: fill.txid, binding },
+        ]);
     });
 
     it("never re-fetches the funding tx: the offer comes off the record", async () => {

@@ -2,6 +2,7 @@ import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { contractPreimage } from "@arkade-os/sdk";
 import type { IWallet, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
+import type { RecordedOfferBinding } from "./offer";
 import { collectAssetSwaps, type AssetSwapRepository } from "./repository";
 
 /** @deprecated Use `Outcome`. Moved off the package root to `@arkade-os/swap/protocol`. */
@@ -61,8 +62,10 @@ export interface AssetSwap extends SwapSecretsProjection {
     swapAddress: string;
     /** Hex pkScript of the swap contract — the indexer monitoring key. */
     swapPkScript: string;
-    /** TLV offer — needed to rebuild the contract for cancel. */
-    offerHex: string;
+    /** TLV offer — rebuilds the contract for cancel when there is no `binding`. */
+    offerHex?: string;
+    /** The covenant, structured. A directed offer carries this and no `offerHex`. */
+    binding?: RecordedOfferBinding;
     fundingTxid: string;
     spentTxid?: string;
     status: AssetSwapStatus;
@@ -94,9 +97,11 @@ export const getAssetSwapsOrThrow = async (
             (s) =>
                 s &&
                 typeof s.id === "string" &&
-                // offer swaps carry the TLV; onchain-corridor swaps carry
-                // the payment hash instead — either marks a valid record
-                (typeof s.offerHex === "string" || typeof s.paymentHash === "string"),
+                // offer swaps carry the TLV or the binding; onchain-corridor swaps carry
+                // the payment hash instead — any of them marks a valid record
+                (typeof s.offerHex === "string" ||
+                    s.binding !== undefined ||
+                    typeof s.paymentHash === "string"),
         )
         .sort(byNewest);
 };

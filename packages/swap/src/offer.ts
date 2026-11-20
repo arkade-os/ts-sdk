@@ -301,6 +301,76 @@ export function offerFromBinding(binding: OfferBinding): Offer {
     return offerOf(binding, compileSwapBinding(bindingProgram(binding)).pkScript);
 }
 
+/** {@link OfferBinding} as a record stores it: hex and decimal strings, so the record stays JSON. */
+export interface RecordedOfferBinding {
+    readonly version: AssetSwapContractVersion;
+    readonly receiverPkScript: string;
+    readonly amount: string;
+    readonly wantAsset?: string;
+    readonly offerAsset?: string;
+    readonly userPublicKey: string;
+    readonly serverPublicKey: string;
+    readonly emulatorPublicKey: string;
+    readonly exitDelay?: { readonly type: RelativeTimelock["type"]; readonly value: string };
+    readonly taker?: string;
+}
+
+export const recordOfferBinding = (binding: OfferBinding): RecordedOfferBinding => ({
+    version: binding.version,
+    receiverPkScript: hex.encode(binding.receiverPkScript),
+    amount: binding.amount.toString(),
+    ...(binding.wantAsset && { wantAsset: binding.wantAsset.toString() }),
+    ...(binding.offerAsset && { offerAsset: binding.offerAsset.toString() }),
+    userPublicKey: hex.encode(binding.userPublicKey),
+    serverPublicKey: hex.encode(binding.serverPublicKey),
+    emulatorPublicKey: hex.encode(binding.emulatorPublicKey),
+    ...(binding.exitDelay && {
+        exitDelay: { type: binding.exitDelay.type, value: binding.exitDelay.value.toString() },
+    }),
+    ...(binding.taker && { taker: hex.encode(binding.taker) }),
+});
+
+const decimal = (value: string, name: string): bigint => {
+    if (!/^\d+$/.test(value)) throw new Error(`recorded binding ${name} is not a decimal amount`);
+    return BigInt(value);
+};
+
+export const offerBindingOf = (recorded: RecordedOfferBinding): OfferBinding => {
+    // an absent version would read as the baseline and rebuild a covenant nobody funded
+    if (
+        typeof recorded.version !== "string" ||
+        !Object.hasOwn(ASSET_SWAP_CONTRACTS, recorded.version)
+    ) {
+        throw new Error(`recorded binding names no known contract version (${recorded.version})`);
+    }
+    const { exitDelay, wantAsset, offerAsset, taker } = recorded;
+    return {
+        version: recorded.version,
+        receiverPkScript: hex.decode(recorded.receiverPkScript),
+        amount: decimal(recorded.amount, "amount"),
+        ...(wantAsset !== undefined && { wantAsset: asset.AssetId.fromString(wantAsset) }),
+        ...(offerAsset !== undefined && { offerAsset: asset.AssetId.fromString(offerAsset) }),
+        userPublicKey: hex.decode(recorded.userPublicKey),
+        serverPublicKey: hex.decode(recorded.serverPublicKey),
+        emulatorPublicKey: hex.decode(recorded.emulatorPublicKey),
+        ...(exitDelay && {
+            exitDelay: { type: exitDelay.type, value: decimal(exitDelay.value, "exitDelay") },
+        }),
+        ...(taker !== undefined && { taker: hex.decode(taker) }),
+    };
+};
+
+/** What a stored offer swap rebuilds from: its binding when it has one, else its TLV. One with
+ * neither cannot be rebuilt, and throws rather than guess. */
+export const storedOffer = (swap: {
+    readonly binding?: RecordedOfferBinding;
+    readonly offerHex?: string;
+}): Offer | OfferBinding => {
+    if (swap.binding !== undefined) return offerBindingOf(swap.binding);
+    if (typeof swap.offerHex === "string") return decodeOffer(hex.decode(swap.offerHex));
+    throw new Error("this offer swap carries neither a binding nor an offerHex to rebuild from");
+};
+
 // ── Offer wire format ────────────────────────────────────────────────────────
 // The offer travels inside the funding tx as an Extension packet (type 0x03)
 // so a solver can discover it from the txid alone.
@@ -580,14 +650,14 @@ const derivingClient = (
 
 function offerContractParams(
     client: arkade.Arkade,
-    binding: Omit<Offer, "swapPkScript">,
+    binding: Omit<Offer, "swapPkScript"> | OfferBinding,
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
 ) {
-    const { program, args, keys } = swapProgramBinding(
-        { ...binding, swapPkScript: expectedPkScript },
-        operatorPubkey,
-    );
+    const { program, args, keys } =
+        "version" in binding
+            ? bindingProgram(binding)
+            : swapProgramBinding({ ...binding, swapPkScript: expectedPkScript }, operatorPubkey);
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering any other script would leave the real deposit
     // unwatched and unmarked
@@ -604,7 +674,7 @@ function offerContractParams(
 /** What coverage reads off a swap: an `AssetSwap` fits, and so does a drive record's facts. */
 export type OfferCoverageSwap = Pick<
     AssetSwap,
-    "status" | "swapPkScript" | "offerHex" | "createdAt"
+    "status" | "swapPkScript" | "offerHex" | "binding" | "createdAt"
 > &
     CoverageRegistrationOptions;
 
@@ -637,7 +707,7 @@ export async function restoreOfferCoverage(
         if (seen.has(swap.swapPkScript)) continue;
         seen.add(swap.swapPkScript);
         try {
-            const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(swap.offerHex));
+            const binding = storedOffer(swap);
             const stored = fundedKey.get(swap.swapPkScript);
             covenants.push({
                 script: swap.swapPkScript,
@@ -767,8 +837,10 @@ export interface OfferParams {
      * rotation between the two reads derive a covenant the solver never quoted.
      */
     maker?: { pkScript: Uint8Array; publicKey: Uint8Array };
-    /** Defaults to {@link ASSET_SWAP_BASELINE}. */
+    /** Defaults to {@link ASSET_SWAP_BASELINE}, or to `asset-swap-v4` with a `taker`. */
     contractVersion?: AssetSwapContractVersion;
+    /** The quoting solver's x-only key, for a directed offer. */
+    taker?: Uint8Array;
 }
 
 /**
@@ -787,6 +859,8 @@ export interface DerivedOffer {
     readonly swapPkScript: Uint8Array;
     /** The covenant's parameters — {@link registerDerivedOffer}'s only input. */
     readonly binding: Readonly<Omit<Offer, "swapPkScript">>;
+    /** The same covenant with its version: what a directed record stores in place of `offerHex`. */
+    readonly offerBinding: OfferBinding;
     /** The live info this covenant is bound to. */
     readonly info: OperatorInfo;
     readonly operatorPubkey: Uint8Array;
@@ -868,6 +942,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
             : params.exitDelay
               ? assertExitDelay(params.exitDelay)
               : serverExitDelay(info.unilateralExitDelay),
+        ...(params.taker && { taker: params.taker }),
     });
     const script = offerContract(binding, operatorPubKey, params.contractVersion);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
@@ -881,6 +956,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
         address: script.address(network.hrp, operatorPubKey).encode(),
         swapPkScript: script.pkScript,
         binding,
+        offerBinding: Object.freeze(bindingFromOffer(offer, operatorPubKey)),
         info,
         operatorPubkey: operatorPubKey,
     });
@@ -1026,7 +1102,7 @@ export interface PreparedOfferCancel {
  */
 export async function prepareOfferCancel(
     wallet: IWallet,
-    offerHex: string | OfferBinding,
+    offerHex: string | Offer | OfferBinding,
     opts: {
         fundingTxid?: string;
         fundingOutpoint?: FillOutpoint;
@@ -1036,7 +1112,12 @@ export async function prepareOfferCancel(
     },
 ): Promise<PreparedOfferCancel> {
     const { fundingTxid, fundingOutpoint, swapAddress } = opts;
-    const decoded = typeof offerHex === "string" ? decodeOffer(hex.decode(offerHex)) : undefined;
+    const decoded =
+        typeof offerHex === "string"
+            ? decodeOffer(hex.decode(offerHex))
+            : isOfferBinding(offerHex)
+              ? undefined
+              : offerHex;
 
     const [contractManager, info, reader, broadcaster] = await Promise.all([
         wallet.getContractManager(),
@@ -1064,10 +1145,9 @@ export async function prepareOfferCancel(
     let binding: SwapProgramBinding;
     let rebuilt: InstanceType<typeof arkade.ArkadeProgramScript>;
     try {
-        binding =
-            typeof offerHex === "string"
-                ? swapProgramBinding(decoded!, pinned?.serverPubKey ?? client.serverKey)
-                : bindingProgram(offerHex);
+        binding = decoded
+            ? swapProgramBinding(decoded, pinned?.serverPubKey ?? client.serverKey)
+            : bindingProgram(offerHex as OfferBinding);
         rebuilt = compileSwapBinding(binding);
     } catch (cause) {
         // a pinned key that is not a curve point throws in the taproot encoder — same diagnosis

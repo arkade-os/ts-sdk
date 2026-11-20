@@ -14,6 +14,14 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`@arkade-os/swap`: `offerHex` is optional on `AssetSwap` and `OfferSwapRecord`.**
+  A directed swap keeps its covenant in the new `binding` field instead, as
+  hex and decimal strings so the record stays JSON. Code that reads `offerHex`
+  as always present must handle a record that has only `binding`. v2 and v3
+  records still carry `offerHex`, and nothing rewrites them. The cross-asset
+  rail's `RouteResult.swapId`, and the key it documents for `persist`, are now
+  the covenant's `swapPkScript` hex rather than its `offerHex`.
+
 - **Service-worker pages and workers must use the same wallet request protocol.** Every wallet operation now carries its captured identity/operator/network binding, including reads used to construct quotes and transactions. Older page/worker combinations fail before wallet access; update both together. `ServiceWorkerWallet` and its readonly variant accept `expectedNetwork` to verify the configured network during bootstrap.
 - **A worker `clear()` can be refused.** `ServiceWorkerWallet.clear()` rejects while a settlement or another long-running request from a page is in flight. It also fails without wiping anything if the remaining requests take over 5s to drain; the page then reinitializes before retrying. A logout that clears unconditionally must handle the rejection.
 
@@ -113,6 +121,19 @@ style and have not been backfilled.
   `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
 ### Features
+
+- **`@arkade-os/swap`: a swap record can hold its covenant as a binding.** Every
+  reader takes either form: the store and the drive list a record with either,
+  legacy adoption accepts either, and cancel with its fill-race reconciliation,
+  the spend watcher, coverage restore and the restore scan's reopen all rebuild
+  from the binding when one is there. The drive re-reads a funded record's
+  deposit through its binding, so a deposit funded with no packet still learns
+  of a fill or cancel that landed while no client ran. A resumed funding
+  attaches the packet the binding encodes. The restore scan records a directed
+  deposit's packet as a binding. `deriveOffer` takes a `taker` and returns the
+  covenant as
+  `offerBinding`. A build with this change can read, cancel and restore a
+  directed deposit; nothing in it creates one yet.
 
 - **`@arkade-os/swap`: offers rebuild from a structured binding, no TLV needed.**
   `OfferBinding` holds everything that compiles an offer covenant, its version

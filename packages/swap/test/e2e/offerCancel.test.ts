@@ -337,7 +337,7 @@ describe("the v2 cancel (regtest)", () => {
         // And they are enough to get the deposit back, with no v2 record in
         // sight — which is what makes the loss above recoverable rather than
         // terminal.
-        const cancelTxid = await cancelOffer(wallet, found!.offerHex, {
+        const cancelTxid = await cancelOffer(wallet, found!.offerHex!, {
             repository: new InMemoryAssetSwapRepository(),
             fundingTxid: record.fundingTxid!,
             swapAddress: record.swapAddress,

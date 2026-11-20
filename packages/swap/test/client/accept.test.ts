@@ -278,7 +278,7 @@ describe("accept() — the offer extension packet", () => {
         // against.
         const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(hex.encode(payment?.extensions?.[0]?.payload as Uint8Array)).toBe(stored.offerHex);
-        expect(decodeOffer(hex.decode(stored.offerHex)).wantAmount).toBe(quote.take.amount);
+        expect(decodeOffer(hex.decode(stored.offerHex!)).wantAmount).toBe(quote.take.amount);
     });
 
     it("sends the asset leg as an asset, not as sats", async () => {
