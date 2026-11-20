@@ -513,7 +513,11 @@ interface ServiceWorkerWalletOptions {
     expectedNetwork?: NetworkName;
     /** Optional delegation service URL. */
     delegateUrl?: string;
-    /** URL of the Executor, the service that boards the wallet's deposits while it is offline. */
+    /**
+     * URL of the Executor, the service that boards the wallet's deposits while it is offline. Only
+     * a `ServiceWorkerWallet` registers watches; a readonly wallet reads them. Without one, the
+     * wallet behaves as it does without the Executor.
+     */
     executorUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.

@@ -117,8 +117,9 @@ style and have not been backfilled.
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) gives the wallet a
-  `getExecutorManager()`. Everything about the Executor is opt-in: a wallet
-  without one behaves as before. `registerBoarding({ renewalWindow, maxFee })`
+  `getExecutorManager()`, on `Wallet` and `ServiceWorkerWallet`: a readonly
+  wallet given one only reads the watches. Everything about the Executor is
+  opt-in: a wallet without one behaves as before. `registerBoarding({ renewalWindow, maxFee })`
   registers the wallet's key under the Executor's `boarding` template, exit
   delays defaulting to the operator's; the manager refuses an Executor on
   another network or operator, or one whose single onchain input derives a
@@ -142,9 +143,12 @@ style and have not been backfilled.
   operator's exit delays and the Executor's keys are unchanged: the address
   derives from them. The registration returns its resolved `params`, which with
   its `keys` restore the watch through `watchExecutorContracts` regardless.
-  `getAddress()` does not change. A watch registered without `expiresAt` does
-  not expire, and
-  registering again does not change its expiry. A subscription started before
+  `getAddress()` does not change. A watch registered without `expiresAt` has no
+  deadline of its own, and registering again does not change its expiry.
+  Executor `v0.0.4` still ends a watch that never held a coin after 7 days,
+  while the wallet keeps showing the delegated address, so call
+  `registerBoarding` at every startup: it re-activates the watch. Its 30 s
+  deadline covers the request to the Executor only. A subscription started before
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new
   onchain-scoped contract is saved, and the wallet re-subscribes on it. A

@@ -27,7 +27,10 @@ import { timelockToSequence } from "../utils/timelock";
 import { newestWalletReceiveContract } from "./walletReceiveRotator";
 import { toXOnlySignerHex } from "./signerRotation";
 
-/** Bounds a registration: a write has no `fetch` deadline of its own. */
+/**
+ * Bounds the registration request, a write with no `fetch` deadline of its own; the local setup
+ * after the service answers is not covered.
+ */
 export const REGISTRATION_TIMEOUT_MS = 30_000;
 
 /** Metadata key: the service's status of a delegated watch. */
@@ -349,9 +352,12 @@ export interface IExecutorManager {
     /**
      * Watch the displayed boarding address's key: the Executor boards every deposit there
      * into the wallet's renewal contract, a virtual output the wallet spends and renews as its
-     * own. The wallet watches both contracts. Without `expiresAt` the watch does not expire;
-     * registering again returns the existing watch unchanged. An HD wallet registers a new watch
-     * each time it rotates the boarding address.
+     * own. The wallet watches both contracts. Without `expiresAt` the watch has no deadline of its
+     * own; registering again returns the existing watch unchanged. An HD wallet registers a new
+     * watch each time it rotates the boarding address.
+     *
+     * Call it at every startup: Executor v0.0.4 ends a watch that never held a coin after 7 days,
+     * while the wallet keeps showing its address as delegated. Registering again re-activates it.
      *
      * The address derives from the key, `params`, the operator's exit delays when `params` omits
      * them, and the Executor's keys: registering again on a restored wallet finds the same watch
