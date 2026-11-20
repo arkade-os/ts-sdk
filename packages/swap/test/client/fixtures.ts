@@ -552,7 +552,7 @@ export const arkadeAssetAnswer = (
         price?: number;
         /** Override the payout, to price the double off its own card. */
         toAmount?: bigint;
-        /** Serves `asset-swap-v4` when asked, quoting and deriving under this key. */
+        /** Quotes and derives `asset-swap-v4` under this key; default, the one the transport attests. */
         taker?: Uint8Array;
     } = {},
 ): RfqQuote => {
@@ -570,12 +570,10 @@ export const arkadeAssetAnswer = (
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
     // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
     const version = (payload.contract_versions as string[] | undefined)?.find(
-        (v) =>
-            v === ASSET_SWAP_V3 ||
-            v === ASSET_SWAP_V2 ||
-            (over.taker !== undefined && v === ASSET_SWAP_V4),
+        (v) => v === ASSET_SWAP_V4 || v === ASSET_SWAP_V3 || v === ASSET_SWAP_V2,
     );
-    const taker = version === ASSET_SWAP_V4 ? over.taker : undefined;
+    const taker =
+        version === ASSET_SWAP_V4 ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY)) : undefined;
     const script = offerContract(
         {
             // The covenant binds what the fill must DELIVER, so the wanted

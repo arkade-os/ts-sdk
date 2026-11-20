@@ -4,7 +4,6 @@
  * Every active member runs BEFORE the RFQ round trip that discloses an invoice or an amount; a
  * policy that could only reject a quote after it arrived would be a preference.
  */
-import type { AssetSwapContractVersion } from "../program";
 import type { MarketCandidate } from "./market";
 import type { RankedBid } from "./quote";
 import type { FeeCeiling } from "./verbs";
@@ -90,13 +89,6 @@ export interface SwapPolicy {
      * `QuoteVerificationFailed("refund_window")`. Default {@link DEFAULT_MAX_REFUND_WINDOW_SECONDS}.
      */
     readonly maxRefundWindowSeconds?: number;
-
-    /**
-     * The contract versions an asset quote advertises, most preferred first. Defaults to
-     * `ASSET_SWAP_CONTRACT_VERSIONS`. Listing `asset-swap-v4` opts in to directed deposits, which
-     * only the quoting solver can fill.
-     */
-    readonly assetSwapContractVersions?: readonly AssetSwapContractVersion[];
 
     /**
      * §10, reserved and inert: the published-RFQ auction's parameters.

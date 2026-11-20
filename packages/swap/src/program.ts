@@ -112,8 +112,8 @@ export const ASSET_SWAP_CONTRACTS: Readonly<Record<AssetSwapContractVersion, Ass
     },
 };
 
-/** The versions every asset RFQ advertises by default, most preferred first. v4 is opt-in. */
-export const ASSET_SWAP_CONTRACT_VERSIONS = [ASSET_SWAP_V3, ASSET_SWAP_V2] as const;
+/** What every asset RFQ advertises: the directed covenant alone. */
+export const ASSET_SWAP_CONTRACT_VERSIONS = [ASSET_SWAP_V4] as const;
 
 /** Every version this build derives: the registry's keys, not a preference. */
 export const ASSET_SWAP_DERIVABLE_VERSIONS = [ASSET_SWAP_V4, ASSET_SWAP_V3, ASSET_SWAP_V2] as const;

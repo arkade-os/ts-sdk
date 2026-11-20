@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, asset, type OperatorInfo, type IWallet } from "@arkade-os/sdk";
 import { requestArkadeSwap, type RfqTransport } from "../src/rfq";
-import { acceptWallet } from "./client/fixtures";
+import { acceptWallet, SOLVER_DISCOVERY_KEY } from "./client/fixtures";
 import { decodeOffer, deriveOffer } from "../src/offer";
+import { ASSET_SWAP_V4 } from "../src/program";
+import type { AttestingRfqTransport } from "../src/client/transport";
 
 const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
 const makerKey = hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1");
@@ -104,7 +106,11 @@ describe("RFQ offer receive payout", () => {
         const owner = ArkAddress.decode(address);
         const receiver = new ArkAddress(owner.serverPubKey, recipientKey, owner.hrp).encode();
         const destination = receiveAddress === "receiver" ? receiver : receiveAddress;
-        const expected = await deriveOffer(f.wallet, { ...params, receiveAddress: destination });
+        const expected = await deriveOffer(f.wallet, {
+            ...params,
+            receiveAddress: destination,
+            taker: hex.decode(SOLVER_DISCOVERY_KEY),
+        });
         const requestQuote = vi.fn(async () => ({
             v: 1 as const,
             type: "rfq_quote" as const,
@@ -112,14 +118,16 @@ describe("RFQ offer receive payout", () => {
             pair: `arkade:BTC->arkade:${params.wantAsset}`,
             from_amount: "700",
             to_amount: "50000",
-            solver_pubkey: "22".repeat(32),
+            solver_pubkey: SOLVER_DISCOVERY_KEY,
             valid_until: 1_800_000_060,
+            contract_version: ASSET_SWAP_V4,
             profile: {
                 offer_address: expected.address,
                 offer_pk_script: hex.encode(expected.swapPkScript),
             },
         }));
-        const transport: RfqTransport = {
+        const transport: AttestingRfqTransport = {
+            attestedResponder: SOLVER_DISCOVERY_KEY,
             requestQuote,
             status: async () => null,
             close: async () => {},

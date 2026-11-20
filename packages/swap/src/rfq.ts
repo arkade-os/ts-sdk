@@ -77,10 +77,12 @@ import {
 } from "./program";
 import {
     ASSET_SWAP_BASELINE,
+    ASSET_SWAP_V4,
     RFQ_CONTRACT_VERSION_KEY,
     RFQ_CONTRACT_VERSION_UNSUPPORTED,
     RFQ_CONTRACT_VERSIONS_KEY,
 } from "./rfq-contract";
+import type { AttestingRfqTransport } from "./client/transport";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -753,9 +755,9 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
 
 /**
  * Ask for an arkade↔arkade quote advertising `contract_versions`, and read the tree to derive.
- * No `contract_version` in the quote is `asset-swap-v2`, the version every solver serves.
+ * No `contract_version` in the quote means {@link ASSET_SWAP_BASELINE}, refused unless advertised.
  * A pre-negotiation solver's strict schema refuses the list with a bare `unsupported_payload`;
- * it is asked once more without it, under a fresh rfq_id.
+ * only when the baseline was advertised is it asked once more without it, under a fresh rfq_id.
  */
 export const requestVersionedQuote = async (
     transport: RfqTransport,
@@ -793,7 +795,9 @@ export const requestVersionedQuote = async (
     const version = selected ?? ASSET_SWAP_BASELINE;
     if (!advertised.includes(version)) {
         throw new Error(
-            `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
+            selected === undefined
+                ? `solver negotiated no contract version; advertised ${advertised.join(", ")}`
+                : `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
         );
     }
     return { quote, rfqId: sent.rfq_id, contractVersion: assetSwapContractVersion(version) };
@@ -1431,14 +1435,14 @@ export const quoteCarrierSats = (quote: RfqQuote): bigint => {
  * whatever it quotes.
  *
  * Maker keys are read once here so the request profile and the local `createOffer` derivation
- * cannot diverge. Throws {@link SwapRefusal}, {@link AddressMismatch} (never fund), or a gate error
- * with a stable `reason`.
+ * cannot diverge. Throws {@link SwapRefusal}, {@link AddressMismatch} (never fund),
+ * `QuoteVerificationFailed` (`responder`), or a gate error with a stable `reason`.
  *
  * `client.exchange()` now covers this route end to end — it opens the card's
  * Nostr rendezvous, sends this same request, runs the full verification set,
  * and registers, persists and funds in one step — so there is nothing left here
- * that it does not do. What it additionally refuses is a transport that cannot
- * say who answered, which this function, taking one from its caller, cannot.
+ * that it does not do. A transport that cannot say who answered is refused here
+ * too, but only once its quote is back; `exchange()` refuses it before asking.
  *
  * Funding (caller's job, immediately after, before `valid_until`):
  * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
@@ -1448,7 +1452,7 @@ export const quoteCarrierSats = (quote: RfqQuote): bigint => {
  */
 export async function requestArkadeSwap(
     wallet: IWallet,
-    transport: RfqTransport,
+    transport: AttestingRfqTransport,
     params: {
         /** Asset the trader deposits; omit when depositing BTC. */
         offerAsset?: asset.AssetId;
@@ -1461,16 +1465,11 @@ export async function requestArkadeSwap(
          * so asserting it proves nothing and an unbounded caller funds what it is asked. */
         maxFromAmount?: bigint | number | string;
         minToAmount?: bigint | number | string;
-        /** A retry without `contract_versions` goes out under a fresh rfq_id, so the
-         * returned `rfqId` can differ from this one. */
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
         /** Canonical Arkade payout destination; the maker signing key stays this wallet's. */
         receiveAddress?: string;
-        /** Contract versions to advertise, most preferred first; the quote's choice must be one of them.
-         * Defaults to every covenant this build derives. */
-        contractVersions?: readonly string[];
         now?: number;
     },
 ): Promise<{
@@ -1519,8 +1518,6 @@ export async function requestArkadeSwap(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
     );
-    // A copy: the request and the check of the reply must see the same list.
-    const contractVersions = [...(params.contractVersions ?? ASSET_SWAP_CONTRACT_VERSIONS)];
     const { quote, rfqId, contractVersion } = await requestVersionedQuote(
         transport,
         arkadeSwapRequest({
@@ -1531,13 +1528,21 @@ export async function requestArkadeSwap(
             amountSide,
             makerPkScript,
             makerPublicKey,
-            contractVersions,
+            contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
         }),
-        contractVersions,
+        ASSET_SWAP_CONTRACT_VERSIONS,
     );
     if (quote.pair !== pair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
     }
+    // Imported here: client/verify.ts imports this module, and a static cycle breaks the CJS build.
+    const taker =
+        contractVersion === ASSET_SWAP_V4
+            ? (await import("./client/verify")).verifyTaker({
+                  attested: transport.attestedResponder,
+                  solverPubkey: quote.solver_pubkey,
+              })
+            : undefined;
     assertArkadeFundable({ quote, ...(params.now !== undefined ? { now: params.now } : {}) });
     const terms = offerTermsFromQuote(quote, {
         ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
@@ -1576,6 +1581,7 @@ export async function requestArkadeSwap(
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
         contractVersion,
+        ...(taker === undefined ? {} : { taker }),
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);

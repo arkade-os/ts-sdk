@@ -379,7 +379,6 @@ const quoteArkadeAsset = async (
         if (input.now >= choice.quote.expiresAt - 30)
             throw new Error("carrier quote expired before RFQ");
     }
-    const advertised = input.policy?.assetSwapContractVersions ?? ASSET_SWAP_CONTRACT_VERSIONS;
     const request = arkadeSwapRequest({
         rfqId: newRfqId(),
         ...sides,
@@ -387,7 +386,7 @@ const quoteArkadeAsset = async (
         amountSide: toRfqAmountSide(pinned.on),
         makerPkScript: receivePkScript,
         makerPublicKey: maker.publicKey,
-        contractVersions: advertised,
+        contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
     });
     const {
         quote: wire,
@@ -404,7 +403,7 @@ const quoteArkadeAsset = async (
                     : { carrier: encodeCarrierRequest(carrierRequest) }),
             },
         },
-        advertised,
+        ASSET_SWAP_CONTRACT_VERSIONS,
     );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);

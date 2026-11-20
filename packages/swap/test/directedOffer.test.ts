@@ -161,13 +161,13 @@ describe("the directed contracts (asset-swap-v4)", () => {
         expect(() => ASSET_SWAP_CONTRACTS[ASSET_SWAP_V2].args(inputs)).toThrow(/binds no taker/);
     });
 
-    it("derives v4 without advertising it", () => {
+    it("advertises v4 alone, and still derives v3 and v2", () => {
         expect(ASSET_SWAP_DERIVABLE_VERSIONS).toEqual([
             ASSET_SWAP_V4,
             ASSET_SWAP_V3,
             ASSET_SWAP_V2,
         ]);
-        expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([ASSET_SWAP_V3, ASSET_SWAP_V2]);
+        expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([ASSET_SWAP_V4]);
     });
 });
 

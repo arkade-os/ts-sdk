@@ -44,7 +44,7 @@ import {
     type OfferBinding,
 } from "../../src/offer";
 import { buildOfferFillPlan } from "../../src/offerFillPlan";
-import { ASSET_SWAP_DERIVABLE_VERSIONS, ASSET_SWAP_V4 } from "../../src/program";
+import { ASSET_SWAP_V4 } from "../../src/program";
 import { collectSwapRecords } from "../../src/repository";
 import { spendTxidsOf } from "../../src/restore";
 import type { AttestingRfqTransport } from "../../src/client/transport";
@@ -339,7 +339,6 @@ function clientOn(wallet: Wallet, store: InMemoryAssetSwapRepository): SwapClien
         discovery: { snapshot: [card] },
         fetchImpl: (async () =>
             new Response(JSON.stringify({ price: PRICE }))) as unknown as typeof fetch,
-        policy: { assetSwapContractVersions: ASSET_SWAP_DERIVABLE_VERSIONS },
         transportFor: () => solverTransport(),
     });
 }
