@@ -43,8 +43,7 @@ import {
     ASSET_SWAP_CONTRACT_VERSIONS,
     ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_V2,
-    ASSET_SWAP_V3,
-    ASSET_SWAP_V4,
+    ASSET_SWAP_DIRECTED,
     assetSwapContractVersion,
 } from "../src/program";
 import { asset } from "@arkade-os/sdk";
@@ -542,19 +541,20 @@ describe("requests", () => {
         expect("contract_versions" in plain).toBe(false);
         const advertised = arkadeSwapRequest({
             ...base,
-            contractVersions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
+            contractVersions: [ASSET_SWAP_DIRECTED, ASSET_SWAP_V2],
         }) as Record<string, unknown>;
-        expect(advertised.contract_versions).toEqual([ASSET_SWAP_V3, ASSET_SWAP_V2]);
+        expect(advertised.contract_versions).toEqual([ASSET_SWAP_DIRECTED, ASSET_SWAP_V2]);
         expect(advertised.profile).toEqual(plain.profile);
     });
 
     it("resolves a contract version, defaulting to asset-swap-v2", () => {
-        expect(assetSwapContractVersion(ASSET_SWAP_V3)).toBe(ASSET_SWAP_V3);
         expect(assetSwapContractVersion(ASSET_SWAP_V2)).toBe(ASSET_SWAP_V2);
         expect(assetSwapContractVersion(undefined)).toBe(ASSET_SWAP_V2);
-        expect(() => assetSwapContractVersion("asset-swap-v999")).toThrow(
-            "unknown contract version asset-swap-v999",
-        );
+        for (const unknown of ["asset-swap-v3", "asset-swap-v999"]) {
+            expect(() => assetSwapContractVersion(unknown)).toThrow(
+                `unknown contract version ${unknown}`,
+            );
+        }
     });
 
     it("derives exactly the registered contract versions, and advertises a subset", () => {
@@ -564,7 +564,7 @@ describe("requests", () => {
         for (const version of ASSET_SWAP_CONTRACT_VERSIONS) {
             expect(ASSET_SWAP_DERIVABLE_VERSIONS).toContain(version);
         }
-        expect(assetSwapContractVersion(ASSET_SWAP_V4)).toBe(ASSET_SWAP_V4);
+        expect(assetSwapContractVersion(ASSET_SWAP_DIRECTED)).toBe(ASSET_SWAP_DIRECTED);
     });
 
     it("mirrors the wire's pair-length cap for asset-to-asset", () => {

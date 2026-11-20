@@ -42,7 +42,7 @@ import { toAtomicDecimal } from "./amount";
 import { arkadeAsset, btcOn, type AssetId, type NetworkRef } from "./assetId";
 import { railOfCorridor, type Corridor } from "./corridor";
 import type { QuoteId } from "./quote";
-import type { CorridorSwapRecord, OfferSwapRecord, SwapRecord } from "./record";
+import type { CorridorSwapRecord, OfferCovenant, OfferSwapRecord, SwapRecord } from "./record";
 
 /** Every stored corridor record, and every offer record, in one read. */
 export const splitRecords = (
@@ -241,6 +241,13 @@ const covenantOf = (swap: Pick<AssetSwap, "offerHex" | "binding">) => ({
     ...(swap.binding === undefined ? {} : { binding: swap.binding }),
 });
 
+// Strict only for a fresh restore: stored records are read leniently, so one bad row fails alone.
+const restoredCovenant = (swap: Pick<AssetSwap, "offerHex" | "binding">): OfferCovenant => {
+    if (swap.binding !== undefined) return { ...covenantOf(swap), binding: swap.binding };
+    if (swap.offerHex !== undefined) return { offerHex: swap.offerHex };
+    throw new Error("this offer swap carries neither a binding nor an offerHex to rebuild from");
+};
+
 /** A v2 offer record as the watcher and coverage read one. */
 export const offerFactsOf = (
     record: OfferSwapRecord,
@@ -370,7 +377,7 @@ export const restoredOfferRecord = (
             market: { kind: "restored", backend: "feed" },
             expiresAt: createdAt,
             status: swap.status,
-            ...covenantOf(swap),
+            ...restoredCovenant(swap),
             swapAddress: swap.swapAddress,
             swapPkScript: swap.swapPkScript,
             fundingTxid: swap.fundingTxid,

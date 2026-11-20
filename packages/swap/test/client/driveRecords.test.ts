@@ -148,6 +148,16 @@ describe("a record rebuilt from the chain", () => {
         expect("offerHex" in facts).toBe(false);
     });
 
+    it("refuses to build a record with neither covenant form, but reads a stored one", () => {
+        // @ts-expect-error an offer record carries offerHex, binding, or both
+        const bare: OfferSwapRecord = { ...offerRecord(), offerHex: undefined, binding: undefined };
+        expect(bare.family).toBe("offer");
+        expect(() =>
+            restoredOfferRecord(found({ offerHex: undefined, binding: undefined }), "regtest", 0),
+        ).toThrow("neither a binding nor an offerHex");
+        expect(offerFactsOf(bare)).not.toHaveProperty("offerHex");
+    });
+
     it("keys on the funding txid and spells both legs as arkade ids", () => {
         const record = restoredOfferRecord(found(), "regtest", 3_000);
         expect(record).toMatchObject({

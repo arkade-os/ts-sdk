@@ -25,6 +25,7 @@
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 import { hex } from "@scure/base";
+import { SolverResponseInvalid } from "./transportErrors";
 import { isAmount } from "@arkade-os/solver-discovery";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
@@ -77,7 +78,7 @@ import {
 } from "./program";
 import {
     ASSET_SWAP_BASELINE,
-    ASSET_SWAP_V4,
+    ASSET_SWAP_DIRECTED,
     RFQ_CONTRACT_VERSION_KEY,
     RFQ_CONTRACT_VERSION_UNSUPPORTED,
     RFQ_CONTRACT_VERSIONS_KEY,
@@ -743,10 +744,10 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
         });
     }
     if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
-        throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
+        throw new SolverResponseInvalid(`unexpected reply: ${p?.type ?? "no payload"}`);
     }
     if (requestedPair !== undefined && p.pair !== requestedPair) {
-        throw new Error(
+        throw new SolverResponseInvalid(
             `solver quoted ${JSON.stringify(p.pair)}, not the requested ${requestedPair}`,
         );
     }
@@ -789,12 +790,15 @@ export const requestVersionedQuote = async (
         quote = await transport.requestQuote(sent);
     }
     const selected = quote[RFQ_CONTRACT_VERSION_KEY];
+    // A version this client cannot take condemns this solver's reply, not the swap: routing tries the next.
     if (sent !== request && selected !== undefined) {
-        throw new Error(`solver chose contract version ${selected}, but none was advertised`);
+        throw new SolverResponseInvalid(
+            `solver chose contract version ${selected}, but none was advertised`,
+        );
     }
     const version = selected ?? ASSET_SWAP_BASELINE;
     if (!advertised.includes(version)) {
-        throw new Error(
+        throw new SolverResponseInvalid(
             selected === undefined
                 ? `solver negotiated no contract version; advertised ${advertised.join(", ")}`
                 : `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
@@ -1537,7 +1541,7 @@ export async function requestArkadeSwap(
     }
     // Imported here: client/verify.ts imports this module, and a static cycle breaks the CJS build.
     const taker =
-        contractVersion === ASSET_SWAP_V4
+        contractVersion === ASSET_SWAP_DIRECTED
             ? (await import("./client/verify")).verifyTaker({
                   attested: transport.attestedResponder,
                   solverPubkey: quote.solver_pubkey,

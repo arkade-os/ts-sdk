@@ -21,7 +21,7 @@ import {
     type ProvisionedKey,
     type VHTLC,
 } from "@arkade-os/sdk";
-import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
+import { type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { deepFreeze } from "../jointGraph";
 import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
@@ -42,7 +42,7 @@ import {
     type OnchainNetwork,
 } from "../onchainHtlc";
 import { claimFeeSats } from "../payment/onchainSwap";
-import { ASSET_SWAP_V4 } from "../rfq-contract";
+import { ASSET_SWAP_DIRECTED } from "../rfq-contract";
 import {
     arkadeSwapRequest,
     deriveLightningReceive,
@@ -73,13 +73,19 @@ import {
 import type { DiscoveryLeg } from "./aliases";
 import type { LightningCorridorDeps } from "./corridors/deps";
 import type { CorridorSet } from "./corridors/registry";
-import { UnsupportedRoute } from "./errors";
-import { feedSpread, verifyPlanLegs, type FeedFetch } from "./quoteOffer";
+import { AmountEncodingUnsupported, UnsupportedRoute } from "./errors";
+import { SolverResponseInvalid } from "../transportErrors";
+import { feedSpread, quoteAdvertisedPlan, verifyPlanLegs, type FeedFetch } from "./quoteOffer";
 import type { CardMarketRef, PinnedAmount, Quote, QuoteId, ResolvedEndpoint } from "./quote";
 import type { MarketCandidate } from "./market";
 import type { Artifact } from "./route";
 import type { SwapPolicy } from "./policy";
-import { parseRfqQuote, rfqPairFor, withCanonicalAmount, type ParsedRfqQuote } from "./rfqWire";
+import {
+    parseRfqQuote as parseWireQuote,
+    rfqPairFor,
+    withCanonicalAmount,
+    type ParsedRfqQuote,
+} from "./rfqWire";
 import { toRfqAmountSide } from "./rfqAmount";
 import { assembleRoute } from "./resolve";
 import type { AttestingRfqTransport } from "./transport";
@@ -275,6 +281,20 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
  * Never seal to a throwaway key: an undecryptable packet looks like a working one on the wire,
  * and covclaimd would silently claim nothing.
  */
+const parseRfqQuote = (
+    wire: Parameters<typeof parseWireQuote>[0],
+    policy?: SwapPolicy,
+): ParsedRfqQuote => {
+    try {
+        return parseWireQuote(wire);
+    } catch (cause) {
+        if (policy?.solverRouting !== undefined && cause instanceof AmountEncodingUnsupported) {
+            throw new SolverResponseInvalid(cause.message, { cause });
+        }
+        throw cause;
+    }
+};
+
 const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
     const configured = deps.covclaimd?.pubkey;
     if (configured === undefined) return undefined;
@@ -411,9 +431,9 @@ const quoteArkadeAsset = async (
         ASSET_SWAP_CONTRACT_VERSIONS,
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     const taker =
-        contractVersion === ASSET_SWAP_V4
+        contractVersion === ASSET_SWAP_DIRECTED
             ? verifyTaker({
                   attested: input.transport.attestedResponder,
                   solverPubkey: parsed.solver,
@@ -468,16 +488,21 @@ const quoteArkadeAsset = async (
     // The solver's carrier for an asset deposit, parsed before anything is derived. A BTC
     // deposit funds none, so its wire `carrier_sats` is deliberately not read.
     const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
-    // Before deriving: a failed feed or a mismatched pair refuses with no covenant built.
-    const reference = await quoteOffer(input.candidate.card, {
-        give: input.candidate.give,
-        giveAmount: parsed.give,
-        // Unconditional: a card charging for the delivered carrier refuses to price without
-        // it whichever leg gives, and a BTC deposit funds none of its own to publish.
-        carrierSats: carrierSats ?? ASSET_CARRIER_SATS,
-        ...QUOTE_OPTIONS,
-        fetchImpl: input.feed.fetch,
-    });
+    // The RFQ already disclosed amount, pair and maker script/key; feed failure may try another
+    // solver before any covenant is derived or accepted. This asset path sends no invoice.
+    const reference = await quoteAdvertisedPlan(
+        input.candidate.card,
+        {
+            give: input.candidate.give,
+            giveAmount: parsed.give,
+            // Unconditional: a card charging for the delivered carrier refuses to price without
+            // it whichever leg gives, and a BTC deposit funds none of its own to publish.
+            carrierSats: carrierSats ?? ASSET_CARRIER_SATS,
+            ...QUOTE_OPTIONS,
+            fetchImpl: input.feed.fetch,
+        },
+        input.policy,
+    );
     verifyPlanLegs(reference, input.legs, input.candidate.give);
 
     // The covenant binds what the fill must DELIVER, so the wanted amount is the
@@ -613,7 +638,7 @@ const quoteLightningSend = async (
         }),
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     // Exact-out: `to_amount` is the invoice verbatim and `from_amount` adds the fee.
     verifySendInvoice({ invoiced: invoice.amount, give: parsed.give, take: parsed.take });
 
@@ -722,7 +747,7 @@ const quoteLightningReceive = async (
         ),
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
 
     const covenant = covenantInputs(input);
@@ -801,6 +826,32 @@ const quoteLightningReceive = async (
     };
 };
 
+/**
+ * The pin a solver is shown, and the claim fee folded into it. Open RFQ broadcasts the same
+ * figure, so a bid and its directed quote price one amount.
+ *
+ * **An onchain send's take pin is recipient-EXACT.** The claim's miner fee comes out of the HTLC
+ * output (`payout = utxo.amount - fee`), so with a resolvable
+ * {@link OnchainCorridorDeps.claimFeeRateSatVb} the solver is asked for `pinned.value + claimFee`
+ * (same arithmetic as the `onchain-swap` rail). No rate: verbatim, no invented fee. A give pin is
+ * untouched: the take leg is the solver's to size. The recipient's own number never reaches the
+ * wire: a solver who knew it would know what to short us by.
+ */
+export const solverFacingAmount = (
+    route: RfqQuoteInput["route"],
+    pinned: PinnedAmount,
+    corridors: CorridorSet,
+): { quoted: PinnedAmount; claimFee?: bigint } => {
+    if (route !== "arkade->onchain" || pinned.on !== "take") return { quoted: pinned };
+    const onchain = corridors.get("onchain").deps;
+    if (onchain.claimFeeRateSatVb === undefined) return { quoted: pinned };
+    const claimFee = claimFeeSats({
+        claimFeeRateSatVb: onchain.claimFeeRateSatVb,
+        claimVsize: onchain.claimVsize,
+    });
+    return { quoted: { ...pinned, value: pinned.value + claimFee }, claimFee };
+};
+
 const quoteOnchainSend = async (
     input: RfqQuoteInput,
 ): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
@@ -815,25 +866,7 @@ const quoteOnchainSend = async (
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
 
-    // **The take pin is recipient-EXACT.** The claim's miner fee comes out of the HTLC output
-    // (`payout = utxo.amount - fee`), so with a take pin and a resolvable
-    // {@link OnchainCorridorDeps.claimFeeRateSatVb} the solver is asked for
-    // `pinned.value + claimFee` (same arithmetic as the `onchain-swap` rail). No rate: verbatim,
-    // no invented fee. A give pin is untouched: the take leg is the solver's to size.
-    const onchain = input.corridors.get("onchain").deps;
-    const claimFee =
-        pinned.on === "take" && onchain.claimFeeRateSatVb !== undefined
-            ? claimFeeSats({
-                  claimFeeRateSatVb: onchain.claimFeeRateSatVb,
-                  claimVsize: onchain.claimVsize,
-              })
-            : undefined;
-    // What the SOLVER is shown and the reply is verified against. The recipient's own number
-    // never reaches the wire: a solver who knew it would know what to short us by.
-    const quoted: PinnedAmount =
-        claimFee === undefined
-            ? pinned
-            : { on: pinned.on, value: pinned.value + claimFee, source: pinned.source };
+    const { quoted, claimFee } = solverFacingAmount(input.route, pinned, input.corridors);
 
     // Two wallet keys: the claim secret (P, covenant sender role) and the L1 HTLC claim key.
     // Asking twice keeps them distinct; minting one here is what key provisioning forbids.
@@ -860,7 +893,7 @@ const quoteOnchainSend = async (
         ),
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     // Against the pin the solver was SHOWN (grossed when a claim fee is active).
     verifyQuotedAmount({ pair, pinned: quoted, give: parsed.give, take: parsed.take });
 
@@ -1005,7 +1038,7 @@ const quoteOnchainReceive = async (
         ),
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
 
     const covenant = covenantInputs(input);

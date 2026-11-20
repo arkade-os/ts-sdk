@@ -1,15 +1,15 @@
 # Swap contracts
 
-`asset-swap.ark` and `sats-swap.ark` (v3) let anyone complete a funded deposit through `fulfill`.
-`asset-swap-v4.ark` and `sats-swap-v4.ark` are the directed versions: only `taker`, the key of the
-solver that quoted the swap, can. Each adds `taker` to its v3 constructor, and a `fulfill`
-tapscript that replaces the leaf the compiler would otherwise synthesize for `fulfill`.
+`asset-swap-directed.ark` and `sats-swap-directed.ark` are the directed asset swaps: only
+`taker`, the key of the solver that quoted the swap, can complete a funded deposit through
+`fulfill`. Each declares a `fulfill` tapscript that replaces the leaf the compiler would otherwise
+synthesize for `fulfill`.
 
 ## 1. The coin the person sends
 
 ```mermaid
 flowchart LR
-  user["user<br/>the maker"] --> fund["fund<br/>a send to the v4 address"]
+  user["user<br/>the maker"] --> fund["fund<br/>a send to the directed address"]
   fund --> deposit["deposit<br/>carrier 330<br/>pot above it<br/>SatsSwap: plus the asset sold"]
 ```
 
@@ -19,7 +19,7 @@ The deposit is the coin the swap tracks. `fulfill` never inspects it.
 
 ```mermaid
 flowchart LR
-  sender["anyone"] --> sent["direct send<br/>to the same v4 address"]
+  sender["anyone"] --> sent["direct send<br/>to the same directed address"]
   sent --> second["second coin<br/>same address<br/>not the deposit"]
   deposit["the deposit"] --> spend["fulfill or cancel"]
   spend --> position["the deposit is spent<br/>the swap moves"]
@@ -60,8 +60,8 @@ flowchart LR
     ck["cancel<br/>user + server"]
   end
   subgraph builds["who can build"]
-    v3["v3 fulfill<br/>server + emulator:fulfill<br/>anyone whose transaction passes the require"]
-    v4["v4 fulfill<br/>only the holder of taker"]
+    fb["fulfill<br/>only the taker starts it;<br/>server + emulator co-sign"]
+    cb["cancel<br/>only the user starts it;<br/>server co-signs (2-of-2)"]
   end
   signs ~~~ builds
 ```

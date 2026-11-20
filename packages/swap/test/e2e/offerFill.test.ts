@@ -121,7 +121,7 @@ const setup = async (): Promise<void> => {
 };
 
 describe("filling an offer (regtest)", () => {
-    it.each(["asset-swap-v2", "asset-swap-v3"] as const)(
+    it.each(["asset-swap-v2"] as const)(
         "spends the deposit through the %s tree's fulfill leaf and pays the maker",
         async (contractVersion) => {
             await setup();

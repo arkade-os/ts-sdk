@@ -18,7 +18,7 @@ import {
 } from "@arkade-os/sdk";
 import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
 import { requestArkadeSwap } from "../src/rfq";
-import { ASSET_SWAP_V4 } from "../src/program";
+import { ASSET_SWAP_DIRECTED } from "../src/program";
 import type { AttestingRfqTransport } from "../src/client/transport";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
@@ -142,7 +142,7 @@ describe("offer contract registration", () => {
                 to_amount: "50000",
                 solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
-                contract_version: ASSET_SWAP_V4,
+                contract_version: ASSET_SWAP_DIRECTED,
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),
@@ -200,7 +200,7 @@ describe("offer contract registration", () => {
                 to_amount: "50000",
                 solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
-                contract_version: ASSET_SWAP_V4,
+                contract_version: ASSET_SWAP_DIRECTED,
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),
@@ -247,7 +247,7 @@ describe("offer contract registration", () => {
                 ...(carrier === undefined ? {} : { carrier_sats: carrier }),
                 solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
-                contract_version: ASSET_SWAP_V4,
+                contract_version: ASSET_SWAP_DIRECTED,
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),

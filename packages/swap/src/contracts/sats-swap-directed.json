@@ -13,6 +13,10 @@
     {
       "name": "user",
       "type": "pubkey"
+    },
+    {
+      "name": "taker",
+      "type": "pubkey"
     }
   ],
   "functions": [
@@ -39,6 +43,11 @@
           "name": "fulfill",
           "witness": [
             {
+              "name": "takerSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
               "name": "serverSig",
               "type": "signature",
               "encoding": "schnorr-64",
@@ -52,6 +61,8 @@
             }
           ],
           "asm": [
+            "<taker>",
+            "OP_CHECKSIGVERIFY",
             "<SERVER_KEY>",
             "OP_CHECKSIGVERIFY",
             "<EMULATOR_KEY:fulfill>",
@@ -89,9 +100,9 @@
     }
   ],
   "source": {
-    "entry": "sats-swap.ark",
+    "entry": "sats-swap-directed.ark",
     "files": {
-      "sats-swap.ark": "pragma arkade ^0.1.0;\n\n// The output at this input's index pays `receiver` at least `amount` sats.\n// Coordination of who funds it lives outside the contract.\ncontract SatsSwap(\n    pubkey receiver,\n    int amount,\n    pubkey user\n) {\n    function fulfill() {\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].value >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
+      "sats-swap-directed.ark": "pragma arkade ^0.1.0;\n\n// The output at this input's index pays `receiver` at least `amount` sats,\n// and only `taker` can make that spend.\ncontract SatsSwap(\n    pubkey receiver,\n    int amount,\n    pubkey user,\n    pubkey taker\n) {\n    function fulfill() {\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].value >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function fulfill(signature takerSig, signature serverSig, signature emulatorSig) tapscript {\n        require(checkMultisig([taker, server, emulator], [takerSig, serverSig, emulatorSig], 3));\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
     }
   },
   "compiler": {
@@ -101,6 +112,6 @@
       "optimize": true
     }
   },
-  "updatedAt": "2026-11-02T17:43:42.616824535+00:00",
-  "fingerprint": "sha256:d7a60ab2178ede40a2e4867816689ea022641531cc662b562bebd7caa1ef96c4"
+  "updatedAt": "2026-11-19T20:57:50.848496600+00:00",
+  "fingerprint": "sha256:6ca61bf7ed8d8f65af3141da4e95fcc896863650127dd20949a84e72258053f4"
 }

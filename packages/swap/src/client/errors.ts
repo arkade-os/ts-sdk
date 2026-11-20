@@ -26,7 +26,13 @@ export { SwapRefusal };
  * transport but *run* as a check, so verification cannot be skipped by configuring a dev
  * transport that authenticates nobody. Published RFQ (§10) attributes bids by signature instead.
  */
-export type QuoteCheck = "pair" | "lockup_address" | "invoice" | "refund_window" | "responder";
+export type QuoteCheck =
+    | "pair"
+    | "lockup_address"
+    | "invoice"
+    | "refund_window"
+    | "responder"
+    | "amount";
 
 /**
  * `to` is underdetermined — it parses as nothing, as more than one thing, or as one thing the
@@ -97,11 +103,10 @@ export class AmountMismatch extends Error {
 }
 
 /**
- * The amount cannot cross this encoding without an unsafe narrowing — a quote
- * field arriving as a JSON number past 2^53, a non-canonical decimal string, or
- * a `bigint` too large for a foreign `number` amount.
- *
- * Boundary: the RFQ adapter, both directions; core's payment rails.
+ * An unsafe amount encoding: a JSON number past 2^53, non-canonical decimal string,
+ * or bigint too large for a foreign number. Applies to RFQ adapters and core payment rails.
+ * With solver routing, malformed incoming RFQ replies wrap this error in
+ * `SolverResponseInvalid.cause` so the client can try another solver.
  */
 export class AmountEncodingUnsupported extends Error {
     override readonly name = "AmountEncodingUnsupported";
