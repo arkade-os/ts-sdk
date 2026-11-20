@@ -13,8 +13,8 @@
  *   or funds the L1 HTLC, and may go offline once a request has sealed `P` to covclaimd; the
  *   solver funds a lockup pinned to the user's payout ({@link lightningReceiveContract}), and the
  *   claim reveals `P`, settling the user's side.
- * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; any
- *   filler may deliver, or the user cancels cooperatively.
+ * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; only
+ *   the quoting solver can fill it, or the user cancels cooperatively.
  *
  * Trust model: from a quote the user uses only the binding fields (`solver_pubkey`,
  * `refund_locktime`, `valid_until`, the amounts, and `profile.refund_without_receiver_delay` on

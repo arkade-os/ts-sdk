@@ -25,10 +25,11 @@ style and have not been backfilled.
   advertises v4 alone and loses `contractVersions`. It binds the transport's
   attested responder as the taker, and refuses a transport that attests nobody
   as the `responder` check (`QuoteVerificationFailed`) before it creates the
-  offer. It now takes an `AttestingRfqTransport`, which a plain `RfqTransport`
-  still satisfies. v2 and v3 deposits stay readable, cancellable and
-  restorable, `ASSET_SWAP_V2` and `ASSET_SWAP_V3` stay exported, and public
-  (non-RFQ) offers are unchanged on the v2 baseline.
+  offer. It now takes an `AttestingRfqTransport` (exported, with `attesting()`,
+  from `@arkade-os/swap/advanced`); a plain `RfqTransport` still type-checks but
+  attests nobody, so its quotes are refused. v2 and v3 deposits stay readable,
+  cancellable and restorable, `ASSET_SWAP_V2` and `ASSET_SWAP_V3` stay exported,
+  and public (non-RFQ) offers are unchanged on the v2 baseline.
 
 - **`@arkade-os/swap`: `offerHex` is optional on `AssetSwap` and `OfferSwapRecord`.**
   A directed swap keeps its covenant in the new `binding` field instead, as
