@@ -34,7 +34,15 @@ import {
     offerContract,
     recordOfferBinding,
 } from "../../src/offer";
-import { ASSET_SWAP_V2, ASSET_SWAP_V3, type AssetSwapContractVersion } from "../../src/program";
+import {
+    ASSET_SWAP_DERIVABLE_VERSIONS,
+    ASSET_SWAP_V2,
+    ASSET_SWAP_V3,
+    ASSET_SWAP_V4,
+    type AssetSwapContractVersion,
+} from "../../src/program";
+import type { SwapPolicy } from "../../src/client/policy";
+import { verifyTaker } from "../../src/client/verify";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
 import { quoteIdOfSwapId, type OfferSwapRecord } from "../../src/client/record";
@@ -85,6 +93,7 @@ const setup = async (
         repository?: AssetSwapRepository;
         wallet?: AcceptWallet;
         fetchImpl?: typeof fetch;
+        policy?: SwapPolicy;
     } = {},
 ) => {
     const wallet = over.wallet?.wallet ?? (await hdWallet());
@@ -101,6 +110,7 @@ const setup = async (
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         transportFor: () => transport,
         fetchImpl: over.fetchImpl ?? feed.fetch,
+        ...(over.policy === undefined ? {} : { policy: over.policy }),
     });
     return { client, transport, feed, repository };
 };
@@ -519,6 +529,85 @@ describe("quote() verification, one case per check", () => {
             };
         });
         await expect(client.quote(buy())).rejects.toMatchObject({ check: "lockup_address" });
+    });
+});
+
+describe("a directed quote (asset-swap-v4)", () => {
+    const TAKER_KEY = hex.decode(SOLVER_DISCOVERY_KEY);
+    const optedIn = { assetSwapContractVersions: ASSET_SWAP_DERIVABLE_VERSIONS };
+    const directed = (taker: Uint8Array): SolverAnswer => {
+        const base = solverFor(CLOCK);
+        return (payload) =>
+            payload.pair === ASSET_BUY_PAIR || payload.pair === ASSET_SELL_PAIR
+                ? arkadeAssetAnswer(payload, CLOCK, { taker })
+                : base(payload);
+    };
+
+    it("is asked for only when the policy lists it, first", async () => {
+        const { client, transport } = await setup({ answer: directed(TAKER_KEY), policy: optedIn });
+        await client.quote(buy());
+        expect(transport.sent[0]?.contract_versions).toEqual([
+            ASSET_SWAP_V4,
+            ASSET_SWAP_V3,
+            ASSET_SWAP_V2,
+        ]);
+    });
+
+    it("derives under the key that answered, and records the covenant as a binding", async () => {
+        const wallet = await acceptWallet();
+        const { client, repository } = await setup({
+            wallet,
+            answer: directed(TAKER_KEY),
+            policy: optedIn,
+        });
+        const quote = await client.quote(buy());
+        expect(quote.solver).toBe(SOLVER_DISCOVERY_KEY);
+        await client.accept(quote);
+
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.offerHex).toBeUndefined();
+        expect(stored.binding).toMatchObject({
+            version: ASSET_SWAP_V4,
+            taker: SOLVER_DISCOVERY_KEY,
+        });
+        const packet = decodeOffer(wallet.sent[0]?.extensions?.[0]?.payload as Uint8Array);
+        expect(hex.encode(packet.taker ?? new Uint8Array())).toBe(SOLVER_DISCOVERY_KEY);
+        expect(hex.encode(packet.swapPkScript)).toBe(stored.swapPkScript);
+    });
+
+    it("refuses a v4 quote whose solver key is not the responder", async () => {
+        const { client } = await setup({ answer: directed(SOLVER_PUBKEY), policy: optedIn });
+        const refused = await client.quote(buy()).catch((error: unknown) => error);
+        expect(refused).toBeInstanceOf(QuoteVerificationFailed);
+        expect(refused).toMatchObject({
+            check: "responder",
+            expected: SOLVER_DISCOVERY_KEY,
+            actual: hex.encode(SOLVER_PUBKEY),
+        });
+    });
+
+    it("leaves a v3 quote's solver key unchecked, as before", async () => {
+        const { client } = await setup({ policy: optedIn });
+        await expect(client.quote(buy())).resolves.toMatchObject({
+            solver: hex.encode(SOLVER_PUBKEY),
+        });
+    });
+
+    it("compares the keys as bytes, and refuses one that is not a key", () => {
+        expect(
+            verifyTaker({
+                attested: SOLVER_DISCOVERY_KEY,
+                solverPubkey: SOLVER_DISCOVERY_KEY.toUpperCase(),
+            }),
+        ).toEqual(TAKER_KEY);
+        for (const solverPubkey of ["zz", undefined, SOLVER_DISCOVERY_KEY.slice(2)]) {
+            expect(() => verifyTaker({ attested: SOLVER_DISCOVERY_KEY, solverPubkey })).toThrow(
+                QuoteVerificationFailed,
+            );
+        }
+        expect(() => verifyTaker({ solverPubkey: SOLVER_DISCOVERY_KEY })).toThrow(
+            QuoteVerificationFailed,
+        );
     });
 });
 

@@ -42,6 +42,7 @@ import {
     encodeOffer,
     OFFER_PACKET_TYPE,
     offerFromBinding,
+    recordOfferBinding,
     registerDerivedOffer,
     storedOffer,
 } from "../offer";
@@ -514,7 +515,11 @@ const registeredAssetRecord = async (
             : { assetPayment: recordAssetPayment(preparation.assetPayment) }),
         family: "offer",
         status: "pending",
-        offerHex: preparation.offer.offerHex,
+        // a directed covenant is kept as its binding alone, which an older reader drops whole
+        // rather than half-reads
+        ...(preparation.offer.offerBinding.taker === undefined
+            ? { offerHex: preparation.offer.offerHex }
+            : { binding: recordOfferBinding(preparation.offer.offerBinding) }),
         swapAddress: preparation.offer.address,
         swapPkScript: hex.encode(preparation.offer.swapPkScript),
         ...(preparation.carrierSats === undefined

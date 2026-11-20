@@ -122,6 +122,15 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: asset quotes can ask for the directed `asset-swap-v4`.**
+  `SwapPolicy.assetSwapContractVersions` sets what an asset quote advertises; it
+  defaults to `ASSET_SWAP_CONTRACT_VERSIONS`, so nothing changes until a caller
+  lists v4. On a v4 quote the client derives the covenant with the quote's
+  `solver_pubkey` as the taker, after checking that key is the responder the
+  transport attested; a mismatch is refused as the `responder` check, before
+  anything is derived. A v2 or v3 quote's `solver_pubkey` is still not checked.
+  Accepting a v4 quote records the covenant as its binding, with no `offerHex`.
+
 - **`@arkade-os/swap`: a swap record can hold its covenant as a binding.** Every
   reader takes either form: the store and the drive list a record with either,
   legacy adoption accepts either, and cancel with its fill-race reconciliation,
