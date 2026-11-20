@@ -211,10 +211,6 @@ export function isSdkPicked(params: object | undefined): boolean {
 }
 
 /**
- * Boarding UTXOs an SDK pick may take. A `Wallet` leaves out those an in-flight settle is
- * spending; any other `IWallet` answers with its full list, and its `settle` refuses a clash.
- */
-/**
  * Where the boarding sweeps send coins: a `Wallet`'s own boarding address, never the delegated one
  * a deposit may have been swept off; any other `IWallet` answers {@link IWallet.getBoardingAddress}.
  */
@@ -227,6 +223,10 @@ export function getOwnBoardingAddress(
         : wallet.getBoardingAddress();
 }
 
+/**
+ * Boarding UTXOs an SDK pick may take. A `Wallet` leaves out those an in-flight settle is
+ * spending; any other `IWallet` answers with its full list, and its `settle` refuses a clash.
+ */
 export function getSelectableBoardingUtxos(
     wallet: Pick<IWallet, "getBoardingUtxos">,
 ): Promise<ExtendedCoin[]> {

@@ -116,6 +116,7 @@ describe.skipIf(!reachable).sequential("Executor non-interactive boarding", () =
         await waitFor(async () => (await bob.getBalance()).available === 4_000, {
             timeout: 50_000,
         });
+        // the renewal row is local here, so the change goes to the wallet's own address
         expect(await atRenewal()).toHaveLength(0);
     });
 
@@ -292,6 +293,35 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
         const renewed = (await atRenewal())!;
         expect(renewed.script).toBe(renewalScript);
         expect(renewed.expiresAt!.getTime()).toBeGreaterThan(expiresAt);
+    });
+
+    // no second wait for the daemon: the test above pins its in-place renewal
+    it("keeps the change of a send at the renewal contract", { timeout: 120_000 }, async () => {
+        const own = await alice.getAddress();
+        const held = (await atRenewal())!;
+        const bob = await createWallet();
+        // named, so an own coin expiring sooner is not spent with it and the change keeps the
+        // renewed expiry, clear of the wallet's fallback margin
+        await alice.send({
+            recipients: [{ address: await bob.getAddress(), amount: 3_000 }],
+            selectedVtxos: [held],
+        });
+        await waitFor(async () => (await bob.getBalance()).available === 3_000, {
+            timeout: 50_000,
+        });
+
+        await waitFor(async () => {
+            const change = await atRenewal();
+            return change !== undefined && change.txid !== held.txid;
+        });
+        expect(await alice.getAddress()).toBe(own);
+
+        // still the daemon's to renew: the wallet's own renewal leaves it alone
+        const change = (await atRenewal())!;
+        expect(change.value).toBe(held.value - 3_000);
+        await (await alice.getVtxoManager()).renewVtxos().catch(() => undefined);
+        const untouched = (await atRenewal())!;
+        expect(`${untouched.txid}:${untouched.vout}`).toBe(`${change.txid}:${change.vout}`);
     });
 });
 

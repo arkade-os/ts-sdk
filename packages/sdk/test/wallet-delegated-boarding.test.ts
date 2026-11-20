@@ -20,6 +20,7 @@ import {
 } from "../src";
 import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
 import { saveVtxosForContract } from "../src/contracts/vtxoOwnership";
+import { collectVtxos } from "../src/repositories/walletRepository";
 import { REGISTRATION_TIMEOUT_MS } from "../src/wallet/executor";
 import { DEFAULT_TEMPLATE_IDS } from "../src/script/executor/executorTemplate";
 import { getOwnBoardingAddress } from "../src/wallet/utils";
@@ -266,6 +267,29 @@ function coin(row: Awaited<ReturnType<typeof executorRow>>, txidByte: string) {
     });
 }
 
+/**
+ * Sends part of a coin at `renewal`, as the delegated coin's owner; the change comes back to that
+ * contract, which is what the contract manager would report.
+ */
+async function sendFromRenewal(
+    { wallet, renewal, walletRepository }: Awaited<ReturnType<typeof hdWalletWithWatch>>,
+    boarded: ExtendedVirtualCoin,
+) {
+    const input = { ...boarded, isPreconfirmed: true, expiresAt: new Date(Date.now() + 36e6) };
+    await saveVtxosForContract(walletRepository, renewal.contract, [input]);
+    const arkTxid = "ee".repeat(32);
+    vi.spyOn(wallet as any, "_buildAndSubmitOffchainTx").mockResolvedValue({
+        arkTxid,
+        signedCheckpointTxs: [],
+    });
+    await wallet.send({
+        recipients: [{ address: vectors.renewal.address, amount: 4_000 }],
+        selectedVtxos: [input],
+    });
+    const stored = await collectVtxos(walletRepository, renewal.contract.address);
+    return stored.find((v) => v.txid === arkTxid)!;
+}
+
 /** Delivers a contract event to the wallet's subscribers, as the watcher does. */
 async function deliverContractEvent(
     wallet: Wallet,
@@ -476,6 +500,40 @@ describe("delegated boarding address on an HD wallet", () => {
         await emitContractEvent(wallet, "vtxo_received", renewal.contract, [coin(renewal, "bb")]);
         expect(await wallet.getBoardingAddress()).toBe(next);
         expect(registerDelegation).toHaveBeenCalledOnce();
+        await wallet.dispose();
+    });
+
+    it("does not rotate for the change of a coin the Executor boarded", async () => {
+        const fx = await hdWalletWithWatch({ renewalLive: true });
+        const { wallet, boarding, renewal, registerDelegation } = fx;
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+        const boarded = coin(renewal, "aa");
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [boarded]);
+        const next = await wallet.getBoardingAddress();
+        expect(next).not.toBe(first);
+
+        const change = await sendFromRenewal(fx, boarded);
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [change]);
+        expect(await wallet.getBoardingAddress()).toBe(next);
+        // the one rotation's boarding and renewal watches
+        expect(registerDelegation).toHaveBeenCalledTimes(2);
+        await wallet.dispose();
+    });
+
+    it("rotates when the change lands after the deposit's own rotation failed", async () => {
+        const fx = await hdWalletWithWatch({ renewalLive: true });
+        const { wallet, boarding, renewal, registerDelegation } = fx;
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        vi.spyOn(wallet as any, "rotateBoarding").mockRejectedValueOnce(new Error("no index"));
+        const boarded = coin(renewal, "aa");
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [boarded]);
+        expect(await wallet.getBoardingAddress()).toBe(first);
+
+        const change = await sendFromRenewal(fx, boarded);
+        await emitContractEvent(wallet, "vtxo_received", renewal.contract, [change]);
+        expect(await wallet.getBoardingAddress()).not.toBe(first);
+        expect(registerDelegation).toHaveBeenCalledTimes(2);
         await wallet.dispose();
     });
 
@@ -760,6 +818,7 @@ describe("delegated boarding address on an HD wallet", () => {
         });
 
         it("does nothing without an Executor", async () => {
+            mockFetch.mockImplementation(async () => jsonResponse(arkInfo));
             const { wallet } = await walletWith({ executor: false, rows: true });
 
             await expect(wallet.refreshExecutorWatches()).resolves.toBeUndefined();

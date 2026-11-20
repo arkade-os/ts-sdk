@@ -136,9 +136,9 @@ const readLegacyAssetSwaps = async (repository: AssetSwapRepository): Promise<As
 export const legacyOfferDepositsToAdopt = async (
     repository: AssetSwapRepository,
 ): Promise<Set<string>> => {
-    // Typed required, but onchain-HTLC rows carry no `offerHex` and an unfunded one no txid.
+    // Onchain-HTLC rows carry neither covenant form, and an unfunded one no txid.
     const unadopted = (await readLegacyAssetSwaps(repository)).filter(
-        (swap) => !!swap.offerHex && !!swap.fundingTxid,
+        (swap) => (!!swap.offerHex || !!swap.binding) && !!swap.fundingTxid,
     );
     if (unadopted.length === 0) return new Set();
     const { offer } = splitRecords(await collectSwapRecords(repository));

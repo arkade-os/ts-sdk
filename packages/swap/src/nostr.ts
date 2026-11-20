@@ -130,6 +130,11 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
         { kinds: [RFQ_DIRECTED_KIND], "#p": [pubkey], authors: [solverPubkey] },
         {
             onevent(event: Event) {
+                // `pool` is the caller's to supply, so re-check what nostr-tools' own would. The
+                // author matters alone: the conversation key is symmetric, so a decrypt proves
+                // only "one of the two", and reflected client traffic passes it. Silent, not a
+                // rejection: an injection must not settle a still-live negotiation.
+                if (event.pubkey !== solverPubkey || !verifyEvent(event)) return;
                 let payload: unknown;
                 try {
                     payload = JSON.parse(nip44.v2.decrypt(event.content, conversationKey));

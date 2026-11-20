@@ -30,7 +30,7 @@ import {
     watchStateOf,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
-import { contractHandlers } from "./handlers";
+import { contractHandlers, ExecutorContractHandler } from "./handlers";
 import { speculativeReceiveMetadata } from "./handlers/helpers";
 import { Coin, ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
@@ -1450,7 +1450,14 @@ export class ContractManager implements IContractManager {
         };
 
         await this.config.contractRepository.saveContract(contract);
-        if (isOnchainScoped(contract)) this.config.onOnchainContractCreated?.();
+        if (isOnchainScoped(contract)) {
+            // The row is saved: a throwing callback must not skip its hydration and watching.
+            try {
+                this.config.onOnchainContractCreated?.();
+            } catch (e) {
+                console.warn("onOnchainContractCreated failed", e);
+            }
+        }
         return { contract, persisted: true };
     }
 
@@ -2156,11 +2163,14 @@ export class ContractManager implements IContractManager {
     }
 
     /**
-     * The onchain side of hydrating new contracts: stores their coins, and the sync's retarget
-     * adds their addresses to the onchain watch. Best-effort: the next sync retries.
+     * The onchain side of hydrating new Executor contracts: stores their coins, and the sync's
+     * retarget adds their addresses to the onchain watch. Best-effort: the next sync retries.
      */
     private async syncNewOnchain(contracts: Contract[]): Promise<void> {
-        const scripts = contracts.filter(isOnchainScoped).map((c) => c.script);
+        // Executor only: a plain boarding row is created inside the settle lock.
+        const scripts = contracts
+            .filter((c) => c.type === ExecutorContractHandler.type && isOnchainScoped(c))
+            .map((c) => c.script);
         if (scripts.length === 0) return;
         await this.syncOnchain(scripts).catch((e) =>
             console.warn("[contracts] onchain sync of new contracts failed", e),

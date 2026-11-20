@@ -28,7 +28,10 @@ import { timelockToSequence } from "../utils/timelock";
 import { newestWalletReceiveContract } from "./walletReceiveRotator";
 import { toXOnlySignerHex } from "./signerRotation";
 
-/** Bounds a registration: a write has no `fetch` deadline of its own. */
+/**
+ * Bounds the registration request, a write with no `fetch` deadline of its own; the local setup
+ * after the service answers is not covered.
+ */
 export const REGISTRATION_TIMEOUT_MS = 30_000;
 
 /** Metadata key: the service's status of a delegated watch. */
@@ -117,11 +120,13 @@ export async function delegatedContracts(
     getContracts: ContractReader,
     template: ExecutorDefault,
 ): Promise<DelegatedContractWatch[]> {
-    const identityKey = hex.encode(await identity.xOnlyPublicKey());
-    const now = Math.floor(Date.now() / 1000);
     const rows = (await getContracts({ type: ["executor"] }))
         .filter((c) => c.params.template === template)
         .sort((a, b) => registeredAt(b) - registeredAt(a));
+    // Before the identity read, which can be a round trip for a remote signer.
+    if (rows.length === 0) return [];
+    const identityKey = hex.encode(await identity.xOnlyPublicKey());
+    const now = Math.floor(Date.now() / 1000);
     const watches: DelegatedContractWatch[] = [];
     for (const contract of rows) {
         try {
@@ -384,9 +389,10 @@ export interface IExecutorManager {
      * is thrown, and the error names the keys that failed, so a retry covers the rest.
      * `expiresAt` applies to every watch registered.
      *
-     * Until the wallet's address becomes its renewal contract, coins received at `getAddress()`,
-     * a send's change and the fallback renewals are not covered: they land at the wallet's own
-     * address, which the wallet renews itself.
+     * A send's change returns to the live renewal contract of its first delegated input, unless it
+     * is `maxFee + dust` or less, so it stays covered. Until the wallet's address becomes its
+     * renewal contract, coins received at `getAddress()` and the fallback renewals are not: they
+     * land at the wallet's own address, which the wallet renews itself.
      */
     registerRenewal(
         params: DelegationOptions,
@@ -742,7 +748,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `Executor's ${template} delegation has ${delegation.inputs.length} inputs, expected one ${template === "boarding" ? "onchain" : "offchain"} input`,
             );
         }
-        if (input.address !== watchAddress) {
+        // bech32 is case-insensitive, and the service may answer in upper case
+        if (input.address.toLowerCase() !== watchAddress) {
             throw new Error(
                 `Executor derived a different address: expected ${watchAddress}, got ${input.address}`,
             );

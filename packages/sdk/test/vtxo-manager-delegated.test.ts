@@ -3,6 +3,7 @@ import { hex } from "@scure/base";
 import { VtxoManager } from "../src/wallet/vtxo-manager";
 import { ExecutorContractHandler } from "../src/contracts/handlers/executor";
 import { InMemoryContractRepository } from "../src";
+import { delegatedContracts } from "../src/wallet/executor";
 import { collectContracts } from "../src/repositories/contractRepository";
 import type { IWallet } from "../src/wallet";
 import type { NormalizedExtendedVirtualCoin } from "../src/wallet/vtxo";
@@ -103,6 +104,46 @@ function walletWith(rows: Contract[], vtxos: NormalizedExtendedVirtualCoin[]): I
 
 const settleInputs = (wallet: IWallet) =>
     (wallet.settle as ReturnType<typeof vi.fn>).mock.calls[0][0].inputs;
+
+describe("delegatedContracts", () => {
+    it("reads the rows before the identity, so no rows never ask for the key", async () => {
+        const xOnlyPublicKey = vi.fn().mockResolvedValue(hex.decode(IDENTITY_X_ONLY));
+        const boarding = { ...renewalRow(IDENTITY_X_ONLY), params: { template: "boarding" } };
+
+        await expect(
+            delegatedContracts({ xOnlyPublicKey }, async () => [], "renewal"),
+        ).resolves.toEqual([]);
+        // rows of another template are no rows for this one
+        await expect(
+            delegatedContracts({ xOnlyPublicKey }, async () => [boarding as Contract], "renewal"),
+        ).resolves.toEqual([]);
+        expect(xOnlyPublicKey).not.toHaveBeenCalled();
+    });
+});
+
+describe("VtxoManager without Executor watches", () => {
+    it("renews a coin without asking the operator or the identity", async () => {
+        const vtxo = coin("51");
+        const wallet = walletWith([], [vtxo]);
+        const manager = new VtxoManager(wallet, {});
+
+        await manager.renewVtxos();
+        expect(settleInputs(wallet).map((v: { txid: string }) => v.txid)).toEqual([vtxo.txid]);
+        expect(wallet.getOperatorInfo).not.toHaveBeenCalled();
+        expect(wallet.identity.xOnlyPublicKey).not.toHaveBeenCalled();
+    });
+
+    it("renews a coin without asking the operator when no watch is live", async () => {
+        const row = renewalRow(IDENTITY_X_ONLY, { delegationStatus: "local" });
+        const vtxo = coin(row.script);
+        const wallet = walletWith([row], [vtxo]);
+        const manager = new VtxoManager(wallet, {});
+
+        await manager.renewVtxos();
+        expect(settleInputs(wallet).map((v: { txid: string }) => v.txid)).toEqual([vtxo.txid]);
+        expect(wallet.getOperatorInfo).not.toHaveBeenCalled();
+    });
+});
 
 describe("VtxoManager defers Executor-renewable delegated coins", () => {
     it("skips a coin at a live renewal watch, leaving nothing to renew", async () => {

@@ -235,6 +235,12 @@ export const corridorRecordStore = (
     };
 };
 
+/** Whichever of the two covenant forms a swap holds, and nothing for the one it lacks. */
+const covenantOf = (swap: Pick<AssetSwap, "offerHex" | "binding">) => ({
+    ...(swap.offerHex === undefined ? {} : { offerHex: swap.offerHex }),
+    ...(swap.binding === undefined ? {} : { binding: swap.binding }),
+});
+
 /** A v2 offer record as the watcher and coverage read one. */
 export const offerFactsOf = (
     record: OfferSwapRecord,
@@ -242,7 +248,7 @@ export const offerFactsOf = (
     id: record.id,
     coverageId: record.id,
     status: record.status,
-    offerHex: record.offerHex,
+    ...covenantOf(record),
     swapPkScript: record.swapPkScript,
     ...(record.fundingTxid === undefined ? {} : { fundingTxid: record.fundingTxid }),
     ...(record.spentTxid === undefined ? {} : { spentTxid: record.spentTxid }),
@@ -364,7 +370,7 @@ export const restoredOfferRecord = (
             market: { kind: "restored", backend: "feed" },
             expiresAt: createdAt,
             status: swap.status,
-            offerHex: swap.offerHex,
+            ...covenantOf(swap),
             swapAddress: swap.swapAddress,
             swapPkScript: swap.swapPkScript,
             fundingTxid: swap.fundingTxid,
@@ -375,6 +381,22 @@ export const restoredOfferRecord = (
         now,
     );
 };
+
+/** A funded record as the restore scan's `reopen` reads it: its deposit and covenant, re-asked. */
+export const reopenedDeposit = (record: OfferSwapRecord, fundingTxid: string): AssetSwap => ({
+    id: fundingTxid,
+    fromAsset: record.give.asset,
+    toAsset: record.take.asset,
+    fromAmount: record.give.amount,
+    toAmount: record.take.amount,
+    swapAddress: record.swapAddress,
+    swapPkScript: record.swapPkScript,
+    ...covenantOf(record),
+    fundingTxid,
+    ...(record.spentTxid === undefined ? {} : { spentTxid: record.spentTxid }),
+    status: record.status,
+    createdAt: record.createdAt * 1000,
+});
 
 /** v1's asset spelling — `btc`, or the 68-hex identity — as an arkade id. */
 const restoredAssetId = (network: NetworkRef, id: string): AssetId<"arkade"> =>
