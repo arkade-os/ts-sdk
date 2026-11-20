@@ -42,6 +42,7 @@ import {
     encodeOffer,
     OFFER_PACKET_TYPE,
     offerFromBinding,
+    recordOfferBinding,
     registerDerivedOffer,
     storedOffer,
 } from "../offer";
@@ -124,6 +125,8 @@ export interface AcceptInput {
     /** Unix seconds. */
     readonly now: number;
     readonly validUntil?: number;
+    /** `false` funds an offer without its packet. Written on the record before any funding. */
+    readonly attachOfferPacket?: boolean;
 }
 
 /**
@@ -412,12 +415,16 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
     const funds = fundsFromWallet(quote.route);
     if (funds) await assertFundable(wallet, quote);
 
-    const record =
+    const built =
         preparation.backend === "feed"
             ? await registeredOfferRecord(input, preparation)
             : preparation.route === "arkade->arkade"
               ? await registeredAssetRecord(input, preparation)
               : await registeredCorridorRecord(input, preparation);
+    const record: SwapRecord =
+        built.family === "offer" && input.attachOfferPacket === false
+            ? { ...built, attachOfferPacket: false }
+            : built;
 
     // Throwing, deliberately: nothing past this line may happen unless the record is durable.
     await repository.saveSwapRecord(record);
@@ -514,7 +521,11 @@ const registeredAssetRecord = async (
             : { assetPayment: recordAssetPayment(preparation.assetPayment) }),
         family: "offer",
         status: "pending",
-        offerHex: preparation.offer.offerHex,
+        // a directed covenant is kept as its binding alone, which an older reader drops whole
+        // rather than half-reads
+        ...(preparation.offer.offerBinding.taker === undefined
+            ? { offerHex: preparation.offer.offerHex }
+            : { binding: recordOfferBinding(preparation.offer.offerBinding) }),
         swapAddress: preparation.offer.address,
         swapPkScript: hex.encode(preparation.offer.swapPkScript),
         ...(preparation.carrierSats === undefined
@@ -656,7 +667,9 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
                           { assetId: toDiscoveryLeg(record.route.give.asset).assetId, amount },
                       ],
                   }),
-            extensions: [offerExtensionOf(record)],
+            ...(record.attachOfferPacket === false
+                ? {}
+                : { extensions: [offerExtensionOf(record)] }),
         });
     }
     if (record.kind === "lightning_receive" || record.kind === "onchain_receive") {

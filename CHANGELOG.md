@@ -122,6 +122,48 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: the drive cancels a directed deposit its quote let lapse.**
+  Only the quoting solver can fill an `asset-swap-v4` deposit, and it fills
+  nothing past `valid_until`, so once 60 seconds beyond it have passed with the
+  deposit unspent, a running drive cancels it through the usual `cancelling` to
+  `cancelled` path, retrying on each pass until it lands. A cancel that loses to
+  a late fill resolves as `filled`. A `readonly` drive, or a `manual` one before
+  `start()`, does nothing; v2 and v3 deposits, and records rebuilt from the chain
+  (whose deadline is not known), are left for the user to cancel.
+
+- **`@arkade-os/swap`: the restore scan takes its deposits from pluggable sources.**
+  `restoreAssetSwaps` accepts `sources`, each an `OfferRecoverySource` that answers
+  candidate funding txids with bindings, and marks the ones it rules out. The
+  default is `[packetRecoverySource(indexer)]`, the funding tx's own `0x03`
+  packet, so a restore with no sources passed finds what it found before. Answers
+  merge by funding txid, first source first, and a source that throws is skipped.
+  A source's binding is proven by the deposit at its script, and nothing else it
+  sends is trusted: packet bytes are kept only if they encode exactly that
+  covenant, an answer whose packet or binding does not hold up is dropped for
+  the next source or a later scan, and a binding sent without bytes has them
+  derived from it.
+  One case now scans differently: a funding whose `0x03` packet is present but
+  does not decode is left unscanned, so a later build gets a second look, rather
+  than marked answered for good. A funding with no packet, or another packet
+  type, is still marked scanned.
+
+- **`@arkade-os/swap`: `accept(quote, { attachOfferPacket: false })` funds an offer
+  without its packet.** The funding then shows only a payment to a taproot
+  output, and the terms stay off-chain until the deposit is spent. The packet
+  is also how a wallet restored from its seed alone finds an unfilled deposit,
+  so the default stays `true`, and a record funded without it is not found by a
+  seed-only restore. The choice is written on the record before funding, so a
+  resumed funding makes the same one. Unset, the funding is unchanged.
+
+- **`@arkade-os/swap`: asset quotes can ask for the directed `asset-swap-v4`.**
+  `SwapPolicy.assetSwapContractVersions` sets what an asset quote advertises; it
+  defaults to `ASSET_SWAP_CONTRACT_VERSIONS`, so nothing changes until a caller
+  lists v4. On a v4 quote the client derives the covenant with the quote's
+  `solver_pubkey` as the taker, after checking that key is the responder the
+  transport attested; a mismatch is refused as the `responder` check, before
+  anything is derived. A v2 or v3 quote's `solver_pubkey` is still not checked.
+  Accepting a v4 quote records the covenant as its binding, with no `offerHex`.
+
 - **`@arkade-os/swap`: a swap record can hold its covenant as a binding.** Every
   reader takes either form: the store and the drive list a record with either,
   legacy adoption accepts either, and cancel with its fill-race reconciliation,

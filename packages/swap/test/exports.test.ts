@@ -710,6 +710,8 @@ describe("the @deprecated pointers", () => {
         "solverOnchainRendezvous",
         "solverRendezvous",
         "spendTxidsOf",
+        "OfferRecoverySource",
+        "packetRecoverySource",
         "unilateralClaimDelay",
         "unilateralRefundDelay",
         "unilateralRefundWithoutReceiverDelay",

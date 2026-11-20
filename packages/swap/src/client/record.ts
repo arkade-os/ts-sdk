@@ -153,6 +153,8 @@ export interface OfferSwapRecord extends SwapRecordCommon {
     /** Sats riding an asset deposit, decimal: the solver's published carrier, which the fill is
      * priced against. Absent for a BTC deposit and for feed-priced swaps (the SDK default). */
     readonly carrierSats?: string;
+    /** `false`: the funding carries no offer packet. Absent attaches it. */
+    readonly attachOfferPacket?: false;
     readonly spentTxid?: string;
     readonly completedAt?: number;
 }

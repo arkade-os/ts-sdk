@@ -37,6 +37,7 @@ import {
     type OnchainNetwork,
 } from "../onchainHtlc";
 import { claimFeeSats } from "../payment/onchainSwap";
+import { ASSET_SWAP_V4 } from "../rfq-contract";
 import {
     arkadeSwapRequest,
     deriveLightningReceive,
@@ -89,6 +90,7 @@ import {
     verifySendInvoice,
     verifyRefundWindow,
     verifySendWindow,
+    verifyTaker,
     verifyingDerivation,
 } from "./verify";
 
@@ -377,6 +379,7 @@ const quoteArkadeAsset = async (
         if (input.now >= choice.quote.expiresAt - 30)
             throw new Error("carrier quote expired before RFQ");
     }
+    const advertised = input.policy?.assetSwapContractVersions ?? ASSET_SWAP_CONTRACT_VERSIONS;
     const request = arkadeSwapRequest({
         rfqId: newRfqId(),
         ...sides,
@@ -384,7 +387,7 @@ const quoteArkadeAsset = async (
         amountSide: toRfqAmountSide(pinned.on),
         makerPkScript: receivePkScript,
         makerPublicKey: maker.publicKey,
-        contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
+        contractVersions: advertised,
     });
     const {
         quote: wire,
@@ -401,10 +404,17 @@ const quoteArkadeAsset = async (
                     : { carrier: encodeCarrierRequest(carrierRequest) }),
             },
         },
-        ASSET_SWAP_CONTRACT_VERSIONS,
+        advertised,
     );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);
+    const taker =
+        contractVersion === ASSET_SWAP_V4
+            ? verifyTaker({
+                  attested: input.transport.attestedResponder,
+                  solverPubkey: parsed.solver,
+              })
+            : undefined;
     verifyCrossAssetAmount({ pair, pinned, give: parsed.give, take: parsed.take });
     verifyQuoteTtl({
         quoteId: input.quoteId,
@@ -476,6 +486,7 @@ const quoteArkadeAsset = async (
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         info: input.info,
         contractVersion,
+        ...(taker === undefined ? {} : { taker }),
     });
     // Compare-only, and never the other way round: the address the trader funds
     // is the one the trader derived, and a solver naming another one is refused

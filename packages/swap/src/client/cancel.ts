@@ -46,7 +46,7 @@ export interface CancelInput {
      * read the call makes, and what the gate is written from. */
     readonly record: OfferSwapRecord;
     /** The delivery channel both edges emit through, armed or not. */
-    readonly drive: SwapDrive;
+    readonly drive: Pick<SwapDrive, "ingest">;
     readonly indexer: LockupSpendIndexer;
     /** Unix seconds. Injected for tests. */
     readonly now?: () => number;
