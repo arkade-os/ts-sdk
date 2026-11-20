@@ -567,6 +567,12 @@ const PENDING_RECOVERY_REASON =
 const UNROLLED_REASON =
     "was unilaterally exited and lives onchain — `Unroll.completeUnroll` is the only spend that reaches it";
 
+/** The script a send's change is locked to, and the contract bucket (address) it is stored under. */
+type ChangeDestination = {
+    tapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+    address: string;
+};
+
 /**
  * Structural rather than {@link ContractWithVtxos} so the worker's repository-built snapshot
  * (VTXOs without `contractScript`) classifies without a parallel array.
@@ -3114,8 +3120,8 @@ export class Wallet
     /**
      * Rotate-on-board for Executor watches: the Executor boards a deposit into the renewal
      * contract of its key, so a coin there while that key is displayed means the address was used.
-     * Renewals land there too, and the trigger is still correct: the coin proves the address was
-     * used.
+     * Renewals and a delegated coin's change land there too, and the trigger is still correct: the
+     * coin proves the address was used.
      */
     private async installExecutorBoardRotation(): Promise<void> {
         if (!this._descriptorProvider || !this._executorManager || this._executorBoardUnsub) return;
@@ -6540,8 +6546,6 @@ export class Wallet
         const offchainTapscript = this.offchainTapscript;
         const serverPubKey = this.arkServerPublicKey;
         const serverUnrollScript = this.serverUnrollScript;
-        const outputAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
-        const address = outputAddress.encode();
 
         // validate recipients and populate undefined amount with dust amount
         const recipients = validateRecipients(
@@ -6818,7 +6822,16 @@ export class Wallet
         // build change receiver with BTC change and all asset changes
         let changeReceiver: Recipient | undefined;
         let changeIndex = 0;
+        let change: ChangeDestination | undefined;
         if (changeAmount > 0) {
+            const changeTapscript = await this.changeTapscriptFor(
+                selectedCoins,
+                changeAmount,
+                serverPubKey,
+                offchainTapscript,
+            );
+            const changeAddress = changeTapscript.address(this.network.hrp, serverPubKey);
+            change = { tapscript: changeTapscript, address: changeAddress.encode() };
             const changeAssets: Asset[] = [];
             for (const [assetId, amount] of assetChanges) {
                 if (amount > 0n) {
@@ -6830,13 +6843,13 @@ export class Wallet
             outputs.push({
                 script:
                     BigInt(changeAmount) < this.dustAmount
-                        ? outputAddress.subdustPkScript
-                        : outputAddress.pkScript,
+                        ? changeAddress.subdustPkScript
+                        : changeAddress.pkScript,
                 amount: BigInt(changeAmount),
             });
 
             changeReceiver = {
-                address: address,
+                address: change.address,
                 amount: changeAmount,
                 assets: changeAssets.length > 0 ? changeAssets : undefined,
             };
@@ -6883,11 +6896,42 @@ export class Wallet
                 serverPubKey,
                 serverUnrollScript,
                 changeAssets: changeReceiver?.assets,
+                change,
             },
             onReserved,
             !selectedVtxos,
             { validUntil },
         );
+    }
+
+    /**
+     * Change follows its inputs: a send spending a coin at a live renewal watch returns the change
+     * to that contract, so the Executor keeps renewing it. The own script otherwise. Fail-open: a
+     * send must not fail over a delegation lookup.
+     */
+    private async changeTapscriptFor(
+        inputs: ExtendedVirtualCoin[],
+        changeAmount: number,
+        serverPubKey: Bytes,
+        own: DefaultVtxo.Script | DelegateVtxo.Script,
+    ): Promise<DefaultVtxo.Script | DelegateVtxo.Script> {
+        try {
+            const signer = toXOnlySignerHex(hex.encode(serverPubKey));
+            const live = (await this.delegatedExecutorContracts("renewal")).filter(
+                (w) => w.live && w.signer === signer,
+            );
+            for (const coin of inputs) {
+                const watch = live.find((w) => w.contract.script === coin.script);
+                if (!watch) continue;
+                // the Executor cannot renew a coin of maxFee + dust or less
+                const renewable =
+                    BigInt(changeAmount) > BigInt(watch.contract.params.maxFee) + this.dustAmount;
+                return renewable ? watch.script : own;
+            }
+        } catch (e) {
+            console.warn("Unable to inspect Executor renewal watches", e);
+        }
+        return own;
     }
 
     /**
@@ -6906,6 +6950,8 @@ export class Wallet
             serverUnrollScript: CSVMultisigTapscript.Type;
             changeAssets?: Asset[];
             recordSentHistory?: boolean;
+            /** Where the change went; `offchainTapscript` when absent. */
+            change?: ChangeDestination;
         },
         onReserved?: () => void,
         picked = false,
@@ -6936,6 +6982,7 @@ export class Wallet
                 persist.serverPubKey,
                 persist.changeAssets,
                 persist.recordSentHistory ?? true,
+                persist.change,
             );
 
             return arkTxid;
@@ -7220,8 +7267,10 @@ export class Wallet
         changeAssets?: Asset[],
         // False for self-transfer migrations: a `TxSent` row would show a phantom outflow.
         recordSentHistory: boolean = true,
+        change?: ChangeDestination,
     ): Promise<void> {
         const primaryAddress = offchainTapscript.address(this.network.hrp, serverPubKey).encode();
+        const changeTapscript = change?.tapscript ?? offchainTapscript;
 
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
@@ -7286,10 +7335,10 @@ export class Wallet
                     txid: arkTxid,
                     vout: changeVout,
                     createdAt: new Date(createdAt),
-                    forfeitTapLeafScript: offchainTapscript.forfeit(),
-                    proofTapLeafScript: offchainTapscript.forfeit(),
+                    forfeitTapLeafScript: changeTapscript.forfeit(),
+                    proofTapLeafScript: changeTapscript.forfeit(),
                     isUnrolled: false,
-                    tapTree: offchainTapscript.encode(),
+                    tapTree: changeTapscript.encode(),
                     value: Number(changeAmount),
                     ...changeFacts,
                     spentBy: "",
@@ -7297,7 +7346,7 @@ export class Wallet
                         confirmed: false,
                     },
                     assets: changeAssets,
-                    script: hex.encode(offchainTapscript.pkScript),
+                    script: hex.encode(changeTapscript.pkScript),
                 };
             }
 
@@ -7333,11 +7382,11 @@ export class Wallet
                 );
             }
 
-            // Change is always primary-script by construction.
+            // Change goes to the primary script, or to the renewal contract its inputs sat at.
             if (changeVtxo) {
                 await saveVtxosForContract(
                     this.walletRepository,
-                    { script: changeVtxo.script!, address: primaryAddress },
+                    { script: changeVtxo.script!, address: change?.address ?? primaryAddress },
                     [changeVtxo],
                 );
             }

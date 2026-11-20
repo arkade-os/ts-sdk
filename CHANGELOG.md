@@ -175,10 +175,12 @@ style and have not been backfilled.
   `renewalWindow` before expiry, and always for a recoverable, subdust or
   `maxFee + dust`-or-less coin, which the Executor cannot renew. `renewVtxos()`
   skips the delegated coins too, including a manual call; `settle()` still moves
-  them when the user asks. Until the wallet's receive address becomes its
-  renewal contract, coins received at `getAddress()`, a send's change and the
-  fallback renewals are not covered: they land at the wallet's own address,
-  which the wallet renews itself.
+  them when the user asks. A send's change returns to the live renewal contract
+  of its first delegated input, unless it is `maxFee + dust` or less, so it
+  stays covered. Until the wallet's receive address becomes its renewal
+  contract, coins received at `getAddress()` and the fallback renewals are not
+  covered: they land at the wallet's own address, which the wallet renews
+  itself.
 
 - **Deposits waiting for the Executor are the wallet's boarding coins.** A
   deposit at a delegated boarding address shows in `getBoardingUtxos`,
