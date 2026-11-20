@@ -346,6 +346,17 @@ describe("ExecutorManagerImpl.register", () => {
         expect(contractManager.updateContract).not.toHaveBeenCalled();
     });
 
+    it("accepts an address the service returns in upper case", async () => {
+        // bech32 is case-insensitive: the same address in the other of its two valid cases
+        const address = vectors.boarding.address;
+        await expect(
+            new ExecutorManagerImpl(
+                makeProvider({ inputs: [{ ...boardingInput, address: address.toUpperCase() }] }),
+                wallet,
+            ).registerBoarding(params, trusted),
+        ).resolves.toMatchObject({ address });
+    });
+
     it("refuses a delegation without exactly one onchain input, persisting nothing", async () => {
         for (const inputs of [
             [boardingInput, { ...boardingInput, name: "other" }],
@@ -642,6 +653,17 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         await expect(
             new ExecutorManagerImpl(
                 makeProvider({ inputs: [{ ...renewalInput, address }] }),
+                wallet,
+            ).registerRenewal(params, trusted),
+        ).resolves.toMatchObject({ address });
+    });
+
+    it("accepts an address the service returns in upper case", async () => {
+        // bech32 is case-insensitive: the same address in the other of its two valid cases
+        const address = vectors.renewal.address;
+        await expect(
+            new ExecutorManagerImpl(
+                makeProvider({ inputs: [{ ...renewalInput, address: address.toUpperCase() }] }),
                 wallet,
             ).registerRenewal(params, trusted),
         ).resolves.toMatchObject({ address });

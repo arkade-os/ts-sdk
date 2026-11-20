@@ -667,7 +667,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `Executor's ${template} delegation has ${delegation.inputs.length} inputs, expected one ${template === "boarding" ? "onchain" : "offchain"} input`,
             );
         }
-        if (input.address !== watchAddress) {
+        // bech32 is case-insensitive, and the service may answer in upper case
+        if (input.address.toLowerCase() !== watchAddress) {
             throw new Error(
                 `Executor derived a different address: expected ${watchAddress}, got ${input.address}`,
             );
