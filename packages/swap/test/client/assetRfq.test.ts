@@ -27,8 +27,16 @@ import {
     QuoteVerificationFailed,
     UnsupportedRoute,
 } from "../../src/client/errors";
-import { deriveOffer, OFFER_PACKET_TYPE, offerContract } from "../../src/offer";
-import { ASSET_SWAP_V2, ASSET_SWAP_V3, type AssetSwapContractVersion } from "../../src/program";
+import {
+    bindingFromOffer,
+    decodeOffer,
+    deriveOffer,
+    OFFER_PACKET_TYPE,
+    offerContract,
+    recordOfferBinding,
+} from "../../src/offer";
+import { ASSET_SWAP_V2, ASSET_SWAP_V3, ASSET_SWAP_V4 } from "../../src/program";
+import { verifyTaker } from "../../src/client/verify";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
 import { quoteIdOfSwapId, type OfferSwapRecord } from "../../src/client/record";
@@ -37,6 +45,7 @@ import {
     ASSET_SELL_PAIR,
     EMULATOR_PUBKEY_HEX,
     FUNDING_TXID,
+    OPERATOR_PUBKEY,
     SOLVER_DISCOVERY_KEY,
     SOLVER_PUBKEY,
     USD_ASSET_ID,
@@ -141,7 +150,7 @@ describe("quote() on a negotiated asset market", () => {
         expect(quote.give).toEqual({ asset: BTC, amount: 10_000n });
         expect(quote.take).toEqual({ asset: USD, amount: 990n });
         expect(quote.market.backend).toBe("rfq");
-        expect(quote.solver).toBe(hex.encode(SOLVER_PUBKEY));
+        expect(quote.solver).toBe(SOLVER_DISCOVERY_KEY);
         expect(transport.sent).toHaveLength(1);
         expect(transport.closed()).toBe(true);
     });
@@ -160,7 +169,7 @@ describe("quote() on a negotiated asset market", () => {
             // one.
             amount_side: "from",
             amount: "10000",
-            contract_versions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
+            contract_versions: [ASSET_SWAP_V4],
             profile: {
                 maker_pk_script: expect.stringMatching(/^5120[0-9a-f]{64}$/),
                 maker_public_key: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -236,39 +245,27 @@ describe("quote() on a negotiated asset market", () => {
     });
 
     describe("contract version negotiation", () => {
-        const treeOf = (client: Awaited<ReturnType<typeof setup>>["client"], id: string) => {
-            const preparation = client.preparationOf(id);
-            if (!preparation || !("offer" in preparation)) throw new Error("no offer preparation");
-            const { binding, operatorPubkey, swapPkScript } = preparation.offer;
-            const pk = (g: AssetSwapContractVersion) =>
-                hex.encode(offerContract(binding, operatorPubkey, g).pkScript);
-            const script = hex.encode(swapPkScript);
-            if (script === pk("asset-swap-v3")) return "asset-swap-v3";
-            if (script === pk("asset-swap-v2")) return "asset-swap-v2";
-            throw new Error("the offer matches neither tree");
-        };
-
-        it("derives the current tree when the solver echoes asset-swap-v3", async () => {
-            const { client } = await setup();
-            const quote = await client.quote(buy());
-            expect(treeOf(client, quote.id)).toBe("asset-swap-v3");
-        });
-
-        it("derives the previous tree when the solver picks asset-swap-v2", async () => {
-            const { client } = await setup({
-                answer: (payload) =>
-                    arkadeAssetAnswer({ ...payload, contract_versions: [ASSET_SWAP_V2] }, CLOCK),
-            });
-            const quote = await client.quote(buy());
-            expect(treeOf(client, quote.id)).toBe("asset-swap-v2");
-        });
-
-        it("derives the previous tree when the solver names no contract version", async () => {
+        it("refuses a quote that names no contract version, before deriving", async () => {
             const { client } = await setup({
                 answer: ({ contract_versions: _, ...payload }) => arkadeAssetAnswer(payload, CLOCK),
             });
-            const quote = await client.quote(buy());
-            expect(treeOf(client, quote.id)).toBe("asset-swap-v2");
+            vi.mocked(deriveOffer).mockClear();
+            await expect(client.quote(buy())).rejects.toThrow(
+                "solver negotiated no contract version",
+            );
+            expect(deriveOffer).not.toHaveBeenCalled();
+        });
+
+        it.each([ASSET_SWAP_V3, ASSET_SWAP_V2])("refuses a quote echoing %s", async (version) => {
+            const { client } = await setup({
+                answer: (payload) =>
+                    arkadeAssetAnswer({ ...payload, contract_versions: [version] }, CLOCK),
+            });
+            vi.mocked(deriveOffer).mockClear();
+            await expect(client.quote(buy())).rejects.toThrow(
+                `solver chose contract version ${version}, not one of ${ASSET_SWAP_V4}`,
+            );
+            expect(deriveOffer).not.toHaveBeenCalled();
         });
 
         it("refuses a contract version it did not advertise", async () => {
@@ -283,25 +280,8 @@ describe("quote() on a negotiated asset market", () => {
             );
         });
 
-        it("asks a solver that refuses the list once more without it, on the previous tree", async () => {
-            const { client, transport } = await setup({
-                answer: (payload) => {
-                    if ("contract_versions" in payload)
-                        throw new SwapRefusal("unsupported_payload");
-                    return arkadeAssetAnswer(payload, CLOCK);
-                },
-            });
-            const quote = await client.quote(buy());
-            expect(transport.sent).toHaveLength(2);
-            expect(transport.sent[1]).not.toHaveProperty("contract_versions");
-            expect(transport.sent[1]?.rfq_id).not.toBe(transport.sent[0]?.rfq_id);
-            expect(client.preparationOf(quote.id)).toMatchObject({
-                rfqId: transport.sent[1]?.rfq_id,
-            });
-            expect(treeOf(client, quote.id)).toBe("asset-swap-v2");
-        });
-
         it.each([
+            [undefined, "unsupported_payload"],
             ["contract_version_unsupported", "unsupported_payload"],
             [undefined, "no_liquidity"],
         ] as const)("does not retry a refusal with code %s, reason %s", async (code, reason) => {
@@ -554,6 +534,69 @@ describe("quote() verification, one case per check", () => {
     });
 });
 
+describe("a directed quote (asset-swap-v4)", () => {
+    const TAKER_KEY = hex.decode(SOLVER_DISCOVERY_KEY);
+    const directed = (taker: Uint8Array): SolverAnswer => {
+        const base = solverFor(CLOCK);
+        return (payload) =>
+            payload.pair === ASSET_BUY_PAIR || payload.pair === ASSET_SELL_PAIR
+                ? arkadeAssetAnswer(payload, CLOCK, { taker })
+                : base(payload);
+    };
+
+    it("advertises asset-swap-v4 alone", async () => {
+        const { client, transport } = await setup({ answer: directed(TAKER_KEY) });
+        await client.quote(buy());
+        expect(transport.sent[0]?.contract_versions).toEqual([ASSET_SWAP_V4]);
+    });
+
+    it("derives under the key that answered, and records the covenant as a binding", async () => {
+        const wallet = await acceptWallet();
+        const { client, repository } = await setup({ wallet, answer: directed(TAKER_KEY) });
+        const quote = await client.quote(buy());
+        expect(quote.solver).toBe(SOLVER_DISCOVERY_KEY);
+        await client.accept(quote);
+
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.offerHex).toBeUndefined();
+        expect(stored.binding).toMatchObject({
+            version: ASSET_SWAP_V4,
+            taker: SOLVER_DISCOVERY_KEY,
+        });
+        const packet = decodeOffer(wallet.sent[0]?.extensions?.[0]?.payload as Uint8Array);
+        expect(hex.encode(packet.taker ?? new Uint8Array())).toBe(SOLVER_DISCOVERY_KEY);
+        expect(hex.encode(packet.swapPkScript)).toBe(stored.swapPkScript);
+    });
+
+    it("refuses a v4 quote whose solver key is not the responder", async () => {
+        const { client } = await setup({ answer: directed(SOLVER_PUBKEY) });
+        const refused = await client.quote(buy()).catch((error: unknown) => error);
+        expect(refused).toBeInstanceOf(QuoteVerificationFailed);
+        expect(refused).toMatchObject({
+            check: "responder",
+            expected: SOLVER_DISCOVERY_KEY,
+            actual: hex.encode(SOLVER_PUBKEY),
+        });
+    });
+
+    it("compares the keys as bytes, and refuses one that is not a key", () => {
+        expect(
+            verifyTaker({
+                attested: SOLVER_DISCOVERY_KEY,
+                solverPubkey: SOLVER_DISCOVERY_KEY.toUpperCase(),
+            }),
+        ).toEqual(TAKER_KEY);
+        for (const solverPubkey of ["zz", undefined, SOLVER_DISCOVERY_KEY.slice(2)]) {
+            expect(() => verifyTaker({ attested: SOLVER_DISCOVERY_KEY, solverPubkey })).toThrow(
+                QuoteVerificationFailed,
+            );
+        }
+        expect(() => verifyTaker({ solverPubkey: SOLVER_DISCOVERY_KEY })).toThrow(
+            QuoteVerificationFailed,
+        );
+    });
+});
+
 describe("accept() on a negotiated asset market", () => {
     const harness = async (over: Parameters<typeof acceptWallet>[0] = {}) => {
         const wallet = await acceptWallet(over);
@@ -564,6 +607,7 @@ describe("accept() on a negotiated asset market", () => {
     it("registers the covenant, persists, then funds — in that order", async () => {
         const { client, repository, wallet } = await harness();
         const quote = await client.quote(buy());
+        const preparation = client.preparationOf(quote.id);
         expect(wallet.contracts).toHaveLength(0);
 
         const swap = await client.accept(quote);
@@ -573,15 +617,26 @@ describe("accept() on a negotiated asset market", () => {
         expect(stored.family).toBe("offer");
         expect(wallet.contracts[0]?.script).toBe(stored.swapPkScript);
         // The negotiation's own evidence on the record: the key that quoted it.
-        expect(stored.solver).toBe(hex.encode(SOLVER_PUBKEY));
+        expect(stored.solver).toBe(SOLVER_DISCOVERY_KEY);
         expect(swap.fundingTxid).toBe(FUNDING_TXID);
+        const offerHex = preparation && "offer" in preparation ? preparation.offer.offerHex : "";
         expect(wallet.sent).toEqual([
             {
                 address: stored.swapAddress,
                 amount: 10_000,
-                extensions: [{ type: OFFER_PACKET_TYPE, payload: hex.decode(stored.offerHex) }],
+                extensions: [{ type: OFFER_PACKET_TYPE, payload: hex.decode(offerHex) }],
             },
         ]);
+    });
+
+    it("funds a negotiated swap with no packet when asked", async () => {
+        const { client, repository, wallet } = await harness();
+        const quote = await client.quote(buy());
+        await client.accept(quote, { attachOfferPacket: false });
+
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.attachOfferPacket).toBe(false);
+        expect(wallet.sent).toEqual([{ address: stored.swapAddress, amount: 10_000 }]);
     });
 
     it("persists before it funds", async () => {
@@ -596,6 +651,25 @@ describe("accept() on a negotiated asset market", () => {
         expect(stored).toBeDefined();
         expect(stored?.fundingTxid).toBeUndefined();
         expect(wallet.sent).toHaveLength(0);
+    });
+
+    it("resumes a record that carries only its binding with the packet it encodes", async () => {
+        let failing = true;
+        const { client, repository, wallet } = await harness({
+            failSend: () => (failing ? new Error("send exploded") : (undefined as never)),
+        });
+        const quote = await client.quote(buy());
+        await expect(client.accept(quote)).rejects.toThrow(/send exploded/);
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.offerHex).toBeUndefined();
+        failing = false;
+
+        await client.accept(quote);
+
+        const [extension] = wallet.sent[0]?.extensions ?? [];
+        expect(extension?.type).toBe(OFFER_PACKET_TYPE);
+        const sent = bindingFromOffer(decodeOffer(extension!.payload), OPERATOR_PUBKEY);
+        expect(recordOfferBinding(sent)).toEqual(stored.binding);
     });
 
     it("leaves nothing durable when registration fails", async () => {
@@ -721,11 +795,11 @@ describe("accept() on a negotiated asset market", () => {
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         const derived = preparation && "offer" in preparation ? preparation.offer : undefined;
         expect(stored.swapAddress).toBe(derived?.address);
-        expect(stored.offerHex).toBe(derived?.offerHex);
-        // the fixture solver negotiates asset-swap-v3, so accept must keep that tree
+        expect(stored.binding).toEqual(derived && recordOfferBinding(derived.offerBinding));
+        // the fixture solver negotiates asset-swap-v4, so accept must keep that tree
         expect(derived?.swapPkScript).toEqual(
             derived &&
-                offerContract(derived.binding, derived.operatorPubkey, "asset-swap-v3").pkScript,
+                offerContract(derived.binding, derived.operatorPubkey, ASSET_SWAP_V4).pkScript,
         );
         expect(wallet.contracts[0]?.script).toBe(
             hex.encode(derived?.swapPkScript ?? new Uint8Array()),

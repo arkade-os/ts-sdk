@@ -37,7 +37,15 @@ import {
     type IWallet,
     type Recipient,
 } from "@arkade-os/sdk";
-import { createOffer, OFFER_PACKET_TYPE, registerDerivedOffer } from "../offer";
+import {
+    createOffer,
+    encodeOffer,
+    OFFER_PACKET_TYPE,
+    offerFromBinding,
+    recordOfferBinding,
+    registerDerivedOffer,
+    storedOffer,
+} from "../offer";
 import { promoteOfferContract } from "../coverage";
 import { registerLockupContract } from "../lockupContract";
 import { onchainReceiveProfile, onchainSendProfile } from "../rfqCorridors";
@@ -117,6 +125,8 @@ export interface AcceptInput {
     /** Unix seconds. */
     readonly now: number;
     readonly validUntil?: number;
+    /** `false` funds an offer without its packet. Written on the record before any funding. */
+    readonly attachOfferPacket?: boolean;
 }
 
 /**
@@ -405,12 +415,16 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
     const funds = fundsFromWallet(quote.route);
     if (funds) await assertFundable(wallet, quote);
 
-    const record =
+    const built =
         preparation.backend === "feed"
             ? await registeredOfferRecord(input, preparation)
             : preparation.route === "arkade->arkade"
               ? await registeredAssetRecord(input, preparation)
               : await registeredCorridorRecord(input, preparation);
+    const record: SwapRecord =
+        built.family === "offer" && input.attachOfferPacket === false
+            ? { ...built, attachOfferPacket: false }
+            : built;
 
     // Throwing, deliberately: nothing past this line may happen unless the record is durable.
     await repository.saveSwapRecord(record);
@@ -507,7 +521,11 @@ const registeredAssetRecord = async (
             : { assetPayment: recordAssetPayment(preparation.assetPayment) }),
         family: "offer",
         status: "pending",
-        offerHex: preparation.offer.offerHex,
+        // a directed covenant is kept as its binding alone, which an older reader drops whole
+        // rather than half-reads
+        ...(preparation.offer.offerBinding.taker === undefined
+            ? { offerHex: preparation.offer.offerHex }
+            : { binding: recordOfferBinding(preparation.offer.offerBinding) }),
         swapAddress: preparation.offer.address,
         swapPkScript: hex.encode(preparation.offer.swapPkScript),
         ...(preparation.carrierSats === undefined
@@ -649,7 +667,9 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
                           { assetId: toDiscoveryLeg(record.route.give.asset).assetId, amount },
                       ],
                   }),
-            extensions: [offerExtensionOf(record)],
+            ...(record.attachOfferPacket === false
+                ? {}
+                : { extensions: [offerExtensionOf(record)] }),
         });
     }
     if (record.kind === "lightning_receive" || record.kind === "onchain_receive") {
@@ -664,13 +684,19 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
 };
 
 /**
- * The offer packet, rebuilt from the record's own TLV, so a resumed funding attaches exactly
- * what the *stored* covenant commits to.
+ * The offer packet, rebuilt from the record's own TLV, or encoded from its binding when it keeps
+ * none, so a resumed funding attaches exactly what the *stored* covenant commits to.
  */
-const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uint8Array } => ({
-    type: OFFER_PACKET_TYPE,
-    payload: hex.decode(record.offerHex),
-});
+const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uint8Array } => {
+    const stored = storedOffer(record);
+    return {
+        type: OFFER_PACKET_TYPE,
+        payload:
+            record.offerHex !== undefined
+                ? hex.decode(record.offerHex)
+                : encodeOffer("version" in stored ? offerFromBinding(stored) : stored),
+    };
+};
 
 /**
  * The deposit a crashed accept may already have made (sent, then died before stamping the txid);

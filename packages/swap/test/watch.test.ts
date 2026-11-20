@@ -2,7 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, ArkAddress, Transaction } from "@arkade-os/sdk";
-import { encodeOffer, offerContract, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
+import {
+    bindingFromOffer,
+    encodeOffer,
+    offerContract,
+    OFFER_CONTRACT_KIND,
+    recordOfferBinding,
+    type Offer,
+} from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 import { retireSettledOfferContracts } from "../src/coverage";
@@ -150,6 +157,30 @@ describe("watchOfferSwaps", () => {
             { status: "fulfilled", spentTxid: fill.txid, completedAt: 1_700_000_100_000 },
         ]);
         expect(updates).toMatchObject([{ status: "fulfilled" }]);
+    });
+
+    it("classifies a directed swap that carries only its binding", async () => {
+        const { swapPkScript: _, ...terms } = makeOffer();
+        const taker = key("77");
+        const directed: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const fill = spendPsbt(directed, "fulfill");
+        const repository = new InMemoryAssetSwapRepository();
+        const binding = recordOfferBinding(bindingFromOffer(directed, OPERATOR_KEY));
+        await addAssetSwap(repository, swapFor(directed, { offerHex: undefined, binding }));
+
+        const { wallet, emit } = makeWallet(async () => ({ txs: [fill.psbt] }));
+        const watcher = await watchOfferSwaps({ wallet, repository });
+        emit(spentEvent(directed, fill.txid));
+        await watcher.idle();
+        watcher.stop();
+
+        expect(await getAssetSwaps(repository)).toMatchObject([
+            { status: "fulfilled", spentTxid: fill.txid },
+        ]);
     });
 
     it("marks a cancel made elsewhere as cancelled, by its leaf", async () => {

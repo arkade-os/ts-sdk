@@ -10,6 +10,7 @@ import { assetPaymentOf, type RecordedAssetPayment, type AssetPaymentTerms } fro
  * **No `bigint` anywhere, at any depth**: SQLite and Realm `JSON.stringify` the record whole
  * (`test/client/record.types.ts` proves it structurally).
  */
+import type { RecordedOfferBinding } from "../offer";
 import type { AssetSwapStatus } from "../store";
 import type { RfqSwapState } from "../rfqSwapState";
 import type { PersistableRfqSwap } from "../rfqRecord";
@@ -137,19 +138,23 @@ export interface SwapRecordCommon {
     readonly updatedAt: number;
 }
 
-/** `arkade <-> arkade`: the offer covenant. `offerHex` is the whole covenant, so no tree params. */
+/** `arkade <-> arkade`: the offer covenant, whole in `binding` or `offerHex`, so no tree params. */
 export interface OfferSwapRecord extends SwapRecordCommon {
     readonly family: "offer";
     /** v1's raw status vocabulary, read verbatim by the drive's `RawState`. */
     readonly status: AssetSwapStatus;
-    /** The TLV offer, hex. The only input `cancelOffer` needs. */
-    readonly offerHex: string;
+    /** The TLV offer, hex: what rebuilds the covenant when there is no `binding`. */
+    readonly offerHex?: string;
+    /** The covenant, structured. A directed swap carries this and no `offerHex`. */
+    readonly binding?: RecordedOfferBinding;
     readonly swapAddress: string;
     /** The covenant's scriptPubKey, hex — the indexer's monitoring key and the reconcile's match key. */
     readonly swapPkScript: string;
     /** Sats riding an asset deposit, decimal: the solver's published carrier, which the fill is
      * priced against. Absent for a BTC deposit and for feed-priced swaps (the SDK default). */
     readonly carrierSats?: string;
+    /** `false`: the funding carries no offer packet. Absent attaches it. */
+    readonly attachOfferPacket?: false;
     readonly spentTxid?: string;
     readonly completedAt?: number;
 }

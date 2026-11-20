@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import {
     fateMoved,
+    offerFactsOf,
     restoredCorridorRecord,
     restoredOfferRecord,
     rfqRecordOf,
@@ -22,8 +23,16 @@ import {
 } from "../../src/client/driveRecords";
 import type { RfqSwapRecord } from "../../src/rfqRecord";
 import type { CorridorSwapRecord, OfferSwapRecord } from "../../src/client/record";
+import { bindingFromOffer, recordOfferBinding } from "../../src/offer";
 import type { AssetSwap } from "../../src/store";
-import { OFFER_SCRIPT, PREIMAGE, corridorRecord, offerRecord } from "./driveFixtures";
+import {
+    OFFER,
+    OFFER_SCRIPT,
+    OPERATOR,
+    PREIMAGE,
+    corridorRecord,
+    offerRecord,
+} from "./driveFixtures";
 
 /** What the solver revealed in the witness that claimed the send lockup. */
 const RECEIPT = hex.encode(PREIMAGE);
@@ -127,6 +136,16 @@ describe("a record rebuilt from the chain", () => {
         status: "pending",
         createdAt: 1_700_000_000_000,
         ...over,
+    });
+
+    it("carries a binding through both projections, and no TLV it never had", () => {
+        const binding = recordOfferBinding(bindingFromOffer(OFFER, OPERATOR));
+        const rebuilt = restoredOfferRecord(found({ offerHex: undefined, binding }), "regtest", 0);
+        expect(rebuilt.binding).toEqual(binding);
+        expect("offerHex" in rebuilt).toBe(false);
+        const facts = offerFactsOf(offerRecord({ offerHex: undefined, binding }));
+        expect(facts.binding).toEqual(binding);
+        expect("offerHex" in facts).toBe(false);
     });
 
     it("keys on the funding txid and spells both legs as arkade ids", () => {

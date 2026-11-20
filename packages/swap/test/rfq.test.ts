@@ -41,8 +41,10 @@ import { CHF_ID, USD_ID } from "./fixtures";
 import {
     ASSET_SWAP_CONTRACTS,
     ASSET_SWAP_CONTRACT_VERSIONS,
+    ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_V2,
     ASSET_SWAP_V3,
+    ASSET_SWAP_V4,
     assetSwapContractVersion,
 } from "../src/program";
 import { asset } from "@arkade-os/sdk";
@@ -555,10 +557,14 @@ describe("requests", () => {
         );
     });
 
-    it("advertises exactly the contract versions it can derive", () => {
-        expect([...ASSET_SWAP_CONTRACT_VERSIONS].sort()).toEqual(
+    it("derives exactly the registered contract versions, and advertises a subset", () => {
+        expect([...ASSET_SWAP_DERIVABLE_VERSIONS].sort()).toEqual(
             Object.keys(ASSET_SWAP_CONTRACTS).sort(),
         );
+        for (const version of ASSET_SWAP_CONTRACT_VERSIONS) {
+            expect(ASSET_SWAP_DERIVABLE_VERSIONS).toContain(version);
+        }
+        expect(assetSwapContractVersion(ASSET_SWAP_V4)).toBe(ASSET_SWAP_V4);
     });
 
     it("mirrors the wire's pair-length cap for asset-to-asset", () => {

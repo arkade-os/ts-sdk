@@ -12,8 +12,10 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 import {
+    bindingFromOffer,
     encodeOffer,
     offerContract,
+    recordOfferBinding,
     restoreOfferCoverage,
     OFFER_CONTRACT_KIND,
     OFFER_CONTRACT_LABEL,
@@ -157,6 +159,22 @@ describe("restoreOfferCoverage", () => {
         expect(row.script).toBe(record.swapPkScript);
         expect(row.label).toBe(OFFER_CONTRACT_LABEL);
         expect(row.metadata).toEqual({ genericallySpendable: false, kind: OFFER_CONTRACT_KIND });
+    });
+
+    it("registers a directed covenant from the record's binding alone", async () => {
+        const { swapPkScript: _, ...terms } = makeOffer();
+        const taker = EMULATOR_KEY;
+        const directed: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, SERVER_KEY).pkScript,
+        };
+        const binding = recordOfferBinding(bindingFromOffer(directed, SERVER_KEY));
+        const record = restored(directed, { offerHex: undefined, binding });
+
+        await restoreOfferCoverage(wallet, [record]);
+
+        expect(state.created.map((row) => row.script)).toEqual([record.swapPkScript]);
     });
 
     it("puts the restored script back in the watched set", async () => {
