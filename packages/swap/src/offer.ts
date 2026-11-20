@@ -4,8 +4,8 @@
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
  * README's Roles section). `fulfill` pays the receiver at least the wanted amount and never
- * inspects the deposit: at output 0 on `asset-swap-v2`, and on the directed `asset-swap-v4` at the
- * output with the spending input's index. `program.ts` loads both.
+ * inspects the deposit: at output 0 on `asset-swap-v2`, and on `asset-swap-directed` at the output
+ * with the spending input's index. `program.ts` loads both.
  */
 import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
@@ -31,7 +31,7 @@ import {
 import {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_CONTRACTS,
-    ASSET_SWAP_V4,
+    ASSET_SWAP_DIRECTED,
     type AssetSwapContractVersion,
     assetSwapContractVersion,
     swapPrograms,
@@ -85,7 +85,7 @@ export interface Offer {
      * taproot tree, so it changes `swapPkScript` — see {@link offerVtxoScript}. */
     exitDelay?: RelativeTimelock;
     /** The solver key `fulfill` requires, x-only. Present on directed versions only, and its
-     * presence is what selects the `asset-swap-v4` tree. */
+     * presence is what selects the `asset-swap-directed` tree. */
     taker?: Uint8Array;
 }
 
@@ -132,7 +132,7 @@ export function withExitClosure(
 /** Exported for the asset-id vector tests (the args are the only place both asset-id forms are
  * visible). Deliberately absent from the package index -- not public API.
  * A carried `swapPkScript` selects the version that compiles to it; without one,
- * `contractVersion` picks, defaulting to `asset-swap-v4` for an offer with a `taker` and to
+ * `contractVersion` picks, defaulting to `asset-swap-directed` for an offer with a `taker` and to
  * {@link ASSET_SWAP_BASELINE} otherwise.
  */
 export function swapProgramBinding(
@@ -145,16 +145,16 @@ export function swapProgramBinding(
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
-    // A taker selects the directed tree: v4 is never tried without one, nor anything else with one.
+    // A taker selects the directed tree: it is never tried without one, nor anything else with one.
     const directed = offer.taker !== undefined;
-    const version = contractVersion ?? (directed ? ASSET_SWAP_V4 : ASSET_SWAP_BASELINE);
+    const version = contractVersion ?? (directed ? ASSET_SWAP_DIRECTED : ASSET_SWAP_BASELINE);
     const expected = offer.swapPkScript;
     if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, version);
-    const candidate = directed ? ASSET_SWAP_V4 : ASSET_SWAP_BASELINE;
+    const candidate = directed ? ASSET_SWAP_DIRECTED : ASSET_SWAP_BASELINE;
     const binding = bindSwapProgram(offer, operatorPubkey, candidate);
     if (pkOf(binding) === hex.encode(expected)) return binding;
     // No match (usually a rotated operator key): callers throw with that diagnosis.
-    return bindSwapProgram(offer, operatorPubkey, directed ? ASSET_SWAP_V4 : version);
+    return bindSwapProgram(offer, operatorPubkey, directed ? ASSET_SWAP_DIRECTED : version);
 }
 
 function bindSwapProgram(
@@ -237,7 +237,7 @@ export interface OfferBinding {
     readonly emulatorPublicKey: Uint8Array;
     /** Omitted removes the exit leaf, which changes the address. */
     readonly exitDelay?: RelativeTimelock;
-    /** The solver key `fulfill` requires; `asset-swap-v4` only. */
+    /** The solver key `fulfill` requires; `asset-swap-directed` only. */
     readonly taker?: Uint8Array;
 }
 
@@ -830,7 +830,7 @@ export interface OfferParams {
      * rotation between the two reads derive a covenant the solver never quoted.
      */
     maker?: { pkScript: Uint8Array; publicKey: Uint8Array };
-    /** Defaults to {@link ASSET_SWAP_BASELINE}, or to `asset-swap-v4` with a `taker`. */
+    /** Defaults to {@link ASSET_SWAP_BASELINE}, or to `asset-swap-directed` with a `taker`. */
     contractVersion?: AssetSwapContractVersion;
     /** The quoting solver's x-only key, for a directed offer. */
     taker?: Uint8Array;

@@ -1,6 +1,6 @@
 /**
- * The directed asset swap (`asset-swap-v4`, R1–R7) against a real arkd and emulator. The client is
- * `SwapClient` opted in to v4 by policy; the solver quotes over a stub transport, derives the
+ * The directed asset swap (`asset-swap-directed`, R1–R7) against a real arkd and emulator. The
+ * client is `SwapClient`; the solver quotes over a stub transport, derives the
  * covenant from its own operator read and identity, and fills with `fillOffer`. The `rfq` prefix
  * routes the file to the seconds-typed swap-rfq stack, which runs the emulator.
  */
@@ -44,7 +44,7 @@ import {
     type OfferBinding,
 } from "../../src/offer";
 import { buildOfferFillPlan } from "../../src/offerFillPlan";
-import { ASSET_SWAP_V4 } from "../../src/program";
+import { ASSET_SWAP_DIRECTED } from "../../src/program";
 import { collectSwapRecords } from "../../src/repository";
 import { spendTxidsOf } from "../../src/restore";
 import type { AttestingRfqTransport } from "../../src/client/transport";
@@ -347,8 +347,10 @@ function solverTransport(): AttestingRfqTransport {
     return {
         attestedResponder: takerHex,
         async requestQuote(payload) {
-            if (!(payload.contract_versions as string[] | undefined)?.includes(ASSET_SWAP_V4)) {
-                throw new Error("the client did not offer asset-swap-v4");
+            if (
+                !(payload.contract_versions as string[] | undefined)?.includes(ASSET_SWAP_DIRECTED)
+            ) {
+                throw new Error("the client did not offer asset-swap-directed");
             }
             const profile = payload.profile as Record<string, string>;
             const buying = (payload.pair as string).startsWith("arkade:BTC->");
@@ -362,7 +364,7 @@ function solverTransport(): AttestingRfqTransport {
             });
             const id = asset.AssetId.fromString(assetId);
             const binding: OfferBinding = {
-                version: ASSET_SWAP_V4,
+                version: ASSET_SWAP_DIRECTED,
                 receiverPkScript: hex.decode(profile.maker_pk_script),
                 amount: receive.atomic,
                 ...(buying ? { wantAsset: id } : { offerAsset: id }),
@@ -384,7 +386,7 @@ function solverTransport(): AttestingRfqTransport {
                 solver_pubkey: takerHex,
                 // past the drive's directed auto-cancel for as long as any step needs the deposit
                 valid_until: Math.floor(Date.now() / 1000) + 3_600,
-                contract_version: ASSET_SWAP_V4,
+                contract_version: ASSET_SWAP_DIRECTED,
                 profile: {
                     offer_address: script.address(terms.hrp, terms.serverPublicKey).encode(),
                     offer_pk_script: hex.encode(script.pkScript),

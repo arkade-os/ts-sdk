@@ -38,7 +38,7 @@ import {
     ASSET_SWAP_CONTRACT_VERSIONS,
     ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_V2,
-    ASSET_SWAP_V4,
+    ASSET_SWAP_DIRECTED,
 } from "../src/program";
 
 const operatorPubkey = hex.decode(
@@ -60,12 +60,12 @@ type Terms = Omit<Offer, "swapPkScript"> & { exitDelay: RelativeTimelock };
 
 const directions: [string, Terms, string][] = [
     [
-        "asset-swap-v4",
+        "asset-swap-directed",
         { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys, exitDelay: EXIT },
         "512005f7c7cf1dd75781e8a55db2c683f90d8da874bdf6136dc7e46b236977888443",
     ],
     [
-        "sats-swap-v4",
+        "sats-swap-directed",
         { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys, exitDelay: EXIT },
         "5120b7387dd1c058fef6f8cc8bece1444f60a3ce5cbb8e8cf6faa20517ad1a435a0c",
     ],
@@ -74,7 +74,7 @@ const directions: [string, Terms, string][] = [
 const artifact = (name: string) =>
     JSON.parse(readFileSync(new URL(`../src/contracts/${name}.json`, import.meta.url), "utf8"));
 
-/** The construction proven on regtest: the artifact's constructor args by hand, on the v4 artifact. */
+/** The construction proven on regtest: the artifact's constructor args, written out by hand. */
 const handBuilt = (name: string, terms: Terms, taker: Uint8Array) => {
     const program = withExitClosure(arkade.programFromArtifact(artifact(name)), terms.exitDelay);
     const id = terms.wantAsset;
@@ -98,7 +98,7 @@ const handBuilt = (name: string, terms: Terms, taker: Uint8Array) => {
 };
 
 const registered = (terms: Terms, taker: Uint8Array | undefined) => {
-    const { programs, args } = ASSET_SWAP_CONTRACTS[ASSET_SWAP_V4];
+    const { programs, args } = ASSET_SWAP_CONTRACTS[ASSET_SWAP_DIRECTED];
     const id = terms.wantAsset;
     return new arkade.ArkadeProgramScript(
         withExitClosure(id ? programs.wantAsset : programs.wantBtc, terms.exitDelay),
@@ -119,7 +119,7 @@ const registered = (terms: Terms, taker: Uint8Array | undefined) => {
     );
 };
 
-describe("the directed contracts (asset-swap-v4)", () => {
+describe("the directed contracts (asset-swap-directed)", () => {
     it.each(directions)("pins %s to the construction regtest proved", (name, terms, golden) => {
         const proved = hex.encode(handBuilt(name, terms, TAKER).pkScript);
         expect(hex.encode(registered(terms, TAKER).pkScript)).toBe(proved);
@@ -162,9 +162,9 @@ describe("the directed contracts (asset-swap-v4)", () => {
         );
     });
 
-    it("refuses v4 without a taker, and v2 with one", () => {
+    it("refuses the directed tree without a taker, and v2 with one", () => {
         const [, terms] = directions[0];
-        expect(() => registered(terms, undefined)).toThrow(/asset-swap-v4 needs a taker/);
+        expect(() => registered(terms, undefined)).toThrow(/asset-swap-directed needs a taker/);
         const inputs = {
             receiver: terms.makerPkScript.subarray(2),
             amount: terms.wantAmount,
@@ -175,9 +175,9 @@ describe("the directed contracts (asset-swap-v4)", () => {
         expect(() => ASSET_SWAP_CONTRACTS[ASSET_SWAP_V2].args(inputs)).toThrow(/binds no taker/);
     });
 
-    it("advertises v4 alone, and derives v4 and v2", () => {
-        expect(ASSET_SWAP_DERIVABLE_VERSIONS).toEqual([ASSET_SWAP_V4, ASSET_SWAP_V2]);
-        expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([ASSET_SWAP_V4]);
+    it("advertises the directed covenant alone, and derives it and v2", () => {
+        expect(ASSET_SWAP_DERIVABLE_VERSIONS).toEqual([ASSET_SWAP_DIRECTED, ASSET_SWAP_V2]);
+        expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([ASSET_SWAP_DIRECTED]);
     });
 });
 
@@ -222,7 +222,7 @@ describe("the taker record (0x04)", () => {
         expect(() => decodeOffer(payload(taker))).toThrow("missing/invalid taker");
     });
 
-    it("throws on a tag outside its table, as a pre-v4 decoder does on 0x04", () => {
+    it("throws on a tag outside its table, as a decoder from before the taker does on 0x04", () => {
         const unknown = Uint8Array.from([...payload(TAKER), ...rec(0x06, new Uint8Array(1))]);
         expect(() => decodeOffer(unknown)).toThrow("unknown TLV type: 0x6");
     });
@@ -231,27 +231,33 @@ describe("the taker record (0x04)", () => {
 describe("which tree an offer compiles", () => {
     const [, terms] = directions[0];
     const v2Script = offerContract(terms, operatorPubkey).pkScript;
-    const v4Script = offerContract({ ...terms, taker: TAKER }, operatorPubkey).pkScript;
+    const directedScript = offerContract({ ...terms, taker: TAKER }, operatorPubkey).pkScript;
     const versionOf = (offer: Parameters<typeof swapProgramBinding>[0]) =>
         swapProgramBinding(offer, operatorPubkey).version;
 
-    it("never compiles v4 without a taker", () => {
+    it("never compiles the directed tree without a taker", () => {
         expect(versionOf(terms)).toBe(ASSET_SWAP_V2);
-        expect(versionOf({ ...terms, swapPkScript: v4Script })).toBe(ASSET_SWAP_V2);
+        expect(versionOf({ ...terms, swapPkScript: directedScript })).toBe(ASSET_SWAP_V2);
     });
 
     it("never compiles v2 with a taker", () => {
-        expect(versionOf({ ...terms, taker: TAKER })).toBe(ASSET_SWAP_V4);
-        expect(versionOf({ ...terms, taker: TAKER, swapPkScript: v4Script })).toBe(ASSET_SWAP_V4);
-        expect(versionOf({ ...terms, taker: TAKER, swapPkScript: v2Script })).toBe(ASSET_SWAP_V4);
+        expect(versionOf({ ...terms, taker: TAKER })).toBe(ASSET_SWAP_DIRECTED);
+        expect(versionOf({ ...terms, taker: TAKER, swapPkScript: directedScript })).toBe(
+            ASSET_SWAP_DIRECTED,
+        );
+        expect(versionOf({ ...terms, taker: TAKER, swapPkScript: v2Script })).toBe(
+            ASSET_SWAP_DIRECTED,
+        );
     });
 
-    it("refuses a taker on an explicit v2, and v4 without one", () => {
+    it("refuses a taker on an explicit v2, and the directed tree without one", () => {
         const directed = { ...terms, taker: TAKER };
         expect(() => offerContract(directed, operatorPubkey, ASSET_SWAP_V2)).toThrow(
             /binds no taker/,
         );
-        expect(() => offerContract(terms, operatorPubkey, ASSET_SWAP_V4)).toThrow(/needs a taker/);
+        expect(() => offerContract(terms, operatorPubkey, ASSET_SWAP_DIRECTED)).toThrow(
+            /needs a taker/,
+        );
     });
 });
 
@@ -286,10 +292,10 @@ describe("the offer binding", () => {
         );
     });
 
-    it.each(directions)("binds a directed %s offer at v4 with its taker", (_, terms, golden) => {
+    it.each(directions)("binds a directed %s offer with its taker", (_, terms, golden) => {
         const offer: Offer = { ...terms, taker: TAKER, swapPkScript: hex.decode(golden) };
         const binding = bindingFromOffer(offer, operatorPubkey);
-        expect(binding.version).toBe(ASSET_SWAP_V4);
+        expect(binding.version).toBe(ASSET_SWAP_DIRECTED);
         expect(hex.encode(binding.taker ?? new Uint8Array())).toBe(hex.encode(TAKER));
         expect(pkScriptOf(binding)).toBe(golden);
         expect(decodeOffer(encodeOffer(offerFromBinding(binding)))).toEqual(offer);
@@ -344,7 +350,7 @@ describe("deriveOffer with a taker", () => {
             taker: TAKER,
         });
         expect(hex.encode(derived.swapPkScript)).toBe(golden);
-        expect(derived.offerBinding.version).toBe(ASSET_SWAP_V4);
+        expect(derived.offerBinding.version).toBe(ASSET_SWAP_DIRECTED);
         expect(derived.offerBinding).toEqual(
             bindingFromOffer(decodeOffer(hex.decode(derived.offerHex)), operatorPubkey),
         );

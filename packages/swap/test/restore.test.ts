@@ -12,7 +12,7 @@ import {
     recordOfferBinding,
     type OfferBinding,
 } from "../src/offer";
-import { ASSET_SWAP_V4 } from "../src/program";
+import { ASSET_SWAP_DIRECTED } from "../src/program";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -861,7 +861,7 @@ describe("restoreAssetSwaps — recovery sources", () => {
         const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
         const takerless: OfferBinding = {
             ...bindingFromOffer(offer, OPERATOR_KEY),
-            version: ASSET_SWAP_V4,
+            version: ASSET_SWAP_DIRECTED,
         };
 
         const { restored } = await restoreWith(indexer, funding.txid, [

@@ -77,7 +77,7 @@ import {
 } from "./program";
 import {
     ASSET_SWAP_BASELINE,
-    ASSET_SWAP_V4,
+    ASSET_SWAP_DIRECTED,
     RFQ_CONTRACT_VERSION_KEY,
     RFQ_CONTRACT_VERSION_UNSUPPORTED,
     RFQ_CONTRACT_VERSIONS_KEY,
@@ -1537,7 +1537,7 @@ export async function requestArkadeSwap(
     }
     // Imported here: client/verify.ts imports this module, and a static cycle breaks the CJS build.
     const taker =
-        contractVersion === ASSET_SWAP_V4
+        contractVersion === ASSET_SWAP_DIRECTED
             ? (await import("./client/verify")).verifyTaker({
                   attested: transport.attestedResponder,
                   solverPubkey: quote.solver_pubkey,

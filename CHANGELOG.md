@@ -22,30 +22,43 @@ style and have not been backfilled.
   binding). A stored v3 record still lists, and its cancel fails as
   `OfferCovenantMismatchError` before anything is broadcast. `ASSET_SWAP_V3` is
   no longer exported, `ASSET_SWAP_DERIVABLE_VERSIONS` is
-  `[asset-swap-v4, asset-swap-v2]`, and `contracts/asset-swap.ark`,
+  `[asset-swap-directed, asset-swap-v2]`, and `contracts/asset-swap.ark`,
   `contracts/sats-swap.ark` and their artifacts are deleted. The deprecated
   `swapPrograms` export of `@arkade-os/swap/protocol` holds the `asset-swap-v2`
   programs again, as it did before 0.1.8; code that compiled it with v3's
   constructor args now throws (`makerWP` is not bound) rather than deriving
   another address. v3's input-paired `fulfill`, paying `receiver` on the output
-  at the spending input's index, survives in the directed `asset-swap-v4`. A
-  newly derived offer stays on `asset-swap-v2`, an offer that carries a
-  `swapPkScript` compiles the tree its taker selects, and v0 offer rows migrate
-  onto `asset-swap-v2`.
+  at the spending input's index, survives in the directed covenant,
+  `asset-swap-directed`. A newly derived offer stays on `asset-swap-v2`, an
+  offer that carries a `swapPkScript` compiles the tree its taker selects, and
+  v0 offer rows migrate onto `asset-swap-v2`.
 
-- **`@arkade-os/swap`: asset RFQ negotiates only `asset-swap-v4`.**
-  `ASSET_SWAP_CONTRACT_VERSIONS`, what every asset RFQ advertises, is now
-  `[asset-swap-v4]`, and `SwapPolicy.assetSwapContractVersions` is removed.
-  Before, an asset RFQ advertised `asset-swap-v3` then `asset-swap-v2` and fell
-  back to the v2 baseline. Now a solver that does not negotiate v4 is refused
-  before anything is derived or funded: a quote echoing v3 or v2, or naming no
-  `contract_version`, fails, and a bare `unsupported_payload` refusal is no
-  longer retried without the list. The deprecated `requestArkadeSwap` also
-  advertises v4 alone and loses `contractVersions`. It binds the transport's
-  attested responder as the taker, and refuses a transport that attests nobody
-  as the `responder` check (`QuoteVerificationFailed`) before it creates the
-  offer. It now takes an `AttestingRfqTransport` (exported, with `attesting()`,
-  from `@arkade-os/swap/advanced`); a plain `RfqTransport` still type-checks but
+- **`@arkade-os/swap`: the directed covenant is renamed `asset-swap-directed`.**
+  0.1.10 shipped it as `asset-swap-v4`. Its contract version id is now
+  `asset-swap-directed`, `ASSET_SWAP_V4` is now `ASSET_SWAP_DIRECTED`, and
+  `contracts/asset-swap-v4` and `contracts/sats-swap-v4` (`.ark` and `.json`)
+  are now `asset-swap-directed` and `sats-swap-directed`. The id is a wire
+  value, so a 0.1.10 client negotiating `asset-swap-v4` and a solver on
+  `asset-swap-directed` refuse each other, and a binding a 0.1.10 client
+  recorded under `asset-swap-v4` reads as an unknown contract version. Deposit
+  addresses are unchanged: only names move, and the covenant compiles byte for
+  byte as it did in 0.1.10.
+
+- **`@arkade-os/swap`: asset RFQ negotiates only the directed covenant,
+  `asset-swap-directed`.** `ASSET_SWAP_CONTRACT_VERSIONS`, what every asset RFQ
+  advertises, is now `[asset-swap-directed]`, and
+  `SwapPolicy.assetSwapContractVersions` is removed. Before, an asset RFQ
+  advertised `asset-swap-v3` then `asset-swap-v2` and fell back to the v2
+  baseline. Now a solver that does not negotiate `asset-swap-directed` is
+  refused before anything is derived or funded: a quote echoing v3 or v2, or
+  naming no `contract_version`, fails, and a bare `unsupported_payload` refusal
+  is no longer retried without the list. The deprecated `requestArkadeSwap`
+  also advertises the directed covenant alone and loses `contractVersions`. It
+  binds the transport's attested responder as the taker, and refuses a
+  transport that attests nobody as the `responder` check
+  (`QuoteVerificationFailed`) before it creates the offer. It now takes an
+  `AttestingRfqTransport` (exported, with `attesting()`, from
+  `@arkade-os/swap/advanced`); a plain `RfqTransport` still type-checks but
   attests nobody, so its quotes are refused. v2 deposits stay readable,
   cancellable and restorable, `ASSET_SWAP_V2` stays exported, and public
   (non-RFQ) offers are unchanged on the v2 baseline.
@@ -147,7 +160,7 @@ style and have not been backfilled.
 ### Features
 
 - **`@arkade-os/swap`: the drive cancels a directed deposit its quote let lapse.**
-  Only the quoting solver can fill an `asset-swap-v4` deposit, and it fills
+  Only the quoting solver can fill an `asset-swap-directed` deposit, and it fills
   nothing past `valid_until`, so once 60 seconds beyond it have passed with the
   deposit unspent, a running drive cancels it through the usual `cancelling` to
   `cancelled` path, retrying on each pass until it lands. A cancel that loses to
@@ -179,12 +192,13 @@ style and have not been backfilled.
   seed-only restore. The choice is written on the record before funding, so a
   resumed funding makes the same one. Unset, the funding is unchanged.
 
-- **`@arkade-os/swap`: asset quotes fund the directed `asset-swap-v4`.** An
-  asset quote advertises v4 alone (see Breaking Changes). The client derives the
-  covenant with the quote's `solver_pubkey` as the taker, after checking that
-  key is the responder the transport attested; a mismatch is refused as the
-  `responder` check, before anything is derived. Accepting a quote records the
-  covenant as its binding, with no `offerHex`.
+- **`@arkade-os/swap`: asset quotes fund the directed covenant,
+  `asset-swap-directed`.** An asset quote advertises it alone (see Breaking
+  Changes). The client derives the covenant with the quote's `solver_pubkey`
+  as the taker, after checking that key is the responder the transport
+  attested; a mismatch is refused as the `responder` check, before anything is
+  derived. Accepting a quote records the covenant as its binding, with no
+  `offerHex`.
 
 - **`@arkade-os/swap`: a swap record can hold its covenant as a binding.** Every
   reader takes either form: the store and the drive list a record with either,
@@ -214,18 +228,21 @@ style and have not been backfilled.
   is the x-only solver key a directed offer binds, emitted after the maker key
   (`0x07`) and before the emulator key (`0x08`); `encodeOffer` and
   `decodeOffer` refuse any other width than 32 bytes. A taker selects the
-  `asset-swap-v4` tree and nothing else: an offer without one never compiles v4,
-  an offer with one never compiles v2, and a funded script neither reproduces
-  still fails with the existing mismatch diagnosis. Decoders from
+  `asset-swap-directed` tree and nothing else: an offer without one never
+  compiles it, an offer with one never compiles v2, and a funded script neither
+  reproduces still fails with the existing mismatch diagnosis. Decoders from
   before this release refuse the record (`unknown TLV type: 0x4`), as the strict
   codec intends, so an older taker reads a directed funding as no swap at all.
 
-- **`@arkade-os/swap`: the directed asset-swap covenant, `asset-swap-v4`.** Its
-  `fulfill` leaf adds the quoting solver's `taker` key to the server and emulator,
-  so only that solver can complete a funded deposit; `cancel` and `exit` need no
-  solver. `ASSET_SWAP_DERIVABLE_VERSIONS` lists every version this build derives
-  (v4, v2); `ASSET_SWAP_CONTRACT_VERSIONS`, what an asset RFQ advertises, is v4
-  alone. v4 refuses to compile without a taker, and v2 refuses one.
+- **`@arkade-os/swap`: the directed asset-swap covenant, `asset-swap-directed`.**
+  Its `fulfill` leaf adds the quoting solver's `taker` key to the server and
+  emulator, so only that solver can complete a funded deposit; `cancel` and
+  `exit` need no solver. `ASSET_SWAP_DIRECTED` names it, and
+  `contracts/asset-swap-directed.ark` and `contracts/sats-swap-directed.ark` hold
+  its source. `ASSET_SWAP_DERIVABLE_VERSIONS` lists every version this build
+  derives (`asset-swap-directed`, `asset-swap-v2`);
+  `ASSET_SWAP_CONTRACT_VERSIONS`, what an asset RFQ advertises, is the directed
+  covenant alone. It refuses to compile without a taker, and v2 refuses one.
 
 - **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
   can import the negotiation field names, refusal code, and asset contract IDs

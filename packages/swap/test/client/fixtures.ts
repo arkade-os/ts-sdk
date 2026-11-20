@@ -29,7 +29,7 @@ import {
     type TransportCard,
 } from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
-import { ASSET_SWAP_V2, ASSET_SWAP_V4 } from "../../src/program";
+import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "../../src/program";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -552,7 +552,7 @@ export const arkadeAssetAnswer = (
         price?: number;
         /** Override the payout, to price the double off its own card. */
         toAmount?: bigint;
-        /** Quotes and derives `asset-swap-v4` under this key; default, the one the transport attests. */
+        /** Quotes and derives `asset-swap-directed` under this key; default, the one the transport attests. */
         taker?: Uint8Array;
     } = {},
 ): RfqQuote => {
@@ -570,10 +570,12 @@ export const arkadeAssetAnswer = (
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
     // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
     const version = (payload.contract_versions as string[] | undefined)?.find(
-        (v) => v === ASSET_SWAP_V4 || v === ASSET_SWAP_V2,
+        (v) => v === ASSET_SWAP_DIRECTED || v === ASSET_SWAP_V2,
     );
     const taker =
-        version === ASSET_SWAP_V4 ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY)) : undefined;
+        version === ASSET_SWAP_DIRECTED
+            ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY))
+            : undefined;
     const script = offerContract(
         {
             // The covenant binds what the fill must DELIVER, so the wanted
@@ -587,7 +589,7 @@ export const arkadeAssetAnswer = (
             ...(taker && { taker }),
         },
         OPERATOR_PUBKEY,
-        version === ASSET_SWAP_V4 ? version : ASSET_SWAP_V2,
+        version === ASSET_SWAP_DIRECTED ? version : ASSET_SWAP_V2,
     );
     return {
         v: 1,

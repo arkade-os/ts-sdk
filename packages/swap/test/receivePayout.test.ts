@@ -4,7 +4,7 @@ import { ArkAddress, asset, type OperatorInfo, type IWallet } from "@arkade-os/s
 import { requestArkadeSwap, type RfqTransport } from "../src/rfq";
 import { acceptWallet, SOLVER_DISCOVERY_KEY } from "./client/fixtures";
 import { decodeOffer, deriveOffer } from "../src/offer";
-import { ASSET_SWAP_V4 } from "../src/program";
+import { ASSET_SWAP_DIRECTED } from "../src/program";
 import type { AttestingRfqTransport } from "../src/client/transport";
 
 const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
@@ -120,7 +120,7 @@ describe("RFQ offer receive payout", () => {
             to_amount: "50000",
             solver_pubkey: SOLVER_DISCOVERY_KEY,
             valid_until: 1_800_000_060,
-            contract_version: ASSET_SWAP_V4,
+            contract_version: ASSET_SWAP_DIRECTED,
             profile: {
                 offer_address: expected.address,
                 offer_pk_script: hex.encode(expected.swapPkScript),

@@ -1,14 +1,15 @@
 # Swap contracts
 
-`asset-swap-v4.ark` and `sats-swap-v4.ark` are the directed asset swaps: only `taker`, the key of
-the solver that quoted the swap, can complete a funded deposit through `fulfill`. Each declares a
-`fulfill` tapscript that replaces the leaf the compiler would otherwise synthesize for `fulfill`.
+`asset-swap-directed.ark` and `sats-swap-directed.ark` are the directed asset swaps: only
+`taker`, the key of the solver that quoted the swap, can complete a funded deposit through
+`fulfill`. Each declares a `fulfill` tapscript that replaces the leaf the compiler would otherwise
+synthesize for `fulfill`.
 
 ## 1. The coin the person sends
 
 ```mermaid
 flowchart LR
-  user["user<br/>the maker"] --> fund["fund<br/>a send to the v4 address"]
+  user["user<br/>the maker"] --> fund["fund<br/>a send to the directed address"]
   fund --> deposit["deposit<br/>carrier 330<br/>pot above it<br/>SatsSwap: plus the asset sold"]
 ```
 
@@ -18,7 +19,7 @@ The deposit is the coin the swap tracks. `fulfill` never inspects it.
 
 ```mermaid
 flowchart LR
-  sender["anyone"] --> sent["direct send<br/>to the same v4 address"]
+  sender["anyone"] --> sent["direct send<br/>to the same directed address"]
   sent --> second["second coin<br/>same address<br/>not the deposit"]
   deposit["the deposit"] --> spend["fulfill or cancel"]
   spend --> position["the deposit is spent<br/>the swap moves"]

@@ -1,12 +1,12 @@
 import { arkade } from "@arkade-os/sdk";
 
-import assetSwapV4Artifact from "./contracts/asset-swap-v4.json";
-import satsSwapV4Artifact from "./contracts/sats-swap-v4.json";
+import assetSwapDirectedArtifact from "./contracts/asset-swap-directed.json";
+import satsSwapDirectedArtifact from "./contracts/sats-swap-directed.json";
 import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
 import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
-import { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_V4 } from "./rfq-contract";
+import { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "./rfq-contract";
 
-export { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_V4 } from "./rfq-contract";
+export { ASSET_SWAP_BASELINE, ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "./rfq-contract";
 
 // json imports widen "type": "pubkey" to string; the parsers validate at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -25,11 +25,11 @@ export const swapPrograms: Record<
 };
 
 const directedSwapPrograms: typeof swapPrograms = {
-    wantAsset: arkade.programFromArtifact(assetSwapV4Artifact as ContractArtifact),
-    wantBtc: arkade.programFromArtifact(satsSwapV4Artifact as ContractArtifact),
+    wantAsset: arkade.programFromArtifact(assetSwapDirectedArtifact as ContractArtifact),
+    wantBtc: arkade.programFromArtifact(satsSwapDirectedArtifact as ContractArtifact),
 };
 
-export type AssetSwapContractVersion = typeof ASSET_SWAP_V2 | typeof ASSET_SWAP_V4;
+export type AssetSwapContractVersion = typeof ASSET_SWAP_V2 | typeof ASSET_SWAP_DIRECTED;
 
 /** What a version's constructor args are built from; asset fields are in internal byte order. */
 export interface AssetSwapArgInputs {
@@ -39,7 +39,7 @@ export interface AssetSwapArgInputs {
     user: Uint8Array;
     server: Uint8Array;
     exitDelay?: bigint;
-    /** x-only key `asset-swap-v4`'s `fulfill` requires; every other version refuses one. */
+    /** x-only key `asset-swap-directed`'s `fulfill` requires; every other version refuses one. */
     taker?: Uint8Array;
 }
 
@@ -71,10 +71,11 @@ export const ASSET_SWAP_CONTRACTS: Readonly<Record<AssetSwapContractVersion, Ass
             };
         },
     },
-    [ASSET_SWAP_V4]: {
+    [ASSET_SWAP_DIRECTED]: {
         programs: directedSwapPrograms,
         args: (inputs) => {
-            if (inputs.taker === undefined) throw new Error(`${ASSET_SWAP_V4} needs a taker key`);
+            if (inputs.taker === undefined)
+                throw new Error(`${ASSET_SWAP_DIRECTED} needs a taker key`);
             return {
                 receiver: inputs.receiver,
                 amount: inputs.amount,
@@ -90,10 +91,10 @@ export const ASSET_SWAP_CONTRACTS: Readonly<Record<AssetSwapContractVersion, Ass
 };
 
 /** What every asset RFQ advertises: the directed covenant alone. */
-export const ASSET_SWAP_CONTRACT_VERSIONS = [ASSET_SWAP_V4] as const;
+export const ASSET_SWAP_CONTRACT_VERSIONS = [ASSET_SWAP_DIRECTED] as const;
 
 /** Every version this build derives: the registry's keys, not a preference. */
-export const ASSET_SWAP_DERIVABLE_VERSIONS = [ASSET_SWAP_V4, ASSET_SWAP_V2] as const;
+export const ASSET_SWAP_DERIVABLE_VERSIONS = [ASSET_SWAP_DIRECTED, ASSET_SWAP_V2] as const;
 
 /** Absent means {@link ASSET_SWAP_BASELINE}; an id this build cannot derive throws. */
 export const assetSwapContractVersion = (id: string | undefined): AssetSwapContractVersion => {

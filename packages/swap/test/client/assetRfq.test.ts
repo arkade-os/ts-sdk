@@ -35,7 +35,7 @@ import {
     offerContract,
     recordOfferBinding,
 } from "../../src/offer";
-import { ASSET_SWAP_V2, ASSET_SWAP_V4 } from "../../src/program";
+import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "../../src/program";
 import { verifyTaker } from "../../src/client/verify";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
@@ -169,7 +169,7 @@ describe("quote() on a negotiated asset market", () => {
             // one.
             amount_side: "from",
             amount: "10000",
-            contract_versions: [ASSET_SWAP_V4],
+            contract_versions: [ASSET_SWAP_DIRECTED],
             profile: {
                 maker_pk_script: expect.stringMatching(/^5120[0-9a-f]{64}$/),
                 maker_public_key: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -263,7 +263,7 @@ describe("quote() on a negotiated asset market", () => {
             });
             vi.mocked(deriveOffer).mockClear();
             await expect(client.quote(buy())).rejects.toThrow(
-                `solver chose contract version ${version}, not one of ${ASSET_SWAP_V4}`,
+                `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED}`,
             );
             expect(deriveOffer).not.toHaveBeenCalled();
         });
@@ -534,7 +534,7 @@ describe("quote() verification, one case per check", () => {
     });
 });
 
-describe("a directed quote (asset-swap-v4)", () => {
+describe("a directed quote (asset-swap-directed)", () => {
     const TAKER_KEY = hex.decode(SOLVER_DISCOVERY_KEY);
     const directed = (taker: Uint8Array): SolverAnswer => {
         const base = solverFor(CLOCK);
@@ -544,10 +544,10 @@ describe("a directed quote (asset-swap-v4)", () => {
                 : base(payload);
     };
 
-    it("advertises asset-swap-v4 alone", async () => {
+    it("advertises asset-swap-directed alone", async () => {
         const { client, transport } = await setup({ answer: directed(TAKER_KEY) });
         await client.quote(buy());
-        expect(transport.sent[0]?.contract_versions).toEqual([ASSET_SWAP_V4]);
+        expect(transport.sent[0]?.contract_versions).toEqual([ASSET_SWAP_DIRECTED]);
     });
 
     it("derives under the key that answered, and records the covenant as a binding", async () => {
@@ -560,7 +560,7 @@ describe("a directed quote (asset-swap-v4)", () => {
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(stored.offerHex).toBeUndefined();
         expect(stored.binding).toMatchObject({
-            version: ASSET_SWAP_V4,
+            version: ASSET_SWAP_DIRECTED,
             taker: SOLVER_DISCOVERY_KEY,
         });
         const packet = decodeOffer(wallet.sent[0]?.extensions?.[0]?.payload as Uint8Array);
@@ -568,7 +568,7 @@ describe("a directed quote (asset-swap-v4)", () => {
         expect(hex.encode(packet.swapPkScript)).toBe(stored.swapPkScript);
     });
 
-    it("refuses a v4 quote whose solver key is not the responder", async () => {
+    it("refuses a directed quote whose solver key is not the responder", async () => {
         const { client } = await setup({ answer: directed(SOLVER_PUBKEY) });
         const refused = await client.quote(buy()).catch((error: unknown) => error);
         expect(refused).toBeInstanceOf(QuoteVerificationFailed);
@@ -796,10 +796,11 @@ describe("accept() on a negotiated asset market", () => {
         const derived = preparation && "offer" in preparation ? preparation.offer : undefined;
         expect(stored.swapAddress).toBe(derived?.address);
         expect(stored.binding).toEqual(derived && recordOfferBinding(derived.offerBinding));
-        // the fixture solver negotiates asset-swap-v4, so accept must keep that tree
+        // the fixture solver negotiates asset-swap-directed, so accept must keep that tree
         expect(derived?.swapPkScript).toEqual(
             derived &&
-                offerContract(derived.binding, derived.operatorPubkey, ASSET_SWAP_V4).pkScript,
+                offerContract(derived.binding, derived.operatorPubkey, ASSET_SWAP_DIRECTED)
+                    .pkScript,
         );
         expect(wallet.contracts[0]?.script).toBe(
             hex.encode(derived?.swapPkScript ?? new Uint8Array()),

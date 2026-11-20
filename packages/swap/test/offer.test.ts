@@ -96,7 +96,7 @@ describe("swap offer", () => {
         },
     );
 
-    it.each([["asset-swap-v2", "asset-swap-v4"]] as const)(
+    it.each([["asset-swap-v2", "asset-swap-directed"]] as const)(
         "rebinds an offer funded on %s from its swapPkScript alone",
         (funded, asked) => {
             const [offer] = goldens[0];
