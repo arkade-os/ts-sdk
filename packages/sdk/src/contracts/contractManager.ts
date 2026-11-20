@@ -1450,7 +1450,14 @@ export class ContractManager implements IContractManager {
         };
 
         await this.config.contractRepository.saveContract(contract);
-        if (isOnchainScoped(contract)) this.config.onOnchainContractCreated?.();
+        if (isOnchainScoped(contract)) {
+            // The row is saved: a throwing callback must not skip its hydration and watching.
+            try {
+                this.config.onOnchainContractCreated?.();
+            } catch (e) {
+                console.warn("onOnchainContractCreated failed", e);
+            }
+        }
         return { contract, persisted: true };
     }
 

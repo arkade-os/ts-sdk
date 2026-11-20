@@ -105,6 +105,7 @@ async function setup(
     getCoins: () => Promise<any[]>,
     outspends: any[] = [{ spent: false }, { spent: true, txid: "cc".repeat(32) }],
     getUtxos?: (opts: any) => Promise<{ utxos: any[] }>,
+    config: { onOnchainContractCreated?: () => void } = {},
 ) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
@@ -126,6 +127,7 @@ async function setup(
         walletRepository,
         onchainProvider,
         network: networks.regtest,
+        ...config,
     });
     return { manager, walletRepository, contractRepository, onchainProvider, tip, indexerProvider };
 }
@@ -944,6 +946,41 @@ describe("ContractManager.createContract", () => {
             ]),
             expect.any(Function),
         );
+        manager.dispose();
+    });
+
+    it("still hydrates and watches when onOnchainContractCreated throws", async () => {
+        const onOnchainContractCreated = vi.fn(() => {
+            throw new Error("callback failed");
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { manager, walletRepository, onchainProvider } = await setup(
+            async () => [coin],
+            undefined,
+            undefined,
+            { onOnchainContractCreated },
+        );
+        const later = { type: "blocks", value: 145n } as const;
+        const rotated = new DefaultVtxo.Script({ pubKey, serverPubKey, csvTimelock: later });
+        const rotatedScript = hex.encode(rotated.pkScript);
+
+        await expect(
+            manager.createContract({
+                type: "boarding",
+                params: { ...boarding.params, csvTimelock: timelockToSequence(later).toString() },
+                script: rotatedScript,
+                address: rotated.address(networks.regtest.hrp, serverPubKey).encode(),
+            }),
+        ).resolves.toMatchObject({ script: rotatedScript });
+
+        expect(onOnchainContractCreated).toHaveBeenCalledOnce();
+        expect(warn).toHaveBeenCalledWith("onOnchainContractCreated failed", expect.any(Error));
+        expect(await collectScriptVtxos(walletRepository, rotatedScript)).toHaveLength(1);
+        expect(onchainProvider.watchAddresses).toHaveBeenLastCalledWith(
+            expect.arrayContaining([rotated.onchainAddress(networks.regtest)]),
+            expect.any(Function),
+        );
+        warn.mockRestore();
         manager.dispose();
     });
 });

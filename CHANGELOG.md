@@ -146,7 +146,8 @@ style and have not been backfilled.
   registering again does not change its expiry. A subscription started before
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new
-  onchain-scoped contract is saved, and the wallet re-subscribes on it.
+  onchain-scoped contract is saved, and the wallet re-subscribes on it. A
+  callback that throws is logged and does not fail `createContract`.
 
 - **Executor renewal delegation: `registerRenewal`, and a VtxoManager that
   defers to a live watch.** The manager gains `registerRenewal({ renewalWindow,
