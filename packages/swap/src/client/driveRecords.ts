@@ -236,12 +236,14 @@ export const corridorRecordStore = (
 };
 
 /** Whichever of the two covenant forms a swap holds, and nothing for the one it lacks. */
-const covenantOf = (swap: Pick<AssetSwap, "offerHex" | "binding">): OfferCovenant => {
-    if (swap.binding !== undefined)
-        return {
-            binding: swap.binding,
-            ...(swap.offerHex === undefined ? {} : { offerHex: swap.offerHex }),
-        };
+const covenantOf = (swap: Pick<AssetSwap, "offerHex" | "binding">) => ({
+    ...(swap.offerHex === undefined ? {} : { offerHex: swap.offerHex }),
+    ...(swap.binding === undefined ? {} : { binding: swap.binding }),
+});
+
+// Strict only for a fresh restore: stored records are read leniently, so one bad row fails alone.
+const restoredCovenant = (swap: Pick<AssetSwap, "offerHex" | "binding">): OfferCovenant => {
+    if (swap.binding !== undefined) return { ...covenantOf(swap), binding: swap.binding };
     if (swap.offerHex !== undefined) return { offerHex: swap.offerHex };
     throw new Error("this offer swap carries neither a binding nor an offerHex to rebuild from");
 };
@@ -375,7 +377,7 @@ export const restoredOfferRecord = (
             market: { kind: "restored", backend: "feed" },
             expiresAt: createdAt,
             status: swap.status,
-            ...covenantOf(swap),
+            ...restoredCovenant(swap),
             swapAddress: swap.swapAddress,
             swapPkScript: swap.swapPkScript,
             fundingTxid: swap.fundingTxid,
