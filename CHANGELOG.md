@@ -319,6 +319,8 @@ style and have not been backfilled.
 
 - **Boarding inputs in a commitment transaction are signed with the default sighash**, whatever sighash type the operator's PSBT declares, as forfeits already were.
 
+- **`arkServerPublicKey` and `ServiceWorkerWallet`'s `arkServer.publicKey` are marked deprecated.** Neither has been read since the signer key moved to the operator's info, which may rotate it.
+
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the
   open, so a client a second or two ahead of the solver received no bids at
