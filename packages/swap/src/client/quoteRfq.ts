@@ -26,7 +26,12 @@ import { deepFreeze } from "../jointGraph";
 import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
-import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
+import {
+    ASSET_CARRIER_SATS,
+    deriveOffer,
+    resolveReceivePkScript,
+    type DerivedOffer,
+} from "../offer";
 import { ASSET_SWAP_CONTRACT_VERSIONS } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
@@ -37,6 +42,7 @@ import {
     type OnchainNetwork,
 } from "../onchainHtlc";
 import { claimFeeSats } from "../payment/onchainSwap";
+import { ASSET_SWAP_DIRECTED } from "../rfq-contract";
 import {
     arkadeSwapRequest,
     deriveLightningReceive,
@@ -95,6 +101,7 @@ import {
     verifySendInvoice,
     verifyRefundWindow,
     verifySendWindow,
+    verifyTaker,
     verifyingDerivation,
 } from "./verify";
 
@@ -425,6 +432,13 @@ const quoteArkadeAsset = async (
     );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire, input.policy);
+    const taker =
+        contractVersion === ASSET_SWAP_DIRECTED
+            ? verifyTaker({
+                  attested: input.transport.attestedResponder,
+                  solverPubkey: parsed.solver,
+              })
+            : undefined;
     verifyCrossAssetAmount({ pair, pinned, give: parsed.give, take: parsed.take });
     verifyQuoteTtl({
         quoteId: input.quoteId,
@@ -471,8 +485,8 @@ const quoteArkadeAsset = async (
         };
     }
     if (assetPayment !== undefined) deepFreeze(assetPayment);
-    // The solver's own carrier, parsed before anything is derived; a card that charges for it
-    // prices the reference below with it.
+    // The solver's carrier for an asset deposit, parsed before anything is derived. A BTC
+    // deposit funds none, so its wire `carrier_sats` is deliberately not read.
     const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
     // The RFQ already disclosed amount, pair and maker script/key; feed failure may try another
     // solver before any covenant is derived or accepted. This asset path sends no invoice.
@@ -481,7 +495,9 @@ const quoteArkadeAsset = async (
         {
             give: input.candidate.give,
             giveAmount: parsed.give,
-            ...(carrierSats === undefined ? {} : { carrierSats }),
+            // Unconditional: a card charging for the delivered carrier refuses to price without
+            // it whichever leg gives, and a BTC deposit funds none of its own to publish.
+            carrierSats: carrierSats ?? ASSET_CARRIER_SATS,
             ...QUOTE_OPTIONS,
             fetchImpl: input.feed.fetch,
         },
@@ -501,6 +517,7 @@ const quoteArkadeAsset = async (
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         info: input.info,
         contractVersion,
+        ...(taker === undefined ? {} : { taker }),
     });
     // Compare-only, and never the other way round: the address the trader funds
     // is the one the trader derived, and a solver naming another one is refused

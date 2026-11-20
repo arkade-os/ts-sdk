@@ -115,7 +115,7 @@ describe("onchainHtlcScript — golden", () => {
         ).toThrow(/positive/);
     });
 
-    it("rejects a height-shaped refundLocktime, and accepts the boundary itself", () => {
+    it("rejects a refundLocktime outside BIP65's timestamp range, and accepts both bounds", () => {
         // Below BIP65's threshold consensus reads the value as a block height,
         // so the refund leaf would mature at block ~500 million. 500_000_000 is
         // 1985-07-05 — a timestamp, and the last value that is one.
@@ -131,6 +131,8 @@ describe("onchainHtlcScript — golden", () => {
         expect(onchainHtlcScript(params(LOCKTIME_THRESHOLD), "bitcoin").refundLocktime).toBe(
             LOCKTIME_THRESHOLD,
         );
+        expect(() => onchainHtlcScript(params(2 ** 32), "bitcoin")).toThrow(/uint32/);
+        expect(onchainHtlcScript(params(0xffffffff), "bitcoin").refundLocktime).toBe(0xffffffff);
     });
 
     it("rejects a network it cannot build for, rather than defaulting to mainnet", () => {
@@ -485,5 +487,32 @@ describe("classifyOnchainHtlc", () => {
                 })
             ).phase,
         ).toBe("unfunded");
+    });
+
+    it("classifies a confirmed output ahead of a larger one that has not confirmed", async () => {
+        const decoy = { ...UTXO, txid: "22".repeat(32), amount: 1_000_000n, confirmations: 0 };
+        const phase = await classifyOnchainHtlc(
+            fakeChain({ utxos: [decoy, funded(6)], mtp: LOCKTIME - 1 }),
+            { htlc: htlc(), minConfirmations: 2, funding: { txid: UTXO.txid, vout: UTXO.vout } },
+        );
+        expect(phase).toEqual({ phase: "claimable", utxo: funded(6) });
+    });
+
+    it("reads the recorded outpoint's spend past another output at its script", async () => {
+        const h = htlc();
+        const claim = await buildHtlcClaim({
+            htlc: h,
+            utxo: UTXO,
+            preimage: PREIMAGE,
+            payoutPkScript: PAYOUT,
+            feeRateSatVb: 2,
+            sign: signWith(1),
+        });
+        const other = { txid: "22".repeat(32), vout: 0, amount: 1_000n, confirmations: 6 };
+        const phase = await classifyOnchainHtlc(
+            fakeChain({ utxos: [other], spend: { txHex: claim.txHex } }),
+            { htlc: h, minConfirmations: 2, funding: { txid: UTXO.txid, vout: UTXO.vout } },
+        );
+        expect(phase.phase).toBe("claimed");
     });
 });

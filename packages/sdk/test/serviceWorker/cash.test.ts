@@ -9,6 +9,16 @@ import { SingleKey } from "../../src/identity/singleKey";
 import { TxType, type VirtualCoin } from "../../src/wallet";
 import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
 import { ServiceWorkerReadonlyWallet } from "../../src/wallet/serviceWorker/wallet";
+import type { WalletRequestBinding } from "../../src/wallet/serviceWorker/wallet-request";
+import { bindTestWallet, scopedWalletRequest, testWalletBinding } from "../helpers/walletRequest";
+
+async function bindingForWallet(wallet: Wallet) {
+    return testWalletBinding(
+        await wallet.identity.xOnlyPublicKey(),
+        "https://ark.test",
+        wallet.network.name,
+    );
+}
 
 const point = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const info = {
@@ -89,15 +99,28 @@ async function message(
     amount?: number,
 ) {
     const handler = new WalletMessageHandler();
-    await handler.start({ arkProvider: wallet.arkProvider, wallet, readonlyWallet: wallet }, {
-        walletRepository: wallet.walletRepository,
-    } as never);
-    return (await handler.handleMessage({
-        id: "1",
-        tag: handler.messageTag,
-        type: "ARKADE_CASH",
-        payload: { action, token, amount },
-    } as never)) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
+    await handler.start(
+        {
+            arkProvider: wallet.arkProvider,
+            wallet,
+            readonlyWallet: wallet,
+            walletRequestBinding: await bindingForWallet(wallet),
+        },
+        {
+            walletRepository: wallet.walletRepository,
+        } as never,
+    );
+    return (await handler.handleMessage(
+        scopedWalletRequest(
+            {
+                id: "1",
+                tag: handler.messageTag,
+                type: "ARKADE_CASH",
+                payload: { action, token, amount },
+            } as never,
+            await bindingForWallet(wallet),
+        ),
+    )) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
 }
 
 const cash = () =>
@@ -168,9 +191,17 @@ describe("Worker ArkadeCash", () => {
             },
         });
         const handler = new WalletMessageHandler();
-        await handler.start({ arkProvider: wallet.arkProvider, wallet, readonlyWallet: wallet }, {
-            walletRepository: wallet.walletRepository,
-        } as never);
+        await handler.start(
+            {
+                arkProvider: wallet.arkProvider,
+                wallet,
+                readonlyWallet: wallet,
+                walletRequestBinding: await bindingForWallet(wallet),
+            },
+            {
+                walletRepository: wallet.walletRepository,
+            } as never,
+        );
         const tx = (arkTxid: string, type: TxType, amount: number) => ({
             key: { arkTxid, commitmentTxid: "", boardingTxid: "" },
             type,
@@ -194,24 +225,29 @@ describe("Worker ArkadeCash", () => {
             },
         ] as never);
 
-        const response = (await handler.handleMessage({
-            id: "1",
-            tag: handler.messageTag,
-            type: "ARKADE_CASH",
-            payload: {
-                action: "activities",
-                records: [
-                    {
-                        id: "v1",
-                        action: "claimed",
-                        createdAt: 1,
-                        outcome: "claimed",
-                        issues: [{ txid: "funding", amount: 5_000 }],
-                        claims: [{ txid: "sweep", amount: 3_000 }],
+        const response = (await handler.handleMessage(
+            scopedWalletRequest(
+                {
+                    id: "1",
+                    tag: handler.messageTag,
+                    type: "ARKADE_CASH",
+                    payload: {
+                        action: "activities",
+                        records: [
+                            {
+                                id: "v1",
+                                action: "claimed",
+                                createdAt: 1,
+                                outcome: "claimed",
+                                issues: [{ txid: "funding", amount: 5_000 }],
+                                claims: [{ txid: "sweep", amount: 3_000 }],
+                            },
+                        ],
                     },
-                ],
-            },
-        } as never)) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
+                } as never,
+                await bindingForWallet(wallet),
+            ),
+        )) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
 
         if (response.payload?.action !== "activities") throw new Error("expected activities");
         // Funding is the issue; the page's sweep and the recovery settle are claims.
@@ -245,9 +281,17 @@ describe("Worker ArkadeCash", () => {
             },
         });
         const handler = new WalletMessageHandler();
-        await handler.start({ arkProvider: wallet.arkProvider, wallet, readonlyWallet: wallet }, {
-            walletRepository: wallet.walletRepository,
-        } as never);
+        await handler.start(
+            {
+                arkProvider: wallet.arkProvider,
+                wallet,
+                readonlyWallet: wallet,
+                walletRequestBinding: await bindingForWallet(wallet),
+            },
+            {
+                walletRepository: wallet.walletRepository,
+            } as never,
+        );
         vi.spyOn(
             handler as unknown as { buildTransactionHistoryFromCache: () => Promise<unknown> },
             "buildTransactionHistoryFromCache",
@@ -261,25 +305,30 @@ describe("Worker ArkadeCash", () => {
             },
         ] as never);
 
-        const response = (await handler.handleMessage({
-            id: "1",
-            tag: handler.messageTag,
-            type: "ARKADE_CASH",
-            payload: {
-                action: "activities",
-                // `get` reports the settlement's commitment with the coin's gross value.
-                records: [
-                    {
-                        id: "v1",
-                        action: "claimed",
-                        createdAt: 1,
-                        outcome: "claimed",
-                        issues: [],
-                        claims: [{ txid: "settle", amount: 4_000 }],
+        const response = (await handler.handleMessage(
+            scopedWalletRequest(
+                {
+                    id: "1",
+                    tag: handler.messageTag,
+                    type: "ARKADE_CASH",
+                    payload: {
+                        action: "activities",
+                        // `get` reports the settlement's commitment with the coin's gross value.
+                        records: [
+                            {
+                                id: "v1",
+                                action: "claimed",
+                                createdAt: 1,
+                                outcome: "claimed",
+                                issues: [],
+                                claims: [{ txid: "settle", amount: 4_000 }],
+                            },
+                        ],
                     },
-                ],
-            },
-        } as never)) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
+                } as never,
+                await bindingForWallet(wallet),
+            ),
+        )) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
 
         if (response.payload?.action !== "activities") throw new Error("expected activities");
         expect(response.payload.activities).toHaveLength(1);
@@ -302,7 +351,10 @@ const STUB_KEY = new Uint8Array(32).fill(7);
  * A page-side readonly wallet wired to a fake worker. `respond` answers each
  * request, optionally after a delay; every reply crosses `structuredClone`.
  */
-function pageWallet(respond: (message: any) => Promise<unknown>) {
+function pageWallet(
+    respond: (message: any) => Promise<unknown>,
+    binding: WalletRequestBinding = testWalletBinding(STUB_KEY, "https://ark.test", "mutinynet"),
+) {
     const listeners = new Set<(event: { data: unknown }) => void>();
     vi.stubGlobal("navigator", {
         serviceWorker: {
@@ -322,13 +374,16 @@ function pageWallet(respond: (message: any) => Promise<unknown>) {
             });
         },
     };
-    return new (ServiceWorkerReadonlyWallet as any)(
-        worker,
-        { xOnlyPublicKey: async () => STUB_KEY },
-        new InMemoryWalletRepository(),
-        new InMemoryContractRepository(),
-        "wallet-tag",
-    ) as ServiceWorkerReadonlyWallet;
+    return bindTestWallet(
+        new (ServiceWorkerReadonlyWallet as any)(
+            worker,
+            { xOnlyPublicKey: async () => STUB_KEY },
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            "wallet-tag",
+        ) as ServiceWorkerReadonlyWallet,
+        binding,
+    );
 }
 
 describe("Page-side ArkadeCash requests", () => {
@@ -344,10 +399,18 @@ describe("Page-side ArkadeCash requests", () => {
         );
         const handler = new WalletMessageHandler();
         await handler.start(
-            { arkProvider: worker.arkProvider, wallet: worker, readonlyWallet: worker },
+            {
+                arkProvider: worker.arkProvider,
+                wallet: worker,
+                readonlyWallet: worker,
+                walletRequestBinding: await bindingForWallet(worker),
+            },
             { walletRepository: worker.walletRepository } as never,
         );
-        const page = pageWallet((request) => handler.handleMessage(request));
+        const page = pageWallet(
+            (request) => handler.handleMessage(request),
+            await bindingForWallet(worker),
+        );
 
         const failure = await page.arkadeCash({ action: "create", amount: 5000 }).catch((e) => e);
 

@@ -148,7 +148,7 @@ describe("maker-side swap loop (regtest)", () => {
 
         // the offer read back off the funding tx is byte-identical to the one
         // we embedded — the whole persistence contract rests on this
-        restoredOfferHex = restored[0].offerHex;
+        restoredOfferHex = restored[0].offerHex!;
         expect(restoredOfferHex).toBe(offer.offerHex);
         expect(() => decodeOffer(hex.decode(restoredOfferHex))).not.toThrow();
     }, 120_000);
@@ -840,7 +840,7 @@ const waitForFill = (swap: AssetSwap): Promise<void> =>
 
 /** Cancel the swap, record the outcome in `swaps`, and wait for the refund to land. */
 const cancelAndAwaitRefund = async (swaps: AssetSwapRepository, swap: AssetSwap) => {
-    const cancelTxid = await cancelOffer(wallet, swap.offerHex, {
+    const cancelTxid = await cancelOffer(wallet, swap.offerHex!, {
         repository: swaps,
         fundingTxid: swap.fundingTxid,
         swapAddress: swap.swapAddress,

@@ -161,6 +161,23 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
 
+    // A PSBT's witnessUtxo is outside its txid, so a response can restate the prevouts it signed.
+    it("rejects a server signature over prevouts other than the submitted ones", async () => {
+        const p = provider({
+            cosignArkTx: async (psbt) => {
+                const tx = Transaction.fromPSBT(base64.decode(psbt));
+                const { script, amount } = tx.getInput(0).witnessUtxo!;
+                const witnessUtxo = { script, amount: amount + 1n };
+                tx.updateInput(0, { tapScriptSig: undefined, witnessUtxo }, true);
+                return cosign(base64.encode(tx.toPSBT()));
+            },
+        });
+        await expect(submit(p, { serverPubkey: SERVER_PUBKEY })).rejects.toThrow(
+            /ark tx: input 0 is not signed by the server/,
+        );
+        expect(p.finalizeTx).not.toHaveBeenCalled();
+    });
+
     it("fails closed when the response carries no final ark tx — but only when asked to verify", async () => {
         await expect(
             submit(provider({ dropFinalArkTx: true }), { serverPubkey: SERVER_PUBKEY }),

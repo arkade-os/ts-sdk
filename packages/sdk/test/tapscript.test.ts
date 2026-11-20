@@ -130,6 +130,16 @@ describe("CLTVMultisigTapscript", () => {
         expect(decoded.params.pubkeys.map(hex.encode)).toEqual(params.pubkeys.map(hex.encode));
     });
 
+    it("refuses an absolute timelock outside 32 bits", () => {
+        const params = { pubkeys: [exPubKey1], type: MultisigTapscript.MultisigType.CHECKSIG };
+        expect(() =>
+            CLTVMultisigTapscript.encode({ ...params, absoluteTimelock: 2n ** 32n }),
+        ).toThrow(/32 bits/);
+        expect(() =>
+            CLTVMultisigTapscript.encode({ ...params, absoluteTimelock: 0xffffffffn }),
+        ).not.toThrow();
+    });
+
     it("should encode and decode with number absolute timelock", () => {
         const params = {
             absoluteTimelock: BigInt(10), // Some block height between 0 and 16

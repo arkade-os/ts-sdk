@@ -145,7 +145,7 @@ export class BIP21 {
         if (query) {
             const queryParams = new URLSearchParams(query);
             for (const [key, value] of queryParams.entries()) {
-                if (!value) continue;
+                if (!value || key === "address") continue;
 
                 if (key === "amount") {
                     // BIP21 ABNF: amount = *digit [ "." *digit ], so digits are

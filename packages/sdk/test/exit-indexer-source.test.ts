@@ -23,11 +23,26 @@ function fakeIndexer(
     psbtsByTxid: Record<string, string>,
 ) {
     return {
-        getVtxoChain: async (_o: any, opts: any) => pages[opts.pageIndex] ?? { chain: [] },
+        // As arkd: index 0 serves page 1.
+        getVtxoChain: async (_o: any, opts: any) =>
+            pages[Math.max(opts.pageIndex, 1) - 1] ?? { chain: [] },
         getVirtualTxs: async (txids: string[]) => ({
             txs: txids.map((t) => psbtsByTxid[t]).filter(Boolean),
         }),
     } as any;
+}
+
+// Full pages under a caller-chosen cursor; throws past `limit` so a walk that never ends fails fast.
+function pagedIndexer(page: (pageIndex: number) => object, limit: number) {
+    const full = Array.from({ length: DEFAULT_PAGE_SIZE }, (_, i) => tx(`p_${i}`));
+    const indexer = {
+        calls: 0,
+        getVtxoChain: async (_o: unknown, opts: { pageIndex: number }) => {
+            if (++indexer.calls > limit) throw new Error("no more pages");
+            return { chain: full, page: page(opts.pageIndex) };
+        },
+    };
+    return indexer;
 }
 
 describe("IndexerExitDataSource", () => {
@@ -37,14 +52,12 @@ describe("IndexerExitDataSource", () => {
         expect(chain!.map((c) => c.txid)).toEqual(["a", "b"]);
     });
 
-    it("walks and merges all pages until a short page", async () => {
-        // A full page (== DEFAULT_PAGE_SIZE) signals "there may be more" → fetch page 1;
-        // the short page 1 ends it.
-        const full = Array.from({ length: DEFAULT_PAGE_SIZE }, (_, i) => tx(`p0_${i}`));
+    it("follows the indexer's cursor past a page capped at 100 entries", async () => {
+        const full = Array.from({ length: 100 }, (_, i) => tx(`p0_${i}`));
         const indexer = fakeIndexer(
             [
-                { chain: full, page: { current: 0, next: 1, total: 2 } },
-                { chain: [tx("leaf")], page: { current: 1, next: 1, total: 2 } },
+                { chain: full, page: { current: 1, next: 2, total: 2 } },
+                { chain: [tx("leaf")], page: { current: 2, next: 2, total: 2 } },
             ],
             {},
         );
@@ -52,8 +65,24 @@ describe("IndexerExitDataSource", () => {
             txid: "aa",
             vout: 0,
         });
-        expect(chain!.length).toBe(DEFAULT_PAGE_SIZE + 1);
+        expect(chain!.length).toBe(101);
         expect(chain![chain!.length - 1].txid).toBe("leaf");
+    });
+
+    it("stops when the indexer's cursor stops advancing", async () => {
+        const indexer = pagedIndexer(() => ({ current: 1, next: 1, total: 2 }), 3);
+        await new IndexerExitDataSource(indexer as any).getVtxoChain({ txid: "aa", vout: 0 });
+        expect(indexer.calls).toBe(2);
+    });
+
+    it("gives up after 1000 pages", async () => {
+        const indexer = pagedIndexer((i) => ({ current: i + 1, next: i + 2, total: 1e9 }), 1000);
+        const walk = new IndexerExitDataSource(indexer as any).getVtxoChain({
+            txid: "aa",
+            vout: 0,
+        });
+        await expect(walk).rejects.toThrow("indexer paging does not end");
+        expect(indexer.calls).toBe(1000);
     });
 
     it("keys PSBTs by their derived (unsigned) txid", async () => {

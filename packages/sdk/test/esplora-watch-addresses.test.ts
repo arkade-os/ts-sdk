@@ -594,6 +594,7 @@ describe("EsploraProvider.watchAddresses", () => {
 
             mockFetch.mockImplementation((url: string) => {
                 if (isProbeUrl(url)) return Promise.resolve(okJson(summary));
+                if (url.includes("/txs/chain/")) return Promise.resolve(okJson([]));
                 if (url.includes("/txs")) {
                     if (historyFailures++ === 1) {
                         // Fail the first poll cycle's history fetch (index 1;

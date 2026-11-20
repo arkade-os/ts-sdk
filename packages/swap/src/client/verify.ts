@@ -9,6 +9,7 @@
  * and an expired or expiring quote is `QuoteExpired` (the remedy is a fresh quote, not a
  * different solver).
  */
+import { hex } from "@scure/base";
 import {
     AddressMismatch,
     assertFundable,
@@ -104,6 +105,31 @@ export const verifyResponder = (input: {
     if (input.attested !== input.expected) {
         throw new QuoteVerificationFailed("responder", input.expected, input.attested);
     }
+};
+
+/**
+ * A directed covenant binds `solver_pubkey` into `fulfill`, so it must be the key the transport
+ * proved answered: a key nobody behind this quote holds would strand the deposit until cancelled.
+ * Folded into the `responder` check. Returns the key, decoded.
+ */
+export const verifyTaker = (input: {
+    readonly attested?: Pubkey;
+    readonly solverPubkey: unknown;
+}): Uint8Array => {
+    const xOnly = (key: unknown) =>
+        typeof key === "string" && /^[0-9a-f]{64}$/i.test(key)
+            ? hex.decode(key.toLowerCase())
+            : undefined;
+    const taker = xOnly(input.solverPubkey);
+    const attested = xOnly(input.attested);
+    if (
+        taker === undefined ||
+        attested === undefined ||
+        hex.encode(taker) !== hex.encode(attested)
+    ) {
+        throw new QuoteVerificationFailed("responder", input.attested, String(input.solverPubkey));
+    }
+    return taker;
 };
 
 /**

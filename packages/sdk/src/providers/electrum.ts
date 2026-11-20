@@ -246,10 +246,12 @@ export class WsElectrumChainSource {
         for (let i = 0; i < MAX_FETCH_TRANSACTIONS_ATTEMPTS; i++) {
             try {
                 const responses = await this.safeBatchRequest<string>(requests);
-                return responses.map((hexStr, i) => ({
-                    txID: txids[i],
-                    hex: hexStr,
-                }));
+                return responses.map((hexStr, i) => {
+                    if (childTxidFromHex(hexStr) !== txids[i].toLowerCase()) {
+                        throw new Error(`Electrum returned another transaction for ${txids[i]}`);
+                    }
+                    return { txID: txids[i], hex: hexStr };
+                });
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 if (msg.toLowerCase().includes(MISSING_TRANSACTION)) {
@@ -571,6 +573,12 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const script = this.encodeAddress(address);
         const scriptHash = toScriptHash(script);
         const unspents = await this.ws.request<UnspentElectrum[]>(ListUnspentMethod, scriptHash);
+        const bad = unspents.find(
+            (u) =>
+                !(u.value >= 0 && u.value <= 2_100_000_000_000_000 && u.tx_pos >= 0) ||
+                ![u.value, u.tx_pos, u.height].every(Number.isSafeInteger),
+        );
+        if (bad) throw new Error(`Invalid listunspent entry: ${JSON.stringify(bad)}`);
 
         return unspents.map((u) => ({
             txid: u.tx_hash,
@@ -709,8 +717,6 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         );
 
         // For each spent output find the spender in its history.
-        // Common case: history has exactly 2 entries (creating + spending tx).
-        // Ambiguous case (same script reused): batch-fetch all candidates at once.
         const ambiguousIndices: number[] = [];
         const ambiguousCandidates: string[][] = [];
 
@@ -718,10 +724,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             const i = spentIndices[j];
             const candidates = histories[j].map((h) => h.tx_hash).filter((hash) => hash !== txid);
 
-            if (candidates.length === 1) {
-                // Fast path: one candidate = the spender
-                results[i] = { spent: true, txid: candidates[0] };
-            } else if (candidates.length > 1) {
+            if (candidates.length > 0) {
                 ambiguousIndices.push(i);
                 ambiguousCandidates.push(candidates);
             }
@@ -729,7 +732,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             // max_history: treated as unspent either way
         }
 
-        // Step 4 (rare): batch-fetch all ambiguous candidate txs at once
+        // Step 4: batch-fetch all candidate txs at once
         if (ambiguousIndices.length > 0) {
             const allCandidateTxids = [...new Set(ambiguousCandidates.flat())];
             const fetched = await this.chain.fetchTransactions(allCandidateTxids);
@@ -743,6 +746,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                     const candidateTx = Transaction.fromRaw(hex.decode(rawHex), {
                         allowUnknownOutputs: true,
                         allowUnknownInputs: true,
+                        allowUnknownVersion: true,
+                        disableScriptCheck: true,
                     });
                     let found = false;
                     for (let k = 0; k < candidateTx.inputsLength; k++) {
@@ -898,19 +903,23 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         // implement verbose. get_merkle is part of the
         // standard SPV protocol and supported by every Electrum server.
         const merkle = await this.chain.fetchTxMerkle(txid);
-        if (!merkle) return { confirmed: false };
+        if (!merkle) {
+            // get_merkle fails alike for mempool and unknown txids; fetching tells them apart, and
+            // its retry covers an index still catching up with a fresh broadcast.
+            await this.chain.fetchTransactions([txid]);
+            return { confirmed: false };
+        }
 
         // Header lookup can transiently race with electrs's index right
         // after a fresh block — listunspent/get_merkle expose the new
-        // height before block.header(N) is queryable. Tolerate that the
-        // same way historyToExplorerTxs does: confirmation status and
-        // height are still authoritative; only block_time degrades.
+        // height before block.header(N) is queryable; block time 0 would mature any seconds CSV.
         let blockTime = 0;
         try {
             const header = await this.chain.fetchBlockHeader(merkle.blockHeight);
             blockTime = parseBlockHeader(header.hex).timestamp;
         } catch (err) {
             if (!isMissingHeightError(err)) throw err;
+            return { confirmed: false };
         }
         return {
             confirmed: true,
@@ -961,10 +970,6 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     private async medianTimePast(height: number, tipTime: number, hash: string): Promise<number> {
         if (this.mtpCache?.hash === hash) return this.mtpCache.mtp;
         if (this.mtpInflight?.hash === hash) return this.mtpInflight.mtp;
-        // The cache lands only once the window resolves, so every reader before
-        // then re-fetches — each burst another chance at the early-maturing
-        // `tipTime` fallback. Hash-gated, so a mid-flight tip change costs one
-        // extra fetch rather than the wrong median.
         const mtp = this.readMedianTimePast(height, tipTime, hash).finally(() => {
             this.mtpInflight = undefined;
         });
@@ -972,8 +977,6 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         return mtp;
     }
 
-    /** Degrades to the tip's `nTime` rather than throwing — a caller that
-     *  cannot read the tip at all is worse off. */
     private async readMedianTimePast(
         height: number,
         tipTime: number,
@@ -984,22 +987,11 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         for (let h = height - 1; h >= 0 && heights.length < MTP_WINDOW - 1; h--) heights.push(h);
         if (heights.length === 0) return tipTime;
 
-        let timestamps: number[];
-        try {
-            const headers = await this.chain.fetchBlockHeaders(heights);
-            timestamps = [
-                tipTime,
-                ...headers.map((header) => parseBlockHeader(header.hex).timestamp),
-            ];
-        } catch (e) {
-            // Not cached: retry the window next call rather than serve the
-            // early-maturing fallback for this whole block.
-            console.warn(
-                "Failed to fetch the median-time-past window; using the tip's own time",
-                e,
-            );
-            return tipTime;
-        }
+        const headers = await this.chain.fetchBlockHeaders(heights);
+        const timestamps = [
+            tipTime,
+            ...headers.map((header) => parseBlockHeader(header.hex).timestamp),
+        ];
         timestamps.sort((a, b) => a - b);
         const mtp = timestamps[Math.floor(timestamps.length / 2)];
         this.mtpCache = { hash, mtp };
@@ -1019,29 +1011,32 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             scriptHashes.map((h, i) => [h, scripts[i]]),
         );
 
-        // Track known history per script to detect new txs.
-        const knownTxids = new Map<string, Set<string>>();
+        // Known history per script, with heights, so a confirmation or reorg is reported too.
+        const knownTxids = new Map<string, Map<string, number>>();
 
         // Initialize known-set in parallel — for a wallet watching many
         // addresses this avoids n sequential round trips on first call.
         const initialHistories = await Promise.all(scripts.map((s) => this.chain.fetchHistory(s)));
         initialHistories.forEach((history, i) => {
-            knownTxids.set(scriptHashes[i], new Set(history.map((h) => h.tx_hash)));
+            knownTxids.set(scriptHashes[i], new Map(history.map((h) => [h.tx_hash, h.height])));
         });
 
         // Per-scripthash mutex serializing concurrent notifications so
         // two pushes for the same address can't fetch history in parallel
         // and emit duplicate events. Each call chains onto the previous
-        // one's tail; failures are swallowed to keep the chain alive.
+        // one's tail, or joins a read still queued (that read sees its change too);
+        // failures are swallowed to keep the chain alive.
         const inFlight = new Map<string, Promise<void>>();
+        const queued = new Set<string>();
 
         const processStatusChange = async (scripthash: string): Promise<void> => {
+            queued.delete(scripthash);
             const script = scriptByHash.get(scripthash);
             if (!script) return;
 
             const history = await this.chain.fetchHistory(script);
-            const known = knownTxids.get(scripthash) ?? new Set<string>();
-            const newEntries = history.filter((entry) => !known.has(entry.tx_hash));
+            const known = knownTxids.get(scripthash) ?? new Map<string, number>();
+            const newEntries = history.filter((entry) => known.get(entry.tx_hash) !== entry.height);
 
             if (newEntries.length === 0) return;
 
@@ -1054,11 +1049,13 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             // re-deliver them.
             const explorerTxs = await this.historyToExplorerTxs(newEntries);
             eventCallback(explorerTxs);
-            for (const entry of newEntries) known.add(entry.tx_hash);
+            for (const entry of newEntries) known.set(entry.tx_hash, entry.height);
             knownTxids.set(scripthash, known);
         };
 
         const handleStatusChange = (scripthash: string): Promise<void> => {
+            if (queued.has(scripthash)) return inFlight.get(scripthash) as Promise<void>;
+            queued.add(scripthash);
             const previous = inFlight.get(scripthash) ?? Promise.resolve();
             const next = previous.then(() => processStatusChange(scripthash));
             // Keep the chain alive even when one link rejects.
@@ -1187,6 +1184,8 @@ function childTxidFromHex(txHex: string): string {
     const tx = Transaction.fromRaw(hex.decode(txHex), {
         allowUnknownOutputs: true,
         allowUnknownInputs: true,
+        allowUnknownVersion: true,
+        disableScriptCheck: true,
     });
     return tx.id;
 }

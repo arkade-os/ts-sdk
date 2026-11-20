@@ -359,6 +359,8 @@ describe("pushClaim", () => {
     it.each([
         ["NaN", Number.NaN],
         ["missing from an older record", undefined as unknown as number],
+        ["zero", 0],
+        ["negative", -1],
     ])("refuses an expectedAmount that is %s instead of comparing against it", async (_, bad) => {
         const operator = fakeOperator();
         await expect(

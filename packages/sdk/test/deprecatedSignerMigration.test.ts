@@ -314,6 +314,23 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(sendSelectedVtxosToSelf.mock.calls[0][0]).toHaveLength(1);
     });
 
+    it("leaves VTXOs held by reserveVtxos out of the migration send", async () => {
+        const script = "default-" + DEP_DUE;
+        const held = makeVtxo(script, 9000);
+        const free = makeVtxo(script, 5000);
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [held, free])],
+        });
+        Object.assign(wallet, { getHeldVtxos: vi.fn().mockResolvedValue([held]) });
+
+        const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        const inputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(inputs.map((v) => v.txid)).toEqual([free.txid]);
+    });
+
     it("excludes deprecated-signer VTXOs without a batchExpiry and still migrates the rest", async () => {
         // An unrolled (or otherwise no-expiry) input cannot go through the send
         // leg — sendSelectedVtxosToSelf would throw and fail the whole leg — so

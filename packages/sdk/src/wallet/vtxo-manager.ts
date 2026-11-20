@@ -56,7 +56,8 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
 import { getDustAmount, getSelectableBoardingUtxoGroups, markSdkPicked } from "./utils";
-import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
+import { providerFeeRate } from "./onchain";
+import { logExcludedVtxos, outpointExclusion, outpointReasons } from "../contracts/spendability";
 
 /**
  * Outpoints (`txid:vout`) of VTXOs whose contract signer is past its cutoff (`EXPIRED`) and that
@@ -209,6 +210,12 @@ function heldVtxosOf(wallet: IWallet): Promise<NormalizedExtendedVirtualCoin[]> 
     const held = (wallet as { getHeldVtxos?: () => Promise<NormalizedExtendedVirtualCoin[]> })
         .getHeldVtxos;
     return typeof held === "function" ? held.call(wallet) : Promise.resolve([]);
+}
+
+const HELD_REASON = "is held by reserveVtxos";
+
+async function heldOutpointsOf(wallet: IWallet): Promise<Set<string>> {
+    return new Set((await heldVtxosOf(wallet)).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
 }
 
 /**
@@ -1138,15 +1145,21 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * fails its batch at submit. The key is a thunk so ordinary recovery never touches the
      * identity; full coins carry the confirmation a relative timelock counts from.
      */
+    /** Recovery inputs to skip: refused by their contract right now, or held by `reserveVtxos`. */
     private async unspendableNow(
         vtxos: readonly NormalizedExtendedVirtualCoin[],
     ): Promise<Map<string, string>> {
         const contractManager = await this.wallet.getContractManager();
-        return (
+        const refused =
             (await contractManager.unspendableNowReasons?.(vtxos, async () =>
                 hex.encode(await this.wallet.identity.xOnlyPublicKey()),
-            )) ?? new Map()
-        );
+            )) ?? new Map<string, string>();
+        const held = await heldOutpointsOf(this.wallet);
+        for (const vtxo of vtxos) {
+            const key = `${vtxo.txid}:${vtxo.vout}`;
+            if (held.has(key) && !refused.has(key)) refused.set(key, HELD_REASON);
+        }
+        return refused;
     }
 
     /**
@@ -1154,8 +1167,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      *
      * Includes preconfirmed subdust when the total reaches the dust threshold; settled outputs
      * with a long expiry are NOT recovered, to avoid locking liquidity. Inputs whose contract
-     * refuses a spend right now (an immature VHTLC refund path) are skipped rather than failing
-     * the batch, matching {@link getRecoverableBalance}.
+     * refuses a spend right now (an immature VHTLC refund path), or that `reserveVtxos` holds, are
+     * skipped rather than failing the batch, matching {@link getRecoverableBalance}.
      *
      * @param eventCallback - Optional callback to receive settlement events
      * @returns Settlement transaction ID
@@ -1194,7 +1207,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const refused = await this.unspendableNow(vtxosToRecover);
         if (refused.size > 0) {
             logExcludedVtxos("recoverVtxos", vtxosToRecover, [outpointReasons(refused)]);
-            const held = vtxosToRecover.length;
+            const found = vtxosToRecover.length;
             vtxosToRecover = vtxosToRecover.filter(
                 (vtxo) => !refused.has(`${vtxo.txid}:${vtxo.vout}`),
             );
@@ -1210,8 +1223,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                               .map(([outpoint, reason]) => `${outpoint}: ${reason}`)
                               .join("; ");
                 throw new Error(
-                    `All ${held} recoverable VTXO(s) are held by a contract that refuses a ` +
-                        `spend right now: ${why}`,
+                    `All ${found} recoverable VTXO(s) are held by reserveVtxos or by a ` +
+                        `contract that refuses a spend right now: ${why}`,
                 );
             }
             ({ vtxosToRecover } = getRecoverableWithSubdust(vtxosToRecover, dustAmount, now));
@@ -1971,7 +1984,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const boardingAddress = await this.wallet.getBoardingAddress();
 
-        const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
+        const feeRate = await providerFeeRate(this.getOnchainProvider());
 
         // Each coin spends through the exit leaf of the boarding address it sits on: rotation and
         // signer changes leave coins at addresses whose leaf differs from the current one.
@@ -2164,12 +2177,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Two independent legs (see MigrationLegReport), run sequentially: each acquires the
         // wallet tx lock itself.
 
-        // VTXO leg: no settlement events.
-        if (vtxoMigratable.length > 0) {
+        // VTXO leg: no settlement events. A held coin is not ours to move; it waits for release.
+        const held = await heldOutpointsOf(this.wallet);
+        const vtxoLeg = vtxoMigratable.filter((c) => !held.has(`${c.vtxo.txid}:${c.vtxo.vout}`));
+        logExcludedVtxos(
+            "migrateDeprecatedSignerVtxos",
+            vtxoMigratable.map((c) => c.vtxo),
+            [outpointExclusion(held, HELD_REASON)],
+        );
+        if (vtxoLeg.length > 0) {
             // One chain tip shared with the send path — see {@link canMigrateBySend}.
             const now = await fetchTimeHeight(this.wallet);
             report.vtxos = await this.runMigrationLeg(
-                vtxoMigratable,
+                vtxoLeg,
                 (c) => c.vtxo.value,
                 classifiedToRef,
                 vtxoMaxAmount,

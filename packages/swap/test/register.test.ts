@@ -17,7 +17,9 @@ import {
     type OnchainProvider,
 } from "@arkade-os/sdk";
 import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
-import { requestArkadeSwap, type RfqTransport } from "../src/rfq";
+import { requestArkadeSwap } from "../src/rfq";
+import { ASSET_SWAP_DIRECTED } from "../src/program";
+import type { AttestingRfqTransport } from "../src/client/transport";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
 // all real here — only the wallet's view of the server and the contract manager
@@ -96,11 +98,19 @@ const wallet = {
 // overridden so the golden expectations don't move with the pinned constants
 const emulatorPubkey = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
+const TAKER = hex.encode(schnorr.getPublicKey(new Uint8Array(32).fill(7)));
 const create = (maker: IWallet = wallet) =>
     createOffer(maker, {
         wantAmount: BigInt(50_000),
         wantAsset: testAsset,
         emulatorPubkey,
+    });
+const createDirected = () =>
+    createOffer(wallet, {
+        wantAmount: BigInt(50_000),
+        wantAsset: testAsset,
+        emulatorPubkey,
+        taker: hex.decode(TAKER),
     });
 
 // file-level, not per-describe: the mocked provider is module state, so a
@@ -117,14 +127,11 @@ describe("offer contract registration", () => {
     // check passes by construction and from_amount is whatever the solver asked.
     it("refuses an exact-out quote whose from_amount exceeds the caller's cap", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await createOffer(wallet, {
-            wantAmount: BigInt(50_000),
-            wantAsset: testAsset,
-            emulatorPubkey,
-        });
+        const expected = await createDirected();
         const rfqId = "33".repeat(32);
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
-        const gouging: RfqTransport = {
+        const gouging: AttestingRfqTransport = {
+            attestedResponder: TAKER,
             requestQuote: vi.fn(async () => ({
                 v: 1 as const,
                 type: "rfq_quote" as const,
@@ -133,8 +140,9 @@ describe("offer contract registration", () => {
                 // 1000x a fair deposit, while to_amount echoes the request.
                 from_amount: "700000",
                 to_amount: "50000",
-                solver_pubkey: "22".repeat(32),
+                solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
+                contract_version: ASSET_SWAP_DIRECTED,
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),
@@ -178,14 +186,11 @@ describe("offer contract registration", () => {
 
     it("requests an asset-to-asset RFQ and derives a want-asset-only offer", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await createOffer(wallet, {
-            wantAmount: BigInt(50_000),
-            wantAsset: testAsset,
-            emulatorPubkey,
-        });
+        const expected = await createDirected();
         const rfqId = "11".repeat(32);
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
-        const transport: RfqTransport = {
+        const transport: AttestingRfqTransport = {
+            attestedResponder: TAKER,
             requestQuote: vi.fn(async () => ({
                 v: 1 as const,
                 type: "rfq_quote" as const,
@@ -193,8 +198,9 @@ describe("offer contract registration", () => {
                 pair,
                 from_amount: "700",
                 to_amount: "50000",
-                solver_pubkey: "22".repeat(32),
+                solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
+                contract_version: ASSET_SWAP_DIRECTED,
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),
@@ -226,10 +232,11 @@ describe("offer contract registration", () => {
     /** A solver whose dust is not 330 prices against its own; the constant would misfund. */
     it("funds the carrier the solver published, not the SDK constant", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await create();
+        const expected = await createDirected();
         const rfqId = "33".repeat(32);
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
-        const quoteWith = (carrier?: string): RfqTransport => ({
+        const quoteWith = (carrier?: string): AttestingRfqTransport => ({
+            attestedResponder: TAKER,
             requestQuote: vi.fn(async () => ({
                 v: 1 as const,
                 type: "rfq_quote" as const,
@@ -238,8 +245,9 @@ describe("offer contract registration", () => {
                 from_amount: "700",
                 to_amount: "50000",
                 ...(carrier === undefined ? {} : { carrier_sats: carrier }),
-                solver_pubkey: "22".repeat(32),
+                solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
+                contract_version: ASSET_SWAP_DIRECTED,
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),
@@ -248,7 +256,7 @@ describe("offer contract registration", () => {
             status: vi.fn(async () => null),
             close: vi.fn(async () => undefined),
         });
-        const request = (transport: RfqTransport) =>
+        const request = (transport: AttestingRfqTransport) =>
             requestArkadeSwap(wallet, transport, {
                 offerAsset,
                 wantAsset: testAsset,

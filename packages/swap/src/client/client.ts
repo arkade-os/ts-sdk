@@ -122,6 +122,9 @@ export interface SwapClientConfig {
 export interface AcceptOptions {
     /** Final funding submission deadline, Unix seconds, capped by the quote expiry. */
     readonly validUntil?: number;
+    /** `false` funds an offer with no packet. Default on: a seed-only restore finds an unfilled
+     * deposit by it. Kept on the record, so a resumed funding chooses the same. */
+    readonly attachOfferPacket?: boolean;
 }
 
 export interface SwapClient {
@@ -916,6 +919,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             return acceptQuote({
                 quote,
                 ...(validUntil === undefined ? {} : { validUntil }),
+                ...(options?.attachOfferPacket === false ? { attachOfferPacket: false } : {}),
                 ...(preparation === undefined ? {} : { preparation }),
                 wallet,
                 repository: config.repository,

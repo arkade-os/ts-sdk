@@ -338,7 +338,8 @@ describe("crossAssetRail.send", () => {
         expect(result).toEqual({
             railId: CROSS_ASSET_RAIL,
             txid: "pay-txid",
-            swapId: offer.offerHex,
+            // the covenant's script, which a directed offer has whether or not it has a TLV
+            swapId: "5120",
         });
     });
 

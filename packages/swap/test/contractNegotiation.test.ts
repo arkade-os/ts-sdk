@@ -1,135 +1,131 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { asset } from "@arkade-os/sdk";
-import { requestArkadeSwap, SwapRefusal, type RfqTransport } from "../src/rfq";
-import { createOffer, deriveOffer, offerContract } from "../src/offer";
-import {
-    ASSET_SWAP_CONTRACT_VERSIONS,
-    ASSET_SWAP_V2,
-    ASSET_SWAP_V3,
-    type AssetSwapContractVersion,
-} from "../src/program";
-import { acceptWallet } from "./client/fixtures";
+import { requestArkadeSwap, requestVersionedQuote, SwapRefusal, type RfqQuote } from "../src/rfq";
+import { createOffer, decodeOffer, deriveOffer, offerContract } from "../src/offer";
+import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED, type AssetSwapContractVersion } from "../src/program";
+import type { AttestingRfqTransport } from "../src/client/transport";
+import { acceptWallet, SOLVER_DISCOVERY_KEY } from "./client/fixtures";
+
+vi.mock("../src/offer", async (original) => {
+    const actual = await original<typeof import("../src/offer")>();
+    return { ...actual, createOffer: vi.fn(actual.createOffer) };
+});
 
 const wantAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const emulatorPubkey = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
-const advertised = [ASSET_SWAP_V3, ASSET_SWAP_V2];
+const TAKER = SOLVER_DISCOVERY_KEY;
+
+const quoteOf = (
+    offer: { address: string; swapPkScript: Uint8Array },
+    contractVersion?: string,
+): RfqQuote => ({
+    v: 1,
+    type: "rfq_quote",
+    rfq_id: "11".repeat(32),
+    pair: `arkade:BTC->arkade:${wantAsset}`,
+    from_amount: "700",
+    to_amount: "50000",
+    solver_pubkey: TAKER,
+    valid_until: 1_800_000_060,
+    ...(contractVersion !== undefined ? { contract_version: contractVersion } : {}),
+    profile: { offer_address: offer.address, offer_pk_script: hex.encode(offer.swapPkScript) },
+});
 
 const setup = async (
     quotedVersion: AssetSwapContractVersion,
     contractVersion?: string,
-    contractVersions: readonly string[] | null = advertised,
+    attestedResponder: string | null = TAKER,
 ) => {
     const f = await acceptWallet();
-    const derive = (contractVersion: AssetSwapContractVersion) =>
-        deriveOffer(f.wallet, { wantAmount: 50_000n, wantAsset, emulatorPubkey, contractVersion });
-    const [current, previous] = await Promise.all([
-        derive("asset-swap-v3"),
-        derive("asset-swap-v2"),
-    ]);
-    const quoted = quotedVersion === "asset-swap-v3" ? current : previous;
-    const requestQuote = vi.fn(async (_payload: Record<string, unknown>) => ({
-        v: 1 as const,
-        type: "rfq_quote" as const,
-        rfq_id: "11".repeat(32),
-        pair: `arkade:BTC->arkade:${wantAsset}`,
-        from_amount: "700",
-        to_amount: "50000",
-        solver_pubkey: "22".repeat(32),
-        valid_until: 1_800_000_060,
-        ...(contractVersion !== undefined ? { contract_version: contractVersion } : {}),
-        profile: {
-            offer_address: quoted.address,
-            offer_pk_script: hex.encode(quoted.swapPkScript),
-        },
-    }));
-    const transport: RfqTransport = {
+    const quoted = await deriveOffer(f.wallet, {
+        wantAmount: 50_000n,
+        wantAsset,
+        emulatorPubkey,
+        contractVersion: quotedVersion,
+        ...(quotedVersion === ASSET_SWAP_DIRECTED ? { taker: hex.decode(TAKER) } : {}),
+    });
+    const requestQuote = vi.fn(async (_payload: Record<string, unknown>) =>
+        quoteOf(quoted, contractVersion),
+    );
+    const transport: AttestingRfqTransport = {
+        ...(attestedResponder === null ? {} : { attestedResponder }),
         requestQuote,
         status: async () => null,
         close: async () => {},
     };
+    vi.mocked(createOffer).mockClear();
     const request = () =>
         requestArkadeSwap(f.wallet, transport, {
             wantAsset,
             amount: 700n,
             emulatorPubkey,
-            ...(contractVersions !== null ? { contractVersions } : {}),
             now: 1_800_000_000,
         });
-    return { current, previous, request, requestQuote };
+    return { ...f, quoted, request, requestQuote };
 };
 
 describe("requestArkadeSwap contract version negotiation", () => {
-    it("rejects an empty contractVersions list before sending anything", async () => {
-        const f = await setup("asset-swap-v2", undefined, []);
-        await expect(f.request()).rejects.toThrow("contractVersions is empty");
-        expect(f.requestQuote).not.toHaveBeenCalled();
+    it("advertises asset-swap-directed alone", async () => {
+        const f = await setup(ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED);
+        await f.request();
+        expect(f.requestQuote.mock.calls[0]?.[0]).toMatchObject({
+            contract_versions: [ASSET_SWAP_DIRECTED],
+        });
     });
 
-    it("derives the previous tree when the solver picks an advertised older contract version", async () => {
-        const f = await setup("asset-swap-v2", ASSET_SWAP_V2);
-        expect(f.previous.address).not.toBe(f.current.address);
+    it("binds the attested responder as the taker of the offer it registers", async () => {
+        const f = await setup(ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED);
         const result = await f.request();
-        expect(result.address).toBe(f.previous.address);
-        expect(result.offerHex).toBe(f.previous.offerHex);
+        expect(result.address).toBe(f.quoted.address);
+        expect(decodeOffer(hex.decode(result.offerHex)).taker).toEqual(hex.decode(TAKER));
+        expect(createOffer).toHaveBeenCalledWith(
+            f.wallet,
+            expect.objectContaining({ taker: hex.decode(TAKER) }),
+        );
+        expect(f.contracts.map((row) => row.script)).toEqual([hex.encode(result.swapPkScript)]);
     });
 
-    it("refuses a contract version it did not advertise, naming the offered list", async () => {
-        const f = await setup("asset-swap-v2", "asset-swap-v9");
+    it("refuses a directed quote over a transport that attests nobody, before creating the offer", async () => {
+        const f = await setup(ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED, null);
+        await expect(f.request()).rejects.toMatchObject({
+            name: "QuoteVerificationFailed",
+            check: "responder",
+        });
+        expect(createOffer).not.toHaveBeenCalled();
+        expect(f.contracts).toHaveLength(0);
+    });
+
+    it("refuses a quote that names no contract version, before creating the offer", async () => {
+        const f = await setup(ASSET_SWAP_V2);
+        await expect(f.request()).rejects.toThrow("solver negotiated no contract version");
+        expect(createOffer).not.toHaveBeenCalled();
+    });
+
+    it.each(["asset-swap-v3", ASSET_SWAP_V2])("refuses a quote echoing %s", async (version) => {
+        const f = await setup(ASSET_SWAP_V2, version);
         await expect(f.request()).rejects.toThrow(
-            `solver chose contract version asset-swap-v9, not one of ${advertised.join(", ")}`,
+            `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED}`,
         );
+        expect(createOffer).not.toHaveBeenCalled();
     });
 
-    it("derives the previous tree when the solver names no contract version", async () => {
-        const f = await setup("asset-swap-v2");
-        const result = await f.request();
-        expect(result.address).toBe(f.previous.address);
-    });
-
-    it("refuses an unnamed contract version when the caller did not advertise the baseline", async () => {
-        const f = await setup("asset-swap-v2", undefined, [ASSET_SWAP_V3]);
-        await expect(f.request()).rejects.toThrow(
-            `solver chose contract version ${ASSET_SWAP_V2}, not one of ${ASSET_SWAP_V3}`,
-        );
-    });
-
-    it("advertises [asset-swap-v3, asset-swap-v2] and takes the current tree on v3", async () => {
-        const f = await setup("asset-swap-v3", ASSET_SWAP_V3, null);
-        const result = await f.request();
-        expect(result.address).toBe(f.current.address);
-        expect(f.requestQuote).toHaveBeenCalledWith(
-            expect.objectContaining({ contract_versions: [...ASSET_SWAP_CONTRACT_VERSIONS] }),
-        );
-    });
-
-    it("asks a solver that refuses the list once more without it, taking the baseline", async () => {
-        const f = await setup("asset-swap-v2", undefined, null);
+    it("does not ask again without the list after a bare unsupported_payload", async () => {
+        const f = await setup(ASSET_SWAP_V2);
         f.requestQuote.mockRejectedValueOnce(new SwapRefusal("unsupported_payload"));
-        const result = await f.request();
-        expect(result.address).toBe(f.previous.address);
-        expect(f.requestQuote).toHaveBeenCalledTimes(2);
-        const [[first], [second]] = f.requestQuote.mock.calls as [Record<string, unknown>][];
-        expect(second).not.toHaveProperty("contract_versions");
-        expect(second?.rfq_id).not.toBe(first?.rfq_id);
-        expect(result.rfqId).toBe(second?.rfq_id);
-    });
-
-    it("refuses a retried quote that names a contract version nobody advertised", async () => {
-        const f = await setup("asset-swap-v3", ASSET_SWAP_V3, null);
-        f.requestQuote.mockRejectedValueOnce(new SwapRefusal("unsupported_payload"));
-        await expect(f.request()).rejects.toThrow("but none was advertised");
+        await expect(f.request()).rejects.toMatchObject({ reason: "unsupported_payload" });
+        expect(f.requestQuote).toHaveBeenCalledTimes(1);
     });
 
     it("does not retry any other refusal", async () => {
-        const f = await setup("asset-swap-v2", undefined, null);
+        const f = await setup(ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED);
         f.requestQuote.mockRejectedValueOnce(new SwapRefusal("no_liquidity"));
         await expect(f.request()).rejects.toMatchObject({ reason: "no_liquidity" });
         expect(f.requestQuote).toHaveBeenCalledTimes(1);
     });
 
     it("does not retry a solver that read the list and supports none of it", async () => {
-        const f = await setup("asset-swap-v2", undefined, null);
+        const f = await setup(ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED);
         f.requestQuote.mockRejectedValueOnce(
             new SwapRefusal("unsupported_payload", undefined, {
                 errorCode: "contract_version_unsupported",
@@ -139,6 +135,59 @@ describe("requestArkadeSwap contract version negotiation", () => {
             errorCode: "contract_version_unsupported",
         });
         expect(f.requestQuote).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("requestVersionedQuote", () => {
+    const advertised = [ASSET_SWAP_DIRECTED, ASSET_SWAP_V2];
+    const request = { rfq_id: "33".repeat(32), contract_versions: advertised };
+    const answering = (contractVersion?: string) => ({
+        requestQuote: vi.fn(async (_payload: Record<string, unknown>) =>
+            quoteOf({ address: "tark1quoted", swapPkScript: new Uint8Array(34) }, contractVersion),
+        ),
+        status: async () => null,
+        close: async () => {},
+    });
+
+    it("rejects an empty list before sending anything", async () => {
+        const transport = answering(ASSET_SWAP_DIRECTED);
+        await expect(requestVersionedQuote(transport, request, [])).rejects.toThrow(
+            "contractVersions is empty",
+        );
+        expect(transport.requestQuote).not.toHaveBeenCalled();
+    });
+
+    it("refuses a contract version it did not advertise, naming the offered list", async () => {
+        await expect(
+            requestVersionedQuote(answering("asset-swap-v9"), request, advertised),
+        ).rejects.toThrow(
+            `solver chose contract version asset-swap-v9, not one of ${advertised.join(", ")}`,
+        );
+    });
+
+    it("reads a quote naming none as the baseline when the baseline was advertised", async () => {
+        await expect(
+            requestVersionedQuote(answering(), request, advertised),
+        ).resolves.toMatchObject({ contractVersion: ASSET_SWAP_V2 });
+    });
+
+    it("asks once more without the list when the baseline was advertised", async () => {
+        const transport = answering();
+        transport.requestQuote.mockRejectedValueOnce(new SwapRefusal("unsupported_payload"));
+        const result = await requestVersionedQuote(transport, request, advertised);
+        expect(result.contractVersion).toBe(ASSET_SWAP_V2);
+        const [[first], [second]] = transport.requestQuote.mock.calls;
+        expect(second).not.toHaveProperty("contract_versions");
+        expect(second?.rfq_id).not.toBe(first?.rfq_id);
+        expect(result.rfqId).toBe(second?.rfq_id);
+    });
+
+    it("refuses a retried quote that names a contract version nobody advertised", async () => {
+        const transport = answering(ASSET_SWAP_DIRECTED);
+        transport.requestQuote.mockRejectedValueOnce(new SwapRefusal("unsupported_payload"));
+        await expect(requestVersionedQuote(transport, request, advertised)).rejects.toThrow(
+            "but none was advertised",
+        );
     });
 });
 
@@ -160,5 +209,22 @@ describe("offer contract version default", () => {
         expect(hex.encode(offerContract(previous.binding, previous.operatorPubkey).pkScript)).toBe(
             hex.encode(previous.swapPkScript),
         );
+    });
+
+    it("refuses asset-swap-v3 as an unknown version, and registers nothing", async () => {
+        const f = await acceptWallet();
+        const params = {
+            wantAmount: 50_000n,
+            wantAsset,
+            emulatorPubkey,
+            contractVersion: "asset-swap-v3" as never,
+        };
+        await expect(deriveOffer(f.wallet, params)).rejects.toThrow(
+            "unknown contract version asset-swap-v3",
+        );
+        await expect(createOffer(f.wallet, params)).rejects.toThrow(
+            "unknown contract version asset-swap-v3",
+        );
+        expect(f.contracts).toHaveLength(0);
     });
 });

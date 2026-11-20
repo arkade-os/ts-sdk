@@ -158,14 +158,30 @@ describe.each([
     });
 
     describe("ExpoIndexerProvider — may be its own origin", () => {
-        it("sends no Arkade headers on the subscription", async () => {
+        it("sends only X-SDK-VERSION on the subscription", async () => {
             const provider = await indexerProvider();
 
             const init = await requestFrom(
                 provider.getSubscription("sub-1", new AbortController().signal),
             );
 
-            expect(arkadeHeadersOf(init)).toEqual(NO_ARKADE_HEADERS);
+            expect(arkadeHeadersOf(init)).toEqual({
+                ...NO_ARKADE_HEADERS,
+                "X-SDK-VERSION": sdkVersion,
+            });
+        });
+
+        it("sends no Arkade headers on the subscription from a page origin", async () => {
+            vi.stubGlobal("location", { origin: "https://wallet.test" });
+            try {
+                const provider = await indexerProvider();
+                const init = await requestFrom(
+                    provider.getSubscription("sub-1", new AbortController().signal),
+                );
+                expect(arkadeHeadersOf(init)).toEqual(NO_ARKADE_HEADERS);
+            } finally {
+                vi.unstubAllGlobals();
+            }
         });
 
         it("still sends the headers the subscription does need", async () => {

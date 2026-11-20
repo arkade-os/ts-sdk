@@ -107,7 +107,7 @@ export const legsAgree = (s: Swap): QuoteLeg => s.give;
 // ── The two records are told apart by their tag, never by a probe ──────────
 
 export const familyDiscriminates = (record: SwapRecord): string =>
-    record.family === "offer" ? record.offerHex : record.lockupAddress;
+    record.family === "offer" ? record.swapPkScript : record.lockupAddress;
 
 // @ts-expect-error the offer arm has no lockup
 export const noLockupOnOffer = (record: OfferSwapRecord): string => record.lockupAddress;

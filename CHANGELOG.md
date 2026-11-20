@@ -16,6 +16,68 @@ style and have not been backfilled.
 
 - **Inert open-RFQ placeholders are removed.** `SwapPolicy.selectBid`, `RfqAuctionPolicy.freshTransportKey` and `AuctionMarketRef` (a `MarketRef` member) were exported since 0.1.0 but never read or populated. Remove references to them; `openRfq()` and `quoteBid()` replace the auction they reserved, and an auction-closed quote keeps a card `MarketRef` with its `quote.auction` provenance.
 
+- **`@arkade-os/swap`: `asset-swap-v3` is removed.** It never saw use:
+  mutinynet had two v3 quotes, both lapsed unfilled, and mainnet none. This
+  build no longer derives, cancels or restores a v3 deposit, and reads
+  `asset-swap-v3` as an unknown contract version wherever it meets one
+  (`createOffer`, `deriveOffer`, `assetSwapContractVersion`, a recorded
+  binding). A stored v3 record still lists, and its cancel fails as
+  `OfferCovenantMismatchError` before anything is broadcast. `ASSET_SWAP_V3` is
+  no longer exported, `ASSET_SWAP_DERIVABLE_VERSIONS` is
+  `[asset-swap-directed, asset-swap-v2]`, and `contracts/asset-swap.ark`,
+  `contracts/sats-swap.ark` and their artifacts are deleted. The deprecated
+  `swapPrograms` export of `@arkade-os/swap/protocol` holds the `asset-swap-v2`
+  programs again, as it did before 0.1.8; code that compiled it with v3's
+  constructor args now throws (`makerWP` is not bound) rather than deriving
+  another address. v3's input-paired `fulfill`, paying `receiver` on the output
+  at the spending input's index, survives in the directed covenant,
+  `asset-swap-directed`. A newly derived offer stays on `asset-swap-v2`, an
+  offer that carries a `swapPkScript` compiles the tree its taker selects, and
+  v0 offer rows migrate onto `asset-swap-v2`.
+
+- **`@arkade-os/swap`: the directed covenant is renamed `asset-swap-directed`.**
+  0.1.10 shipped it as `asset-swap-v4`. Its contract version id is now
+  `asset-swap-directed`, `ASSET_SWAP_V4` is now `ASSET_SWAP_DIRECTED`, and
+  `contracts/asset-swap-v4` and `contracts/sats-swap-v4` (`.ark` and `.json`)
+  are now `asset-swap-directed` and `sats-swap-directed`. The id is a wire
+  value, so a 0.1.10 client negotiating `asset-swap-v4` and a solver on
+  `asset-swap-directed` refuse each other. A binding a 0.1.10 client recorded
+  under `asset-swap-v4` reads as an unknown contract version: the swap still
+  lists, but its cancel fails before anything is broadcast and the record stays
+  `pending`, and the restore scan skips its deposit. Deposit addresses are
+  unchanged: only names move, and the covenant compiles byte for byte as it did
+  in 0.1.10.
+
+- **`@arkade-os/swap`: asset RFQ negotiates only the directed covenant,
+  `asset-swap-directed`.** `ASSET_SWAP_CONTRACT_VERSIONS`, what every asset RFQ
+  advertises, is now `[asset-swap-directed]`, and
+  `SwapPolicy.assetSwapContractVersions` is removed. Before, an asset RFQ
+  advertised `asset-swap-v3` then `asset-swap-v2` and fell back to the v2
+  baseline. Now a solver that does not negotiate `asset-swap-directed` is
+  refused before anything is derived or funded: a quote echoing v3 or v2, or
+  naming no `contract_version`, fails, and a bare `unsupported_payload` refusal
+  is no longer retried without the list. The deprecated `requestArkadeSwap`
+  also advertises the directed covenant alone and loses `contractVersions`. It
+  binds the transport's attested responder as the taker, and refuses a
+  transport that attests nobody as the `responder` check
+  (`QuoteVerificationFailed`) before it creates the offer. It now takes an
+  `AttestingRfqTransport` (exported, with `attesting()`, from
+  `@arkade-os/swap/advanced`); a plain `RfqTransport` still type-checks but
+  attests nobody, so its quotes are refused. v2 deposits stay readable,
+  cancellable and restorable, `ASSET_SWAP_V2` stays exported, and public
+  (non-RFQ) offers are unchanged on the v2 baseline.
+
+- **`@arkade-os/swap`: `offerHex` is optional on `AssetSwap` and `OfferSwapRecord`.**
+  A directed swap keeps its covenant in the new `binding` field instead, as
+  hex and decimal strings so the record stays JSON. Code that reads `offerHex`
+  as always present must handle a record that has only `binding`. v2 records
+  still carry `offerHex`, and nothing rewrites them. The cross-asset
+  rail's `RouteResult.swapId`, and the key it documents for `persist`, are now
+  the covenant's `swapPkScript` hex rather than its `offerHex`.
+
+- **Service-worker pages and workers must use the same wallet request protocol.** Every wallet operation now carries its captured identity/operator/network binding, including reads used to construct quotes and transactions. Older page/worker combinations fail before wallet access; update both together. `ServiceWorkerWallet` and its readonly variant accept `expectedNetwork` to verify the configured network during bootstrap.
+- **A worker `clear()` can be refused.** `ServiceWorkerWallet.clear()` rejects while a settlement or another long-running request from a page is in flight. It also fails without wiping anything if the remaining requests take over 5s to drain; the page then reinitializes before retrying. A logout that clears unconditionally must handle the rejection.
+
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
 - **Arkade contract calls group their arguments by witness.** `contract.functions.<name>({ arkadeScript: [...], tapscript: [...] })` replaces the positional call, and programs declare inputs on the segment that uses them (`arkadeScript.inputs`, `tapscript.inputs`) instead of on the function. Widened programs are typed the same way, so a positional call no longer type-checks, and any call other than one such object (or none) is rejected at runtime. `ArkadeUnlocker.args` holds one map per segment. Compiled scripts are unchanged: a stored contract with function-level `inputs` still syncs, but its functions that take arguments fail until the program is re-created with those inputs moved onto its segments.
 - **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
@@ -28,18 +90,6 @@ style and have not been backfilled.
   key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
   keep the old key on disk.
 
-- **`@arkade-os/swap`: a new settlement leaf, used only when negotiated.** The
-  leaf is now the compiler artifact `asset-swap` or `sats-swap`
-  (`contracts/*.ark`). `fulfill` pays `receiver` on the output at the spending
-  input's index, so the same leaf can sit in a batch where input i is paid at
-  output i. A one-deposit fill is unchanged: the deposit stays input 0 and the
-  payout stays output 0. A newly derived offer address does not change by
-  default: an offer is derived on the previous tree unless the solver negotiates
-  `asset-swap-v3` over RFQ (`contractVersion: "asset-swap-v3"` opts in directly). An offer
-  that carries a `swapPkScript` compiles whichever tree matches it, so cancel,
-  fill, classify and restore keep rebuilding the address it was funded at. v0
-  offer rows migrate onto the previous tree. The deprecated `swapPrograms`
-  export of `@arkade-os/swap/protocol` now holds the new programs.
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already
@@ -131,16 +181,114 @@ style and have not been backfilled.
 
 - **Open RFQ discovers signed solver offers before selection.** The swap client broadcasts only canonical pair and atomic size, collects sealed exact-amount bids on the current version-1 wire, then verifies a chosen bidder through the existing directed quote and acceptance path. Routing pauses and registry policies still apply; selection never fails over or silently accepts worse terms. An onchain send with a fixed take amount broadcasts the claim-fee-inclusive amount its directed quote asks, and its offers report what the recipient nets. Auction funding dispatch deadlines survive reloads, while funded-swap reconciliation and recovery remain available after expiry. Collection keeps the best 64 bids within a fixed budget of 256 authenticated-reply decryptions. Returned offers are rechecked for expiry, and a received bid proves a relay carried the request even when its acknowledgement stalls or fails. Existing directed requests are unchanged. Open pairs join their two CAIP-19 legs with `->`, the separator directed pairs use.
 
+- **`@arkade-os/swap`: the drive cancels a directed deposit its quote let lapse.**
+  Only the quoting solver can fill an `asset-swap-directed` deposit, and it fills
+  nothing past `valid_until`, so once 60 seconds beyond it have passed with the
+  deposit unspent, a running drive cancels it through the usual `cancelling` to
+  `cancelled` path, retrying on each pass until it lands. A cancel that loses to
+  a late fill resolves as `filled`. A `readonly` drive, or a `manual` one before
+  `start()`, does nothing; v2 deposits, and records rebuilt from the chain
+  (whose deadline is not known), are left for the user to cancel.
+
+- **`@arkade-os/swap`: the restore scan takes its deposits from pluggable sources.**
+  `restoreAssetSwaps` accepts `sources`, each an `OfferRecoverySource` that answers
+  candidate funding txids with bindings, and marks the ones it rules out. The
+  default is `[packetRecoverySource(indexer)]`, the funding tx's own `0x03`
+  packet, so a restore with no sources passed finds what it found before. Answers
+  merge by funding txid, first source first, and a source that throws is skipped.
+  A source's binding is proven by the deposit at its script, and nothing else it
+  sends is trusted: packet bytes are kept only if they encode exactly that
+  covenant, an answer whose packet or binding does not hold up is dropped for
+  the next source or a later scan, and a binding sent without bytes has them
+  derived from it.
+  One case now scans differently: a funding whose `0x03` packet is present but
+  does not decode is left unscanned, so a later build gets a second look, rather
+  than marked answered for good. A funding with no packet, or another packet
+  type, is still marked scanned.
+
+- **`@arkade-os/swap`: `accept(quote, { attachOfferPacket: false })` funds an offer
+  without its packet.** The funding then shows only a payment to a taproot
+  output, and the terms stay off-chain until the deposit is spent. The packet
+  is also how a wallet restored from its seed alone finds an unfilled deposit,
+  so the default stays `true`, and a record funded without it is not found by a
+  seed-only restore. The choice is written on the record before funding, so a
+  resumed funding makes the same one. Unset, the funding is unchanged.
+
+- **`@arkade-os/swap`: asset quotes fund the directed covenant,
+  `asset-swap-directed`.** An asset quote advertises it alone (see Breaking
+  Changes). The client derives the covenant with the quote's `solver_pubkey`
+  as the taker, after checking that key is the responder the transport
+  attested; a mismatch is refused as the `responder` check, before anything is
+  derived. Accepting a quote records the covenant as its binding, with no
+  `offerHex`.
+
+- **`@arkade-os/swap`: a swap record can hold its covenant as a binding.** Every
+  reader takes either form: the store and the drive list a record with either,
+  legacy adoption accepts either, and cancel with its fill-race reconciliation,
+  the spend watcher, coverage restore and the restore scan's reopen all rebuild
+  from the binding when one is there. The drive re-reads a funded record's
+  deposit through its binding, so a deposit funded with no packet still learns
+  of a fill or cancel that landed while no client ran. A resumed funding
+  attaches the packet the binding encodes. The restore scan records a directed
+  deposit's packet as a binding. `deriveOffer` takes a `taker` and returns the
+  covenant as
+  `offerBinding`. A build with this change can read, cancel and restore a
+  directed deposit.
+
+- **`@arkade-os/swap`: offers rebuild from a structured binding, no TLV needed.**
+  `OfferBinding` holds everything that compiles an offer covenant, its version
+  included, so nothing is trial-compiled. `bindingProgram`, `bindingFromOffer`
+  and `offerFromBinding` convert between it and an `Offer`; on a v2 offer both
+  directions reproduce the pinned scripts byte for byte. `cancelOffer`,
+  `prepareOfferCancel`, `fillOffer`, `buildOfferFillPlan`, `classifySpend` and
+  `classifyDepositSpend` take a binding where they took the offer hex or a
+  decoded `Offer`; the result is the same spend either way. A binding pins its
+  own operator key, and `swapAddress`, when passed beside one, must be the
+  address it compiles to.
+
+- **`@arkade-os/swap`: offer TLV record `0x04` carries the taker.** `Offer.taker`
+  is the x-only solver key a directed offer binds, emitted after the maker key
+  (`0x07`) and before the emulator key (`0x08`); `encodeOffer` and
+  `decodeOffer` refuse any other width than 32 bytes. A taker selects the
+  `asset-swap-directed` tree and nothing else: an offer without one never
+  compiles it, an offer with one never compiles v2, and a funded script neither
+  reproduces still fails with the existing mismatch diagnosis. Decoders from
+  before this release refuse the record (`unknown TLV type: 0x4`), as the strict
+  codec intends, so an older taker reads a directed funding as no swap at all.
+
+- **`@arkade-os/swap`: the directed asset-swap covenant, `asset-swap-directed`.**
+  Its `fulfill` leaf adds the quoting solver's `taker` key to the server and
+  emulator, so only that solver can complete a funded deposit; `cancel` and
+  `exit` need no solver. `ASSET_SWAP_DIRECTED` names it, and
+  `contracts/asset-swap-directed.ark` and `contracts/sats-swap-directed.ark` hold
+  its source. `ASSET_SWAP_DERIVABLE_VERSIONS` lists every version this build
+  derives (`asset-swap-directed`, `asset-swap-v2`);
+  `ASSET_SWAP_CONTRACT_VERSIONS`, what an asset RFQ advertises, is the directed
+  covenant alone. It refuses to compile without a taker, and v2 refuses one.
+
+- **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
+  can import the negotiation field names, refusal code, and asset contract IDs
+  without loading the client or contract builders. Existing `/protocol` exports
+  keep their names and values.
+
+- **The indexer can tell SDK callers apart.** `RestIndexerProvider` and
+  `ExpoIndexerProvider` send `X-SDK-VERSION` on REST calls and subscriptions
+  from runtimes with no page or worker origin, such as Node and React Native.
+  Browsers and workers send nothing new: a custom header there needs a CORS
+  preflight an indexer on its own origin may refuse. `X-Build-Version` stays
+  arkd-only.
+
 - **`@arkade-os/swap`: asset RFQ negotiates the contract version.**
   `requestArkadeSwap` and the `SwapClient` asset quote send `contract_versions`
-  (by default `ASSET_SWAP_CONTRACT_VERSIONS`, `asset-swap-v3` first); the
-  quote's `contract_version` picks the tree the offer is derived on. A quote
-  naming none is the baseline `asset-swap-v2`. A solver that refuses the field
-  with a bare `unsupported_payload` is asked once more without it, under a fresh
-  `rfq_id`. A choice outside the advertised list, or a version this build cannot
-  derive, is refused before funding.
+  (`ASSET_SWAP_CONTRACT_VERSIONS`); the quote's `contract_version` picks the
+  tree the offer is derived on. A choice outside the advertised list, a quote
+  naming none, or a version this build cannot derive, is refused before funding.
 
 - **Arkade Cash status, claim correlation, and activity through service-worker wallets.** Add public voucher issue/status records, expose create, inspect, and claim operations alongside existing wallet primitives, and resolve their funding and sweep transactions into arkade-cash activities without exposing bearer tokens. Records and status reports list `issues` and `claims` as `{ txid, amount }` (`ArkadeCashTx`), so a voucher's share of a shared funding transaction or a multi-sweep claim is exact. `ArkadeCashClaimResult.claims` has the same shape and includes sweeps finalized from previously pending claims. `addArkadeCashRecord` merges into an existing record through the exported `mergeArkadeCashRecord` (transactions unioned by txid, a claim outranks an issue), so a worker's recovery record no longer overwrites the page's record for the same voucher. Recording a recovered voucher's settlement runs inside the serialized wallet-state update, so concurrent recoveries keep each other's records and a failed state read can no longer wipe them. Issuing and reclaiming one voucher resolve to two activities (`arkade-cash:<id>:issued` and `:claimed`) instead of collapsing into one. An issue correlates only with a sent row and a claim only with a received row, so the same txid in a history of the other direction (a claimer's received funding row, an issuer's sent fee row) is never labelled. A claim recorded under a batch commitment, as a recovery settlement is, correlates only with the received row of exactly its amount, and boarding rows never correlate, so the other rows of that round are neither counted into the claim nor labelled "Cash claimed". Status reports list a coin spent by a batch settlement as a claim under the settlement's commitment txid, so an issuer sees the claim of a recovered voucher too; the amount is the coin's value before intent fees. Through a service worker, `create` and `claim` run with no message deadline on either side, so a slow multi-sweep claim or funded create still returns its result instead of a timeout. A funded-but-failed `create` rejects on the page with a real `ArkadeCashCreateError` whose `.cash` holds the recovery token, exactly as an in-process `Wallet.createCash` does.
+
+- **Export the SDK's boarding expiry classification.** `classifyBoardingExpiry`, `decodeBoardingExit` and `BoardingExpiry` let backend integrations reuse the existing median-time-aware classification instead of copying it.
+
+- **Worker reservations survive a closed tab and a restarted worker.** `ServiceWorkerWallet.reserveVtxos(outpoints, reservationId)` commits an external hold before acknowledging it, and restores every hold before automatic spending starts. Reusing the operation id resumes the same inputs; the owning application releases it only after establishing settlement or non-submission. A handle releases its id only while the id still names the handle's inputs, so a stale handle from an earlier resume leaves a newer hold under the same id alone, and editing a handle's returned `outpoints` cannot stop its release. Acquiring and releasing a hold never waits for an in-progress settlement, and a hold refuses inputs an SDK spend is already submitting, `buildAndSubmitOffchainTx` included. SDK sends and settlements refuse persistently held inputs, including explicit selections, so recovery and deprecated-signer migration leave held VTXOs out instead of failing. The direct wallet's synchronous `reserveVtxos(outpoints)` stays local and keeps its holder bypass; passing a reservation id makes the hold durable when `StorageConfig.vtxoReservationRepository` is configured, so a plugin gets the same guarantee from either wallet. The worker uses an IndexedDB store scoped to wallet identity and operator URL. Clearing the wallet drops its durable holds, and stored holds that overlap restore with a warning instead of failing startup: an outpoint they share stays held until every hold naming it is released. `ContractManager.reconcilePendingBatchRegistrations()` retries recovery through the wallet's active-settlement guard.
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
@@ -166,6 +314,52 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **Indexer reads return every page.** arkd serves at most 100 rows per page whatever size is requested, while the readers asked for 500 and treated any shorter page as the last one. Wallet syncs, exit-data collection, HD script discovery and the Expo contract poll therefore kept only the first 100 matches per query. Every indexer page walk now follows the server's `next` cursor, ends when the cursor stops advancing, and throws after 1000 pages.
+
+- **Esplora address history includes older transactions.** `getTransactions` read only `/address/:address/txs`, which holds the newest page. It now follows `/txs/chain/:last_seen` for the rest, and keeps the first page when an explorer has no such route. `getRawTransaction` bytes must hash to the requested txid, and `getCoins` validates amounts and output indices.
+
+- **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do. `Arkade.connect` also checks the script's key against the forfeit key when the operator advertises one.
+
+- **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.
+
+- **Untrusted encodings are parsed within bounds.** A batch tree that reaches a transaction twice is rejected before it is expanded, and its roots are found in one pass. CLTV leaves refuse a locktime that does not fit in 32 bits. Artifact layouts have a size budget. Asset metadata lists over 1000 entries and varints over 64 bits are rejected, as arkd rejects them.
+
+- **BIP21 ignores an `address` query parameter**; the destination is the URI path.
+
+- **Provider fee rates are capped at 1000 sat/vB** for on-chain sends, boarding and on-chain sweeps, unilateral exits and their fee bumps, and floored at 1 sat/vB everywhere. An explicit `feeRate` argument is used as given.
+
+- **Delegation refuses a negative delegate fee or one above 10% of the delegated amount.**
+
+- **`ElectrumOnchainProvider` fixes.** An unknown txid now reads as not found rather than unconfirmed, so unilateral exit broadcasts instead of waiting forever. Chain time fails when the median-time-past headers cannot be read instead of falling back to the tip's own timestamp, and a confirmation whose header is not yet indexed reads as unconfirmed. Fetched transactions must hash to the requested txid. `listunspent` amounts and indices are validated. Every history candidate, a lone one included, must spend the output before it is reported as its spender, whatever its version or the scripts its outputs pay. Status notifications for the same script are coalesced, and a known transaction whose confirmation height changes is reported again.
+
+- **`@arkade-os/swap`: amount and HTLC checks.** Quotes, claims and stored receive swaps with a non-positive amount are refused before the preimage is published. On-chain HTLC tracking reads the spend of the recorded funding outpoint even when other outputs sit at the script, and a claim of an RBF-replaced funding re-records the outpoint it spends. A confirmed output is claimed ahead of a larger unconfirmed one, so a solver cannot stall the claim past its refund locktime by paying the script an output that never confirms. Refund locktimes must fit in 32 bits.
+
+- **`@arkade-os/swap`: a directed RFQ reply must be signed by the solver it was
+  addressed to.** The Nostr transport now drops any reply whose author is not
+  the solver's key, or whose event signature does not verify, whichever pool
+  delivered it. Before, it relied on the default pool's own checks, so a caller
+  passing a pool that verifies nothing could have the client's echoed request
+  accepted as the solver's answer.
+
+- **`@arkade-os/swap`: an asset RFQ quote prices a carrier-charging card in
+  either direction.** A market declaring `charges_delivered_carrier` refuses to
+  plan without `carrierSats`, but the negotiated asset path passed it only when
+  the client gave the asset — so every BTC-to-asset quote on such a card threw
+  "this market charges for the delivered carrier" out of the reference plan,
+  after the RFQ had already gone out. The plan is now always given a carrier
+  (`ASSET_CARRIER_SATS` where the solver publishes none of its own, as the
+  feed-priced path already did). What the trader funds is unchanged: the quote's
+  fee and the swap record still carry a carrier only for an asset deposit, so a
+  BTC deposit is still funded as plain sats.
+
+- **Retained service-worker proxies cannot read or spend a replacement wallet.** Wallet requests and contract-event subscriptions retain their original wallet binding. Requests capture their wallet, providers and repository before awaiting, and disposal drains admitted operations for up to 5s before closing their storage; settlements and other long-running operations are not waited for, so a re-init during a batch round is not blocked. Initialization separately drains its finite writes and finalization while pending subscription setup remains revocable; clearing revokes callbacks before draining. Reservation requests also verify the original network without changing durable hold namespaces, and timeout settings and settlement events still follow the original operation.
+
+- **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.
+
+- **Settlement refuses registration when its initial recovery proof cannot be saved.** With an intent repository configured, the first journal write is required before contacting the operator. A retry of an ambiguous proof retains its existing lock, while a previously terminal proof starts a fresh locked lifecycle. Later persistence errors still cannot cancel a completed batch.
+
+- **Spending stops when intent locks cannot be read.** Coin selection, explicit sends, settlements and durable reservation acquisition propagate a configured intent repository's read failure instead of treating it as an empty lock set. Explicit spending also refuses inputs held by another pending registration. Balance display retains its best-effort fallback.
 
 - **`ContractWatcher` no longer reconnects hard enough to hold a client over a
   rate limit.** Against a server or CDN refusing the subscription stream, the

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { hex } from "@scure/base";
 import { createSwapClient } from "../../src/client/client";
 import { expectQuote, SwapRefusal } from "../../src/rfq";
 import { AmountMismatch, QuoteVerificationFailed } from "../../src/client/errors";
@@ -12,6 +13,7 @@ import { swapOf, type SwapRecord } from "../../src/client/record";
 import {
     EMULATOR_PUBKEY_HEX,
     PAYMENT_HASH,
+    arkadeAssetAnswer,
     clockAt,
     hdWallet,
     acceptWallet,
@@ -564,9 +566,13 @@ describe("solver quote failover", () => {
                     : feed.fetch(url, init),
             transportFor: ({ card }) => {
                 attempts.push(card.solver);
-                return solverTransport(solverFor(CLOCK), {
-                    attestedResponder: card.discovery_pubkey,
-                });
+                return solverTransport(
+                    (payload) =>
+                        arkadeAssetAnswer(payload, CLOCK, {
+                            taker: hex.decode(card.discovery_pubkey!),
+                        }),
+                    { attestedResponder: card.discovery_pubkey },
+                );
             },
         });
         expect(
