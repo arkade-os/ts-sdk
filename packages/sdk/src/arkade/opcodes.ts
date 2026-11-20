@@ -12,8 +12,7 @@ import { OP } from "@scure/btc-signer";
 export { OP };
 
 export const ARKADE_OP = {
-    // Merkle root (0xb3 — repurposed NOP4 slot). MERKLEBRANCHVERIFY is the emulator's alias and the
-    // 0.1.0-rc.1 compiler's name; the later key names the byte when decoding.
+    // Merkle root (0xb3, repurposed NOP4). MERKLEBRANCHVERIFY is the rc.1 name; decoding uses the last.
     MERKLEBRANCHVERIFY: 0xb3,
     MERKLEBRANCHROOT: 0xb3,
 

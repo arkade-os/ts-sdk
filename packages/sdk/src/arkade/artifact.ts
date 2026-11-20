@@ -337,17 +337,16 @@ function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegme
 }
 
 /**
- * Expands each `<OPERATOR_KEY:f>` into `<OPERATOR_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:f>`: the
- * untweaked server key arkd requires in every forfeit leaf, then the emulator key tweaked by `f`'s
- * covenant. A leaf that already holds an untweaked `<OPERATOR_KEY>` or rc.1 `<SERVER_KEY>` gets no
- * second copy.
- * ponytail: exists only until arkd and the emulator move to the single operator key; delete it then,
- * so `<OPERATOR_KEY:f>` maps to the operator directly.
+ * Reads `<OPERATOR_KEY:f>` as the `f`-tweaked emulator key, preceded by the server key arkd requires
+ * in every non-CSV leaf unless the leaf already holds it.
+ * ponytail: temporary until arkd and the emulator move to the single operator key; delete it then.
  */
 function legacyOperatorLeaf(asm: string[]): string[] {
-    const server = asm.some((token) => token === "<OPERATOR_KEY>" || token === "<SERVER_KEY>")
-        ? []
-        : ["<OPERATOR_KEY>", "OP_CHECKSIGVERIFY"];
+    const skipServer =
+        asm.includes("OP_CHECKSEQUENCEVERIFY") ||
+        asm.includes("<OPERATOR_KEY>") ||
+        asm.includes("<SERVER_KEY>");
+    const server = skipServer ? [] : ["<OPERATOR_KEY>", "OP_CHECKSIGVERIFY"];
     return asm.flatMap((token) =>
         token.startsWith("<OPERATOR_KEY:")
             ? [...server, token.replace("OPERATOR_KEY:", "EMULATOR_KEY:")]
@@ -381,8 +380,7 @@ function parseLeaf(
     let csv: TapscriptSegment["csv"];
     let cltv: TapscriptSegment["cltv"];
     if (asm.length >= index + 3 && asm[index + 2] === "OP_DROP") {
-        // `<OPERATOR_EXIT_DELAY>` binds the same reserved param as `<SERVER_EXIT_DELAY>`, the name
-        // persisted bindings use.
+        // Persisted bindings name the exit delay SERVER_EXIT_DELAY.
         const operand =
             asm[index] === "<OPERATOR_EXIT_DELAY>"
                 ? "$SERVER_EXIT_DELAY"

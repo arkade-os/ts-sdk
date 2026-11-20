@@ -193,49 +193,58 @@ describe("reading an arkadec artifact", () => {
             "between other keys",
             ["<owner>", "<OPERATOR_KEY:claim>", "<taker>"],
             ["<owner>", "<SERVER_KEY>", "<EMULATOR_KEY:claim>", "<taker>"],
+            [],
         ],
         [
             "beside the untweaked key",
             ["<OPERATOR_KEY>", "<OPERATOR_KEY:claim>"],
             ["<SERVER_KEY>", "<EMULATOR_KEY:claim>"],
+            [],
         ],
         [
             "beside the rc.1 server key",
             ["<SERVER_KEY>", "<OPERATOR_KEY:claim>"],
             ["<SERVER_KEY>", "<EMULATOR_KEY:claim>"],
+            [],
         ],
-    ])(
-        "reads an operator key %s as one server key and the emulator key",
-        (_label, keys, legacy) => {
-            const read = (operands: string[]) =>
-                programFromArtifact(
-                    demo({
-                        constructorInputs: [
-                            { name: "owner", type: "pubkey" },
-                            { name: "taker", type: "pubkey" },
-                        ],
-                        functions: [
-                            {
-                                name: "claim",
-                                arkade: { inputs: [], asm: ["OP_1"] },
-                                leaves: [
-                                    {
-                                        name: "claim",
-                                        asm: operands.flatMap((operand, i) => [
+        [
+            "in a CSV leaf",
+            ["<owner>", "<OPERATOR_KEY:claim>"],
+            ["<owner>", "<EMULATOR_KEY:claim>"],
+            ["144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"],
+        ],
+    ])("reads an operator key %s like its rc.1 leaf", (_label, keys, legacy, timelock) => {
+        const read = (operands: string[]) =>
+            programFromArtifact(
+                demo({
+                    constructorInputs: [
+                        { name: "owner", type: "pubkey" },
+                        { name: "taker", type: "pubkey" },
+                    ],
+                    functions: [
+                        {
+                            name: "claim",
+                            arkade: { inputs: [], asm: ["OP_1"] },
+                            leaves: [
+                                {
+                                    name: "claim",
+                                    asm: [
+                                        ...timelock,
+                                        ...operands.flatMap((operand, i) => [
                                             operand,
                                             i === operands.length - 1
                                                 ? "OP_CHECKSIG"
                                                 : "OP_CHECKSIGVERIFY",
                                         ]),
-                                    },
-                                ],
-                            },
-                        ],
-                    }),
-                );
-            expect(read(keys)).toEqual(read(legacy));
-        },
-    );
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                }),
+            );
+        expect(read(keys)).toEqual(read(legacy));
+    });
 
     it("keeps every leaf in a multi-leaf covenant group", () => {
         const program = programFromArtifact(
