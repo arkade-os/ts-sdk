@@ -217,14 +217,16 @@ describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)
         // (11): closure is CLTV locked, ..."}`). So the shared pattern pins only
         // the prefix, which is what rules out a wrong-class failure (a bug in
         // this test, a fetch failure, a timeout elsewhere in the chain) reaching
-        // the `await` instead of a genuine emulator-side submission rejection,
-        // and the immature case, whose cause arkd names, also pins that name.
+        // the `await` instead of a genuine emulator-side submission rejection.
+        // The immature case also pins its cause: arkd's name on v0.0.10, the
+        // opaque code 13 on v0.0.9, which `.env.regtest` still pins.
         // The covenant refusals ((3) wrong destination, (4) short amount) are
         // matched on the prefix only: their body is whatever the emulator
         // release reports for a failed ArkadeScript, which is not part of the
         // contract this file tests.
         const EMULATOR_REJECTION = /Failed to submit tx to emulator:/;
-        const CLOSURE_LOCKED = /Failed to submit tx to emulator:.*FORFEIT_CLOSURE_LOCKED/;
+        const CLOSURE_LOCKED =
+            /Failed to submit tx to emulator:.*(FORFEIT_CLOSURE_LOCKED|"code":\s*13\b)/;
 
         await expect(
             contract.functions.refund().to(senderPkScript, CONTRACT_AMOUNT).send(),
