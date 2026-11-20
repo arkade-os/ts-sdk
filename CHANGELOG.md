@@ -315,6 +315,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: an offer swap record names its covenant.** `OfferSwapRecord`
+  now requires `offerHex`, `binding`, or both (the new `OfferCovenant` type), so
+  code that builds a record with neither no longer compiles. The restore scan
+  refuses to build one. A stored record with neither is still read, and it fails
+  on its own when something needs its covenant, never the whole collection.
+
 - **`@arkade-os/swap` depends on the published `@arkade-os/solver-discovery`
   0.4.0.** Its want amount rounds in the solver's favour at both steps: the
   conversion floors to a whole atomic unit, then the conceded bps share rounds
