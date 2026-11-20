@@ -52,8 +52,18 @@ const arkInfo = {
 const identity = SingleKey.fromHex(
     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
 );
-// an Executor is configured; the wallet never calls it for its addresses
-const executorProvider = {} as ExecutorProvider;
+const executorInfo = async () => ({
+    version: "test",
+    network: "mutinynet",
+    cosignerPubkey: vectors.cosignerPubkey,
+    serverPubkey: SERVER_KEY_HEX,
+    emulatorPubkey: vectors.emulatorPubkey,
+});
+// reports every watch active, so the startup refresh leaves them be
+const executorProvider = {
+    getInfo: executorInfo,
+    getDelegation: async () => ({ delegation: { status: "active" }, coins: [] }),
+} as unknown as ExecutorProvider;
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
@@ -89,6 +99,16 @@ async function executorRow(
     };
 }
 
+/** An operator that answers the contract manager's boot with nothing. */
+function stubOperator() {
+    mockFetch.mockImplementation(async (url: string) => {
+        if (url.includes("/info")) return jsonResponse(arkInfo);
+        if (url.includes("subscri")) return jsonResponse({ subscriptionId: "sub-1" });
+        if (url.includes("vtxo") || url.includes("scripts")) return jsonResponse({ vtxos: [] });
+        return jsonResponse([]);
+    });
+}
+
 async function walletWith(options: { executor: boolean; rows: boolean }) {
     const contractRepository = new InMemoryContractRepository();
     const renewal = await executorRow("renewal");
@@ -112,7 +132,8 @@ async function walletWith(options: { executor: boolean; rows: boolean }) {
  * `coinAtRenewal` stores a coin at that key's renewal contract before the wallet starts. `hold`
  * leaves every registration pending until `open()`, `fail()` or its signal aborts. `lazy` boots
  * the contract manager in the background. `delegation` is what the Executor says of a watch it is
- * asked about: held, `expired`, or `missing` (a 404).
+ * asked about: held, `expired`, or `missing` (a 404). `stat` makes it a static wallet at the
+ * identity key; `rows` seeds its watches live, as `lapsed` (not live) or not at all.
  */
 async function hdWalletWithWatch({
     refuse = false,
@@ -122,6 +143,8 @@ async function hdWalletWithWatch({
     renewalLive = false,
     failRenewal = false,
     delegation = "active",
+    stat = false,
+    rows = "live",
 }: {
     refuse?: boolean;
     coinAtRenewal?: boolean;
@@ -130,28 +153,31 @@ async function hdWalletWithWatch({
     renewalLive?: boolean;
     failRenewal?: boolean;
     delegation?: "active" | "expired" | "missing";
+    stat?: boolean;
+    rows?: "live" | "lapsed" | "none";
 } = {}) {
     // an HD wallet subscribes to its contracts at boot
     vi.stubGlobal(
         "EventSource",
         vi.fn().mockImplementation((url: string) => ({ url, close: vi.fn() })),
     );
-    mockFetch.mockImplementation(async (url: string) => {
-        if (url.includes("/info")) return jsonResponse(arkInfo);
-        if (url.includes("subscri")) return jsonResponse({ subscriptionId: "sub-1" });
-        if (url.includes("vtxo") || url.includes("scripts")) return jsonResponse({ vtxos: [] });
-        return jsonResponse([]);
-    });
-    const hd = MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
+    stubOperator();
+    const hd = stat ? identity : MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
     const renewal = await executorRow("renewal", hd);
     const boarding = await executorRow("boarding", hd);
     const contractRepository = new InMemoryContractRepository();
-    await contractRepository.saveContract(
-        renewalLive
-            ? { ...renewal.contract, metadata: { delegationStatus: "active" } }
-            : renewal.contract,
-    );
-    await contractRepository.saveContract(boarding.contract);
+    if (rows !== "none") {
+        await contractRepository.saveContract(
+            renewalLive
+                ? { ...renewal.contract, metadata: { delegationStatus: "active" } }
+                : renewal.contract,
+        );
+        await contractRepository.saveContract(
+            rows === "lapsed"
+                ? { ...boarding.contract, metadata: { delegationStatus: "local" } }
+                : boarding.contract,
+        );
+    }
     const walletRepository = new InMemoryWalletRepository();
     if (coinAtRenewal) {
         await saveVtxosForContract(walletRepository, renewal.contract, [
@@ -226,21 +252,16 @@ async function hdWalletWithWatch({
         if (delegation === "missing") throw new ExecutorRequestError("delegation not found", 404);
         return { delegation: { status: delegation }, coins: [] };
     });
+    const getInfo = vi.fn(executorInfo);
     const wallet = await Wallet.create({
         identity: hd,
-        walletMode: "hd",
+        ...(stat ? {} : { walletMode: "hd" as const }),
         arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: { walletRepository, contractRepository },
         settlementConfig: false,
         ...(lazy ? { lazyInitialization: true } : {}),
         executorProvider: {
-            getInfo: async () => ({
-                version: "test",
-                network: "mutinynet",
-                cosignerPubkey: vectors.cosignerPubkey,
-                serverPubkey: SERVER_KEY_HEX,
-                emulatorPubkey: vectors.emulatorPubkey,
-            }),
+            getInfo,
             registerDelegation,
             getDelegation,
         } as unknown as ExecutorProvider,
@@ -248,6 +269,7 @@ async function hdWalletWithWatch({
     const owner = hex.encode(await hd.compressedPublicKey());
     return {
         wallet,
+        getInfo,
         renewal,
         boarding,
         registerDelegation,
@@ -769,6 +791,48 @@ describe("delegated boarding address on an HD wallet", () => {
             await wallet.dispose();
         });
 
+        it("registers an expired watch of a static wallet again at startup", async () => {
+            const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+                delegation: "expired",
+                stat: true,
+            });
+
+            await boardChainIdle(wallet);
+            expect(registerDelegation).toHaveBeenCalledOnce();
+            expect(registerDelegation.mock.calls[0][0]).toBe(DEFAULT_TEMPLATE_IDS.boarding);
+            expect(await wallet.getBoardingAddress()).toBe(boardingAddress(boarding));
+            await wallet.dispose();
+        });
+
+        it("shows a static wallet's own address once its expired watch cannot be revived", async () => {
+            const { wallet, registerDelegation } = await hdWalletWithWatch({
+                delegation: "expired",
+                refuse: true,
+                stat: true,
+            });
+            vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            await boardChainIdle(wallet);
+            expect(registerDelegation).toHaveBeenCalledOnce();
+            expect(await wallet.getBoardingAddress()).toBe(wallet.ownBoardingAddress());
+            await wallet.dispose();
+        });
+
+        it.each(["none", "lapsed"] as const)(
+            "asks neither the Executor nor the operator without a live watch (%s)",
+            async (rows) => {
+                const { wallet, getInfo, getDelegation } = await hdWalletWithWatch({
+                    stat: true,
+                    rows,
+                });
+
+                await boardChainIdle(wallet);
+                expect(getInfo).not.toHaveBeenCalled();
+                expect(getDelegation).not.toHaveBeenCalled();
+                await wallet.dispose();
+            },
+        );
+
         it("shows the wallet's own address once an expired watch cannot be registered again", async () => {
             const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
                 delegation: "expired",
@@ -872,7 +936,7 @@ describe("delegated boarding address on an HD wallet", () => {
 describe("delegated boarding address", () => {
     beforeEach(() => {
         mockFetch.mockReset();
-        mockFetch.mockImplementation(async () => jsonResponse(arkInfo));
+        stubOperator();
     });
 
     it("boards at the delegated address and keeps the wallet's own Arkade address", async () => {
@@ -963,6 +1027,7 @@ describe("delegated boarding address", () => {
 
     it("reports boarded coins to incoming-funds subscribers, and deposits only as UTXOs", async () => {
         const { wallet, renewal, boarding } = await walletWith({ executor: true, rows: true });
+        await boardChainIdle(wallet);
         let emit: (event: unknown) => void = () => {};
         vi.spyOn(wallet, "getContractManager").mockResolvedValue({
             onContractEvent: (handler: (event: unknown) => void) => {
@@ -1014,6 +1079,7 @@ describe("delegated boarding address", () => {
         // one confirmed deposit at the delegated address, one at the wallet's own
         async function walletWithDeposits() {
             const ctx = await walletWith({ executor: true, rows: true });
+            await boardChainIdle(ctx.wallet);
             const delegated = ctx.boarding.script.onchainAddress(networks.mutinynet);
             const own = ctx.wallet.ownBoardingAddress();
             const coin = (txid: string, value: number) => ({

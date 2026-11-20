@@ -575,14 +575,20 @@ export class ExecutorManagerImpl implements IExecutorManager {
      * registration moves the boarding address. One that cannot be revived stops being live, and
      * the wallet boards its deposits itself. A failing watch leaves the others to be tried.
      *
-     * Throws when the Executor or the operator cannot be reached.
+     * Throws when a live watch is held and the Executor or the operator cannot be reached; a
+     * wallet with none reaches neither.
      * @internal
      */
     async refreshWatches(): Promise<void> {
+        const held = {
+            boarding: (await this.heldWatches("boarding")).filter((w) => w.live),
+            renewal: (await this.heldWatches("renewal")).filter((w) => w.live),
+        };
+        if (!held.boarding.length && !held.renewal.length) return;
         const context = await this.registrationContext();
         for (const template of ["boarding", "renewal"] as const) {
-            for (const watch of await this.heldWatches(template)) {
-                if (!watch.live || watch.signer !== context.server) continue;
+            for (const watch of held[template]) {
+                if (watch.signer !== context.server) continue;
                 try {
                     await this.refreshWatch(context, template, watch);
                 } catch (e) {

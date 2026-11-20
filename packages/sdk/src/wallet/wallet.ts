@@ -2869,6 +2869,7 @@ export class Wallet
 
     /** Rotates the boarding address once the Executor boards a deposit at it. */
     private _executorBoardUnsub?: () => void;
+    private _executorBootInstalled = false;
     private _executorBoardChain: Promise<void> = Promise.resolve();
     private _executorRefreshedAt = 0;
 
@@ -3140,33 +3141,44 @@ export class Wallet
     }
 
     /**
-     * Rotate-on-board for Executor watches: the Executor boards a deposit into the renewal
-     * contract of its key, so a coin there while that key is displayed means the address was used.
-     * Renewals and a delegated coin's change land there too, and the trigger is still correct: the
-     * coin proves the address was used.
+     * Startup work for an Executor: refresh its watches (every wallet), then, with a descriptor
+     * provider, rotate-on-board. The Executor boards a deposit into the renewal contract of its
+     * key, so a coin there while that key is displayed means the address was used. Renewals and a
+     * delegated coin's change land there too, and the trigger is still correct.
      */
-    private async installExecutorBoardRotation(): Promise<void> {
-        if (!this._descriptorProvider || !this._executorManager || this._executorBoardUnsub) return;
-        const manager = await this.getContractManager();
-        this._executorBoardUnsub = manager.onContractEvent((event) => {
-            if (event.type !== "vtxo_received" || !isContractVtxoEvent(event)) return;
-            const { type, params } = event.contract;
-            if (type !== ExecutorContractHandler.type || params.template !== "renewal") return;
-            this.queueExecutorBoardRotation(params.owner);
-        });
+    private async installExecutorBoot(): Promise<void> {
+        if (!this._executorManager || this._executorBootInstalled) return;
+        const rotates = !!this._descriptorProvider;
+        // A static wallet keeps its contract manager lazy: the task below boots it.
+        const eager = rotates ? await this.getContractManager() : undefined;
+        this._executorBootInstalled = true;
+        if (eager) {
+            this._executorBoardUnsub = eager.onContractEvent((event) => {
+                if (event.type !== "vtxo_received" || !isContractVtxoEvent(event)) return;
+                const { type, params } = event.contract;
+                if (type !== ExecutorContractHandler.type || params.template !== "renewal") return;
+                this.queueExecutorBoardRotation(params.owner);
+            });
+        }
         // Unawaited, so lazy init stays lazy; on the chain, so dispose drains it.
         void this.onBoardChain(async () => {
-            await manager.whenBooted?.().catch(() => undefined);
+            try {
+                const manager = eager ?? (await this.getContractManager());
+                await manager.whenBooted?.().catch(() => undefined);
+            } catch (e) {
+                console.warn("Failed to boot the contracts for the Executor refresh", e);
+                return;
+            }
             // First: a rotation then extends from watches that are still held.
             await this.refreshExecutorWatchesNow();
-            await this.rotateForExecutorCoinAtBoot();
+            if (rotates) await this.rotateForExecutorCoinAtBoot();
         });
     }
 
     /**
      * @internal Register again the Executor watches the service let lapse, see
-     * {@link ExecutorManagerImpl.refreshWatches}; the poll of the {@link VtxoManager} calls it every
-     * cycle. At most once a day, reloads included, on the board chain so it never interleaves a
+     * {@link ExecutorManagerImpl.refreshWatches}; runs at startup for every wallet with an Executor
+     * and from the poll of the {@link VtxoManager} every cycle. At most once a day, reloads included, on the board chain so it never interleaves a
      * rotation's registration. Best-effort: never throws.
      */
     refreshExecutorWatches(): Promise<void> {
@@ -4197,7 +4209,7 @@ export class Wallet
                 this._receiveRotatorInstalled = true;
             }
             try {
-                await this.installExecutorBoardRotation();
+                await this.installExecutorBoot();
             } catch (installErr) {
                 await manager.dispose();
                 throw installErr;
@@ -4242,6 +4254,7 @@ export class Wallet
         }
         this._executorBoardUnsub?.();
         this._executorBoardUnsub = undefined;
+        this._executorBootInstalled = false;
 
         // Before the drain: it waits for an in-flight poll or settle, the producers of
         // post-board rotations.

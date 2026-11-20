@@ -173,9 +173,12 @@ style and have not been backfilled.
   deadline of its own, but the Executor (`v0.0.4`) expires one that never
   receives a coin 168 hours after its creation, without reporting it, and
   registering again does not extend an active one. The wallet therefore asks the
-  Executor about its live watches at most once a day, reloads included, when it
-  starts and while the VtxoManager polls; a refresh the Executor could not
-  answer is retried on the next start. It registers an expired one again, which revives the same
+  Executor about its live watches at most once a day, reloads included: every
+  wallet with an Executor when it starts, and one whose VtxoManager polls also
+  while it runs. With `settlementConfig: false` a session that stays open
+  refreshes only at its next start. A wallet with no live watch asks neither
+  the Executor nor the operator, and a refresh the Executor could not answer is
+  retried on the next start. It registers an expired one again, which revives the same
   address, and stops showing one it cannot revive, so it boards those deposits
   itself. A revived watch keeps its registration time, so reviving an older
   one does not move the boarding address back to its params. A wallet offline for longer than that after its last rotation can
