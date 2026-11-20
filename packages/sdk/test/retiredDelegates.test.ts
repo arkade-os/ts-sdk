@@ -12,6 +12,7 @@ import {
     makeStaticWalletForTest,
     makeHdWalletForTest,
     awaitWalletBooted,
+    makeUnreachableExecutor,
     mockArkInfo,
 } from "./helpers/restoreWallet";
 
@@ -188,11 +189,13 @@ describe("Wallet discovery of retired delegate contracts", () => {
         }>;
     }) => (await wallet.getContractManager()).getContracts({ type: "delegate" });
 
-    describe("on Arkade's operator", () => {
+    describe("on Arkade's operator, with an Executor", () => {
         beforeEach(() => installRestoreHarnessWithInfo(arkadeInfo));
 
         it("creates the retired delegate rows at index 0 on boot", async () => {
-            const { wallet } = await makeStaticWalletForTest();
+            const { wallet } = await makeStaticWalletForTest(new Set(), new Set(), {
+                executorProvider: makeUnreachableExecutor(),
+            });
             try {
                 await awaitWalletBooted(wallet);
                 const rows = await delegateRows(wallet);
@@ -208,7 +211,9 @@ describe("Wallet discovery of retired delegate contracts", () => {
         });
 
         it("restores a coin at a retired delegate contract, spendable through its forfeit leaf", async () => {
-            const { wallet, indexer } = await makeStaticWalletForTest();
+            const { wallet, indexer } = await makeStaticWalletForTest(new Set(), new Set(), {
+                executorProvider: makeUnreachableExecutor(),
+            });
             try {
                 const script = retiredScript(
                     await wallet.identity.xOnlyPublicKey(),
@@ -232,7 +237,11 @@ describe("Wallet discovery of retired delegate contracts", () => {
         });
 
         it("restores a coin at a retired delegate contract at an HD index", async () => {
-            const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
+            const { wallet, indexer, hdProvider } = await makeHdWalletForTest(
+                new Set(),
+                new Set(),
+                { executorProvider: makeUnreachableExecutor() },
+            );
             try {
                 const script = retiredScript(
                     deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(3)),
@@ -253,7 +262,9 @@ describe("Wallet discovery of retired delegate contracts", () => {
         }, 20_000);
 
         it("feeds the retired keys to the look-ahead band", async () => {
-            const { wallet } = await makeHdWalletForTest();
+            const { wallet } = await makeHdWalletForTest(new Set(), new Set(), {
+                executorProvider: makeUnreachableExecutor(),
+            });
             try {
                 const deps = (
                     wallet as unknown as {
@@ -269,12 +280,61 @@ describe("Wallet discovery of retired delegate contracts", () => {
         });
     });
 
+    describe("on Arkade's operator, without an Executor", () => {
+        beforeEach(() => installRestoreHarnessWithInfo(arkadeInfo));
+
+        it("creates no delegate rows on boot", async () => {
+            const { wallet } = await makeStaticWalletForTest();
+            try {
+                await awaitWalletBooted(wallet);
+                expect(await delegateRows(wallet)).toEqual([]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("restores nothing at a retired delegate contract", async () => {
+            const { wallet, indexer } = await makeStaticWalletForTest();
+            try {
+                const script = retiredScript(
+                    await wallet.identity.xOnlyPublicKey(),
+                    wallet.offchainTapscript.options.serverPubKey,
+                    wallet.walletContractTimelocks[0],
+                );
+                indexer.usedScripts.add(hex.encode(script.pkScript));
+
+                await wallet.restore();
+
+                expect(await wallet.getVtxos()).toEqual([]);
+                expect(await delegateRows(wallet)).toEqual([]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("feeds no retired keys to the look-ahead band", async () => {
+            const { wallet } = await makeHdWalletForTest();
+            try {
+                const deps = (
+                    wallet as unknown as {
+                        receiveCandidateDeps(): { retiredDelegatePubKeys?: Uint8Array[] };
+                    }
+                ).receiveCandidateDeps();
+                expect(deps.retiredDelegatePubKeys).toEqual([]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+    });
+
     it("matches Arkade's operator by a deprecated signer", async () => {
         installRestoreHarnessWithInfo({
             ...mockArkInfo,
             deprecatedSigners: [{ pubkey: MUTINYNET_DEPRECATED_SIGNER, cutoffDate: 0n }],
         });
-        const { wallet } = await makeStaticWalletForTest();
+        const { wallet } = await makeStaticWalletForTest(new Set(), new Set(), {
+            executorProvider: makeUnreachableExecutor(),
+        });
         try {
             await awaitWalletBooted(wallet);
             const rows = await delegateRows(wallet);
@@ -290,7 +350,9 @@ describe("Wallet discovery of retired delegate contracts", () => {
 
     it("creates no delegate rows on another operator", async () => {
         installRestoreHarness();
-        const { wallet } = await makeStaticWalletForTest();
+        const { wallet } = await makeStaticWalletForTest(new Set(), new Set(), {
+            executorProvider: makeUnreachableExecutor(),
+        });
         try {
             await awaitWalletBooted(wallet);
             expect(await delegateRows(wallet)).toEqual([]);

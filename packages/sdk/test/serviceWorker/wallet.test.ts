@@ -906,6 +906,7 @@ const createSWWallet = (
             new InMemoryContractRepository(),
             messageTag,
             hasDelegate,
+            undefined,
             executorUrl,
         ) as ServiceWorkerWallet,
         testWalletBinding(STUB_XONLY_PUBLIC_KEY),

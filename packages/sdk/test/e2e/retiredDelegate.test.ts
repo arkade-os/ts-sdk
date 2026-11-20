@@ -8,11 +8,15 @@ import {
     InMemoryContractRepository,
     RestOperatorProvider,
     RestDelegateProvider,
+    RestExecutorProvider,
+    type WalletConfig,
 } from "../../src";
 import { toXOnly } from "../../src/utils/keys";
 import { beforeEachFaucet, createVtxo, ESPLORA_API_URL, OPERATOR_URL, waitFor } from "./utils";
 
 const DELEGATOR_URL = "http://localhost:7012";
+// Never called: the retired delegator discovery is gated on the wallet having an Executor.
+const EXECUTOR_URL = process.env.EXECUTOR_URL ?? "http://localhost:7280";
 
 // Regtest has no pin: stand the local delegator in for Arkade's retired one.
 const retired = vi.hoisted(() => ({ keys: [] as Uint8Array[] }));
@@ -21,7 +25,10 @@ vi.mock("../../src/networks", async (importOriginal) => ({
     retiredDelegatePubKeys: () => retired.keys,
 }));
 
-const createWallet = (identity: SingleKey, withDelegator: boolean) =>
+const createWallet = (
+    identity: SingleKey,
+    providers: Pick<WalletConfig, "delegateProvider" | "executorProvider">,
+) =>
     Wallet.create({
         identity,
         arkProvider: new RestOperatorProvider(OPERATOR_URL),
@@ -33,7 +40,7 @@ const createWallet = (identity: SingleKey, withDelegator: boolean) =>
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         },
-        ...(withDelegator && { delegateProvider: new RestDelegateProvider(DELEGATOR_URL) }),
+        ...providers,
         settlementConfig: false,
     });
 
@@ -50,7 +57,9 @@ describe("Retired delegator contracts", () => {
     }, async () => {
         const identity = SingleKey.fromRandomBytes();
 
-        const a = await createWallet(identity, true);
+        const a = await createWallet(identity, {
+            delegateProvider: new RestDelegateProvider(DELEGATOR_URL),
+        });
         let delegateScript: string;
         try {
             await createVtxo({ wallet: a, identity }, 50_000);
@@ -61,7 +70,9 @@ describe("Retired delegator contracts", () => {
             await a.dispose().catch(() => undefined);
         }
 
-        const b = await createWallet(identity, false);
+        const b = await createWallet(identity, {
+            executorProvider: new RestExecutorProvider(EXECUTOR_URL),
+        });
         try {
             expect(hex.encode(b.offchainTapscript.pkScript)).not.toBe(delegateScript);
             await b.restore();

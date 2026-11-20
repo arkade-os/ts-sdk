@@ -513,7 +513,11 @@ interface ServiceWorkerWalletOptions {
     expectedNetwork?: NetworkName;
     /** Optional delegation service URL. */
     delegateUrl?: string;
-    /** URL of the Executor, the service that boards the wallet's deposits while it is offline. */
+    /**
+     * URL of the Executor, the service that boards the wallet's deposits while it is offline. Only
+     * a `ServiceWorkerWallet` registers watches; a readonly wallet reads them. Without one, the
+     * wallet behaves as it does without the Executor.
+     */
     executorUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.
@@ -1961,8 +1965,8 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
-        executorUrl?: string,
         public readonly oneShotSubmit?: boolean,
+        executorUrl?: string,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -2016,8 +2020,8 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!options.delegateUrl,
-            options.executorUrl,
             options.oneShotSubmit,
+            options.executorUrl,
         );
         wallet._concurrentSpending = options.concurrentSpending === true;
 

@@ -27,9 +27,11 @@ import {
     CSVMultisigTapscript,
     ConditionWitness,
     SingleKey,
+    Transaction,
     buildOffchainTx,
     setArkPsbtField,
 } from "@arkade-os/sdk";
+import { bindingFromOffer, recordOfferBinding } from "../../src/offer";
 import { createSwapDrive, SwapDriveRefusedError, type SwapDrive } from "../../src/client/drive";
 import { corridorOutcome, type SwapUpdate } from "../../src/client/outcome";
 import {
@@ -51,6 +53,7 @@ import {
     AFTER,
     BEFORE,
     RECOVERY_ROUND,
+    OFFER,
     OFFER_ADDRESS,
     OFFER_SCRIPT,
     OPERATOR,
@@ -1077,6 +1080,34 @@ describe("the offer half", () => {
         // money at it, which is what `RETIRABLE` excludes `recoverable` for.
         expect(contracts.watchStates).toEqual([]);
         await drive.dispose();
+    });
+
+    it("reads the fate of a deposit funded without a packet off its record's binding", async () => {
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({ txid: new Uint8Array(32).fill(7), index: 0 });
+        tx.addOutput({ script: OFFER.swapPkScript, amount: 100_000n });
+        const funding = { psbt: base64.encode(tx.toPSBT()), txid: tx.id };
+        const fill = offerSpend({ txid: funding.txid, vout: 0 }, "fulfill");
+        const record = offerRecord({
+            offerHex: undefined,
+            binding: recordOfferBinding(bindingFromOffer(OFFER, OPERATOR)),
+            swapAddress: OFFER_ADDRESS,
+            fundingTxid: funding.txid,
+        });
+        const spent = { isSpent: true, spentBy: fill.txid, arkTxId: fill.txid };
+        const h = await build({
+            mode: "readonly",
+            records: [record],
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            txs: [funding, fill],
+            vtxos: [offerDeposit(funding.txid, spent)],
+            contracts: fakeContracts([]),
+        });
+
+        expect(h.drive.swap(record.id)?.outcome).toBe("filled");
+        const stored = (await h.repository.getSwapRecord(record.id)) as OfferSwapRecord;
+        expect(stored.status).toBe("fulfilled");
+        await h.drive.dispose();
     });
 
     it("re-reads a live offer's deposit rather than answering it once", async () => {

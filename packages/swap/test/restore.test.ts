@@ -2,12 +2,24 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
-import { encodeOffer, offerContract, Offer, OFFER_PACKET_TYPE } from "../src/offer";
+import {
+    bindingFromOffer,
+    decodeOffer,
+    encodeOffer,
+    offerContract,
+    Offer,
+    OFFER_PACKET_TYPE,
+    recordOfferBinding,
+    type OfferBinding,
+} from "../src/offer";
+import { ASSET_SWAP_V4 } from "../src/program";
 import {
     classifyDepositSpend,
     classifySpend,
+    packetRecoverySource,
     restoreAssetSwaps,
     spendTxidsOf,
+    type OfferRecoverySource,
     type RestoreIndexer,
     type Tx,
 } from "../src/restore";
@@ -152,6 +164,27 @@ describe("classifySpend", () => {
         expect(classifySpend(offer, OPERATOR_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
     });
 
+    it("reads the leaf off a binding as off the offer, a directed one included", () => {
+        const undirected = makeOffer("want-asset", BigInt(21_000));
+        const { swapPkScript: _, ...terms } = undirected;
+        const taker = key("66");
+        const directed: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const deposit = { txid: "ab".repeat(32), vout: 0 };
+        const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
+        for (const offer of [undirected, directed]) {
+            const binding = bindingFromOffer(offer, OPERATOR_KEY);
+            const cancel = parse(spendPsbt([{ offer, deposit, via: "cancel" }]).psbt);
+            const fill = parse(spendPsbt([{ offer, deposit, via: "fulfill" }]).psbt);
+            expect(classifySpend(binding, OPERATOR_KEY, cancel, deposit)).toBe("cancelled");
+            expect(classifySpend(binding, OPERATOR_KEY, fill, deposit)).toBe("fulfilled");
+            expect(classifyDepositSpend(binding, key("44"), [fill], deposit)).toBe("fulfilled");
+        }
+    });
+
     it("reports a unilateral exit as cancelled — the deposit came back either way", async () => {
         // An unclassified exit would be worse than imprecise: no status is
         // written, so the swap stays `pending`, the restore scan re-queues it
@@ -290,6 +323,27 @@ describe("restoreAssetSwaps", () => {
             createdAt: 1_700_000_000_000,
             completedAt: 1_700_000_100_000,
         });
+    });
+
+    it("rebuilds a directed swap from its packet as a binding, with no TLV kept", async () => {
+        const { swapPkScript: _, ...terms } = makeOffer("want-asset", BigInt(992));
+        const taker = key("66");
+        const offer: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored } = await scan(indexer, [walletTx(funding.txid, "sent")]);
+
+        expect(restored).toHaveLength(1);
+        expect(restored[0].offerHex).toBeUndefined();
+        expect(restored[0].binding).toEqual(
+            recordOfferBinding(bindingFromOffer(offer, OPERATOR_KEY)),
+        );
+        expect(restored[0].status).toBe("pending");
     });
 
     it("marks a spend that took the cancel leaf as cancelled", async () => {
@@ -662,6 +716,187 @@ describe("restoreAssetSwaps", () => {
     });
 });
 
+describe("restoreAssetSwaps — recovery sources", () => {
+    const fundedWith = (offer: Offer, packets: UnknownPacket[] = []) => {
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({ txid: new Uint8Array(32).fill(9), index: packets.length });
+        tx.addOutput({ script: offer.swapPkScript, amount: BigInt(10_000) });
+        if (packets.length > 0) {
+            const ext = Extension.create(packets).txOut();
+            tx.addOutput({ script: ext.script, amount: ext.amount });
+        }
+        return { psbt: base64.encode(tx.toPSBT()), txid: tx.id };
+    };
+    const knowing = (fundingTxid: string, binding: OfferBinding): OfferRecoverySource => ({
+        name: "backup",
+        discover: async ({ candidateTxids }) => ({
+            found: candidateTxids.includes(fundingTxid) ? [{ fundingTxid, binding }] : [],
+            declined: [],
+        }),
+    });
+    const restoreWith = (indexer: RestoreIndexer, txid: string, sources: OfferRecoverySource[]) =>
+        restoreAssetSwaps(indexer, [walletTx(txid, "sent")], new Set(), {
+            operatorPubkey: OPERATOR_KEY,
+            sources,
+        });
+
+    it("restores a deposit another source knows and the packet scan does not", async () => {
+        const { swapPkScript: _, ...terms } = makeOffer("want-asset", BigInt(992));
+        const taker = key("66");
+        const offer: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const funding = fundedWith(offer);
+        const binding = bindingFromOffer(offer, OPERATOR_KEY);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored, scannedTxids } = await restoreWith(indexer, funding.txid, [
+            packetRecoverySource(indexer),
+            knowing(funding.txid, binding),
+        ]);
+
+        expect(restored).toMatchObject([
+            { fundingTxid: funding.txid, status: "pending", binding: recordOfferBinding(binding) },
+        ]);
+        expect(scannedTxids).toEqual([funding.txid]);
+    });
+
+    it("leaves an undecodable packet for a later build, and marks no packet or a foreign one scanned", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const garbled = fundedWith(offer, [
+            new UnknownPacket(OFFER_PACKET_TYPE, Uint8Array.of(0x06, 0, 1, 0)),
+        ]);
+        const foreign = fundedWith(makeOffer("want-asset", BigInt(993)), [
+            new UnknownPacket(0x7f, Uint8Array.of(1)),
+        ]);
+        const plain = fundedWith(makeOffer("want-asset", BigInt(994)));
+        const funded = [garbled, foreign, plain];
+        const indexer = makeIndexer(funded, []);
+
+        const result = await scan(
+            indexer,
+            funded.map((f) => walletTx(f.txid, "sent")),
+        );
+
+        expect(result.restored).toEqual([]);
+        expect(new Set(result.scannedTxids)).toEqual(new Set([foreign.txid, plain.txid]));
+    });
+
+    it("keeps the first source's answer when two know the same deposit", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+        const other = bindingFromOffer(makeOffer("want-asset", BigInt(1)), OPERATOR_KEY);
+
+        const { restored } = await restoreWith(indexer, funding.txid, [
+            packetRecoverySource(indexer),
+            knowing(funding.txid, other),
+        ]);
+
+        expect(restored).toMatchObject([{ offerHex: hex.encode(encodeOffer(offer)) }]);
+    });
+
+    it("still restores from the packet when another source throws", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+        const broken: OfferRecoverySource = {
+            name: "broken",
+            discover: async () => {
+                throw new Error("backup unreachable");
+            },
+        };
+
+        const { restored } = await restoreWith(indexer, funding.txid, [
+            broken,
+            packetRecoverySource(indexer),
+        ]);
+
+        expect(restored).toHaveLength(1);
+    });
+
+    // A source's binding is proven by the deposit at its script; the packet bytes it sends beside
+    // it are not, and a v2/v3 record is rebuilt from those bytes.
+    const answering = (found: Awaited<ReturnType<OfferRecoverySource["discover"]>>["found"]) => ({
+        name: "answering",
+        discover: async () => ({ found, declined: [] }),
+    });
+
+    it("persists no packet that does not encode the binding it came with", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundedWith(offer);
+        const binding = bindingFromOffer(offer, OPERATOR_KEY);
+        const tampered = hex.encode(encodeOffer({ ...offer, wantAmount: BigInt(1) }));
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored, scannedTxids } = await restoreWith(indexer, funding.txid, [
+            answering([{ fundingTxid: funding.txid, binding, offerHex: tampered }]),
+        ]);
+
+        expect(restored.filter((swap) => swap.offerHex === tampered)).toEqual([]);
+        expect(restored).toEqual([]);
+        expect(scannedTxids).toEqual([]);
+    });
+
+    it("lets a later source answer once an inconsistent answer is refused", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const binding = bindingFromOffer(offer, OPERATOR_KEY);
+        const tampered = hex.encode(encodeOffer({ ...offer, wantAmount: BigInt(1) }));
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored } = await restoreWith(indexer, funding.txid, [
+            answering([{ fundingTxid: funding.txid, binding, offerHex: tampered }]),
+            packetRecoverySource(indexer),
+        ]);
+
+        expect(restored).toMatchObject([{ offerHex: hex.encode(encodeOffer(offer)) }]);
+    });
+
+    it("skips an answer whose binding does not compile, and keeps the rest", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+        const takerless: OfferBinding = {
+            ...bindingFromOffer(offer, OPERATOR_KEY),
+            version: ASSET_SWAP_V4,
+        };
+
+        const { restored } = await restoreWith(indexer, funding.txid, [
+            answering([{ fundingTxid: funding.txid, binding: takerless }]),
+            packetRecoverySource(indexer),
+        ]);
+
+        expect(restored).toMatchObject([{ offerHex: hex.encode(encodeOffer(offer)) }]);
+    });
+
+    it("restores a ratio-carrying solverd packet byte for byte", async () => {
+        // solverd's own encoder; a binding carries no ratio, so re-encoding one would drop them
+        const vector =
+            "0100225120b2a1cd158c7a7e2e6346b6d2d0c323eae90d9d6b8c6e2245de4170d953e2bca6020008000000000000c350030022aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa09000800000000000000010a0008000000000000000405002251203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b10700203c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1080020466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
+        const operator = hex.decode(
+            "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        );
+        const offer = decodeOffer(hex.decode(vector));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored } = await restoreAssetSwaps(
+            indexer,
+            [walletTx(funding.txid, "sent")],
+            new Set(),
+            {
+                operatorPubkey: operator,
+            },
+        );
+
+        expect(offer.ratioNum).toBe(BigInt(1));
+        expect(restored).toMatchObject([{ offerHex: vector }]);
+    });
+});
+
 describe("restoreAssetSwaps — reopening records the scan left pending", () => {
     const record = (
         offer: Offer,
@@ -702,6 +937,29 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
         const result = await reask(indexer, [record(offer, funding.txid)]);
 
         expect(result.restored).toMatchObject([{ status: "fulfilled", spentTxid: fill.txid }]);
+    });
+
+    it("re-answers a directed record that carries only its binding", async () => {
+        const { swapPkScript: _, ...terms } = makeOffer("want-asset", BigInt(992));
+        const taker = key("66");
+        const offer: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const funding = fundingPsbt(offer);
+        const deposit = { txid: funding.txid, vout: 0 };
+        const fill = spendPsbt([{ offer, deposit, via: "fulfill" }]);
+        const indexer = makeIndexer([fill], [spentVtxo(offer, funding.txid, fill.txid)]);
+        const binding = recordOfferBinding(bindingFromOffer(offer, OPERATOR_KEY));
+
+        const result = await reask(indexer, [
+            record(offer, funding.txid, { offerHex: undefined, binding }),
+        ]);
+
+        expect(result.restored).toMatchObject([
+            { status: "fulfilled", spentTxid: fill.txid, binding },
+        ]);
     });
 
     it("never re-fetches the funding tx: the offer comes off the record", async () => {

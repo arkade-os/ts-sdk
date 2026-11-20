@@ -1022,8 +1022,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         this._deprecatedSigners = next;
     }
 
-    /** Arkade's retired delegator keys when this wallet's operator is Arkade's. Discovery only. */
+    /**
+     * Arkade's retired delegator keys when this wallet's operator is Arkade's and it has an
+     * Executor: apps that drop `delegateUrl` do so to move to it. Discovery only.
+     */
     protected retiredDelegateKeys(): Uint8Array[] {
+        if (!this.executorProvider) return [];
         return retiredDelegatePubKeys(this.network, [
             hex.encode(this.offchainTapscript.options.serverPubKey),
             ...this._deprecatedSigners.keys(),
@@ -3986,10 +3990,12 @@ export class Wallet
                 this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK,
             delegatePubKey,
             // Raw hex: the lookup skips malformed signers rather than failing the restore.
-            retiredDelegatePubKeys: retiredDelegatePubKeys(this.network, [
-                arkInfo.signerPubkey,
-                ...arkInfo.deprecatedSigners.map((s) => s.pubkey),
-            ]),
+            retiredDelegatePubKeys: this.executorProvider
+                ? retiredDelegatePubKeys(this.network, [
+                      arkInfo.signerPubkey,
+                      ...arkInfo.deprecatedSigners.map((s) => s.pubkey),
+                  ])
+                : [],
             executorWatches,
         };
 
@@ -4091,9 +4097,9 @@ export class Wallet
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
-        executorProvider?: ExecutorProvider,
         /** @see WalletConfig.oneShotSubmit */
         readonly oneShotSubmit: boolean = true,
+        executorProvider?: ExecutorProvider,
     ) {
         super(
             identity,
@@ -4364,8 +4370,8 @@ export class Wallet
                     ? { minSeconds: config.minBatchExpirySeconds }
                     : {}),
             },
-            setup.executorProvider,
             config.oneShotSubmit,
+            setup.executorProvider,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;

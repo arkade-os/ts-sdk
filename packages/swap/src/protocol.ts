@@ -72,6 +72,8 @@ export {
 } from "./markets";
 export {
     ASSET_CARRIER_SATS,
+    bindingFromOffer,
+    bindingProgram,
     cancelOffer,
     createOffer,
     decodeOffer,
@@ -82,16 +84,20 @@ export {
     offerVtxoScript,
     NoSpendableDepositError,
     type Offer,
+    type OfferBinding,
     OFFER_PACKET_TYPE,
     offerContract,
     OfferCovenantMismatchError,
+    offerFromBinding,
     swapPrograms,
 } from "./offer";
 export {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_CONTRACT_VERSIONS,
+    ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_V2,
     ASSET_SWAP_V3,
+    ASSET_SWAP_V4,
     type AssetSwapContractVersion,
     assetSwapContractVersion,
 } from "./program";
@@ -165,6 +171,8 @@ export {
 export {
     classifyDepositSpend,
     classifySpend,
+    type OfferRecoverySource,
+    packetRecoverySource,
     restoreAssetSwaps,
     type RestoreIndexer,
     type SpendKind,

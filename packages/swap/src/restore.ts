@@ -10,10 +10,23 @@ import {
     Extension,
     RestIndexerProvider,
     Transaction,
+    arkade,
     scriptFromTapLeafScript,
     type ArkTransaction,
 } from "@arkade-os/sdk";
-import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerContract } from "./offer";
+import {
+    bindingFromOffer,
+    bindingProgram,
+    decodeOffer,
+    encodeOffer,
+    Offer,
+    OFFER_PACKET_TYPE,
+    offerContract,
+    offerFromBinding,
+    recordOfferBinding,
+    storedOffer,
+    type OfferBinding,
+} from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
 
 // ponytail: fixed request size; tune only if histories outgrow it
@@ -47,7 +60,9 @@ export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtx
 type Found = {
     fundingTx: Tx;
     offer: Offer;
-    offerHex: string;
+    /** What classifies the spend: the binding when the record has one, which pins its own key. */
+    source: Offer | OfferBinding;
+    offerHex?: string;
     existing?: AssetSwap;
 };
 
@@ -119,18 +134,27 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
  * `indeterminate`. {@link classifyDepositSpend} tries both.
  *
  * @param operatorPubkey - The key the covenant was *funded* against. A rotated key fails
- *   the script match and yields `indeterminate` rather than a guess.
+ *   the script match and yields `indeterminate` rather than a guess. Unused for an
+ *   {@link OfferBinding}, which pins its own.
  */
 export function classifySpend(
-    offer: Offer,
+    offer: Offer | OfferBinding,
     operatorPubkey: Uint8Array,
     spendTx: Transaction,
     deposit: { txid: string; vout: number },
 ): SpendKind {
     let leaves: { returned: Uint8Array[]; fulfill?: Uint8Array };
     try {
-        const script = offerContract(offer, operatorPubkey);
-        if (hex.encode(script.pkScript) !== hex.encode(offer.swapPkScript)) return "indeterminate";
+        let script: InstanceType<typeof arkade.ArkadeProgramScript>;
+        if ("version" in offer) {
+            const { program, args, keys } = bindingProgram(offer);
+            script = new arkade.ArkadeProgramScript(program, args, keys);
+        } else {
+            script = offerContract(offer, operatorPubkey);
+            if (hex.encode(script.pkScript) !== hex.encode(offer.swapPkScript)) {
+                return "indeterminate";
+            }
+        }
         leaves = {
             // `exit` is absent on an offer with no exit closure, and drops out here
             returned: ["cancel", "exit"]
@@ -167,7 +191,7 @@ export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): stri
  * may be the same id for a settlement), taking the first definite answer.
  */
 export function classifyDepositSpend(
-    offer: Offer,
+    offer: Offer | OfferBinding,
     operatorPubkey: Uint8Array,
     spendTxs: Iterable<Transaction>,
     deposit: { txid: string; vout: number },
@@ -178,6 +202,70 @@ export function classifyDepositSpend(
     }
     return "indeterminate";
 }
+
+/** Whether packet bytes encode `offer`'s covenant, `swapPkScript` included. The ratios are reserved
+ * wire space no binding carries, so they alone may differ. */
+const encodesOffer = (offerHex: string, offer: Offer): boolean => {
+    try {
+        const { ratioNum: _num, ratioDen: _den, ...terms } = decodeOffer(hex.decode(offerHex));
+        return hex.encode(encodeOffer(terms)) === hex.encode(encodeOffer(offer));
+    } catch {
+        return false;
+    }
+};
+
+/** A way to learn of a deposit this wallet funded but holds no record for. */
+export interface OfferRecoverySource {
+    readonly name: string;
+    /**
+     * Bindings for candidate deposits, by funding txid (identical offers share an address).
+     * `declined` names txids this source positively ruled out as swaps, so they are marked
+     * scanned; a txid in neither list is asked again by a later scan.
+     */
+    discover(opts: {
+        readonly candidateTxids: readonly string[];
+        readonly operatorPubkey: Uint8Array;
+    }): Promise<{
+        readonly found: readonly {
+            readonly fundingTxid: string;
+            readonly binding: OfferBinding;
+            /** The packet the binding came from, when the source read one. */
+            readonly offerHex?: string;
+        }[];
+        readonly declined: readonly string[];
+    }>;
+}
+
+/**
+ * The funding tx's own `0x03` packet, as a source. A packet that is present but does not
+ * decode is neither found nor declined: a later build may read it.
+ */
+export const packetRecoverySource = (indexer: RestoreIndexer): OfferRecoverySource => ({
+    name: "packet",
+    async discover({ candidateTxids, operatorPubkey }) {
+        const found = [];
+        const declined: string[] = [];
+        // a txid whose psbt did not come back is in neither list, and retries
+        for (const [txid, parsed] of await fetchParsedTxs(indexer, [...candidateTxids])) {
+            let packet;
+            try {
+                packet = Extension.fromTx(parsed).getPacketByType(OFFER_PACKET_TYPE);
+            } catch {}
+            if (!packet) {
+                declined.push(txid);
+                continue;
+            }
+            const payload = packet.serialize();
+            try {
+                const binding = bindingFromOffer(decodeOffer(payload), operatorPubkey);
+                found.push({ fundingTxid: txid, binding, offerHex: hex.encode(payload) });
+            } catch {
+                // undecodable, or no tree reproduces it under this key (a rotation): ask again
+            }
+        }
+        return { found, declined };
+    },
+});
 
 /**
  * Scan the given candidates for offer packets and rebuild the AssetSwap records the store
@@ -203,6 +291,8 @@ export async function restoreAssetSwaps(
         hrp?: string;
         /** Commitment txids of recovery rounds this wallet ran (`recoverVtxos()`'s return). */
         recoveredIn?: ReadonlySet<string>;
+        /** Asked in order, first answer per deposit kept. Default: the packet scan alone. */
+        sources?: readonly OfferRecoverySource[];
     },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
     const {
@@ -211,14 +301,16 @@ export async function restoreAssetSwaps(
         reopen = [],
         hrp,
         recoveredIn = new Set<string>(),
+        sources = [packetRecoverySource(indexer)],
     } = opts;
     const reopened: Found[] = [];
     for (const swap of reopen) {
         try {
+            const source = storedOffer(swap);
             reopened.push({
                 fundingTx: { type: "sent", redeemTxid: swap.fundingTxid },
-                offer: decodeOffer(hex.decode(swap.offerHex)),
-                offerHex: swap.offerHex,
+                offer: "version" in source ? offerFromBinding(source) : source,
+                source,
                 existing: swap,
             });
         } catch {}
@@ -232,33 +324,43 @@ export async function restoreAssetSwaps(
     }
 
     const byTxid = new Map(candidates.map((tx) => [tx.redeemTxid, tx]));
-    const parsedByTxid = await fetchParsedTxs(
-        indexer,
-        candidates.map((tx) => tx.redeemTxid),
-    );
-
-    const fetchedTxids: string[] = [];
+    const candidateTxids = candidates.map((tx) => tx.redeemTxid);
     const found: Found[] = [...reopened];
-    for (const [txid, parsed] of parsedByTxid) {
-        const fundingTx = byTxid.get(txid);
-        if (!fundingTx) continue;
-        // Only a txid whose psbt came back is answered; blanket-marking the request would
-        // orphan missing ones forever.
-        fetchedTxids.push(txid);
+    const claimed = new Set<string>();
+    const declined = new Set<string>();
+    for (const recovery of candidateTxids.length === 0 ? [] : sources) {
+        let answer: Awaited<ReturnType<OfferRecoverySource["discover"]>>;
         try {
-            const packet = Extension.fromTx(parsed).getPacketByType(OFFER_PACKET_TYPE);
-            if (!packet) continue;
-            const payload = packet.serialize();
-            found.push({
-                fundingTx,
-                offer: decodeOffer(payload),
-                offerHex: hex.encode(payload),
-            });
-        } catch {
-            // no extension, foreign packet or malformed offer: not a swap funding
+            answer = await recovery.discover({ candidateTxids, operatorPubkey });
+        } catch (error) {
+            console.warn(`[swap] recovery source ${recovery.name} failed`, error);
+            continue;
+        }
+        for (const txid of answer.declined) declined.add(txid);
+        for (const { fundingTxid, binding, offerHex } of answer.found) {
+            const fundingTx = byTxid.get(fundingTxid);
+            // first source wins; an answer for a txid nobody asked about is ignored
+            if (!fundingTx || claimed.has(fundingTxid)) continue;
+            let offer: Offer;
+            try {
+                offer = offerFromBinding(binding);
+            } catch (error) {
+                console.warn(`[swap] ${recovery.name} sent a binding that does not compile`, error);
+                continue;
+            }
+            // Only the binding is proven, by the deposit at its script, so packet bytes are kept
+            // only if they encode exactly that covenant; else they are derived from it.
+            if (offerHex !== undefined && !encodesOffer(offerHex, offer)) {
+                console.warn(`[swap] ${recovery.name} sent a packet its binding does not match`);
+                continue;
+            }
+            claimed.add(fundingTxid);
+            const packet = offerHex ?? hex.encode(encodeOffer(offer));
+            found.push({ fundingTx, offer, source: binding, offerHex: packet });
         }
     }
-    if (found.length === 0) return { restored: [], scannedTxids: fetchedTxids };
+    const answered = [...claimed, ...[...declined].filter((txid) => !claimed.has(txid))];
+    if (found.length === 0) return { restored: [], scannedTxids: answered };
 
     // If this lookup throws, nothing is marked scanned and the whole batch retries later.
     const scripts = [...new Set(found.map((f) => hex.encode(f.offer.swapPkScript)))];
@@ -287,7 +389,7 @@ export async function restoreAssetSwaps(
 
     const restored: AssetSwap[] = [];
     const unresolved = new Set<string>();
-    for (const { fundingTx, offer, offerHex, existing } of found) {
+    for (const { fundingTx, offer, source, offerHex, existing } of found) {
         const swapPkScript = hex.encode(offer.swapPkScript);
         const vtxo = vtxoByScriptAndTxid.get(`${swapPkScript}:${fundingTx.redeemTxid}`);
         if (!vtxo) {
@@ -341,7 +443,7 @@ export async function restoreAssetSwaps(
             const spendTxs = spendTxidsOf(vtxo)
                 .map((id) => spendTxByTxid.get(id))
                 .filter((tx): tx is Transaction => tx !== undefined);
-            const kind = classifyDepositSpend(offer, operatorPubkey, spendTxs, {
+            const kind = classifyDepositSpend(source, operatorPubkey, spendTxs, {
                 txid: vtxo.txid,
                 vout: vtxo.vout,
             });
@@ -364,24 +466,27 @@ export async function restoreAssetSwaps(
             continue;
         }
 
+        // A new record comes from a source's binding, which pins its own operator key: the
+        // deposit found at its script for this funding txid is what proves it.
+        if (!("version" in source)) continue;
         let swapAddress = "";
         try {
-            const compiled = offerContract(offer, operatorPubkey);
-            // A mismatch is a rotated operator key: leave the deposit unresolved
-            // rather than persist an address cancel cannot spend from.
-            if (hex.encode(compiled.pkScript) !== swapPkScript) {
-                unresolved.add(fundingTx.redeemTxid);
-                continue;
-            }
             // ponytail(arkade-os/ts-sdk#680): without the prefix the address is
             // empty and cancel falls back to the current operator key
             if (hrp !== undefined) {
-                swapAddress = compiled.address(hrp, operatorPubkey).encode();
+                const { program, args, keys } = bindingProgram(source);
+                const compiled = new arkade.ArkadeProgramScript(program, args, keys);
+                swapAddress = compiled.address(hrp, source.serverPublicKey).encode();
             }
         } catch {
             unresolved.add(fundingTx.redeemTxid);
             continue;
         }
+        // a directed record holds its binding alone, as accept() writes one
+        const covenant =
+            source.taker === undefined
+                ? { offerHex: offerHex ?? hex.encode(encodeOffer(offer)) }
+                : { binding: recordOfferBinding(source) };
 
         restored.push({
             id: fundingTx.redeemTxid,
@@ -391,7 +496,7 @@ export async function restoreAssetSwaps(
             toAmount: offer.wantAmount.toString(),
             swapAddress,
             swapPkScript,
-            offerHex,
+            ...covenant,
             fundingTxid: fundingTx.redeemTxid,
             spentTxid,
             status,
@@ -399,5 +504,5 @@ export async function restoreAssetSwaps(
             ...completion,
         });
     }
-    return { restored, scannedTxids: fetchedTxids.filter((id) => !unresolved.has(id)) };
+    return { restored, scannedTxids: answered.filter((id) => !unresolved.has(id)) };
 }

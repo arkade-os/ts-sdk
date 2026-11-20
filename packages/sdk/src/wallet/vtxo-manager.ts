@@ -1708,18 +1708,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // The periodic pass calls this every poll; with nothing expiring there is nothing to defer.
         if (vtxos.length === 0) return vtxos;
         try {
-            const [watches, operator] = await Promise.all([
-                delegatedContracts(
-                    this.wallet.identity,
-                    // repository-backed: `getContracts` reads rows without the manager's indexer sync
-                    async (filter) => (await this.wallet.getContractManager()).getContracts(filter),
-                    "renewal",
-                ),
-                // getOperatorInfo may throw synchronously; deferred, so Promise.all observes
-                // both rejections and the catch below keeps the delegatedContracts promise.
-                Promise.resolve().then(() => this.wallet.getOperatorInfo()),
-            ]);
-            const signer = toXOnlySignerHex(operator.signerPubkey);
+            const watches = await delegatedContracts(
+                this.wallet.identity,
+                // repository-backed: `getContracts` reads rows without the manager's indexer sync
+                async (filter) => (await this.wallet.getContractManager()).getContracts(filter),
+                "renewal",
+            );
+            // Without a live watch there is nothing to defer, and no operator lookup to make.
+            if (!watches.some((w) => w.live)) return vtxos;
+            const signer = toXOnlySignerHex((await this.wallet.getOperatorInfo()).signerPubkey);
             const dust = getDustAmount(this.wallet);
             const live = watches.filter((w) => w.live && w.signer === signer);
             return vtxos.filter((vtxo) => {

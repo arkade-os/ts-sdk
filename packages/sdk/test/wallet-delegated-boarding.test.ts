@@ -818,6 +818,7 @@ describe("delegated boarding address on an HD wallet", () => {
         });
 
         it("does nothing without an Executor", async () => {
+            mockFetch.mockImplementation(async () => jsonResponse(arkInfo));
             const { wallet } = await walletWith({ executor: false, rows: true });
 
             await expect(wallet.refreshExecutorWatches()).resolves.toBeUndefined();

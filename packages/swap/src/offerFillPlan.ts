@@ -5,11 +5,13 @@ import {
     assembleOfferFill,
     connectFillContract,
     decodeOffer,
+    offerOf,
     resolveDeposit,
     type AssembledFillLayout,
     type FillFunding,
     type FillInputOwner,
     type FillOutpoint,
+    type OfferBinding,
     type SponsorFillInput,
 } from "./offer";
 import { deepFreeze, digestJointGraph, verifyJointGraph, type JointGraph } from "./jointGraph";
@@ -50,7 +52,7 @@ export interface BuildOfferFillPlanOpts {
 export async function buildOfferFillPlan(
     wallet: IWallet,
     arkServerUrl: string,
-    offerHex: string,
+    offerHex: string | OfferBinding,
     opts: BuildOfferFillPlanOpts,
 ): Promise<JointGraph> {
     const {
@@ -62,8 +64,9 @@ export async function buildOfferFillPlan(
         assetCarrierSats = ASSET_CARRIER_SATS,
         sponsor,
     } = opts;
-    const offer = decodeOffer(hex.decode(offerHex));
-    const contract = await connectFillContract(wallet, arkServerUrl, offer, { swapAddress });
+    const target = typeof offerHex === "string" ? decodeOffer(hex.decode(offerHex)) : offerHex;
+    const contract = await connectFillContract(wallet, arkServerUrl, target, { swapAddress });
+    const offer = offerOf(target, contract.pkScript);
     const vtxos = await contract.getUtxos();
     const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
     const solverPayout = payoutScript ?? ArkAddress.decode(await wallet.getAddress()).pkScript;
