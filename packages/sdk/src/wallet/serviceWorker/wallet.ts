@@ -1961,8 +1961,8 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
-        executorUrl?: string,
         public readonly oneShotSubmit?: boolean,
+        executorUrl?: string,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -2016,8 +2016,8 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!options.delegateUrl,
-            options.executorUrl,
             options.oneShotSubmit,
+            options.executorUrl,
         );
         wallet._concurrentSpending = options.concurrentSpending === true;
 

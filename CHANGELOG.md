@@ -147,7 +147,10 @@ style and have not been backfilled.
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new
   onchain-scoped contract is saved, and the wallet re-subscribes on it. A
-  callback that throws is logged and does not fail `createContract`.
+  callback that throws is logged and does not fail `createContract`. The
+  Executor is the last constructor parameter of `Wallet` and
+  `ServiceWorkerWallet`, after `oneShotSubmit`, so a subclass that passes them
+  positionally is unaffected.
 
 - **Executor renewal delegation: `registerRenewal`, and a VtxoManager that
   defers to a live watch.** The manager gains `registerRenewal({ renewalWindow,

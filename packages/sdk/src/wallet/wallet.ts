@@ -4052,9 +4052,9 @@ export class Wallet
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
-        executorProvider?: ExecutorProvider,
         /** @see WalletConfig.oneShotSubmit */
         readonly oneShotSubmit: boolean = true,
+        executorProvider?: ExecutorProvider,
     ) {
         super(
             identity,
@@ -4322,8 +4322,8 @@ export class Wallet
                     ? { minSeconds: config.minBatchExpirySeconds }
                     : {}),
             },
-            setup.executorProvider,
             config.oneShotSubmit,
+            setup.executorProvider,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
