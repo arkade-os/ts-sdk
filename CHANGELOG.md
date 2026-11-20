@@ -317,6 +317,8 @@ style and have not been backfilled.
 
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
+- **Boarding inputs in a commitment transaction are signed with the default sighash**, whatever sighash type the operator's PSBT declares, as forfeits already were.
+
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the
   open, so a client a second or two ahead of the solver received no bids at

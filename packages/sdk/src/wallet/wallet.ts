@@ -4594,6 +4594,7 @@ export class Wallet
                     // input found in the settlement tx, sign it
                     settlementPsbt.updateInput(i, {
                         tapLeafScript: [input.forfeitTapLeafScript],
+                        sighashType: SigHash.DEFAULT,
                     });
                     const script = settlementPsbt.getInput(i).witnessUtxo?.script;
                     if (!script) {
