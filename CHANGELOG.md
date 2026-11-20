@@ -122,6 +122,17 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: the restore scan takes its deposits from pluggable sources.**
+  `restoreAssetSwaps` accepts `sources`, each an `OfferRecoverySource` that answers
+  candidate funding txids with bindings, and marks the ones it rules out. The
+  default is `[packetRecoverySource(indexer)]`, the funding tx's own `0x03`
+  packet, so a restore with no sources passed finds what it found before. Answers
+  merge by funding txid, first source first, and a source that throws is skipped.
+  One case now scans differently: a funding whose `0x03` packet is present but
+  does not decode is left unscanned, so a later build gets a second look, rather
+  than marked answered for good. A funding with no packet, or another packet
+  type, is still marked scanned.
+
 - **`@arkade-os/swap`: `accept(quote, { attachOfferPacket: false })` funds an offer
   without its packet.** The funding then shows only a payment to a taproot
   output, and the terms stay off-chain until the deposit is spent. The packet

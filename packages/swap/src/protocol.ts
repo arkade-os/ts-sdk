@@ -171,6 +171,8 @@ export {
 export {
     classifyDepositSpend,
     classifySpend,
+    type OfferRecoverySource,
+    packetRecoverySource,
     restoreAssetSwaps,
     type RestoreIndexer,
     type SpendKind,

@@ -18,6 +18,7 @@ import {
     bindingFromOffer,
     bindingProgram,
     decodeOffer,
+    encodeOffer,
     Offer,
     OFFER_PACKET_TYPE,
     offerContract,
@@ -202,6 +203,59 @@ export function classifyDepositSpend(
     return "indeterminate";
 }
 
+/** A way to learn of a deposit this wallet funded but holds no record for. */
+export interface OfferRecoverySource {
+    readonly name: string;
+    /**
+     * Bindings for candidate deposits, by funding txid (identical offers share an address).
+     * `declined` names txids this source positively ruled out as swaps, so they are marked
+     * scanned; a txid in neither list is asked again by a later scan.
+     */
+    discover(opts: {
+        readonly candidateTxids: readonly string[];
+        readonly operatorPubkey: Uint8Array;
+    }): Promise<{
+        readonly found: readonly {
+            readonly fundingTxid: string;
+            readonly binding: OfferBinding;
+            /** The packet the binding came from, when the source read one. */
+            readonly offerHex?: string;
+        }[];
+        readonly declined: readonly string[];
+    }>;
+}
+
+/**
+ * The funding tx's own `0x03` packet, as a source. A packet that is present but does not
+ * decode is neither found nor declined: a later build may read it.
+ */
+export const packetRecoverySource = (indexer: RestoreIndexer): OfferRecoverySource => ({
+    name: "packet",
+    async discover({ candidateTxids, operatorPubkey }) {
+        const found = [];
+        const declined: string[] = [];
+        // a txid whose psbt did not come back is in neither list, and retries
+        for (const [txid, parsed] of await fetchParsedTxs(indexer, [...candidateTxids])) {
+            let packet;
+            try {
+                packet = Extension.fromTx(parsed).getPacketByType(OFFER_PACKET_TYPE);
+            } catch {}
+            if (!packet) {
+                declined.push(txid);
+                continue;
+            }
+            const payload = packet.serialize();
+            try {
+                const binding = bindingFromOffer(decodeOffer(payload), operatorPubkey);
+                found.push({ fundingTxid: txid, binding, offerHex: hex.encode(payload) });
+            } catch {
+                // undecodable, or no tree reproduces it under this key (a rotation): ask again
+            }
+        }
+        return { found, declined };
+    },
+});
+
 /**
  * Scan the given candidates for offer packets and rebuild the AssetSwap records the store
  * lost. Returns the rebuilt swaps plus the txids that got an authoritative answer, which
@@ -226,6 +280,8 @@ export async function restoreAssetSwaps(
         hrp?: string;
         /** Commitment txids of recovery rounds this wallet ran (`recoverVtxos()`'s return). */
         recoveredIn?: ReadonlySet<string>;
+        /** Asked in order, first answer per deposit kept. Default: the packet scan alone. */
+        sources?: readonly OfferRecoverySource[];
     },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
     const {
@@ -234,6 +290,7 @@ export async function restoreAssetSwaps(
         reopen = [],
         hrp,
         recoveredIn = new Set<string>(),
+        sources = [packetRecoverySource(indexer)],
     } = opts;
     const reopened: Found[] = [];
     for (const swap of reopen) {
@@ -256,30 +313,29 @@ export async function restoreAssetSwaps(
     }
 
     const byTxid = new Map(candidates.map((tx) => [tx.redeemTxid, tx]));
-    const parsedByTxid = await fetchParsedTxs(
-        indexer,
-        candidates.map((tx) => tx.redeemTxid),
-    );
-
-    const fetchedTxids: string[] = [];
+    const candidateTxids = candidates.map((tx) => tx.redeemTxid);
     const found: Found[] = [...reopened];
-    for (const [txid, parsed] of parsedByTxid) {
-        const fundingTx = byTxid.get(txid);
-        if (!fundingTx) continue;
-        // Only a txid whose psbt came back is answered; blanket-marking the request would
-        // orphan missing ones forever.
-        fetchedTxids.push(txid);
+    const claimed = new Set<string>();
+    const declined = new Set<string>();
+    for (const recovery of candidateTxids.length === 0 ? [] : sources) {
+        let answer: Awaited<ReturnType<OfferRecoverySource["discover"]>>;
         try {
-            const packet = Extension.fromTx(parsed).getPacketByType(OFFER_PACKET_TYPE);
-            if (!packet) continue;
-            const payload = packet.serialize();
-            const offer = decodeOffer(payload);
-            found.push({ fundingTx, offer, source: offer, offerHex: hex.encode(payload) });
-        } catch {
-            // no extension, foreign packet or malformed offer: not a swap funding
+            answer = await recovery.discover({ candidateTxids, operatorPubkey });
+        } catch (error) {
+            console.warn(`[swap] recovery source ${recovery.name} failed`, error);
+            continue;
+        }
+        for (const txid of answer.declined) declined.add(txid);
+        for (const { fundingTxid, binding, offerHex } of answer.found) {
+            const fundingTx = byTxid.get(fundingTxid);
+            // first source wins; an answer for a txid nobody asked about is ignored
+            if (!fundingTx || claimed.has(fundingTxid)) continue;
+            claimed.add(fundingTxid);
+            found.push({ fundingTx, offer: offerFromBinding(binding), source: binding, offerHex });
         }
     }
-    if (found.length === 0) return { restored: [], scannedTxids: fetchedTxids };
+    const answered = [...claimed, ...[...declined].filter((txid) => !claimed.has(txid))];
+    if (found.length === 0) return { restored: [], scannedTxids: answered };
 
     // If this lookup throws, nothing is marked scanned and the whole batch retries later.
     const scripts = [...new Set(found.map((f) => hex.encode(f.offer.swapPkScript)))];
@@ -385,30 +441,27 @@ export async function restoreAssetSwaps(
             continue;
         }
 
+        // A new record comes from a source's binding, which pins its own operator key: the
+        // deposit found at its script for this funding txid is what proves it.
+        if (!("version" in source)) continue;
         let swapAddress = "";
-        let covenant: Pick<AssetSwap, "offerHex" | "binding">;
         try {
-            const compiled = offerContract(offer, operatorPubkey);
-            // A mismatch is a rotated operator key: leave the deposit unresolved
-            // rather than persist an address cancel cannot spend from.
-            if (hex.encode(compiled.pkScript) !== swapPkScript) {
-                unresolved.add(fundingTx.redeemTxid);
-                continue;
-            }
             // ponytail(arkade-os/ts-sdk#680): without the prefix the address is
             // empty and cancel falls back to the current operator key
             if (hrp !== undefined) {
-                swapAddress = compiled.address(hrp, operatorPubkey).encode();
+                const { program, args, keys } = bindingProgram(source);
+                const compiled = new arkade.ArkadeProgramScript(program, args, keys);
+                swapAddress = compiled.address(hrp, source.serverPublicKey).encode();
             }
-            // a directed record holds its binding alone, as accept() writes one
-            covenant =
-                offer.taker === undefined
-                    ? { offerHex }
-                    : { binding: recordOfferBinding(bindingFromOffer(offer, operatorPubkey)) };
         } catch {
             unresolved.add(fundingTx.redeemTxid);
             continue;
         }
+        // a directed record holds its binding alone, as accept() writes one
+        const covenant =
+            source.taker === undefined
+                ? { offerHex: offerHex ?? hex.encode(encodeOffer(offer)) }
+                : { binding: recordOfferBinding(source) };
 
         restored.push({
             id: fundingTx.redeemTxid,
@@ -426,5 +479,5 @@ export async function restoreAssetSwaps(
             ...completion,
         });
     }
-    return { restored, scannedTxids: fetchedTxids.filter((id) => !unresolved.has(id)) };
+    return { restored, scannedTxids: answered.filter((id) => !unresolved.has(id)) };
 }

@@ -9,12 +9,15 @@ import {
     Offer,
     OFFER_PACKET_TYPE,
     recordOfferBinding,
+    type OfferBinding,
 } from "../src/offer";
 import {
     classifyDepositSpend,
     classifySpend,
+    packetRecoverySource,
     restoreAssetSwaps,
     spendTxidsOf,
+    type OfferRecoverySource,
     type RestoreIndexer,
     type Tx,
 } from "../src/restore";
@@ -708,6 +711,108 @@ describe("restoreAssetSwaps", () => {
                 hrp: "tark",
             }),
         ).toEqual({ restored: [], scannedTxids: [] });
+    });
+});
+
+describe("restoreAssetSwaps — recovery sources", () => {
+    const fundedWith = (offer: Offer, packets: UnknownPacket[] = []) => {
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({ txid: new Uint8Array(32).fill(9), index: packets.length });
+        tx.addOutput({ script: offer.swapPkScript, amount: BigInt(10_000) });
+        if (packets.length > 0) {
+            const ext = Extension.create(packets).txOut();
+            tx.addOutput({ script: ext.script, amount: ext.amount });
+        }
+        return { psbt: base64.encode(tx.toPSBT()), txid: tx.id };
+    };
+    const knowing = (fundingTxid: string, binding: OfferBinding): OfferRecoverySource => ({
+        name: "backup",
+        discover: async ({ candidateTxids }) => ({
+            found: candidateTxids.includes(fundingTxid) ? [{ fundingTxid, binding }] : [],
+            declined: [],
+        }),
+    });
+    const restoreWith = (indexer: RestoreIndexer, txid: string, sources: OfferRecoverySource[]) =>
+        restoreAssetSwaps(indexer, [walletTx(txid, "sent")], new Set(), {
+            operatorPubkey: OPERATOR_KEY,
+            sources,
+        });
+
+    it("restores a deposit another source knows and the packet scan does not", async () => {
+        const { swapPkScript: _, ...terms } = makeOffer("want-asset", BigInt(992));
+        const taker = key("66");
+        const offer: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const funding = fundedWith(offer);
+        const binding = bindingFromOffer(offer, OPERATOR_KEY);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+
+        const { restored, scannedTxids } = await restoreWith(indexer, funding.txid, [
+            packetRecoverySource(indexer),
+            knowing(funding.txid, binding),
+        ]);
+
+        expect(restored).toMatchObject([
+            { fundingTxid: funding.txid, status: "pending", binding: recordOfferBinding(binding) },
+        ]);
+        expect(scannedTxids).toEqual([funding.txid]);
+    });
+
+    it("leaves an undecodable packet for a later build, and marks no packet or a foreign one scanned", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const garbled = fundedWith(offer, [
+            new UnknownPacket(OFFER_PACKET_TYPE, Uint8Array.of(0x06, 0, 1, 0)),
+        ]);
+        const foreign = fundedWith(makeOffer("want-asset", BigInt(993)), [
+            new UnknownPacket(0x7f, Uint8Array.of(1)),
+        ]);
+        const plain = fundedWith(makeOffer("want-asset", BigInt(994)));
+        const funded = [garbled, foreign, plain];
+        const indexer = makeIndexer(funded, []);
+
+        const result = await scan(
+            indexer,
+            funded.map((f) => walletTx(f.txid, "sent")),
+        );
+
+        expect(result.restored).toEqual([]);
+        expect(new Set(result.scannedTxids)).toEqual(new Set([foreign.txid, plain.txid]));
+    });
+
+    it("keeps the first source's answer when two know the same deposit", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+        const other = bindingFromOffer(makeOffer("want-asset", BigInt(1)), OPERATOR_KEY);
+
+        const { restored } = await restoreWith(indexer, funding.txid, [
+            packetRecoverySource(indexer),
+            knowing(funding.txid, other),
+        ]);
+
+        expect(restored).toMatchObject([{ offerHex: hex.encode(encodeOffer(offer)) }]);
+    });
+
+    it("still restores from the packet when another source throws", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
+        const broken: OfferRecoverySource = {
+            name: "broken",
+            discover: async () => {
+                throw new Error("backup unreachable");
+            },
+        };
+
+        const { restored } = await restoreWith(indexer, funding.txid, [
+            broken,
+            packetRecoverySource(indexer),
+        ]);
+
+        expect(restored).toHaveLength(1);
     });
 });
 
