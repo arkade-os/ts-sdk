@@ -363,6 +363,8 @@ const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 
 /** The Executor expires a watch that never held a coin after 168h; daily keeps that margin. */
 const EXECUTOR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** Wallet-state setting: when the Executor last answered a refresh, in unix ms. */
+const EXECUTOR_REFRESHED_KEY = "executorRefreshedAt";
 
 function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     const seen = new Set<string>();
@@ -3161,8 +3163,8 @@ export class Wallet
     /**
      * @internal Register again the Executor watches the service let lapse, see
      * {@link ExecutorManagerImpl.refreshWatches}; the poll of the {@link VtxoManager} calls it every
-     * cycle. At most once a day, on the board chain so it never interleaves a rotation's
-     * registration. Best-effort: never throws.
+     * cycle. At most once a day, reloads included, on the board chain so it never interleaves a
+     * rotation's registration. Best-effort: never throws.
      */
     refreshExecutorWatches(): Promise<void> {
         return this.onBoardChain(() => this.refreshExecutorWatchesNow());
@@ -3172,14 +3174,28 @@ export class Wallet
         const executor = this._executorManager;
         if (!executor) return;
         if (Date.now() - this._executorRefreshedAt < EXECUTOR_REFRESH_INTERVAL_MS) return;
+        const stored = await this.walletRepository.getWalletState().then(
+            (state) => state?.settings?.[EXECUTOR_REFRESHED_KEY],
+            () => undefined,
+        );
+        if (typeof stored === "number" && stored <= Date.now()) {
+            this._executorRefreshedAt = Math.max(this._executorRefreshedAt, stored);
+            if (Date.now() - this._executorRefreshedAt < EXECUTOR_REFRESH_INTERVAL_MS) return;
+        }
         // Stamped before the call: an unreachable Executor is tried again next interval, not
-        // every poll.
-        this._executorRefreshedAt = Date.now();
+        // every poll. Stored only once it answered, so a reload retries a failed refresh.
+        const at = Date.now();
+        this._executorRefreshedAt = at;
         try {
             await executor.refreshWatches();
         } catch (e) {
             console.warn("Failed to refresh the Executor watches", e);
+            return;
         }
+        await updateWalletState(this.walletRepository, (state) => ({
+            ...state,
+            settings: { ...state.settings, [EXECUTOR_REFRESHED_KEY]: at },
+        })).catch((e) => console.warn("Failed to store the Executor refresh time", e));
     }
 
     /**

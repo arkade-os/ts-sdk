@@ -85,12 +85,14 @@ describe.skipIf(!reachable).sequential("Executor non-interactive boarding", () =
         expect((await daemon.getDelegation(watch.address)).delegation.inputs[0].address).toBe(
             watch.address,
         );
-        expect(watch.delegation.status).toBe("active");
+        expect(watch.delegation?.status).toBe("active");
         expect(await alice.getBoardingAddress()).toBe(watch.address);
         // boarding only: receives stay at the wallet's own address
         expect(await alice.getAddress()).toBe(own);
-        // registering again returns the same watch
-        expect((await manager.registerBoarding(options)).delegation.id).toBe(watch.delegation.id);
+        // registering again returns the same watch, from the stored row
+        const again = await manager.registerBoarding(options);
+        expect(again.address).toBe(watch.address);
+        expect(again.delegation).toBeUndefined();
 
         const cm = await alice.getContractManager();
         const [renewal] = (await cm.getContracts({ type: ["executor"] })).filter(
@@ -240,7 +242,7 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
         timeout: 60_000,
     }, async () => {
         renewal = await (await alice.getExecutorManager())!.registerRenewal(renewalOptions);
-        expect(renewal.delegation.status).toBe("active");
+        expect(renewal.delegation?.status).toBe("active");
         const daemon = new RestExecutorProvider(EXECUTOR_URL);
         expect((await daemon.getDelegation(renewal.address)).delegation.inputs[0].address).toBe(
             renewal.address,

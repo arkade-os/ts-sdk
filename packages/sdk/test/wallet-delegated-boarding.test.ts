@@ -785,13 +785,13 @@ describe("delegated boarding address on an HD wallet", () => {
         });
 
         it("leaves a watch alone when the Executor cannot say whether it holds it", async () => {
+            vi.useFakeTimers({ toFake: ["Date"] });
             const { wallet, boarding, registerDelegation, getDelegation } =
                 await hdWalletWithWatch();
             vi.spyOn(console, "warn").mockImplementation(() => {});
             await boardChainIdle(wallet);
             getDelegation.mockRejectedValue(new ExecutorRequestError("unavailable", 503));
-            // the boot's refresh stamped the throttle; lift it
-            (wallet as any)._executorRefreshedAt = 0;
+            vi.setSystemTime(Date.now() + DAY_MS);
 
             await wallet.refreshExecutorWatches();
 
@@ -812,6 +812,33 @@ describe("delegated boarding address on an HD wallet", () => {
             expect(getDelegation).toHaveBeenCalledOnce();
 
             vi.setSystemTime(Date.now() + DAY_MS);
+            await wallet.refreshExecutorWatches();
+            expect(getDelegation).toHaveBeenCalledTimes(2);
+            await wallet.dispose();
+        });
+
+        it("asks again after a reload only once a day has passed, or the last refresh failed", async () => {
+            vi.useFakeTimers({ toFake: ["Date"] });
+            const { wallet, getDelegation } = await hdWalletWithWatch();
+            vi.spyOn(console, "warn").mockImplementation(() => {});
+            await boardChainIdle(wallet);
+            expect(getDelegation).toHaveBeenCalledOnce();
+            // what a reload starts with
+            const reload = () => ((wallet as any)._executorRefreshedAt = 0);
+
+            reload();
+            await wallet.refreshExecutorWatches();
+            expect(getDelegation).toHaveBeenCalledOnce();
+
+            vi.setSystemTime(Date.now() + DAY_MS);
+            const provider = (wallet as any)._executorManager.executorProvider;
+            const getInfo = provider.getInfo;
+            provider.getInfo = vi.fn().mockRejectedValue(new Error("offline"));
+            await wallet.refreshExecutorWatches();
+            expect(getDelegation).toHaveBeenCalledOnce();
+
+            provider.getInfo = getInfo;
+            reload();
             await wallet.refreshExecutorWatches();
             expect(getDelegation).toHaveBeenCalledTimes(2);
             await wallet.dispose();

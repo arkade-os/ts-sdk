@@ -700,6 +700,43 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         expect(contractManager.updateContract).not.toHaveBeenCalled();
     });
 
+    it("asks the Executor nothing when the stored watches already cover the call", async () => {
+        const { provider, executor } = await renewingWallet();
+        provider.getInfo.mockClear();
+
+        const boarding = await executor.registerBoarding(params, trusted);
+        const renewal = await executor.registerRenewal(params, trusted);
+
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+        expect(provider.getInfo).not.toHaveBeenCalled();
+        expect(boarding).toMatchObject({
+            address: vectors.boarding.address,
+            variables: vectors.boarding.variables,
+        });
+        expect(renewal).toMatchObject({
+            address: vectors.renewal.address,
+            variables: vectors.renewal.variables,
+        });
+        expect(boarding.delegation).toBeUndefined();
+    });
+
+    it("asks the Executor about a restored watch, which carries no status", async () => {
+        const { wallet: managed, provider } = await managedWallet();
+        await watchExecutorContracts(
+            managed,
+            {
+                cosignerPubkey: vectors.cosignerPubkey,
+                serverPubkey: vectors.serverPubkey,
+                emulatorPubkey: vectors.emulatorPubkey,
+            },
+            params,
+        );
+
+        await new ExecutorManagerImpl(provider, managed).registerBoarding(params, trusted);
+
+        expect(provider.registerDelegation.mock.calls.map(([id]) => id)).toEqual([ids.boarding]);
+    });
+
     describe("when the params change", () => {
         it("registers a new boarding and renewal pair and leaves the old pair live", async () => {
             const { manager, provider, executor } = await renewingWallet();
@@ -716,15 +753,6 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
             expect(await rowsOf(manager, "renewal")).toEqual([
                 `${OWNER}/500/active`,
                 `${OWNER}/501/active`,
-            ]);
-        });
-
-        it("does not register the renewal watch again when it is already live", async () => {
-            const { provider, executor } = await renewingWallet();
-
-            await executor.registerBoarding(params, trusted);
-            expect(provider.registerDelegation.mock.calls.map(([id]) => id)).toEqual([
-                ids.boarding,
             ]);
         });
 
@@ -856,7 +884,10 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         // the displayed key and each held one cost a registration; the reads are shared
         expect(provider.registerDelegation).toHaveBeenCalledTimes(held.length + 1);
         expect(provider.getInfo).toHaveBeenCalledOnce();
-        expect(managed.getOperatorInfo.mock.calls).toEqual([[{ requireLive: true }]]);
+        // one live read; the others take the stored snapshot
+        expect(managed.getOperatorInfo.mock.calls.filter((c: unknown[]) => c.length > 0)).toEqual([
+            [{ requireLive: true }],
+        ]);
     });
 
     it("throws at once when the displayed key fails, trying no other", async () => {

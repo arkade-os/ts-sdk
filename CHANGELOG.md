@@ -173,8 +173,9 @@ style and have not been backfilled.
   deadline of its own, but the Executor (`v0.0.4`) expires one that never
   receives a coin 168 hours after its creation, without reporting it, and
   registering again does not extend an active one. The wallet therefore asks the
-  Executor about its live watches when it starts and once a day while the
-  VtxoManager polls, registers an expired one again, which revives the same
+  Executor about its live watches at most once a day, reloads included, when it
+  starts and while the VtxoManager polls; a refresh the Executor could not
+  answer is retried on the next start. It registers an expired one again, which revives the same
   address, and stops showing one it cannot revive, so it boards those deposits
   itself. A revived watch keeps its registration time, so reviving an older
   one does not move the boarding address back to its params. A wallet offline for longer than that after its last rotation can
@@ -207,7 +208,9 @@ style and have not been backfilled.
   emulator key than the Executor's, or with a window no longer shorter than the
   operator's VTXO expiry, cannot be registered: it is skipped with a warning,
   and the wallet renews its coins itself. Like boarding it is idempotent, so
-  apps call it at startup, and each key costs one Executor call; it tries all of
+  apps call it at startup. A call the stored watches already cover (each key's
+  newest live watch, under the same params) asks the Executor nothing, and its
+  result has no `delegation`; otherwise each key costs one Executor call. It tries all of
   the others before throwing and names the keys that failed, so a retry covers
   the rest. A boarding rotation extends the new key with both watches while a
   live renewal watch exists. While a renewal watch is live, the VtxoManager
