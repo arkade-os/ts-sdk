@@ -39,10 +39,12 @@ style and have not been backfilled.
   `contracts/asset-swap-v4` and `contracts/sats-swap-v4` (`.ark` and `.json`)
   are now `asset-swap-directed` and `sats-swap-directed`. The id is a wire
   value, so a 0.1.10 client negotiating `asset-swap-v4` and a solver on
-  `asset-swap-directed` refuse each other, and a binding a 0.1.10 client
-  recorded under `asset-swap-v4` reads as an unknown contract version. Deposit
-  addresses are unchanged: only names move, and the covenant compiles byte for
-  byte as it did in 0.1.10.
+  `asset-swap-directed` refuse each other. A binding a 0.1.10 client recorded
+  under `asset-swap-v4` reads as an unknown contract version: the swap still
+  lists, but its cancel fails before anything is broadcast and the record stays
+  `pending`, and the restore scan skips its deposit. Deposit addresses are
+  unchanged: only names move, and the covenant compiles byte for byte as it did
+  in 0.1.10.
 
 - **`@arkade-os/swap`: asset RFQ negotiates only the directed covenant,
   `asset-swap-directed`.** `ASSET_SWAP_CONTRACT_VERSIONS`, what every asset RFQ

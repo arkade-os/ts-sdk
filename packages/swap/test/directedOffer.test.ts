@@ -325,6 +325,7 @@ describe("a recorded binding", () => {
     it.each([
         ["an unknown version", { version: "asset-swap-v9" }],
         ["the removed asset-swap-v3", { version: "asset-swap-v3" }],
+        ["0.1.10's name for the directed covenant", { version: "asset-swap-v4" }],
         ["no version", { version: undefined }],
         ["a negative amount", { amount: "-1" }],
         ["a fractional amount", { amount: "1.5" }],
