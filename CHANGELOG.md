@@ -100,7 +100,7 @@ style and have not been backfilled.
 
 ### Features
 
-- **Open RFQ discovers signed solver offers before selection.** The swap client broadcasts only canonical pair and atomic size, collects sealed exact-amount bids on the current version-1 wire, then verifies a chosen bidder through the existing directed quote and acceptance path. Routing pauses and registry policies still apply; selection never fails over or silently accepts worse terms. Auction funding dispatch deadlines survive reloads, while funded-swap reconciliation and recovery remain available after expiry. Existing directed requests are unchanged.
+- **Open RFQ discovers signed solver offers before selection.** The swap client broadcasts only canonical pair and atomic size, collects sealed exact-amount bids on the current version-1 wire, then verifies a chosen bidder through the existing directed quote and acceptance path. Routing pauses and registry policies still apply; selection never fails over or silently accepts worse terms. Auction funding dispatch deadlines survive reloads, while funded-swap reconciliation and recovery remain available after expiry. Existing directed requests are unchanged. Open pairs join their two CAIP-19 legs with `->`, the separator directed pairs use.
 
 - **Unreliable solvers lose quote priority temporarily.** Routing tracks repeated candidate-local failures per network and direction, moving cooling solvers behind healthy alternatives before preferred-first, usage or cost ordering. A verified quote restores priority; an injectable health store retains the advisory history across client lifetimes. Cancellation, request limits, acceptance and recovery do not penalize solvers.
 

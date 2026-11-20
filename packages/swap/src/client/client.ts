@@ -551,7 +551,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     : discoveredRelays.slice(0, 16));
             const request = {
                 openId: hex.encode(crypto.getRandomValues(new Uint8Array(32))),
-                pair: `${routed.give.asset}~${routed.take.asset}`,
+                pair: `${routed.give.asset}->${routed.take.asset}`,
                 amountSide: routed.amount.on === "give" ? ("from" as const) : ("to" as const),
                 amount: routed.amount.value,
             };

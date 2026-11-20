@@ -63,7 +63,7 @@ const bid = (toAmount = 2_492n) => ({
     id: "a".repeat(64),
     solverPubkey: pubkey,
     openId: "open",
-    pair: `${give}~${take}`,
+    pair: `${give}->${take}`,
     amountSide: "from" as const,
     fromAmount: 25_000n,
     toAmount,
@@ -200,7 +200,7 @@ describe("open RFQ selection", () => {
         });
         expect(collectOpenRfqBids).toHaveBeenCalledWith(
             expect.objectContaining({
-                pair: `${give}~${take}`,
+                pair: `${give}->${take}`,
                 amount: 25_000n,
                 amountSide: "from",
             }),

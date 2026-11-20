@@ -21,7 +21,7 @@ export interface OpenRfqBid {
 }
 
 const idPattern = /^[a-f0-9]{64}$/;
-const pairPattern = /^[a-zA-Z0-9:/._%-]{1,256}~[a-zA-Z0-9:/._%-]{1,256}$/;
+const pairPattern = /^[a-zA-Z0-9:/._%-]{1,256}->[a-zA-Z0-9:/._%-]{1,256}$/;
 const hexKey = /^[a-f0-9]{64}$/;
 const positiveAtomic = (value: unknown): bigint | undefined =>
     typeof value === "string" && /^[1-9][0-9]{0,127}$/.test(value) ? BigInt(value) : undefined;
