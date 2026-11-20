@@ -8,6 +8,7 @@ import type {
     ExecutorProvider,
 } from "../providers/executor";
 import type { Contract } from "../contracts/types";
+import type { ContractFilter } from "../repositories/contractRepository";
 import { ExecutorContractHandler } from "../contracts/handlers/executor";
 import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { networkFromOperatorInfo, resolveEmulatorPubkey } from "../networks";
@@ -21,6 +22,7 @@ import {
 import { timeoutSignal } from "../utils/fetch";
 import { timelockToSequence } from "../utils/timelock";
 import { newestWalletReceiveContract } from "./walletReceiveRotator";
+import { toXOnlySignerHex } from "./signerRotation";
 
 /** Bounds a registration: a write has no `fetch` deadline of its own. */
 export const REGISTRATION_TIMEOUT_MS = 30_000;
@@ -81,6 +83,61 @@ export type DelegatedWallet = Pick<
     IWallet,
     "identity" | "getAddress" | "getContractManager" | "getOperatorInfo"
 >;
+
+export interface DelegatedContractWatch {
+    contract: Contract;
+    owner: string;
+    script: ReturnType<typeof ExecutorContractHandler.createScript>;
+    signer: string;
+    live: boolean;
+}
+
+/** A read of the wallet's contract rows: repositories, never the manager's indexer sync. */
+export type ContractReader = (filter?: ContractFilter) => Promise<Contract[]>;
+
+/**
+ * The wallet-owned Executor watches of one template, newest first. A watch is the wallet's when
+ * its owner is the identity key, or one the row's `signingDescriptor` derives; it is live while
+ * the service reported it active and it has not expired.
+ */
+export async function delegatedContracts(
+    identity: Pick<IWallet["identity"], "xOnlyPublicKey">,
+    getContracts: ContractReader,
+    template: ExecutorDefault,
+): Promise<DelegatedContractWatch[]> {
+    const identityKey = hex.encode(await identity.xOnlyPublicKey());
+    const now = Math.floor(Date.now() / 1000);
+    const rows = (await getContracts({ type: ["executor"] }))
+        .filter((c) => c.params.template === template)
+        .sort((a, b) => b.createdAt - a.createdAt);
+    const watches: DelegatedContractWatch[] = [];
+    for (const contract of rows) {
+        try {
+            const owner = contract.params.owner?.slice(2).toLowerCase();
+            const descriptor = contract.metadata?.signingDescriptor;
+            const held =
+                owner === identityKey ||
+                (typeof descriptor === "string" &&
+                    hex.encode(deriveDescriptorLeafPubKey(descriptor)) === owner);
+            if (!held || owner === undefined) continue;
+            const script = ExecutorContractHandler.createScript(contract.params);
+            if (hex.encode(script.pkScript) !== contract.script) continue;
+            const expiresAt = contract.metadata?.[DELEGATION_EXPIRES_KEY];
+            watches.push({
+                contract,
+                owner,
+                script,
+                signer: toXOnlySignerHex(contract.params.serverPubKey),
+                live:
+                    contract.metadata?.[DELEGATION_STATUS_KEY] === "active" &&
+                    !(typeof expiresAt === "number" && expiresAt > 0 && expiresAt <= now),
+            });
+        } catch (e) {
+            console.warn("Skipping malformed delegated contract", contract.script, e);
+        }
+    }
+    return watches;
+}
 
 /**
  * Make the wallet's contract manager watch, as its own, the renewal contract of its key and, when
@@ -186,6 +243,20 @@ async function boardingDescriptor(
     return typeof descriptor === "string" ? descriptor : identityDescriptor(wallet.identity);
 }
 
+/**
+ * The key a held watch's row is registered under: its row's descriptor, else the identity's —
+ * a held row without one is the identity key's.
+ */
+function watchDescriptor(
+    watch: DelegatedContractWatch,
+    identity: Pick<IWallet["identity"], "xOnlyPublicKey">,
+): Promise<string> {
+    const descriptor = watch.contract.metadata?.signingDescriptor;
+    return typeof descriptor === "string"
+        ? Promise.resolve(descriptor)
+        : identityDescriptor(identity);
+}
+
 /** `updateContract` replaces metadata, so the previous expiry must not outlive a status without one. */
 function statusMetadata(
     metadata: Record<string, unknown>,
@@ -225,8 +296,8 @@ function delaySequence(delay: bigint): number {
 }
 
 /**
- * Registers boarding only: the wallet renews its renewal-contract coins itself, to `getAddress()`,
- * which would end a renewal watch at its first renewal.
+ * Registers Executor watches. Renewal keeps renewal-contract coins alive while the wallet is
+ * offline; boarding moves onchain deposits into the corresponding renewal contract.
  */
 export interface IExecutorManager {
     getInfo(): Promise<ExecutorInfo>;
@@ -245,6 +316,22 @@ export interface IExecutorManager {
      * through {@link watchExecutorContracts}.
      */
     registerBoarding(
+        params: DelegationOptions,
+        options?: RegistrationOptions,
+    ): Promise<ExecutorWatchRegistration>;
+    /**
+     * Register the renewal watch, with the same params as {@link registerBoarding} (a key whose
+     * rows were registered with other params is refused) and like it idempotent, so apps call it
+     * at startup. It covers every key that holds a live boarding watch under the current
+     * operator: the displayed boarding key first, whose registration is returned, then each
+     * earlier rotated key that still has one. Every key is tried before a failure is thrown, and
+     * the error names the keys that failed, so a retry covers the rest.
+     *
+     * Until the wallet's address becomes its renewal contract, coins received at `getAddress()`,
+     * a send's change and the fallback renewals are not covered: they land at the wallet's own
+     * address, which the wallet renews itself.
+     */
+    registerRenewal(
         params: DelegationOptions,
         options?: RegistrationOptions,
     ): Promise<ExecutorWatchRegistration>;
@@ -281,16 +368,71 @@ export class ExecutorManagerImpl implements IExecutorManager {
         return this.registerBoardingAt(undefined, options, registration);
     }
 
+    async registerRenewal(
+        options: DelegationOptions,
+        registration?: RegistrationOptions,
+    ): Promise<ExecutorWatchRegistration> {
+        const first = await this.registerAt(undefined, options, registration, "renewal");
+        const server = hex.encode(ArkAddress.decode(await this.wallet.getAddress()).serverPubKey);
+        const displayed = hex.encode(
+            (
+                await ownerKey(this.wallet.identity, await boardingDescriptor(this.wallet, server))
+            ).subarray(1),
+        );
+        const reader: ContractReader = async (filter) =>
+            (await this.wallet.getContractManager()).getContracts(filter);
+        const held = await delegatedContracts(this.wallet.identity, reader, "boarding");
+        const failed: string[] = [];
+        for (const watch of held) {
+            // the displayed key's watch is `first`'s registration
+            if (!watch.live || watch.signer !== server || watch.owner === displayed) continue;
+            try {
+                await this.registerAt(
+                    await watchDescriptor(watch, this.wallet.identity),
+                    options,
+                    registration,
+                    "renewal",
+                );
+            } catch (e) {
+                console.warn(`Renewal watch for the held key ${watch.owner} failed`, e);
+                failed.push(watch.owner);
+            }
+        }
+        if (failed.length > 0) {
+            throw new Error(
+                `Executor renewal registration failed for the keys ${failed.join(", ")}`,
+            );
+        }
+        return first;
+    }
+
     /** @internal {@link registerBoarding} for `descriptor`'s key; the displayed one by default. */
     async registerBoardingAt(
         descriptor: string | undefined,
         options: DelegationOptions,
-        { expiresAt, emulatorPubkey }: RegistrationOptions = {},
+        registration: RegistrationOptions = {},
     ): Promise<ExecutorWatchRegistration> {
-        const [info, operator, address] = await Promise.all([
+        return this.registerAt(descriptor, options, registration, "boarding");
+    }
+
+    /** @internal Register the renewal watch for `descriptor`'s key. */
+    async registerRenewalAt(
+        descriptor: string | undefined,
+        options: DelegationOptions,
+        registration?: RegistrationOptions,
+    ): Promise<ExecutorWatchRegistration> {
+        return this.registerAt(descriptor, options, registration, "renewal");
+    }
+
+    private async registerAt(
+        descriptor: string | undefined,
+        options: DelegationOptions,
+        { expiresAt, emulatorPubkey }: RegistrationOptions = {},
+        template: ExecutorDefault,
+    ): Promise<ExecutorWatchRegistration> {
+        const [info, operator] = await Promise.all([
             this.executorProvider.getInfo(),
             this.wallet.getOperatorInfo({ requireLive: true }),
-            this.wallet.getAddress(),
         ]);
         if (info.network !== operator.network) {
             throw new Error(
@@ -298,7 +440,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             );
         }
         // the watch address commits to the service's operator key, so it must be the wallet's
-        const { serverPubKey } = ArkAddress.decode(address);
+        const { hrp, serverPubKey } = ArkAddress.decode(await this.wallet.getAddress());
         const server = hex.encode(serverPubKey);
         if (info.serverPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
@@ -322,25 +464,62 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `renewalWindow ${options.renewalWindow}s must be shorter than the operator's VTXO expiry of ${lifetime}s`,
             );
         }
+        // Both templates register the displayed boarding key's: boarding moves its deposits in,
+        // renewal keeps the renewal contract that receives them alive. boardingDescriptor falls
+        // back to the identity's, so a static wallet registers its identity key, as before.
         descriptor ??= await boardingDescriptor(this.wallet, server);
         const owner = await ownerKey(this.wallet.identity, descriptor);
         const params: DelegationParams = {
             renewalWindow: options.renewalWindow,
             maxFee: options.maxFee,
             exitDelay: options.exitDelay ?? delaySequence(operator.unilateralExitDelay),
-            boardingExitDelay:
-                options.boardingExitDelay ?? delaySequence(operator.boardingExitDelay),
+            ...(template === "boarding"
+                ? {
+                      boardingExitDelay:
+                          options.boardingExitDelay ?? delaySequence(operator.boardingExitDelay),
+                  }
+                : {}),
         };
         const keys: ExecutorContractKeys = {
             cosignerPubkey: info.cosignerPubkey,
             serverPubkey: info.serverPubkey,
             emulatorPubkey: info.emulatorPubkey,
         };
-        const variables = defaultVariables("boarding", owner, params);
-        const watchAddress = ExecutorContractHandler.createScript(
-            contractParams("boarding", owner, keys, params),
-        ).onchainAddress(network);
-        const templateId = DEFAULT_TEMPLATE_IDS.boarding;
+        const existing = await (await this.wallet.getContractManager()).getContracts({
+            type: ["executor"],
+        });
+        const ownerHex = hex.encode(owner.subarray(1));
+        const mismatches = new Set<string>();
+        for (const row of existing) {
+            if (
+                row.params.owner?.slice(2).toLowerCase() !== ownerHex ||
+                row.params.serverPubKey?.toLowerCase() !== info.serverPubkey.toLowerCase()
+            ) {
+                continue;
+            }
+            for (const name of ["renewalWindow", "maxFee", "exitDelay"] as const) {
+                if (row.params[name] !== String(params[name])) mismatches.add(name);
+            }
+            if (template === "boarding" && row.params.template === "boarding") {
+                if (row.params.boardingExitDelay !== String(params.boardingExitDelay)) {
+                    mismatches.add("boardingExitDelay");
+                }
+            }
+        }
+        if (mismatches.size > 0) {
+            throw new Error(
+                `Executor registration parameters differ: ${[...mismatches].join(", ")}`,
+            );
+        }
+        const variables = defaultVariables(template, owner, params);
+        const watchScript = ExecutorContractHandler.createScript(
+            contractParams(template, owner, keys, params),
+        );
+        const watchAddress =
+            template === "boarding"
+                ? watchScript.onchainAddress(network)
+                : watchScript.address(hrp, serverPubKey).encode();
+        const templateId = DEFAULT_TEMPLATE_IDS[template];
         // Idempotent on the service (repeating returns the existing watch), so a call aborted
         // with its outcome unknown is safe to repeat.
         const delegation = await this.executorProvider.registerDelegation(templateId, variables, {
@@ -350,9 +529,13 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // The service fills <COSIGNER_KEY> with its key: the same address proves it is GetInfo's,
         // and commits to the same tapscripts. Checked before anything is persisted.
         const [input] = delegation.inputs;
-        if (delegation.inputs.length !== 1 || !input.onchain) {
+        if (
+            delegation.inputs.length !== 1 ||
+            !input ||
+            (template === "boarding" ? !input.onchain : input.onchain)
+        ) {
             throw new Error(
-                `Executor's boarding delegation has ${delegation.inputs.length} inputs, expected one onchain input`,
+                `Executor's ${template} delegation has ${delegation.inputs.length} inputs, expected one ${template === "boarding" ? "onchain" : "offchain"} input`,
             );
         }
         if (input.address !== watchAddress) {
@@ -361,7 +544,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             );
         }
         const registered: ExecutorWatchMetadata = {
-            template: "boarding",
+            template,
             status: delegation.status,
             expiresAt: delegation.expiresAt,
         };
@@ -375,7 +558,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // The row may predate this registration (the service is idempotent, the repository is
         // not): make it carry what the service just said, ended or not, so an ended watch stops
         // being advertised.
-        const row = contracts.find((c) => c.params.template === "boarding");
+        const row = contracts.find((c) => c.params.template === template);
         if (row) {
             const manager = await this.wallet.getContractManager();
             await manager.updateContract(row.script, {

@@ -19,6 +19,7 @@ import {
 import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
 import { saveVtxosForContract } from "../src/contracts/vtxoOwnership";
 import { REGISTRATION_TIMEOUT_MS } from "../src/wallet/executor";
+import { DEFAULT_TEMPLATE_IDS } from "../src/script/executor/executorTemplate";
 import { getOwnBoardingAddress } from "../src/wallet/utils";
 import { createMockExtendedVtxo } from "./contracts/helpers";
 import vectors from "./fixtures/executor/vectors.json";
@@ -114,6 +115,8 @@ async function hdWalletWithWatch({
     coinAtRenewal = false,
     hold = false,
     lazy = false,
+    renewalLive = false,
+    failRenewal = false,
 } = {}) {
     // an HD wallet subscribes to its contracts at boot
     vi.stubGlobal(
@@ -130,7 +133,11 @@ async function hdWalletWithWatch({
     const renewal = await executorRow("renewal", hd);
     const boarding = await executorRow("boarding", hd);
     const contractRepository = new InMemoryContractRepository();
-    await contractRepository.saveContract(renewal.contract);
+    await contractRepository.saveContract(
+        renewalLive
+            ? { ...renewal.contract, metadata: { delegationStatus: "active" } }
+            : renewal.contract,
+    );
     await contractRepository.saveContract(boarding.contract);
     const walletRepository = new InMemoryWalletRepository();
     if (coinAtRenewal) {
@@ -163,10 +170,21 @@ async function hdWalletWithWatch({
                 ]);
             }
             if (refuse) throw new Error("Executor unavailable");
-            const script = ExecutorContractHandler.createScript({
-                ...boarding.contract.params,
-                owner: variables.owner,
-            });
+            const template = templateId === DEFAULT_TEMPLATE_IDS.boarding ? "boarding" : "renewal";
+            if (failRenewal && template === "renewal") throw new Error("Executor unavailable");
+            const script = ExecutorContractHandler.createScript(
+                ExecutorContractHandler.serializeParams({
+                    template,
+                    owner: hex.decode(variables.owner),
+                    exitDelay: 144,
+                    renewalWindow: 1000,
+                    maxFee: 100,
+                    ...(template === "boarding" ? { boardingExitDelay: 144 } : {}),
+                    cosignerPubKey: hex.decode(vectors.cosignerPubkey),
+                    serverPubKey: hex.decode(SERVER_KEY_HEX),
+                    emulatorPubKey: hex.decode(vectors.emulatorPubkey),
+                }),
+            );
             return {
                 id: 1,
                 templateId,
@@ -174,10 +192,15 @@ async function hdWalletWithWatch({
                 status: "active",
                 inputs: [
                     {
-                        name: "board",
-                        onchain: true,
+                        name: template,
+                        onchain: template === "boarding",
                         script: hex.encode(script.pkScript),
-                        address: script.onchainAddress(networks.mutinynet),
+                        address:
+                            template === "boarding"
+                                ? script.onchainAddress(networks.mutinynet)
+                                : script
+                                      .address("tark", hex.decode(SERVER_KEY_HEX).subarray(1))
+                                      .encode(),
                     },
                 ],
             };
@@ -304,6 +327,59 @@ describe("delegated boarding address on an HD wallet", () => {
         expect(variables.owner).not.toBe(owner);
         // the first watch's deposits are still the wallet's
         expect(await wallet.getBoardingAddresses()).toContain(first);
+        await wallet.dispose();
+    });
+
+    it("extends the new key with both watches when a renewal watch is live", async () => {
+        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+            renewalLive: true,
+        });
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+
+        const next = await wallet.getNewBoardingAddress();
+        expect(next).not.toBe(first);
+        // the new key got a boarding watch and the renewal watch its deposits land in
+        expect(registerDelegation.mock.calls.map(([id]) => id).sort()).toEqual([
+            DEFAULT_TEMPLATE_IDS.boarding,
+            DEFAULT_TEMPLATE_IDS.renewal,
+        ]);
+        const [[, boardingVars], [, renewalVars]] = registerDelegation.mock.calls;
+        expect(renewalVars.owner).toBe(boardingVars.owner);
+        // the new key's renewal row is live, so the Executor renews its coins too
+        const [newRenewal] = (
+            await collectContracts(wallet.contractRepository, {
+                type: ["executor"],
+            })
+        ).filter((c) => c.params.template === "renewal" && c.params.owner === renewalVars.owner);
+        expect(newRenewal.metadata?.delegationStatus).toBe("active");
+        await wallet.dispose();
+    });
+
+    it("registers boarding only when no renewal watch is live", async () => {
+        const { wallet, registerDelegation } = await hdWalletWithWatch();
+
+        await wallet.getNewBoardingAddress();
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        expect(registerDelegation.mock.calls[0][0]).toBe(DEFAULT_TEMPLATE_IDS.boarding);
+        await wallet.dispose();
+    });
+
+    it("still registers the boarding watch when the renewal one fails", async () => {
+        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+            renewalLive: true,
+            failRenewal: true,
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+
+        const next = await wallet.getNewBoardingAddress();
+        expect(next).not.toBe(first);
+        expect(next).not.toBe(wallet.ownBoardingAddress());
+        // both were attempted; only the boarding one took
+        expect(registerDelegation).toHaveBeenCalledTimes(2);
+        expect(registerDelegation.mock.calls[0][0]).toBe(DEFAULT_TEMPLATE_IDS.boarding);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
         await wallet.dispose();
     });
 
