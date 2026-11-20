@@ -4,13 +4,16 @@
  */
 
 import { hex } from "@scure/base";
+import { sha256 } from "@scure/btc-signer/utils.js";
 
 import { sequenceToCanonicalTimelock } from "../utils/timelock";
 import { ARKADE_OPS } from "./script";
 import {
     SUPPORTED_PROGRAM_VERSION,
     ARKADE_TYPE_ENCODINGS,
+    validateParamValue,
     type ArkadeArgType,
+    type ArkadeParamValue,
     type ArkadeFunction,
     type AsmToken,
     type InputDef,
@@ -61,7 +64,40 @@ export interface ContractArtifact {
     constructorInputs: ArtifactParameter[];
     structs?: ArtifactStruct[];
     functions: ArtifactGroup[];
+    /** The `codeHash` of each contract this one instantiates with `new`, by contract name. */
+    contracts?: Record<string, string>;
+    /** `sha256:<hex>` of the fields that determine the scripts. The SDK recomputes it instead. */
+    codeHash?: string;
     fingerprint?: string;
+}
+
+/** What {@link programFromArtifact} reads besides the artifact. */
+export interface ProgramFromArtifactOptions {
+    /** The build's debug file: each covenant segment then carries its `sourceMap`. */
+    debug?: ContractDebugInfo;
+    /**
+     * The artifact of every contract instantiated with `new`, directly or through another one, in
+     * any order. Each must match the `codeHash` its parent pins in `contracts`. That hash covers the
+     * fields in arkadec's order, so an artifact re-serialized with reordered keys (as Postgres
+     * `jsonb` does) is refused: keep the JSON arkadec wrote.
+     */
+    contracts?: readonly ContractArtifact[];
+}
+
+/** A contract a program instantiates; each constructor param is a parent param or a literal. */
+export interface Instantiation {
+    program: Program;
+    args: Record<string, string | ArkadeParamValue>;
+}
+
+const INSTANTIATED = Symbol("instantiated contracts");
+
+/**
+ * @internal The contracts `program` instantiates, keyed by the `bytes32` param that holds each
+ * one's witness program. In memory only: no serializer writes it, so a restored program has none.
+ */
+export function instantiatedContracts(program: Program): Record<string, Instantiation> {
+    return (program as { [INSTANTIATED]?: Record<string, Instantiation> })[INSTANTIATED] ?? {};
 }
 
 /** The compiler's debug file: each covenant's source map, keyed by spend group. */
@@ -308,6 +344,89 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
     }
 }
 
+/**
+ * The `codeHash` arkadec writes: SHA-256 of the compact JSON of every field but the five dropped
+ * here, in the artifact's own key order, and the artifact parsed back from that JSON, so what is
+ * read is exactly what was hashed.
+ */
+function codeHash(artifact: ContractArtifact): [string, ContractArtifact] {
+    const { source, compiler, updatedAt, fingerprint, codeHash, ...scripts } =
+        artifact as ContractArtifact & Record<string, unknown>;
+    const text = JSON.stringify(scripts);
+    return [`sha256:${hex.encode(sha256(new TextEncoder().encode(text)))}`, JSON.parse(text)];
+}
+
+/** A `<CONTRACT:…>` argument: a parent param, by name, or a literal of the child param's type. */
+function instantiationArg(
+    token: string,
+    def: InputDef,
+    params: readonly InputDef[],
+): string | ArkadeParamValue {
+    if (token.startsWith("<") && token.endsWith(">")) {
+        const name = token.slice(1, -1);
+        if (!params.some((param) => param.name === name)) {
+            fail(`instantiation argument '${token}' is not a constructor parameter`);
+        }
+        return name;
+    }
+    const value = token.startsWith("0x")
+        ? hex.decode(token.slice(2))
+        : token === "true" || token === "false"
+          ? BigInt(token === "true")
+          : /^\d+$/.test(token)
+            ? BigInt(token)
+            : fail(`computed instantiation argument '${token}'`);
+    validateParamValue(def, value);
+    return value;
+}
+
+/** Resolve `<CONTRACT:body>` in `parent` to the supplied artifact its pin names, read in turn. */
+function link(
+    parent: ContractArtifact,
+    params: readonly InputDef[],
+    body: string,
+    supplied: Map<string, ContractArtifact>,
+    stack: string[],
+): Instantiation {
+    const [, name, list] = body.match(/^([A-Za-z]\w*)\((.*)\)$/) ?? fail(`malformed '${body}'`);
+    const chain = [...stack, parent.contractName];
+    if (chain.includes(name)) fail(`instantiation loop ${[...chain, name].join(" → ")}`);
+    const pins = parent.contracts;
+    const pin = isRecord(pins) && Object.hasOwn(pins, name) ? pins[name] : undefined;
+    if (typeof pin !== "string") {
+        fail(
+            `${parent.contractName} pins no code hash for ${name}; recompile ${parent.contractName} with arkadec 0.1.0 or later`,
+        );
+    }
+    const child = supplied.get(pin);
+    if (child?.contractName !== name) {
+        fail(
+            [...supplied.values()].some((other) => other.contractName === name)
+                ? `the ${name} artifact in \`contracts\` does not have the code hash ${parent.contractName} pins (${pin}); pass the build it was compiled against, unedited and in arkadec's field order`
+                : `${parent.contractName} instantiates ${name}; pass its artifact in \`contracts\``,
+        );
+    }
+    // ponytail: a child reached along several paths is read once per path, so a list that shares
+    // children across many levels is read exponentially often; memoize by code hash if that bites.
+    const program = readArtifact(child, undefined, supplied, chain);
+    // The flattened constructor inputs come first in `params`, then the reserved `server`.
+    const inputs = program.params!.slice(
+        0,
+        program.params!.findIndex((p) => p.name === "server"),
+    );
+    const values = list === "" ? [] : list.split(",");
+    if (values.length !== inputs.length) {
+        fail(
+            `${name} takes ${inputs.length} constructor argument(s); ${parent.contractName} passes ${values.length}`,
+        );
+    }
+    const args: Instantiation["args"] = Object.create(null);
+    inputs.forEach((input, i) => {
+        args[input.name] = instantiationArg(values[i], input, params);
+    });
+    return { program, args };
+}
+
 function providedWitness(witness: ArtifactWitnessElement[] | undefined): ArtifactWitnessElement[] {
     if (witness === undefined) return [];
     if (!Array.isArray(witness)) fail("leaf witness must be an array");
@@ -450,12 +569,31 @@ function parseLeaf(
 }
 
 /**
- * Adds `server`, and one param per child-output placeholder for the caller to bind to that output key.
- * With the build's `debug` file, each covenant segment also carries its `sourceMap`.
+ * Adds `server`, and one `bytes32` param per `<CONTRACT:Name(…)>` placeholder, which an
+ * `ArkadeContract` binds to that contract's witness program when it is built. Each `Name` needs its
+ * artifact in `options.contracts` and its pin in the artifact's own `contracts`, or this throws.
+ * With the build's `debug` file, passed bare or as `debug`, each covenant segment also carries its
+ * `sourceMap`.
  */
 export function programFromArtifact(
     artifact: ContractArtifact,
-    debug?: ContractDebugInfo,
+    options?: ProgramFromArtifactOptions | ContractDebugInfo,
+): Program {
+    const { debug, contracts = [] }: ProgramFromArtifactOptions =
+        options && "functions" in options ? { debug: options } : (options ?? {});
+    const supplied = new Map<string, ContractArtifact>();
+    for (const child of contracts) {
+        if (!isContractArtifact(child)) fail("each of `contracts` must be an arkadec artifact");
+        supplied.set(...codeHash(child));
+    }
+    return readArtifact(artifact, debug, supplied, []);
+}
+
+function readArtifact(
+    artifact: ContractArtifact,
+    debug: ContractDebugInfo | undefined,
+    supplied: Map<string, ContractArtifact>,
+    stack: string[],
 ): Program {
     if (!isContractArtifact(artifact)) {
         fail(
@@ -579,11 +717,16 @@ export function programFromArtifact(
     ];
     const paramNames = new Set<string>();
     for (const param of params) claim(paramNames, param.name, "program parameter");
+    const linked: Record<string, Instantiation> = Object.create(null);
+    for (const [name, body] of instantiations) {
+        linked[name] = link(artifact, params, body, supplied, stack);
+    }
 
     return {
         version: SUPPORTED_PROGRAM_VERSION,
         name: artifact.contractName,
         params,
         functions,
+        ...(instantiations.size > 0 ? { [INSTANTIATED]: linked } : {}),
     };
 }
