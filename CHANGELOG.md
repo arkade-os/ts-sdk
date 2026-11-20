@@ -122,6 +122,15 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: the drive cancels a directed deposit its quote let lapse.**
+  Only the quoting solver can fill an `asset-swap-v4` deposit, and it fills
+  nothing past `valid_until`, so once 60 seconds beyond it have passed with the
+  deposit unspent, a running drive cancels it through the usual `cancelling` to
+  `cancelled` path, retrying on each pass until it lands. A cancel that loses to
+  a late fill resolves as `filled`. A `readonly` drive, or a `manual` one before
+  `start()`, does nothing; v2 and v3 deposits, and records rebuilt from the chain
+  (whose deadline is not known), are left for the user to cancel.
+
 - **`@arkade-os/swap`: the restore scan takes its deposits from pluggable sources.**
   `restoreAssetSwaps` accepts `sources`, each an `OfferRecoverySource` that answers
   candidate funding txids with bindings, and marks the ones it rules out. The

@@ -61,6 +61,7 @@ import {
     type SwapContractRegistry,
 } from "../swapManager";
 import { watchOfferSwaps, type OfferSwapWatcher } from "../watch";
+import { cancelSwap } from "./cancel";
 import type { CorridorSet } from "./corridors/registry";
 import { ClientDisposed } from "./errors";
 import type { NetworkRef } from "./assetId";
@@ -215,6 +216,9 @@ export interface SwapDrive {
 /** Offer statuses that still have something to drive. */
 const OFFER_LIVE = (status: OfferSwapRecord["status"]): boolean =>
     status === "pending" || status === "cancelling";
+
+/** How long past a directed quote's `valid_until` the solver's fill is still waited for. */
+const DIRECTED_CANCEL_GRACE_SECONDS = 60;
 
 /** The trader's own claim on a swap, whichever leg holds it. */
 const traderClaimTxid = (swap: RfqSwap): string | undefined =>
@@ -948,6 +952,53 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 onUpdate: (swap) => emit(swap.id),
             });
         }
+        if (!lapseTimer) {
+            lapseTimer = setInterval(cancelLapsed, config.pollIntervalMs ?? 5_000);
+            cancelLapsed();
+        }
+    };
+
+    /** Directed deposits whose cancel is in flight; one attempt per deposit at a time. */
+    const lapsing = new Set<QuoteId>();
+    let lapseTimer: ReturnType<typeof setInterval> | undefined;
+
+    /**
+     * Only the quoting solver can fill a directed deposit, and it fills nothing past `valid_until`,
+     * so once the grace is over the cancel is the only way the deposit comes back. A cancel that
+     * loses to a late fill resolves as filled. Restored records are skipped: their deadline is a
+     * placeholder.
+     */
+    const cancelLapsed = (): void => {
+        if (disposed || !repository) return;
+        for (const record of records.values()) {
+            if (
+                record.family !== "offer" ||
+                record.binding?.taker === undefined ||
+                record.market.kind === "restored" ||
+                record.fundingTxid === undefined ||
+                !OFFER_LIVE(record.status) ||
+                fundingWasNotSubmitted(record) ||
+                now() <= record.expiresAt + DIRECTED_CANCEL_GRACE_SECONDS ||
+                lapsing.has(record.id)
+            ) {
+                continue;
+            }
+            lapsing.add(record.id);
+            void track(
+                cancelSwap({
+                    wallet,
+                    repository,
+                    record,
+                    drive: { ingest: remember },
+                    indexer,
+                    now,
+                })
+                    .catch((error: unknown) => {
+                        console.warn(`[swap] could not cancel lapsed swap ${record.id}`, error);
+                    })
+                    .finally(() => lapsing.delete(record.id)),
+            );
+        }
     };
 
     const registerRestoredOffers = async (offers: OfferSwapRecord[]): Promise<void> => {
@@ -1127,6 +1178,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // money actions run to completion — stop/start is a pause.
         await queue;
         await manager.stop();
+        clearInterval(lapseTimer);
+        lapseTimer = undefined;
         // Contract rows are NOT undone: dropping one unwatches a funded lockup.
         watcher?.stop();
         await watcher?.idle();
