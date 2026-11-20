@@ -116,11 +116,13 @@ export async function delegatedContracts(
     getContracts: ContractReader,
     template: ExecutorDefault,
 ): Promise<DelegatedContractWatch[]> {
-    const identityKey = hex.encode(await identity.xOnlyPublicKey());
-    const now = Math.floor(Date.now() / 1000);
     const rows = (await getContracts({ type: ["executor"] }))
         .filter((c) => c.params.template === template)
         .sort((a, b) => registeredAt(b) - registeredAt(a));
+    // Before the identity read, which can be a round trip for a remote signer.
+    if (rows.length === 0) return [];
+    const identityKey = hex.encode(await identity.xOnlyPublicKey());
+    const now = Math.floor(Date.now() / 1000);
     const watches: DelegatedContractWatch[] = [];
     for (const contract of rows) {
         try {

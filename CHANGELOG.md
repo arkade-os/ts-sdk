@@ -181,7 +181,9 @@ style and have not been backfilled.
   stays covered. Until the wallet's receive address becomes its renewal
   contract, coins received at `getAddress()` and the fallback renewals are not
   covered: they land at the wallet's own address, which the wallet renews
-  itself.
+  itself. A wallet with no Executor watches pays one repository read for all
+  this, in a send and in a renewal pass, and makes no operator or identity-key
+  lookup.
 
 - **Deposits waiting for the Executor are the wallet's boarding coins.** A
   deposit at a delegated boarding address shows in `getBoardingUtxos`,
