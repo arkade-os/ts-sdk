@@ -392,6 +392,17 @@ export interface IExecutorManager {
     ): Promise<ExecutorWatchRegistration>;
 }
 
+/** What a public call reads once, however many keys it registers. */
+interface RegistrationContext {
+    info: ExecutorInfo;
+    operator: Awaited<ReturnType<DelegatedWallet["getOperatorInfo"]>>;
+    network: ReturnType<typeof networkFromOperatorInfo>;
+    hrp: string;
+    serverPubKey: Uint8Array;
+    /** The wallet's operator key, x-only hex. */
+    server: string;
+}
+
 /** Client-side watch registration with the Executor. */
 export class ExecutorManagerImpl implements IExecutorManager {
     constructor(
@@ -428,15 +439,11 @@ export class ExecutorManagerImpl implements IExecutorManager {
         registration: RegistrationOptions = {},
     ): Promise<ExecutorWatchRegistration> {
         // Resolved once: a rotation during the call must not change which key is the displayed one.
-        const first = await this.registerAt(
-            await this.displayedDescriptor(),
-            options,
-            registration,
-            "renewal",
-        );
-        const server = await this.operatorSigner();
-        // `first` just read it live; the cached snapshot is enough here
-        const { vtxoTreeExpiry } = await this.wallet.getOperatorInfo();
+        const displayed = await this.displayedDescriptor();
+        const context = await this.registrationContext();
+        const { server } = context;
+        const { vtxoTreeExpiry } = context.operator;
+        const first = await this.registerAt(context, displayed, options, registration, "renewal");
         const registered = new Set([
             renewalScript(hex.decode(first.variables.owner), first.keys, first.params),
         ]);
@@ -465,6 +472,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 if (registered.has(contract)) continue;
                 registered.add(contract);
                 await this.registerAt(
+                    context,
                     await watchDescriptor(watch, this.wallet.identity),
                     { renewalWindow: p.renewalWindow, maxFee: p.maxFee, exitDelay: p.exitDelay },
                     { expiresAt: registration.expiresAt, emulatorPubkey: keys.emulatorPubkey },
@@ -490,9 +498,10 @@ export class ExecutorManagerImpl implements IExecutorManager {
         registration: RegistrationOptions = {},
     ): Promise<ExecutorWatchRegistration> {
         const key = descriptor ?? (await this.displayedDescriptor());
-        const boarding = await this.registerAt(key, options, registration, "boarding");
+        const context = await this.registrationContext();
+        const boarding = await this.registerAt(context, key, options, registration, "boarding");
         try {
-            await this.pairRenewal(key, boarding, options, registration);
+            await this.pairRenewal(context, key, boarding, options, registration);
         } catch (e) {
             console.warn("Failed to register the Executor renewal watch paired with boarding", e);
         }
@@ -505,8 +514,10 @@ export class ExecutorManagerImpl implements IExecutorManager {
         options: DelegationOptions,
         registration?: RegistrationOptions,
     ): Promise<ExecutorWatchRegistration> {
+        const key = descriptor ?? (await this.displayedDescriptor());
         return this.registerAt(
-            descriptor ?? (await this.displayedDescriptor()),
+            await this.registrationContext(),
+            key,
             options,
             registration,
             "renewal",
@@ -518,6 +529,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
      * already renews needs a renewal watch there too, or its boarded coins fall back to the wallet.
      */
     private async pairRenewal(
+        context: RegistrationContext,
         descriptor: string,
         boarding: ExecutorWatchRegistration,
         options: DelegationOptions,
@@ -529,12 +541,11 @@ export class ExecutorManagerImpl implements IExecutorManager {
             boarding.keys,
             boarding.params,
         );
-        const server = await this.operatorSigner();
         const renewals = (await this.heldWatches("renewal")).filter(
-            (w) => w.live && w.signer === server && w.owner === owner,
+            (w) => w.live && w.signer === context.server && w.owner === owner,
         );
         if (renewals.length === 0 || renewals.some((w) => w.contract.script === contract)) return;
-        await this.registerAt(descriptor, options, registration, "renewal");
+        await this.registerAt(context, descriptor, options, registration, "renewal");
     }
 
     /** The wallet's operator key, x-only hex: the signer a live watch is registered under. */
@@ -560,12 +571,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         );
     }
 
-    private async registerAt(
-        descriptor: string,
-        options: DelegationOptions,
-        { expiresAt, emulatorPubkey }: RegistrationOptions = {},
-        template: ExecutorDefault,
-    ): Promise<ExecutorWatchRegistration> {
+    private async registrationContext(): Promise<RegistrationContext> {
         const [info, operator] = await Promise.all([
             this.executorProvider.getInfo(),
             this.wallet.getOperatorInfo({ requireLive: true }),
@@ -583,7 +589,23 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${server}`,
             );
         }
-        const network = networkFromOperatorInfo(operator);
+        return {
+            info,
+            operator,
+            network: networkFromOperatorInfo(operator),
+            hrp,
+            serverPubKey,
+            server,
+        };
+    }
+
+    private async registerAt(
+        { info, operator, network, hrp, serverPubKey }: RegistrationContext,
+        descriptor: string,
+        options: DelegationOptions,
+        { expiresAt, emulatorPubkey }: RegistrationOptions = {},
+        template: ExecutorDefault,
+    ): Promise<ExecutorWatchRegistration> {
         // Pinned, as in Arkade.connect: holding the emulator key, the Executor could sign the
         // emulator-enforced leaf itself, past its covenant. Matching addresses cannot show it.
         const emulator = resolveEmulatorPubkey(network, emulatorPubkey);

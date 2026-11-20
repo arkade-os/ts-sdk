@@ -163,12 +163,12 @@ style and have not been backfilled.
   emulator key than the Executor's, or with a window no longer shorter than the
   operator's VTXO expiry, cannot be registered: it is skipped with a warning,
   and the wallet renews its coins itself. Like boarding it is idempotent, so
-  apps call it at startup; it tries all of the others before throwing and names
-  the keys that failed, so a retry covers the rest. A
-  boarding rotation extends the new key with both watches while a live renewal
-  watch exists. While a renewal watch is live, the VtxoManager leaves the coins
-  at its renewal contract to the Executor, which renews them in place while the
-  wallet is offline. It renews them itself again — the fallback — inside half the
+  apps call it at startup, and each key costs one Executor call; it tries all of
+  the others before throwing and names the keys that failed, so a retry covers
+  the rest. A boarding rotation extends the new key with both watches while a
+  live renewal watch exists. While a renewal watch is live, the VtxoManager
+  leaves the coins at its renewal contract to the Executor, which renews them in
+  place while the wallet is offline. It renews them itself again — the fallback — inside half the
   `renewalWindow` before expiry, and always for a recoverable, subdust or
   `maxFee + dust`-or-less coin, which the Executor cannot renew. `renewVtxos()`
   skips the delegated coins too, including a manual call; `settle()` still moves

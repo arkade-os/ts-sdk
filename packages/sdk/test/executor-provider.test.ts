@@ -817,6 +817,22 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         ]);
     });
 
+    it("reads the Executor and the operator once, however many keys it registers", async () => {
+        const { wallet: managed, provider } = await managedWallet();
+        // the x-only key of 4G, a third held key
+        const held = [
+            ...heldKeys,
+            "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+        ];
+        for (const key of held) await holdBoardingWatch(managed, `tr(${key})`);
+
+        await new ExecutorManagerImpl(provider, managed).registerRenewal(params, trusted);
+        // the displayed key and each held one cost a registration; the reads are shared
+        expect(provider.registerDelegation).toHaveBeenCalledTimes(held.length + 1);
+        expect(provider.getInfo).toHaveBeenCalledOnce();
+        expect(managed.getOperatorInfo.mock.calls).toEqual([[{ requireLive: true }]]);
+    });
+
     it("throws at once when the displayed key fails, trying no other", async () => {
         const { wallet: managed, provider } = await managedWallet([vectors.owner]);
         await holdBoardingWatch(managed, `tr(${heldKeys[0]})`);
