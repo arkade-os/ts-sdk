@@ -152,10 +152,10 @@ style and have not been backfilled.
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new
   onchain-scoped contract is saved, and the wallet re-subscribes on it. A
-  callback that throws is logged and does not fail `createContract`. The
-  Executor is the last constructor parameter of `Wallet` and
-  `ServiceWorkerWallet`, after `oneShotSubmit`, so a subclass that passes them
-  positionally is unaffected.
+  callback that throws is logged and does not fail `createContract`. A new
+  Executor boarding watch's deposits are stored, and its address watched, as
+  soon as `createContract` or `createContracts` returns, best-effort like the
+  indexer hydration, rather than at the next `syncOnchain`.
 
 - **Executor renewal delegation: `registerRenewal`, and a VtxoManager that
   defers to a live watch.** The manager gains `registerRenewal({ renewalWindow,
@@ -301,15 +301,6 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
-
-- **A new onchain contract is synced when it is created.** `createContract`
-  and `createContracts` hydrated a new contract from the indexer only, so the
-  coins of an onchain-scoped one, such as a rotated boarding address or an
-  Executor boarding watch, stayed out of the stored boarding coins, and its
-  address out of the onchain watch, until the next `syncOnchain`. Without a
-  periodic settle (`settlementConfig: false`) nothing ran one, and stored
-  balances missed its deposits. Both now sync the new onchain-scoped contracts
-  before returning, best-effort like the indexer hydration.
 
 - **Indexer reads return every page.** arkd serves at most 100 rows per page whatever size is requested, while the readers asked for 500 and treated any shorter page as the last one. Wallet syncs, exit-data collection, HD script discovery and the Expo contract poll therefore kept only the first 100 matches per query. Every indexer page walk now follows the server's `next` cursor, ends when the cursor stops advancing, and throws after 1000 pages.
 
