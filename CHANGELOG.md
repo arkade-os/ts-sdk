@@ -130,9 +130,9 @@ style and have not been backfilled.
   boards every deposit there into the wallet's renewal contract while the wallet
   is offline. A boarded coin is the wallet's own: it counts, spends and renews
   like any other, migrates off a deprecated operator signer, and incoming-funds
-  subscribers hear of it. The manager registers no renewal watch: the wallet
-  renews these coins to `getAddress()` itself, which would end one at its first
-  renewal. A restored wallet finds it by registering again with
+  subscribers hear of it. The VtxoManager leaves its coins to the Executor
+  while the renewal watch is live (see the next entry). A restored wallet finds
+  it by registering again with
   the same parameters, which returns the existing watch, but only while the
   operator's exit delays and the Executor's keys are unchanged: the address
   derives from them. The registration returns its resolved `params`, which with
@@ -143,6 +143,39 @@ style and have not been backfilled.
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new
   onchain-scoped contract is saved, and the wallet re-subscribes on it.
+
+- **Executor renewal delegation: `registerRenewal`, and a VtxoManager that
+  defers to a live watch.** The manager gains `registerRenewal({ renewalWindow,
+  maxFee })`. Params can change between registrations, for it and for
+  `registerBoarding`: new params register a new watch beside the old one, which
+  stays live and keeps covering the coins already at its contract. Each watch
+  row records when it was last registered (`delegationRegisteredAt`), and the
+  boarding address follows the most recent, so an app that rolls back a release
+  gets its earlier address back. A boarding watch pays into the renewal contract
+  of its own params, so when the key already has a live renewal watch,
+  `registerBoarding` registers renewal under the new params too. That is
+  best-effort: a failure is logged and never undoes the boarding watch, and
+  `registerRenewal` retries it. `registerRenewal` registers the displayed boarding
+  key under the params it is given, first, and throws at once if that fails. It
+  then registers each live boarding watch under the current operator, under
+  that watch's own params, so the deposits an HD wallet boarded at earlier
+  rotated keys, and at earlier params, are covered too. A watch under another
+  emulator key than the Executor's, or with a window no longer shorter than the
+  operator's VTXO expiry, cannot be registered: it is skipped with a warning,
+  and the wallet renews its coins itself. Like boarding it is idempotent, so
+  apps call it at startup, and each key costs one Executor call; it tries all of
+  the others before throwing and names the keys that failed, so a retry covers
+  the rest. A boarding rotation extends the new key with both watches while a
+  live renewal watch exists. While a renewal watch is live, the VtxoManager
+  leaves the coins at its renewal contract to the Executor, which renews them in
+  place while the wallet is offline. It renews them itself again — the fallback — inside half the
+  `renewalWindow` before expiry, and always for a recoverable, subdust or
+  `maxFee + dust`-or-less coin, which the Executor cannot renew. `renewVtxos()`
+  skips the delegated coins too, including a manual call; `settle()` still moves
+  them when the user asks. Until the wallet's receive address becomes its
+  renewal contract, coins received at `getAddress()`, a send's change and the
+  fallback renewals are not covered: they land at the wallet's own address,
+  which the wallet renews itself.
 
 - **Deposits waiting for the Executor are the wallet's boarding coins.** A
   deposit at a delegated boarding address shows in `getBoardingUtxos`,

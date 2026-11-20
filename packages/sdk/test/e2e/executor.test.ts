@@ -24,6 +24,8 @@ import { ESPLORA_API_URL, faucetOnchain, waitFor } from "./utils";
 const EXECUTOR_URL = process.env.EXECUTOR_URL ?? "http://localhost:7280";
 const ESPLORA_URL = process.env.ESPLORA_URL ?? ESPLORA_API_URL;
 const options = { renewalWindow: 256, maxFee: 100 };
+// the renewal delegation's own window: the daemon's opens 256 s before the wallet's fallback
+const renewalOptions = { renewalWindow: 512, maxFee: 100 };
 
 const reachable = await fetch(`${EXECUTOR_URL}/v1/info`)
     .then((r) => r.ok)
@@ -215,6 +217,81 @@ describe.skipIf(!reachable).sequential("Executor boarding on an HD wallet", () =
         await (await restored.getVtxoManager()).renewVtxos();
         await waitFor(async () => (await atExecutor(restored)).length === 0, { timeout: 60_000 });
         expect((await restored.getBalance()).available).toBe(17_000);
+    });
+});
+
+// The Executor renews a delegated coin in place while the wallet is offline: what only the
+// daemon can confirm is that it does, on its own (the template re-spends into the same
+// contract), before the wallet's fallback margin opens.
+describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
+    let alice: Wallet;
+    let renewal: ExecutorWatchRegistration;
+    let renewalScript = "";
+
+    const atRenewal = async () =>
+        (await alice.getVtxos()).find((v) => v.script === renewalScript && !v.isSpent);
+
+    beforeAll(async () => {
+        alice = await createWallet();
+    }, 60_000);
+
+    it("registers a renewal watch at the address the daemon derives", {
+        timeout: 60_000,
+    }, async () => {
+        renewal = await (await alice.getExecutorManager())!.registerRenewal(renewalOptions);
+        expect(renewal.delegation.status).toBe("active");
+        const daemon = new RestExecutorProvider(EXECUTOR_URL);
+        expect((await daemon.getDelegation(renewal.address)).delegation.inputs[0].address).toBe(
+            renewal.address,
+        );
+        // the delegated contract is watched, and is not the wallet's own address yet
+        const cm = await alice.getContractManager();
+        const [row] = (await cm.getContracts({ type: ["executor"] })).filter(
+            (c) => c.params.template === "renewal",
+        );
+        renewalScript = row.script;
+        expect(await alice.getAddress()).not.toBe(renewal.address);
+    });
+
+    // covers every wait below: two funding waits of 170 s and the renewal wait of 600 s
+    it("holds a coin at the renewal contract, which the daemon renews in place", {
+        timeout: 1_000_000,
+    }, async () => {
+        // the wallet funds its own delegated address, so the coin is its own to watch
+        faucetOnchain(await alice.getBoardingAddress(), 10_000);
+        await waitFor(async () => (await alice.getBalance()).boarding.confirmed === 10_000, {
+            timeout: 170_000,
+            interval: 2_000,
+        });
+        await alice.settle();
+        await alice.send({ address: renewal.address, amount: 9_000 });
+        await waitFor(async () => (await atRenewal()) !== undefined, {
+            timeout: 170_000,
+            interval: 2_000,
+        });
+        const held = (await atRenewal())!;
+        const outpoint = `${held.txid}:${held.vout}`;
+        const expiresAt = held.expiresAt!.getTime();
+
+        // inside the delegation's window the wallet's own renewal leaves the coin alone
+        await (await alice.getVtxoManager()).renewVtxos().catch(() => undefined);
+        const untouched = (await atRenewal())!;
+        expect(`${untouched.txid}:${untouched.vout}`).toBe(outpoint);
+        expect(untouched.expiresAt!.getTime()).toBe(expiresAt);
+
+        // the daemon's window opens 512 s before expiry: it re-spends the coin into the same
+        // contract with a later expiry, well before the wallet's 256 s fallback margin
+        // one read per poll: mid-renewal the old coin can read as spent before the new one lands
+        await waitFor(
+            async () => {
+                const current = await atRenewal();
+                return current !== undefined && `${current.txid}:${current.vout}` !== outpoint;
+            },
+            { timeout: 600_000, interval: 5_000 },
+        );
+        const renewed = (await atRenewal())!;
+        expect(renewed.script).toBe(renewalScript);
+        expect(renewed.expiresAt!.getTime()).toBeGreaterThan(expiresAt);
     });
 });
 

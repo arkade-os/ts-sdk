@@ -167,7 +167,7 @@ import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
 import type { ExecutorProvider } from "../providers/executor";
-import type { ExecutorWatchTemplate } from "../script/executor/executorTemplate";
+import type { ExecutorDefault, ExecutorWatchTemplate } from "../script/executor/executorTemplate";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
@@ -191,7 +191,8 @@ import { ExecutorContractHandler } from "../contracts/handlers/executor";
 import { scopeOf } from "../contracts/scope";
 import {
     DELEGATION_EXPIRES_KEY,
-    DELEGATION_STATUS_KEY,
+    delegatedContracts,
+    type DelegatedContractWatch,
     ExecutorManagerImpl,
     type IExecutorManager,
 } from "./executor";
@@ -645,17 +646,6 @@ export interface BoardingUtxoGroup {
     coins: ExtendedCoin[];
     /** A live Executor boarding watch: the Executor boards these, settle leaves them alone. */
     delegated?: true;
-}
-
-/** An Executor boarding contract of this wallet, see {@link ReadonlyWallet.delegatedBoardingContracts}. */
-interface DelegatedBoardingWatch {
-    contract: Contract;
-    /** The owner key, x-only hex. */
-    owner: string;
-    script: DefaultVtxo.Script;
-    /** The operator key, x-only hex. */
-    signer: string;
-    live: boolean;
 }
 
 /**
@@ -1380,68 +1370,38 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * The live boarding watch of the displayed boarding key and current operator, see
-     * {@link delegatedBoardingContracts}. A rotated key without one shows its own address.
+     * {@link delegatedExecutorContracts}. A rotated key without one shows its own address.
      */
     private async delegatedBoardingAddress(): Promise<string | undefined> {
         if (!this.executorProvider) return undefined;
         const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
         const displayed = hex.encode(this._boardingTapscript.options.pubKey);
-        const live = (await this.delegatedBoardingContracts()).find(
+        const live = (await this.delegatedExecutorContracts("boarding")).find(
             (c) => c.live && c.signer === server && c.owner === displayed,
         );
         return live?.script.onchainAddress(this.network);
     }
 
     /**
-     * The Executor boarding contracts of this wallet's keys, newest first: the identity's, or one
-     * its `signingDescriptor` derives. A watch is live while
-     * the Executor registered it as active and it has not expired: the Executor boards its
-     * deposits, so the wallet's own boarding leaves them alone. Read from the contract repository,
-     * so it follows registrations made through any wallet front-end.
+     * The Executor contracts of this wallet's keys, most recently registered first: the
+     * identity's, or one its `signingDescriptor` derives. Read from the contract repository, not
+     * the contract manager: a boarding or renewal read must not start its indexer sync. Reads
+     * follow registrations made through any wallet front-end.
      */
-    protected async delegatedBoardingContracts(): Promise<DelegatedBoardingWatch[]> {
-        const identityKey = hex.encode(await this.identity.xOnlyPublicKey());
-        const nowSeconds = Math.floor(Date.now() / 1000);
-        const rows = (await collectContracts(this.contractRepository, { type: ["executor"] }))
-            .filter((c) => c.params.template === "boarding")
-            .sort((a, b) => b.createdAt - a.createdAt);
-        const contracts: DelegatedBoardingWatch[] = [];
-        for (const c of rows) {
-            try {
-                const owner = c.params.owner?.slice(2).toLowerCase();
-                const descriptor = c.metadata?.signingDescriptor;
-                const held =
-                    owner === identityKey ||
-                    (typeof descriptor === "string" &&
-                        hex.encode(deriveDescriptorLeafPubKey(descriptor)) === owner);
-                if (!held || owner === undefined) continue;
-                const script = ExecutorContractHandler.createScript(c.params);
-                if (hex.encode(script.pkScript) !== c.script) continue;
-                const expiresAt = c.metadata?.[DELEGATION_EXPIRES_KEY];
-                contracts.push({
-                    contract: c,
-                    owner,
-                    script,
-                    signer: toXOnlySignerHex(c.params.serverPubKey),
-                    live:
-                        c.metadata?.[DELEGATION_STATUS_KEY] === "active" &&
-                        !(
-                            typeof expiresAt === "number" &&
-                            expiresAt > 0 &&
-                            expiresAt <= nowSeconds
-                        ),
-                });
-            } catch (e) {
-                console.warn("Skipping malformed delegated contract", c.script, e);
-            }
-        }
-        return contracts;
+    protected delegatedExecutorContracts(
+        template: ExecutorDefault,
+    ): Promise<DelegatedContractWatch[]> {
+        return delegatedContracts(
+            this.identity,
+            (filter) => collectContracts(this.contractRepository, filter),
+            template,
+        );
     }
 
     /** Encoded tap trees of the live boarding watches, whose deposits the Executor boards. */
     protected async liveDelegatedBoardingTrees(): Promise<Set<string>> {
         return new Set(
-            (await this.delegatedBoardingContracts())
+            (await this.delegatedExecutorContracts("boarding"))
                 .filter((c) => c.live)
                 .map((c) => hex.encode(c.script.encode())),
         );
@@ -2064,7 +2024,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         // Deposits at the Executor's boarding addresses are the wallet's until boarded: shown, and
         // exited through the owner's leaf if the Executor never boards them.
-        for (const c of await this.delegatedBoardingContracts()) {
+        for (const c of await this.delegatedExecutorContracts("boarding")) {
             if (allowed.has(c.signer)) add(c.script);
         }
         return [...byScript.values()];
@@ -3059,21 +3019,21 @@ export class Wallet
     }
 
     /**
-     * Register the newest live Executor boarding watch again for a rotated boarding key, so its
-     * deposits are boarded while the wallet is offline too. Not the displayed key's own watch: it
-     * may have none, and the parameters are wallet policy. Best-effort: on failure the key shows
-     * its own address, which the wallet boards once online.
+     * Register the most recently registered live Executor boarding watch again for a rotated
+     * key, so its deposits are boarded while the wallet is offline too. Not the displayed key's
+     * own watch: it may have none, and the parameters are wallet policy. Best-effort: on failure
+     * the key shows its own address, which the wallet boards once online.
      */
     private async extendBoardingWatch(descriptor: string): Promise<void> {
         if (!this._executorManager) return;
         const server = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
-        const watch = (await this.delegatedBoardingContracts()).find(
+        const watch = (await this.delegatedExecutorContracts("boarding")).find(
             (c) => c.live && c.signer === server,
         );
         if (!watch) return;
+        const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
+        const expiresAt = watch.contract.metadata?.[DELEGATION_EXPIRES_KEY];
         try {
-            const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
-            const expiresAt = watch.contract.metadata?.[DELEGATION_EXPIRES_KEY];
             await this._executorManager.registerBoardingAt(
                 descriptor,
                 {
@@ -3091,6 +3051,35 @@ export class Wallet
             );
         } catch (e) {
             console.warn("Failed to register an Executor watch for the new boarding address", e);
+            return;
+        }
+        // Boarding first: a failed renewal must not leave the new key's deposits unboarded.
+        try {
+            const renewal = (await this.delegatedExecutorContracts("renewal")).find(
+                (c) => c.live && c.signer === server,
+            );
+            if (!renewal) return;
+            const renewalParams = ExecutorContractHandler.deserializeParams(
+                renewal.contract.params,
+            );
+            const renewalExpiresAt = renewal.contract.metadata?.[DELEGATION_EXPIRES_KEY];
+            await this._executorManager.registerRenewalAt(
+                descriptor,
+                { renewalWindow: p.renewalWindow, maxFee: p.maxFee, exitDelay: p.exitDelay },
+                {
+                    expiresAt:
+                        typeof renewalExpiresAt === "number" && renewalExpiresAt > 0
+                            ? renewalExpiresAt
+                            : undefined,
+                    // the key the renewal watch was registered under, pinned or approved
+                    emulatorPubkey: hex.encode(renewalParams.emulatorPubKey),
+                },
+            );
+        } catch (e) {
+            console.warn(
+                "Failed to register the Executor renewal watch for the new boarding address",
+                e,
+            );
         }
     }
 
