@@ -1,5 +1,7 @@
 import { hex } from "@scure/base";
 import { base64 } from "@scure/base";
+import { Script } from "@scure/btc-signer/script.js";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import { aggregateKeys } from "../musig2";
 import { TxTree } from "./txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
@@ -55,10 +57,11 @@ export function validateVtxoTxGraph(
         throw ErrInvalidRoundTxOutputs;
     }
 
-    const batchOutputAmount = roundTransaction.getOutput(BATCH_OUTPUT_VTXO_INDEX)?.amount;
-    if (!batchOutputAmount) {
+    const batchOutput = roundTransaction.getOutput(BATCH_OUTPUT_VTXO_INDEX);
+    if (!batchOutput?.amount || !batchOutput.script) {
         throw ErrInvalidRoundTxOutputs;
     }
+    const batchOutputAmount = batchOutput.amount;
 
     if (!graph.root) {
         throw ErrEmptyTree;
@@ -92,6 +95,11 @@ export function validateVtxoTxGraph(
         throw ErrNoLeaves;
     }
 
+    // The root is no node's child, so the edge loop below never binds the batch output.
+    if (!equalBytes(batchOutput.script, cosignersOutputScript(graph.root, sweepTapTreeRoot))) {
+        throw ErrInvalidRoundTxOutputs;
+    }
+
     // validate the graph structure
     graph.validate();
 
@@ -103,26 +111,18 @@ export function validateVtxoTxGraph(
                 throw new Error(`parent output ${childIndex} not found`);
             }
 
-            const previousScriptKey = parentOutput.script.slice(2);
-            if (previousScriptKey.length !== 32) {
-                throw new Error(`parent output ${childIndex} has invalid script`);
-            }
-
-            const cosigners = getArkPsbtFields(child.root, 0, CosignerPublicKey);
-
-            if (cosigners.length === 0) {
-                throw ErrMissingCosignersPublicKeys;
-            }
-
-            const cosignerKeys = cosigners.map((c) => c.key);
-
-            const { finalKey } = aggregateKeys(cosignerKeys, true, {
-                taprootTweak: sweepTapTreeRoot,
-            });
-
-            if (!finalKey || hex.encode(finalKey.slice(1)) !== hex.encode(previousScriptKey)) {
+            const expected = cosignersOutputScript(child.root, sweepTapTreeRoot);
+            if (!equalBytes(parentOutput.script, expected)) {
                 throw ErrInvalidTaprootScript;
             }
         }
     }
+}
+
+function cosignersOutputScript(tx: Transaction, sweepTapTreeRoot: Uint8Array): Uint8Array {
+    const cosigners = getArkPsbtFields(tx, 0, CosignerPublicKey);
+    if (cosigners.length === 0) throw ErrMissingCosignersPublicKeys;
+    const keys = cosigners.map((c) => c.key);
+    const { finalKey } = aggregateKeys(keys, true, { taprootTweak: sweepTapTreeRoot });
+    return Script.encode(["OP_1", finalKey.slice(1)]);
 }
