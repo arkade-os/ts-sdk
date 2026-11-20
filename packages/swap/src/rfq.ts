@@ -2054,7 +2054,7 @@ export const verifyReceiveInvoice = (input: {
  * Optional because a bad price is visible to the caller before anything is published.
  *
  * Reasons: `quote_expired` | `missing_refund_locktime` | `claim_window_too_short` |
- * `price_too_high` | `quote_malformed` | `invalid_gate_input`.
+ * `price_too_high` | `quote_malformed` | `invalid_gate_input` | `non_positive_amount`.
  */
 export const assertReceivable = (input: {
     quote: RfqQuote;
@@ -2073,6 +2073,12 @@ export const assertReceivable = (input: {
     const minClaimWindow = input.minClaimWindowSeconds ?? MIN_CLAIM_WINDOW_SECONDS;
     if (input.now >= input.payDeadline) {
         throw gateError("quote_expired", "quote or invoice already expired — request a fresh one");
+    }
+    if (
+        quoteAmountSats(input.quote.from_amount, "from_amount") <= 0n ||
+        quoteAmountSats(input.quote.to_amount, "to_amount") <= 0n
+    ) {
+        throw gateError("non_positive_amount", "quote carries a non-positive amount");
     }
     if (input.quote.refund_locktime === undefined) {
         throw gateError("missing_refund_locktime", "receive quote carries no refund_locktime");

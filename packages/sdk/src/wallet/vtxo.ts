@@ -173,6 +173,24 @@ export async function getNormalizedVtxos(
     return { vtxos: vtxos.map(normalizeVtxo), page };
 }
 
+const MAX_INDEXER_PAGES = 1000;
+
+/** Pages an indexer read by the server's `page`: arkd caps the size and maps index 0 to page 1. */
+export async function* indexerPages<T extends { page?: PageResponse }>(
+    read: (pageIndex: number) => Promise<T>,
+): AsyncGenerator<T> {
+    let pageIndex = 0;
+    for (let pages = 1; ; pages++) {
+        const res = await read(pageIndex);
+        yield res;
+        const { page } = res;
+        // A stalled cursor ends the walk: 0-based providers pin `next` on their last page.
+        if (!page || !(page.current < page.total) || !(page.next > pageIndex)) return;
+        if (pages >= MAX_INDEXER_PAGES) throw new Error("indexer paging does not end");
+        pageIndex = page.next;
+    }
+}
+
 /** Everything a script query can filter on, minus the cursor this reader owns. */
 export type VtxoScriptQuery = Omit<GetVtxosOptions, "scripts" | "outpoints" | "pageIndex">;
 
@@ -202,23 +220,16 @@ export async function getAllNormalizedVtxos(
 
     const fetchChunk = async (chunk: string[]): Promise<NormalizedVirtualCoin[]> => {
         const result: NormalizedVirtualCoin[] = [];
-        let pageIndex = 0;
-        let hasMore = true;
-
-        while (hasMore) {
-            const { vtxos, page } = await getNormalizedVtxos(provider, {
+        for await (const { vtxos } of indexerPages(async (pageIndex) => {
+            if (pageIndex > 0) await new Promise((r) => setTimeout(r, 500));
+            return getNormalizedVtxos(provider, {
                 ...filters,
                 scripts: chunk,
                 pageIndex,
                 pageSize,
             });
+        })) {
             result.push(...vtxos);
-
-            // A short page means the last one: providers that omit `page`
-            // entirely are treated as unpaged.
-            hasMore = page ? vtxos.length === pageSize : false;
-            pageIndex++;
-            if (hasMore) await new Promise((r) => setTimeout(r, 500));
         }
         return result;
     };

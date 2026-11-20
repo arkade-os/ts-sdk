@@ -214,17 +214,23 @@ function arrayParts(type: string): [string, number] {
         : [type, 0];
 }
 
+// One budget per artifact, charged per generated name: nesting and struct fan-out multiply.
+const MAX_LAYOUT_CHARS = 1 << 18;
+
 function flatten(
     param: ArtifactParameter,
-    structs: ArtifactStruct[],
+    structs: Map<string, ArtifactStruct>,
+    budget: { left: number },
     stack: string[] = [],
 ): InputDef[] {
     if (!isNamed(param)) fail("parameter needs a name and a type");
 
     const [element, length] = arrayParts(param.type);
+    budget.left -= param.name.length;
+    if (budget.left < length) fail(`layouts exceed ${MAX_LAYOUT_CHARS} name characters`);
     if (length > 0) {
         return Array.from({ length }, (_, index) =>
-            flatten({ name: `${param.name}.${index}`, type: element }, structs, stack),
+            flatten({ name: `${param.name}.${index}`, type: element }, structs, budget, stack),
         ).flat();
     }
     if (param.type.includes("[") || param.type.includes("]")) {
@@ -233,15 +239,15 @@ function flatten(
 
     if (Object.hasOwn(NATIVE_STRUCTS, param.type)) {
         return NATIVE_STRUCTS[param.type].flatMap(([field, type]) =>
-            flatten({ name: `${param.name}.${field}`, type }, structs, stack),
+            flatten({ name: `${param.name}.${field}`, type }, structs, budget, stack),
         );
     }
 
-    const declared = structs.find((struct) => struct?.name === param.type);
+    const declared = structs.get(param.type);
     if (declared) {
         if (stack.includes(param.type)) fail(`recursive struct layout '${param.type}'`);
         return declared.fields.flatMap((field) =>
-            flatten({ name: `${param.name}.${field.name}`, type: field.type }, structs, [
+            flatten({ name: `${param.name}.${field.name}`, type: field.type }, structs, budget, [
                 ...stack,
                 param.type,
             ]),
@@ -455,6 +461,8 @@ export function programFromArtifact(
         }
         claim(structNames, struct.name, "struct");
     }
+    const structsByName = new Map(structs.map((struct) => [struct.name, struct] as const));
+    const budget = { left: MAX_LAYOUT_CHARS };
 
     const instantiations = new Map<string, string>();
     const functions: Record<string, ArkadeFunction> = Object.create(null);
@@ -473,7 +481,7 @@ export function programFromArtifact(
             fail(`group '${group.name}': covenant needs inputs and string assembly arrays`);
         }
         const covenantInputs = (group.arkade?.inputs ?? []).flatMap((input) =>
-            flatten(input, structs),
+            flatten(input, structsByName, budget),
         );
         const sourceMap = maps?.get(group.name);
         const arkadeScript = group.arkade
@@ -534,7 +542,7 @@ export function programFromArtifact(
     }
 
     const params: InputDef[] = [
-        ...artifact.constructorInputs.flatMap((input) => flatten(input, structs)),
+        ...artifact.constructorInputs.flatMap((input) => flatten(input, structsByName, budget)),
         { name: "server", type: "pubkey" },
         ...(Object.values(functions).some((fn) => fn.tapscript.csv?.value === "$SERVER_EXIT_DELAY")
             ? [{ name: "SERVER_EXIT_DELAY", type: "int" as const }]

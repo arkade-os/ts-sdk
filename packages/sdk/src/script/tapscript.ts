@@ -619,6 +619,9 @@ export namespace CLTVMultisigTapscript {
 
     /** Encode a CLTV multisig tapscript. */
     export function encode(params: Params): Type {
+        if (params.absoluteTimelock < 0n || params.absoluteTimelock > 0xffffffffn) {
+            throw new Error(`absoluteTimelock must fit in 32 bits, got ${params.absoluteTimelock}`);
+        }
         const locktime = MinimalScriptNum.encode(params.absoluteTimelock);
         const asm: ScriptType = [
             locktime.length === 1 ? locktime[0] : locktime,

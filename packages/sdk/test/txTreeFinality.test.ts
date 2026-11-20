@@ -107,4 +107,20 @@ describe("TxTree finality", () => {
         expect(cosigners).toHaveLength(1);
         expect(hex.encode(cosigners[0]!.key)).toBe(hex.encode(cosignerKey));
     });
+
+    it("rejects a transaction the tree reaches twice, before expanding it", () => {
+        const chunk = (tx: Transaction, children: Record<number, string> = {}) => ({
+            txid: tx.id,
+            tx: base64.encode(tx.toPSBT()),
+            children,
+        });
+        const [a, b] = [node({ lockTime: 1 }), node({ lockTime: 2 })];
+
+        expect(() => TxTree.create([chunk(a, { 0: b.id, 1: b.id }), chunk(b)])).toThrow(
+            /more than once/,
+        );
+        expect(() => TxTree.create([chunk(a, { 0: b.id }), chunk(b, { 0: b.id })])).toThrow(
+            /more than once/,
+        );
+    });
 });

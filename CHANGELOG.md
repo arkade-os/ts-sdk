@@ -166,6 +166,26 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Indexer reads return every page.** arkd serves at most 100 rows per page whatever size is requested, while the readers asked for 500 and treated any shorter page as the last one. Wallet syncs, exit-data collection, HD script discovery and the Expo contract poll therefore kept only the first 100 matches per query. Every indexer page walk now follows the server's `next` cursor, ends when the cursor stops advancing, and throws after 1000 pages.
+
+- **Esplora address history includes older transactions.** `getTransactions` read only `/address/:address/txs`, which holds the newest page. It now follows `/txs/chain/:last_seen` for the rest, and keeps the first page when an explorer has no such route. `getRawTransaction` bytes must hash to the requested txid, and `getCoins` validates amounts and output indices.
+
+- **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do. `Arkade.connect` also checks the script's key against the forfeit key when the operator advertises one.
+
+- **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.
+
+- **Untrusted encodings are parsed within bounds.** A batch tree that reaches a transaction twice is rejected before it is expanded, and its roots are found in one pass. CLTV leaves refuse a locktime that does not fit in 32 bits. Artifact layouts have a size budget. Asset metadata lists over 1000 entries and varints over 64 bits are rejected, as arkd rejects them.
+
+- **BIP21 ignores an `address` query parameter**; the destination is the URI path.
+
+- **Provider fee rates are capped at 1000 sat/vB** for on-chain sends, boarding and on-chain sweeps, unilateral exits and their fee bumps, and floored at 1 sat/vB everywhere. An explicit `feeRate` argument is used as given.
+
+- **Delegation refuses a negative delegate fee or one above 10% of the delegated amount.**
+
+- **`ElectrumOnchainProvider` fixes.** An unknown txid now reads as not found rather than unconfirmed, so unilateral exit broadcasts instead of waiting forever. Chain time fails when the median-time-past headers cannot be read instead of falling back to the tip's own timestamp, and a confirmation whose header is not yet indexed reads as unconfirmed. Fetched transactions must hash to the requested txid. `listunspent` amounts and indices are validated. Every history candidate, a lone one included, must spend the output before it is reported as its spender, whatever its version or the scripts its outputs pay. Status notifications for the same script are coalesced, and a known transaction whose confirmation height changes is reported again.
+
+- **`@arkade-os/swap`: amount and HTLC checks.** Quotes, claims and stored receive swaps with a non-positive amount are refused before the preimage is published. On-chain HTLC tracking reads the spend of the recorded funding outpoint even when other outputs sit at the script, and a claim of an RBF-replaced funding re-records the outpoint it spends. A confirmed output is claimed ahead of a larger unconfirmed one, so a solver cannot stall the claim past its refund locktime by paying the script an output that never confirms. Refund locktimes must fit in 32 bits.
+
 - **Retained service-worker proxies cannot read or spend a replacement wallet.** Wallet requests and contract-event subscriptions retain their original wallet binding. Requests capture their wallet, providers and repository before awaiting, and disposal drains admitted operations for up to 5s before closing their storage; settlements and other long-running operations are not waited for, so a re-init during a batch round is not blocked. Initialization separately drains its finite writes and finalization while pending subscription setup remains revocable; clearing revokes callbacks before draining. Reservation requests also verify the original network without changing durable hold namespaces, and timeout settings and settlement events still follow the original operation.
 
 - **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.

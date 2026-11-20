@@ -49,11 +49,11 @@ describe("contractPollProcessor", () => {
                 .fn()
                 .mockResolvedValueOnce({
                     vtxos: firstPageVtxos,
-                    page: { pageIndex: 0, pageSize: 100 },
+                    page: { current: 1, next: 2, total: 2 },
                 })
                 .mockResolvedValueOnce({
                     vtxos: secondPageVtxos,
-                    page: { pageIndex: 1, pageSize: 100 },
+                    page: { current: 2, next: 2, total: 2 },
                 })
                 .mockResolvedValueOnce({
                     vtxos: [],
@@ -89,7 +89,7 @@ describe("contractPollProcessor", () => {
         });
         expect(indexerProvider.getVtxos).toHaveBeenNthCalledWith(2, {
             scripts: ["script-a"],
-            pageIndex: 1,
+            pageIndex: 2,
             pageSize: 100,
         });
         expect(indexerProvider.getVtxos).toHaveBeenNthCalledWith(3, {

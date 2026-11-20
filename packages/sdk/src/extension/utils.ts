@@ -129,6 +129,9 @@ export class BufferReader {
                 throw new Error("unexpected end of buffer");
             }
             byte = this.view.getUint8(this.offset++);
+            if (shift === 63n && byte > 1) {
+                throw new Error("varuint overflows 64 bits");
+            }
             result |= BigInt(byte & 0x7f) << shift;
             shift += 7n;
         } while (byte & 0x80);

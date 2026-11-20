@@ -2060,6 +2060,51 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
         expect(swap.state).toBe("failed");
         expect(swap.failure).toMatch(/refund/);
     });
+
+    it("ends failed on a replaced claim while another output sits at the script", async () => {
+        const refund = await solversRefund();
+        const s = spies();
+        const other = { ...FILL, txid: "22".repeat(32), amount: BigInt(1_000) };
+        const swap = onchainSwap({ funding: { txid: other.txid, vout: 0, amount: 1_000 } });
+        const chain: Parameters<typeof fakeChain>[0] = { utxos: [other, FILL], status: {} };
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain(chain),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(s.claims[0]?.utxo.txid).toBe(FILL.txid);
+
+        chain.utxos = [other];
+        chain.spend = { txHex: refund.txHex };
+        await m.poll();
+
+        expect(swap.state).toBe("failed");
+    });
+
+    it("follows a re-claim of an RBF-replaced fill to its spend", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const replacement = { ...FILL, txid: "33".repeat(32) };
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const state: Parameters<typeof fakeChain>[0] = { utxos: [replacement], status: {} };
+        const chain = fakeChain(state);
+        const m = manager({ indexer: lockupTaken(), chain, now: SAFE_NOW, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(s.claims[0]?.utxo.txid).toBe(replacement.txid);
+        expect(swap.funding).toEqual({ txid: replacement.txid, vout: 0, amount: 100_000 });
+
+        state.utxos = [];
+        state.spend = { txHex: claim.txHex };
+        state.status = { [claim.txid]: true };
+        await m.poll();
+
+        expect(chain.spendLookups.at(-1)?.txid).toBe(replacement.txid);
+        expect(swap.state).toBe("settled");
+    });
 });
 
 describe("RfqSwapManager — the lightning-send leg", () => {
@@ -2386,7 +2431,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // undefined` and `locked < NaN` are both false, so an unusable
         // comparand does not FAIL the value gate, it deletes it — and the claim
         // proceeds for whatever was funded.
-        for (const expectedAmount of [Number.NaN, undefined as unknown as number]) {
+        for (const expectedAmount of [Number.NaN, undefined as unknown as number, 0, -1]) {
             const s = spies();
             const swap = receiveSwap({ expectedAmount });
             const m = manager({
@@ -2399,7 +2444,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
 
             expect(s.lockupClaims).toHaveLength(0);
             expect(swap.state).toBe("needs_counterparty");
-            expect(swap.blockedReason).toMatch(/not a finite number/);
+            expect(swap.blockedReason).toMatch(/not a positive number of sats/);
         }
     });
 

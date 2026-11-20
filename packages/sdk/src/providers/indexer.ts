@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
-import { convertVtxo } from "../wallet/vtxo";
+import { convertVtxo, indexerPages } from "../wallet/vtxo";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import {
@@ -784,25 +784,14 @@ export class RestIndexerProvider implements IndexerProvider {
         // ask for.
         if (opts?.pageIndex === undefined && opts?.pageSize === undefined) {
             const all: VirtualCoin[] = [];
-            // Follow the server's cursor rather than a local counter: the
-            // server clamps page.index=0 to page 1 and echoes the 1-based
-            // page in `current`, so only `next` says where to go and
-            // `current >= total` says when to stop (both reference clients
-            // drive the loop exactly this way).
-            let pageIndex = 0;
-            for (;;) {
-                const { vtxos, page } = await this.fetchVtxosPage({
+            for await (const { vtxos } of indexerPages((pageIndex) =>
+                this.fetchVtxosPage({
                     ...(opts as GetVtxosOptions),
                     pageIndex,
                     pageSize: DEFAULT_VTXO_PAGE_SIZE,
-                });
+                }),
+            )) {
                 all.push(...vtxos);
-                // A provider that omits `page` entirely never paged in the
-                // first place; a short page can only be the last one.
-                if (!page || page.current >= page.total || vtxos.length < DEFAULT_VTXO_PAGE_SIZE) {
-                    break;
-                }
-                pageIndex = page.next;
             }
             return { vtxos: all };
         }

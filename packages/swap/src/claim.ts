@@ -125,6 +125,9 @@ export async function pushClaim(
     // Only on the comparing path: once `P` is public, refusing an old record would strand funds.
     if (!input.partiallyClaimed) {
         assertFiniteAmount(input.expectedAmount, "invalid_gate_input", "expectedAmount");
+        if (input.expectedAmount <= 0) {
+            throw gateError("invalid_gate_input", "expectedAmount is not positive");
+        }
         if (funded < input.expectedAmount) {
             throw new LockupAmountMismatchError(input.expectedAmount, funded);
         }

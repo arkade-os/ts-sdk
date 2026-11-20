@@ -178,7 +178,7 @@ export class OnchainWallet implements AnchorBumper {
         const coins = await this.getCoins();
         let feeRate = params.feeRate;
         if (!feeRate) {
-            feeRate = await this.provider.getFeeRate();
+            feeRate = await providerFeeRate(this.provider);
         }
 
         if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) {
@@ -233,11 +233,10 @@ export class OnchainWallet implements AnchorBumper {
      * @see send
      */
     async bumpP2A(parent: Transaction): Promise<[string, string]> {
-        let feeRate = await this.provider.getFeeRate();
-        if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) {
-            feeRate = OnchainWallet.MIN_FEE_RATE;
-        }
+        const feeRate = await providerFeeRate(this.provider);
 
+        // Unconfirmed coins stay eligible, unlike in `bumpAnchor`: `Unroll.Session` funds a later
+        // level's bump from an earlier bump's change before that change confirms.
         const child = await this.buildBumpPackage(parent, feeRate, await this.getCoins());
 
         try {
@@ -318,6 +317,17 @@ export class OnchainWallet implements AnchorBumper {
         }
         return signed;
     }
+}
+
+// sat/vB. Provider estimates are external input; this caps what one wrong quote spends on fees.
+const MAX_PROVIDER_FEE_RATE = 1_000;
+
+export async function providerFeeRate(
+    provider: Pick<OnchainProvider, "getFeeRate">,
+): Promise<number> {
+    const feeRate = await provider.getFeeRate();
+    if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) return OnchainWallet.MIN_FEE_RATE;
+    return Math.min(feeRate, MAX_PROVIDER_FEE_RATE);
 }
 
 /**

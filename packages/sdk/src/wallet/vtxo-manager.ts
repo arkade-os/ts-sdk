@@ -56,6 +56,7 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
 import { getDustAmount, getSelectableBoardingUtxoGroups, markSdkPicked } from "./utils";
+import { providerFeeRate } from "./onchain";
 import { logExcludedVtxos, outpointExclusion, outpointReasons } from "../contracts/spendability";
 
 /**
@@ -1983,7 +1984,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const boardingAddress = await this.wallet.getBoardingAddress();
 
-        const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
+        const feeRate = await providerFeeRate(this.getOnchainProvider());
 
         // Each coin spends through the exit leaf of the boarding address it sits on: rotation and
         // signer changes leave coins at addresses whose leaf differs from the current one.

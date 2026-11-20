@@ -65,12 +65,16 @@ function recordingIndexer(pagesPerChunk = 1): {
         }) => {
             if (!opts?.scripts) return { vtxos: [] };
             const pageIndex = opts.pageIndex ?? 0;
-            const pageSize = opts.pageSize ?? 500;
             calls.push({ scripts: opts.scripts, pageIndex, pendingOnly: opts.pendingOnly });
-            const page = { current: pageIndex, next: pageIndex + 1, total: pagesPerChunk };
-            // A full page keeps the reader going; the last one is short.
-            const last = pageIndex === pagesPerChunk - 1;
-            const count = last ? opts.scripts.length : pageSize;
+            // As arkd: index 0 serves page 1, and a page holds at most 100 rows.
+            const current = Math.max(pageIndex, 1);
+            const page = {
+                current,
+                next: Math.min(current + 1, pagesPerChunk),
+                total: pagesPerChunk,
+            };
+            const last = current === pagesPerChunk;
+            const count = last ? opts.scripts.length : Math.min(opts.pageSize ?? 500, 100);
             const vtxos = Array.from({ length: count }, (_, k) =>
                 vtxoFor(opts.scripts![k % opts.scripts!.length], pageIndex * 1000 + k),
             );
@@ -98,7 +102,7 @@ describe("getAllNormalizedVtxos", () => {
     it("pages each chunk to exhaustion, restarting the cursor per chunk", async () => {
         const { indexer, calls } = recordingIndexer(2);
 
-        await getAllNormalizedVtxos(indexer, scripts(CAP + 1), { pageSize: 2 });
+        await getAllNormalizedVtxos(indexer, scripts(CAP + 1));
 
         const byChunk = new Map<string, number[]>();
         for (const call of calls) {
@@ -106,8 +110,8 @@ describe("getAllNormalizedVtxos", () => {
             byChunk.set(key, [...(byChunk.get(key) ?? []), call.pageIndex]);
         }
         expect([...byChunk.values()]).toEqual([
-            [0, 1],
-            [0, 1],
+            [0, 2],
+            [0, 2],
         ]);
         expect(widest(calls)).toBeLessThanOrEqual(CAP);
     });

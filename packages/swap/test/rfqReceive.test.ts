@@ -689,6 +689,14 @@ describe("assertReceivable", () => {
         ).toThrow(expect.objectContaining({ reason: "price_too_high" }));
     });
 
+    it("refuses a non-positive quoted amount", () => {
+        for (const over of [{ to_amount: 0 }, { to_amount: -1 }, { from_amount: 0 }]) {
+            expect(() =>
+                assertReceivable({ quote: quote(over), payDeadline: INVOICE_EXPIRES_AT, now: NOW }),
+            ).toThrow(expect.objectContaining({ reason: "non_positive_amount" }));
+        }
+    });
+
     // Each of these would otherwise delete the gate it belongs to rather than
     // fail it: every comparison against a non-finite number is false.
     it("refuses a non-finite input instead of silently dropping its gate", () => {

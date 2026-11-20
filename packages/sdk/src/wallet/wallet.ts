@@ -43,6 +43,7 @@ import {
     fetchVtxoCreatedAtByTxid,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    indexerPages,
     isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
@@ -86,6 +87,7 @@ import {
     WalletConfig,
 } from ".";
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
+import { providerFeeRate } from "./onchain";
 import { assertSendDeadline, captureSendDeadline } from "./sendDeadline";
 import { captureInputExpiryFloor, meetsInputExpiryFloor } from "./sendInputExpiry";
 import { toBIP371TapTree, VtxoScript } from "../script/base";
@@ -5042,7 +5044,7 @@ export class Wallet
                 .map((o) => dropped.get(o) ?? `${o} is not a known unspent onchain coin`);
             if (reasons.length > 0) throw new OnchainCosignPreflightError(reasons.join("; "));
         }
-        const feeRate = (await this.onchainProvider.getFeeRate()) ?? 1;
+        const feeRate = await providerFeeRate(this.onchainProvider);
         const tx = new SdkTransaction({ version: 2 });
 
         if (sweepTo) {
@@ -5460,7 +5462,11 @@ export class Wallet
      * and one per deprecated signer — else a pre-rotation tx would stay pending forever.
      */
     private checkpointUnrollCandidates(info: OperatorInfo): CSVMultisigTapscript.Type[] {
-        const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        const current = assertValidServerUnrollScript(
+            info.checkpointTapscript,
+            this.network,
+            this.forfeitPubkey,
+        );
         const candidates = [this._serverUnrollScript, current];
         for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {
             candidates.push(
@@ -5936,24 +5942,24 @@ export class Wallet
 
     /** Read every page of an unfiltered VTXO query for the given scripts. */
     private async fetchAllVtxos(scripts: string[]): Promise<NormalizedVirtualCoin[]> {
-        const pageSize = 100;
         const all: NormalizedVirtualCoin[] = [];
         const seen = new Set<string>();
 
-        for (let pageIndex = 0; ; pageIndex++) {
-            const { vtxos, page } = await getNormalizedVtxos(this.indexerProvider, {
+        for await (const { vtxos } of indexerPages((pageIndex) =>
+            getNormalizedVtxos(this.indexerProvider, {
                 scripts,
                 pageIndex,
-                pageSize,
-            });
+                pageSize: 100,
+            }),
+        )) {
             for (const vtxo of vtxos) {
                 const outpoint = `${vtxo.txid}:${vtxo.vout}`;
                 if (seen.has(outpoint)) continue;
                 seen.add(outpoint);
                 all.push(vtxo);
             }
-            if (!page || vtxos.length < pageSize) return all;
         }
+        return all;
     }
 
     /**
