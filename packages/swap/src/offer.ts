@@ -31,7 +31,8 @@ import {
 import {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_CONTRACTS,
-    ASSET_SWAP_CONTRACT_VERSIONS,
+    ASSET_SWAP_V3,
+    ASSET_SWAP_V4,
     type AssetSwapContractVersion,
     legacySwapPrograms,
     swapPrograms,
@@ -84,12 +85,16 @@ export interface Offer {
     /** The maker's unilateral exit path. Present adds a third closure to the
      * taproot tree, so it changes `swapPkScript` — see {@link offerVtxoScript}. */
     exitDelay?: RelativeTimelock;
+    /** The solver key `fulfill` requires, x-only. Present on directed versions only, and its
+     * presence is what selects the `asset-swap-v4` tree. */
+    taker?: Uint8Array;
 }
 
 /** Program + args + keys of an offer's contract: the single source for address derivation and
  * cancel (any change here changes derived swap addresses — see the golden test). Spelled via the
  * public `arkade` namespace so tsc can emit a portable declaration. */
 type SwapProgramBinding = {
+    version: AssetSwapContractVersion;
     program: ConstructorParameters<typeof arkade.ArkadeProgramScript>[0];
     args: ConstructorParameters<typeof arkade.ArkadeProgramScript>[1];
     keys: ConstructorParameters<typeof arkade.ArkadeProgramScript>[2];
@@ -128,32 +133,35 @@ export function withExitClosure(
 /** Exported for the asset-id vector tests (the args are the only place both asset-id forms are
  * visible). Deliberately absent from the package index -- not public API.
  * A carried `swapPkScript` selects the version that compiles to it; without one,
- * `contractVersion` picks, defaulting to {@link ASSET_SWAP_BASELINE}.
+ * `contractVersion` picks, defaulting to `asset-swap-v4` for an offer with a `taker` and to
+ * {@link ASSET_SWAP_BASELINE} otherwise.
  */
 export function swapProgramBinding(
     offer: Omit<Offer, "swapPkScript"> & { swapPkScript?: Uint8Array },
     operatorPubkey: Uint8Array,
-    contractVersion: AssetSwapContractVersion = ASSET_SWAP_BASELINE,
+    contractVersion?: AssetSwapContractVersion,
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
+    // A taker selects the directed tree: v4 is never tried without one, nor anything else with one.
+    const directed = offer.taker !== undefined;
+    const version = contractVersion ?? (directed ? ASSET_SWAP_V4 : ASSET_SWAP_BASELINE);
     const expected = offer.swapPkScript;
-    if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, contractVersion);
+    if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, version);
     const funded = hex.encode(expected);
     // Baseline first: nearly every funded offer is on it, so the common case compiles once.
-    const order: AssetSwapContractVersion[] = [
-        ASSET_SWAP_BASELINE,
-        ...ASSET_SWAP_CONTRACT_VERSIONS.filter((v) => v !== ASSET_SWAP_BASELINE),
-    ];
-    for (const version of order) {
-        const binding = bindSwapProgram(offer, operatorPubkey, version);
+    const order: AssetSwapContractVersion[] = directed
+        ? [ASSET_SWAP_V4]
+        : [ASSET_SWAP_BASELINE, ASSET_SWAP_V3];
+    for (const candidate of order) {
+        const binding = bindSwapProgram(offer, operatorPubkey, candidate);
         if (pkOf(binding) === funded) return binding;
     }
     // None matches (usually a rotated operator key): callers throw with that diagnosis.
-    return bindSwapProgram(offer, operatorPubkey, contractVersion);
+    return bindSwapProgram(offer, operatorPubkey, directed ? ASSET_SWAP_V4 : version);
 }
 
 function bindSwapProgram(
@@ -165,6 +173,7 @@ function bindSwapProgram(
     const user = offer.makerPublicKey;
     const assetId = offer.wantAsset;
     return {
+        version: contractVersion,
         program: withExitClosure(assetId ? programs.wantAsset : programs.wantBtc, offer.exitDelay),
         args: args({
             receiver: offer.makerPkScript.subarray(2),
@@ -176,6 +185,7 @@ function bindSwapProgram(
             user,
             server: operatorPubkey,
             ...(offer.exitDelay && { exitDelay: offer.exitDelay.value }),
+            ...(offer.taker && { taker: offer.taker }),
         }),
         keys: {
             serverKey: operatorPubkey,
@@ -232,6 +242,7 @@ const FIELDS = {
     swapPkScript: { tag: 0x01, width: 34 },
     wantAmount: { tag: 0x02, width: 8 },
     wantAsset: { tag: 0x03, width: undefined },
+    taker: { tag: 0x04, width: 32 },
     makerPkScript: { tag: 0x05, width: 34 },
     makerPublicKey: { tag: 0x07, width: 32 },
     emulatorPubkey: { tag: 0x08, width: 32 },
@@ -301,6 +312,9 @@ export function encodeOffer(offer: Offer): Uint8Array {
             throw new Error(`${name} must be ${FIELDS[name].width} bytes`);
         }
     }
+    if (offer.taker !== undefined && offer.taker.length !== FIELDS.taker.width) {
+        throw new Error(`taker must be ${FIELDS.taker.width} bytes`);
+    }
     const ratioNum = setRatio("ratioNum", offer.ratioNum);
     const ratioDen = setRatio("ratioDen", offer.ratioDen);
     // a numerator without its denominator prices nothing
@@ -320,8 +334,9 @@ export function encodeOffer(offer: Offer): Uint8Array {
     recs.push(
         tlv(FIELDS.makerPkScript.tag, offer.makerPkScript),
         tlv(FIELDS.makerPublicKey.tag, offer.makerPublicKey),
-        tlv(FIELDS.emulatorPubkey.tag, offer.emulatorPubkey),
     );
+    if (offer.taker) recs.push(tlv(FIELDS.taker.tag, offer.taker));
+    recs.push(tlv(FIELDS.emulatorPubkey.tag, offer.emulatorPubkey));
     if (offer.exitDelay) recs.push(tlv(FIELDS.exitTimelock.tag, encodeExitDelay(offer.exitDelay)));
     return concatBytes(...recs);
 }
@@ -423,6 +438,7 @@ export function decodeOffer(data: Uint8Array): Offer {
         ...(ratioNum !== undefined && { ratioNum }),
         ...(ratioDen !== undefined && { ratioDen }),
         ...(fields.exitTimelock && { exitDelay: decodeExitDelay(fields.exitTimelock) }),
+        ...(fields.taker && { taker: fields.taker }),
     };
 }
 

@@ -3,7 +3,14 @@ import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
-import { swapProgramBinding, withExitClosure, type Offer } from "../src/offer";
+import {
+    decodeOffer,
+    encodeOffer,
+    offerContract,
+    swapProgramBinding,
+    withExitClosure,
+    type Offer,
+} from "../src/offer";
 import {
     ASSET_SWAP_CONTRACTS,
     ASSET_SWAP_CONTRACT_VERSIONS,
@@ -46,7 +53,7 @@ const directions: [string, Terms, string][] = [
 const artifact = (name: string) =>
     JSON.parse(readFileSync(new URL(`../src/contracts/${name}.json`, import.meta.url), "utf8"));
 
-/** Step 4's regtest construction: the v3 binding's args plus `taker`, on the v4 artifact. */
+/** The construction proven on regtest: the v3 binding's args plus `taker`, on the v4 artifact. */
 const handBuilt = (name: string, terms: Terms, taker: Uint8Array) => {
     const v3 = swapProgramBinding(terms, operatorPubkey, ASSET_SWAP_V3);
     const program = withExitClosure(arkade.programFromArtifact(artifact(name)), terms.exitDelay);
@@ -79,6 +86,9 @@ describe("the directed contracts (asset-swap-v4)", () => {
     it.each(directions)("pins %s to the construction regtest proved", (name, terms, golden) => {
         const proved = hex.encode(handBuilt(name, terms, TAKER).pkScript);
         expect(hex.encode(registered(terms, TAKER).pkScript)).toBe(proved);
+        expect(hex.encode(offerContract({ ...terms, taker: TAKER }, operatorPubkey).pkScript)).toBe(
+            proved,
+        );
         expect(proved).toBe(golden);
     });
 
@@ -136,5 +146,83 @@ describe("the directed contracts (asset-swap-v4)", () => {
             ASSET_SWAP_V2,
         ]);
         expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([ASSET_SWAP_V3, ASSET_SWAP_V2]);
+    });
+});
+
+const rec = (tag: number, value: Uint8Array): Uint8Array =>
+    Uint8Array.from([tag, value.length >> 8, value.length & 0xff, ...value]);
+
+const u64 = (value: bigint, prefix: number[] = []): Uint8Array => {
+    const out = new Uint8Array(prefix.length + 8);
+    out.set(prefix);
+    new DataView(out.buffer).setBigUint64(prefix.length, value);
+    return out;
+};
+
+describe("the taker record (0x04)", () => {
+    const [, terms] = directions[0];
+    const swapPkScript = offerContract({ ...terms, taker: TAKER }, operatorPubkey).pkScript;
+    const payload = (taker: Uint8Array) =>
+        Uint8Array.from([
+            ...rec(0x01, swapPkScript),
+            ...rec(0x02, u64(terms.wantAmount)),
+            ...rec(0x03, testAsset.serialize()),
+            ...rec(0x05, keys.makerPkScript),
+            ...rec(0x07, keys.makerPublicKey),
+            ...rec(0x04, taker),
+            ...rec(0x08, keys.emulatorPubkey),
+            ...rec(0x0c, u64(EXIT.value, [0])),
+        ]);
+
+    it("round-trips the taker, emitted between the maker key and the emulator key", () => {
+        const encoded = encodeOffer({ ...terms, taker: TAKER, swapPkScript });
+        expect(hex.encode(encoded)).toBe(hex.encode(payload(TAKER)));
+        const decoded = decodeOffer(encoded);
+        expect(hex.encode(decoded.taker ?? new Uint8Array())).toBe(hex.encode(TAKER));
+        expect(hex.encode(encodeOffer(decoded))).toBe(hex.encode(encoded));
+    });
+
+    it.each([31, 33])("refuses a %s-byte taker at encode and at decode", (width) => {
+        const taker = new Uint8Array(width).fill(1);
+        expect(() => encodeOffer({ ...terms, taker, swapPkScript })).toThrow(
+            "taker must be 32 bytes",
+        );
+        expect(() => decodeOffer(payload(taker))).toThrow("missing/invalid taker");
+    });
+
+    it("throws on a tag outside its table, as a pre-v4 decoder does on 0x04", () => {
+        const unknown = Uint8Array.from([...payload(TAKER), ...rec(0x06, new Uint8Array(1))]);
+        expect(() => decodeOffer(unknown)).toThrow("unknown TLV type: 0x6");
+    });
+});
+
+describe("which tree an offer compiles", () => {
+    const [, terms] = directions[0];
+    const v3Script = offerContract(terms, operatorPubkey, ASSET_SWAP_V3).pkScript;
+    const v4Script = offerContract({ ...terms, taker: TAKER }, operatorPubkey).pkScript;
+    const versionOf = (offer: Parameters<typeof swapProgramBinding>[0]) =>
+        swapProgramBinding(offer, operatorPubkey).version;
+
+    it("never compiles v4 without a taker", () => {
+        expect(versionOf(terms)).toBe(ASSET_SWAP_V2);
+        expect(versionOf({ ...terms, swapPkScript: v3Script })).toBe(ASSET_SWAP_V3);
+        expect(versionOf({ ...terms, swapPkScript: v4Script })).toBe(ASSET_SWAP_V2);
+    });
+
+    it("never compiles v2 or v3 with a taker", () => {
+        expect(versionOf({ ...terms, taker: TAKER })).toBe(ASSET_SWAP_V4);
+        expect(versionOf({ ...terms, taker: TAKER, swapPkScript: v4Script })).toBe(ASSET_SWAP_V4);
+        expect(versionOf({ ...terms, taker: TAKER, swapPkScript: v3Script })).toBe(ASSET_SWAP_V4);
+    });
+
+    it("refuses a taker on an explicit v2 or v3, and v4 without one", () => {
+        const directed = { ...terms, taker: TAKER };
+        expect(() => offerContract(directed, operatorPubkey, ASSET_SWAP_V3)).toThrow(
+            /binds no taker/,
+        );
+        expect(() => offerContract(directed, operatorPubkey, ASSET_SWAP_V2)).toThrow(
+            /binds no taker/,
+        );
+        expect(() => offerContract(terms, operatorPubkey, ASSET_SWAP_V4)).toThrow(/needs a taker/);
     });
 });

@@ -114,6 +114,16 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: offer TLV record `0x04` carries the taker.** `Offer.taker`
+  is the x-only solver key a directed offer binds, emitted after the maker key
+  (`0x07`) and before the emulator key (`0x08`); `encodeOffer` and
+  `decodeOffer` refuse any other width than 32 bytes. A taker selects the
+  `asset-swap-v4` tree and nothing else: an offer without one never compiles v4,
+  an offer with one never compiles v2 or v3, and a funded script neither
+  reproduces still fails with the existing mismatch diagnosis. Decoders from
+  before this release refuse the record (`unknown TLV type: 0x4`), as the strict
+  codec intends, so an older taker reads a directed funding as no swap at all.
+
 - **`@arkade-os/swap`: the directed asset-swap covenant, `asset-swap-v4`.** Its
   `fulfill` leaf adds the quoting solver's `taker` key to the server and emulator,
   so only that solver can complete a funded deposit; `cancel` and `exit` are
