@@ -26,7 +26,12 @@ import { deepFreeze } from "../jointGraph";
 import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
-import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
+import {
+    ASSET_CARRIER_SATS,
+    deriveOffer,
+    resolveReceivePkScript,
+    type DerivedOffer,
+} from "../offer";
 import { ASSET_SWAP_CONTRACT_VERSIONS } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
@@ -451,14 +456,16 @@ const quoteArkadeAsset = async (
         };
     }
     if (assetPayment !== undefined) deepFreeze(assetPayment);
-    // The solver's own carrier, parsed before anything is derived; a card that charges for it
-    // prices the reference below with it.
+    // The solver's carrier for an asset deposit, parsed before anything is derived. A BTC
+    // deposit funds none, so its wire `carrier_sats` is deliberately not read.
     const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
     // Before deriving: a failed feed or a mismatched pair refuses with no covenant built.
     const reference = await quoteOffer(input.candidate.card, {
         give: input.candidate.give,
         giveAmount: parsed.give,
-        ...(carrierSats === undefined ? {} : { carrierSats }),
+        // Unconditional: a card charging for the delivered carrier refuses to price without
+        // it whichever leg gives, and a BTC deposit funds none of its own to publish.
+        carrierSats: carrierSats ?? ASSET_CARRIER_SATS,
         ...QUOTE_OPTIONS,
         fetchImpl: input.feed.fetch,
     });
