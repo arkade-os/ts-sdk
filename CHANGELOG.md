@@ -121,7 +121,7 @@ style and have not been backfilled.
   registers the wallet's key under the Executor's `boarding` template, exit
   delays defaulting to the operator's; the manager refuses an Executor on
   another network or operator, or one whose single onchain input derives a
-  different address (it needs Executor `v0.0.4-rc.3` or later), and a
+  different address (it needs Executor `v0.0.4` or later), and a
   `renewalWindow` as long as the operator's VTXO expiry, under which every
   renewed coin would be due again at once and pay `maxFee` each batch. It also
   refuses an emulator key other than the network's pinned one, as
