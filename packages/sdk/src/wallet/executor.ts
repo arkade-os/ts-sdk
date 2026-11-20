@@ -1,11 +1,12 @@
 import { hex } from "@scure/base";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import type { IWallet } from ".";
-import type {
-    ExecutorContractKeys,
-    ExecutorDelegation,
-    ExecutorInfo,
-    ExecutorProvider,
+import {
+    ExecutorRequestError,
+    type ExecutorContractKeys,
+    type ExecutorDelegation,
+    type ExecutorInfo,
+    type ExecutorProvider,
 } from "../providers/executor";
 import type { Contract } from "../contracts/types";
 import type { ContractFilter } from "../repositories/contractRepository";
@@ -352,12 +353,10 @@ export interface IExecutorManager {
     /**
      * Watch the displayed boarding address's key: the Executor boards every deposit there
      * into the wallet's renewal contract, a virtual output the wallet spends and renews as its
-     * own. The wallet watches both contracts. Without `expiresAt` the watch has no deadline of its
-     * own; registering again returns the existing watch unchanged. An HD wallet registers a new
-     * watch each time it rotates the boarding address.
-     *
-     * Call it at every startup: Executor v0.0.4 ends a watch that never held a coin after 7 days,
-     * while the wallet keeps showing its address as delegated. Registering again re-activates it.
+     * own. The wallet watches both contracts. Without `expiresAt` the watch has no deadline of
+     * its own, but the Executor expires one that never receives a coin after an idle window: the
+     * wallet registers it again while it is online. Registering again returns the existing watch
+     * unchanged. An HD wallet registers a new watch each time it rotates the boarding address.
      *
      * The address derives from the key, `params`, the operator's exit delays when `params` omits
      * them, and the Executor's keys: registering again on a restored wallet finds the same watch
@@ -531,6 +530,82 @@ export class ExecutorManagerImpl implements IExecutorManager {
             registration,
             "renewal",
         );
+    }
+
+    /**
+     * Register again the live watches the Executor no longer holds. It expires a client delegation
+     * that never held a coin after an idle window, and reports no deadline for it: the row stays
+     * live, and the wallet keeps advertising an address nobody watches. Registering an expired
+     * watch again revives it at the same address. One that cannot be revived stops being live, and
+     * the wallet boards its deposits itself. A failing watch leaves the others to be tried.
+     *
+     * Throws when the Executor or the operator cannot be reached.
+     * @internal
+     */
+    async refreshWatches(): Promise<void> {
+        const context = await this.registrationContext();
+        for (const template of ["boarding", "renewal"] as const) {
+            for (const watch of await this.heldWatches(template)) {
+                if (!watch.live || watch.signer !== context.server) continue;
+                try {
+                    await this.refreshWatch(context, template, watch);
+                } catch (e) {
+                    console.warn(
+                        `Failed to refresh the Executor ${template} watch`,
+                        watch.owner,
+                        e,
+                    );
+                }
+            }
+        }
+    }
+
+    private async refreshWatch(
+        context: RegistrationContext,
+        template: ExecutorDefault,
+        watch: DelegatedContractWatch,
+    ): Promise<void> {
+        const address =
+            template === "boarding"
+                ? watch.script.onchainAddress(context.network)
+                : watch.script.address(context.hrp, context.serverPubKey).encode();
+        let status: string;
+        try {
+            status = (await this.executorProvider.getDelegation(address)).delegation.status;
+        } catch (e) {
+            // An unknown watch is a lost one; any other failure says nothing of it.
+            if (!(e instanceof ExecutorRequestError) || e.status !== 404) throw e;
+            status = "expired";
+        }
+        if (status === "active") return;
+        const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
+        const expiresAt = watch.contract.metadata?.[DELEGATION_EXPIRES_KEY];
+        try {
+            await this.registerAt(
+                context,
+                await watchDescriptor(watch, this.wallet.identity),
+                {
+                    renewalWindow: p.renewalWindow,
+                    maxFee: p.maxFee,
+                    exitDelay: p.exitDelay,
+                    boardingExitDelay: p.boardingExitDelay,
+                },
+                {
+                    expiresAt:
+                        typeof expiresAt === "number" && expiresAt > 0 ? expiresAt : undefined,
+                    // the key the watch was registered under, pinned or approved
+                    emulatorPubkey: hex.encode(p.emulatorPubKey),
+                },
+                template,
+            );
+        } catch (e) {
+            // Whatever failed, the service said it no longer holds the watch: stop advertising it.
+            const manager = await this.wallet.getContractManager();
+            await manager.updateContract(watch.contract.script, {
+                metadata: statusMetadata(watch.contract.metadata ?? {}, status, undefined),
+            });
+            throw e;
+        }
     }
 
     /**

@@ -141,10 +141,11 @@ style and have not been backfilled.
 
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
-  worker and its `INIT_WALLET`, or a `RestExecutorProvider`) gives the wallet a
-  `getExecutorManager()`, on `Wallet` and `ServiceWorkerWallet`: a readonly
-  wallet given one only reads the watches. Everything about the Executor is
-  opt-in: a wallet without one behaves as before. `registerBoarding({ renewalWindow, maxFee })`
+  worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
+  follow Executor watches. A `Wallet`, and the service-worker wallet, also get a
+  `getExecutorManager()`; a `ReadonlyWallet` has none and only follows the
+  watches a `Wallet` registered. Everything about the Executor is opt-in: a
+  wallet without one behaves as before. `registerBoarding({ renewalWindow, maxFee })`
   registers the wallet's key under the Executor's `boarding` template, exit
   delays defaulting to the operator's; the manager refuses an Executor on
   another network or operator, or one whose single onchain input derives a
@@ -169,11 +170,15 @@ style and have not been backfilled.
   derives from them. The registration returns its resolved `params`, which with
   its `keys` restore the watch through `watchExecutorContracts` regardless.
   `getAddress()` does not change. A watch registered without `expiresAt` has no
-  deadline of its own, and registering again does not change its expiry.
-  Executor `v0.0.4` still ends a watch that never held a coin after 7 days,
-  while the wallet keeps showing the delegated address, so call
-  `registerBoarding` at every startup: it re-activates the watch. Its 30 s
-  deadline covers the request to the Executor only. A subscription started before
+  deadline of its own, but the Executor (`v0.0.4`) expires one that never
+  receives a coin 168 hours after its creation, without reporting it, and
+  registering again does not extend an active one. The wallet therefore asks the
+  Executor about its live watches when it starts and once a day while the
+  VtxoManager polls, registers an expired one again, which revives the same
+  address, and stops showing one it cannot revive, so it boards those deposits
+  itself. A wallet offline for longer than that after its last rotation can
+  still show an address nobody watches until it is back online. A subscription
+  started before
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new
   onchain-scoped contract is saved, and the wallet re-subscribes on it. A
@@ -243,7 +248,7 @@ style and have not been backfilled.
   transaction lock for it; until the new watch is registered the old delegated
   address stays displayed, still watched, so a deposit there is still boarded.
   `getNewBoardingAddress()` waits for the registration, so it now depends on
-  the network. A registration stops after 30 seconds
+  the network. A registration request stops after 30 seconds
   (`ExecutorProvider.registerDelegation` takes an optional `AbortSignal`);
   repeating it is safe, as the service returns the existing watch. A coin
   already there when the wallet starts, boarded while it was offline, raises
@@ -253,9 +258,10 @@ style and have not been backfilled.
   `getNewBoardingAddress()` show the new key's own address, which the wallet
   boards once online, rather than reuse the old one. Rows of a rotated key
   carry its `signingDescriptor`, and the signer router routes `executor` inputs
-  by it. `restore()` scans every HD index for the delegations of the persisted
-  Executor contracts, so calling `watchExecutorContracts` before it also finds
-  the watches of rotated keys. A static wallet keeps its one watch.
+  by it. `restore()` scans HD indices for the delegations of the persisted
+  Executor contracts, as far as its `gapLimit` of consecutive unused indices
+  reaches, so calling `watchExecutorContracts` before it also finds the watches
+  of rotated keys. A static wallet keeps its one watch.
   `getNewAddresses({ types: ["boarding"] })` registers no watch: its side
   address is the wallet's own, and a deposit there waits for the wallet's own
   settle.

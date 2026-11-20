@@ -1397,6 +1397,45 @@ describe("Wallet.restore", () => {
         }
     }, 20_000);
 
+    it("HD: finds a deposit under each boarding delay a rotated key was watched with", async () => {
+        const { wallet, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const keys = {
+                cosignerPubkey: executorVectors.cosignerPubkey,
+                serverPubkey: `02${hex.encode(wallet.offchainTapscript.options.serverPubKey)}`,
+                emulatorPubkey: executorVectors.emulatorPubkey,
+            };
+            // two boarding watches that differ only in their boarding delay: one renewal contract
+            const delegation = { exitDelay: 0x400001, renewalWindow: 86400, maxFee: 500 };
+            for (const boardingExitDelay of [0x400002, 0x400003]) {
+                await watchExecutorContracts(wallet, keys, { ...delegation, boardingExitDelay });
+            }
+            const descriptor = hdProvider.materializeDescriptorAt(3);
+            const boarding = ExecutorContractHandler.createScript(
+                ExecutorContractHandler.serializeParams({
+                    template: "boarding",
+                    owner: new Uint8Array([2, ...deriveDescriptorLeafPubKey(descriptor)]),
+                    ...delegation,
+                    boardingExitDelay: 0x400003,
+                    cosignerPubKey: hex.decode(keys.cosignerPubkey),
+                    serverPubKey: hex.decode(keys.serverPubkey),
+                    emulatorPubKey: hex.decode(keys.emulatorPubkey),
+                }),
+            );
+            fundedOnchain.add(boarding.onchainAddress(wallet.network));
+
+            await wallet.restore({ gapLimit: 5 });
+
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(descriptor);
+            const [row] = await collectContracts(wallet.contractRepository, {
+                script: hex.encode(boarding.pkScript),
+            });
+            expect(row.metadata?.signingDescriptor).toBe(descriptor);
+        } finally {
+            await wallet.dispose();
+        }
+    }, 20_000);
+
     it("HD: recovers history older than the delta-sync overlap window", async () => {
         // Regression: the boot-time reconcile advances the global sync
         // cursor to "now" before the scan has discovered anything, so

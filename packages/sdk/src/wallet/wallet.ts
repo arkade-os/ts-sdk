@@ -361,6 +361,9 @@ export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 
+/** The Executor expires a watch that never held a coin after 168h; daily keeps that margin. */
+const EXECUTOR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     const seen = new Set<string>();
     const deduped: RelativeTimelock[] = [];
@@ -2862,6 +2865,7 @@ export class Wallet
     /** Rotates the boarding address once the Executor boards a deposit at it. */
     private _executorBoardUnsub?: () => void;
     private _executorBoardChain: Promise<void> = Promise.resolve();
+    private _executorRefreshedAt = 0;
 
     /**
      * Descriptor-aware signer for inputs locked by rotated pubkeys (the rotator's instance).
@@ -3040,6 +3044,14 @@ export class Wallet
         const [minted] = await this.allocateAddresses(["boarding"], false, true);
         if (minted?.type !== "boarding" || !minted.allocated) return;
         await this.extendBoardingWatch(minted.signingDescriptor);
+        // A signer rotation during the registration rebuilt the display under the new key: keep it.
+        // The minted index stays burned, and the next rotation mints under the new signer.
+        if (
+            toXOnlySignerHex(hex.encode(minted.tapscript.options.serverPubKey)) !==
+            toXOnlySignerHex(hex.encode(this.arkServerPublicKey))
+        ) {
+            return;
+        }
         this.setBoardingTapscriptForRotation(minted.tapscript);
     }
 
@@ -3139,8 +3151,34 @@ export class Wallet
         // Unawaited, so lazy init stays lazy; on the chain, so dispose drains it.
         void this.onBoardChain(async () => {
             await manager.whenBooted?.().catch(() => undefined);
+            // First: a rotation then extends from watches that are still held.
+            await this.refreshExecutorWatchesNow();
             await this.rotateForExecutorCoinAtBoot();
         });
+    }
+
+    /**
+     * @internal Register again the Executor watches the service let lapse, see
+     * {@link ExecutorManagerImpl.refreshWatches}; the poll of the {@link VtxoManager} calls it every
+     * cycle. At most once a day, on the board chain so it never interleaves a rotation's
+     * registration. Best-effort: never throws.
+     */
+    refreshExecutorWatches(): Promise<void> {
+        return this.onBoardChain(() => this.refreshExecutorWatchesNow());
+    }
+
+    private async refreshExecutorWatchesNow(): Promise<void> {
+        const executor = this._executorManager;
+        if (!executor) return;
+        if (Date.now() - this._executorRefreshedAt < EXECUTOR_REFRESH_INTERVAL_MS) return;
+        // Stamped before the call: an unreachable Executor is tried again next interval, not
+        // every poll.
+        this._executorRefreshedAt = Date.now();
+        try {
+            await executor.refreshWatches();
+        } catch (e) {
+            console.warn("Failed to refresh the Executor watches", e);
+        }
     }
 
     /**
@@ -3871,7 +3909,9 @@ export class Wallet
         const rows = await collectContracts(this.contractRepository, {
             type: [ExecutorContractHandler.type],
         });
-        const templates = new Map<string, ExecutorWatchTemplate>();
+        const boarding = new Map<string, ExecutorWatchTemplate>();
+        const renewalOnly = new Map<string, ExecutorWatchTemplate>();
+        const boardingBases = new Set<string>();
         for (const row of rows) {
             try {
                 const p = ExecutorContractHandler.deserializeParams(row.params);
@@ -3880,26 +3920,31 @@ export class Wallet
                     serverPubkey: hex.encode(p.serverPubKey),
                     emulatorPubkey: hex.encode(p.emulatorPubKey),
                 };
-                const id = JSON.stringify([keys, p.exitDelay, p.renewalWindow, p.maxFee]);
-                const known = templates.get(id);
-                // a renewal row's delegation is its boarding row's, minus the boarding delay
-                if (known?.params.boardingExitDelay !== undefined) continue;
-                templates.set(id, {
-                    keys,
-                    params: {
-                        exitDelay: p.exitDelay,
-                        renewalWindow: p.renewalWindow,
-                        maxFee: p.maxFee,
-                        ...(p.boardingExitDelay !== undefined
-                            ? { boardingExitDelay: p.boardingExitDelay }
-                            : {}),
-                    },
-                });
+                const base = JSON.stringify([keys, p.exitDelay, p.renewalWindow, p.maxFee]);
+                const params = {
+                    exitDelay: p.exitDelay,
+                    renewalWindow: p.renewalWindow,
+                    maxFee: p.maxFee,
+                };
+                if (p.boardingExitDelay === undefined) {
+                    renewalOnly.set(base, { keys, params });
+                } else {
+                    boardingBases.add(base);
+                    // boarding rows differing only in their delay are distinct addresses
+                    boarding.set(JSON.stringify([base, p.boardingExitDelay]), {
+                        keys,
+                        params: { ...params, boardingExitDelay: p.boardingExitDelay },
+                    });
+                }
             } catch (e) {
                 console.warn("Skipping malformed delegated contract", row.script, e);
             }
         }
-        return [...templates.values()];
+        // a renewal row's delegation is its boarding rows', minus the boarding delay
+        return [
+            ...boarding.values(),
+            ...[...renewalOnly].filter(([base]) => !boardingBases.has(base)).map(([, t]) => t),
+        ];
     }
 
     private async _runRestore(gapLimit: number): Promise<void> {
@@ -4177,13 +4222,9 @@ export class Wallet
         }
         this._executorBoardUnsub?.();
         this._executorBoardUnsub = undefined;
-        // A task can queue another while it runs: drain until the chain stops moving.
-        let chain: Promise<void>;
-        do {
-            chain = this._executorBoardChain;
-            await chain;
-        } while (chain !== this._executorBoardChain);
 
+        // Before the drain: it waits for an in-flight poll or settle, the producers of
+        // post-board rotations.
         const manager =
             this._vtxoManager ??
             (this._vtxoManagerInitializing
@@ -4198,6 +4239,13 @@ export class Wallet
         } finally {
             this._vtxoManager = undefined;
             this._vtxoManagerInitializing = undefined;
+            // A task can queue another while it runs: drain until the chain stops moving. Never
+            // rejects, and before the contract manager goes, which a drained rotation writes to.
+            let chain: Promise<void>;
+            do {
+                chain = this._executorBoardChain;
+                await chain;
+            } while (chain !== this._executorBoardChain);
             await super.dispose();
         }
 

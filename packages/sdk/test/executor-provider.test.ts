@@ -935,6 +935,135 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         expect(owners[0]).toBe(vectors.owner);
         expect(new Set(owners.slice(1))).toEqual(new Set(heldKeys.map((k) => `02${k}`)));
     });
+
+    describe("refreshWatches", () => {
+        type Answer = "active" | "expired" | "missing";
+        /** What the Executor says of the boarding (onchain) and renewal (offchain) watches. */
+        const answer = (
+            provider: ReturnType<typeof derivingProvider>,
+            { boarding = "active", renewal = "active" }: { boarding?: Answer; renewal?: Answer },
+        ) =>
+            provider.getDelegation.mockImplementation(async (address: string) => {
+                const status = address.startsWith("tark") ? renewal : boarding;
+                if (status === "missing") {
+                    throw new ExecutorRequestError("delegation not found", 404);
+                }
+                return { delegation: { status }, coins: [] };
+            });
+
+        it("asks about each live watch at its own address, and leaves the held ones", async () => {
+            const { executor, provider } = await renewingWallet();
+            answer(provider, {});
+
+            await executor.refreshWatches();
+
+            expect(provider.getDelegation.mock.calls.map(([address]) => address).sort()).toEqual(
+                [vectors.boarding.address, vectors.renewal.address].sort(),
+            );
+            expect(provider.registerDelegation).not.toHaveBeenCalled();
+        });
+
+        it("registers an expired watch again under its own params, at the same address", async () => {
+            const { executor, provider, manager } = await renewingWallet();
+            answer(provider, { boarding: "expired" });
+
+            await executor.refreshWatches();
+
+            expect(provider.registerDelegation).toHaveBeenCalledOnce();
+            expect(provider.registerDelegation).toHaveBeenCalledWith(
+                ids.boarding,
+                vectors.boarding.variables,
+                { expiresAt: undefined, signal: expect.any(AbortSignal) },
+            );
+            expect(await rowsOf(manager, "boarding")).toEqual([`${OWNER}/500/active`]);
+        });
+
+        it("registers a renewal watch again too", async () => {
+            const { executor, provider } = await renewingWallet();
+            answer(provider, { renewal: "expired" });
+
+            await executor.refreshWatches();
+
+            expect(provider.registerDelegation).toHaveBeenCalledOnce();
+            expect(provider.registerDelegation.mock.calls[0][0]).toBe(ids.renewal);
+        });
+
+        it("registers a watch the Executor does not know again", async () => {
+            const { executor, provider } = await renewingWallet();
+            answer(provider, { boarding: "missing" });
+
+            await executor.refreshWatches();
+
+            expect(provider.registerDelegation).toHaveBeenCalledOnce();
+            expect(provider.registerDelegation.mock.calls[0][0]).toBe(ids.boarding);
+        });
+
+        it("leaves a watch alone when the Executor cannot say whether it holds it", async () => {
+            const { executor, provider, manager } = await renewingWallet();
+            provider.getDelegation.mockRejectedValueOnce(new ExecutorRequestError("busy", 503));
+            provider.getDelegation.mockRejectedValueOnce(new Error("offline"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            await expect(executor.refreshWatches()).resolves.toBeUndefined();
+
+            expect(warn).toHaveBeenCalledTimes(2);
+            warn.mockRestore();
+            expect(provider.registerDelegation).not.toHaveBeenCalled();
+            expect(await rowsOf(manager, "boarding")).toEqual([`${OWNER}/500/active`]);
+        });
+
+        it("stops advertising a watch it cannot register again, and keeps to the others", async () => {
+            const fail: string[] = [];
+            const { executor, provider, manager } = await renewingWallet(fail);
+            fail.push(ids.boarding);
+            answer(provider, { boarding: "expired", renewal: "expired" });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            await expect(executor.refreshWatches()).resolves.toBeUndefined();
+
+            expect(warn).toHaveBeenCalledOnce();
+            warn.mockRestore();
+            expect(await rowsOf(manager, "boarding")).toEqual([`${OWNER}/500/expired`]);
+            expect(await rowsOf(manager, "renewal")).toEqual([`${OWNER}/500/active`]);
+
+            // no longer live, so no longer asked about
+            provider.getDelegation.mockClear();
+            answer(provider, { renewal: "active" });
+            await executor.refreshWatches();
+            expect(provider.getDelegation.mock.calls.map(([address]) => address)).toEqual([
+                vectors.renewal.address,
+            ]);
+        });
+
+        it("does not revive a watch under another emulator key than the Executor's", async () => {
+            const { wallet: managed, manager, provider } = await managedWallet();
+            await holdBoardingWatch(managed, `tr(${heldKeys[0]})`, {
+                keys: { emulatorPubkey: vectors.cosignerPubkey },
+            });
+            answer(provider, { boarding: "expired" });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            await new ExecutorManagerImpl(provider, managed).refreshWatches();
+
+            warn.mockRestore();
+            expect(provider.registerDelegation).not.toHaveBeenCalled();
+            expect(await rowsOf(manager, "boarding")).toEqual([`${HELD[0]}/500/expired`]);
+        });
+
+        it("leaves the watches of another operator alone", async () => {
+            const { wallet: managed, provider } = await managedWallet();
+            // as after a signer rotation: the row commits to the previous operator's key
+            await holdBoardingWatch(managed, `tr(${heldKeys[0]})`, {
+                keys: { serverPubkey: vectors.cosignerPubkey },
+            });
+            answer(provider, { boarding: "expired" });
+
+            await new ExecutorManagerImpl(provider, managed).refreshWatches();
+
+            expect(provider.getDelegation).not.toHaveBeenCalled();
+            expect(provider.registerDelegation).not.toHaveBeenCalled();
+        });
+    });
 });
 
 describe("ExecutorManagerImpl.defaultTemplates", () => {
