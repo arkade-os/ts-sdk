@@ -13,6 +13,8 @@ import {
 } from "../src";
 import { jsonResponse } from "./helpers/response";
 import { MockEventSource } from "./mocks/eventSource";
+import { DEFAULT_ARKADE_SERVER_URL } from "../src/networks";
+import { bindTestWallet, testWalletBinding, walletRequestOf } from "./helpers/walletRequest";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 
@@ -118,13 +120,25 @@ function deferred() {
     return { promise, resolve };
 }
 
-function deadlinePage(
+async function deadlinePage(
     wallet: Wallet,
     mutate?: (response: any, request: any, worker: any) => { data: any; source: any }[],
 ) {
     const handler = new WalletMessageHandler();
-    (handler as any).readonlyWallet = wallet;
-    (handler as any).wallet = wallet;
+    const binding = testWalletBinding(
+        await wallet.identity.xOnlyPublicKey(),
+        DEFAULT_ARKADE_SERVER_URL,
+        wallet.network.name,
+    );
+    await handler.start(
+        {
+            readonlyWallet: wallet,
+            wallet,
+            arkProvider: wallet.arkProvider,
+            walletRequestBinding: binding,
+        },
+        { walletRepository: wallet.walletRepository },
+    );
     const listeners = new Set<(event: any) => void>();
     const replies: any[] = [];
     const worker = {
@@ -134,7 +148,7 @@ function deadlinePage(
                 .then((response) => {
                     const cloned = structuredClone(response);
                     replies.push(cloned);
-                    for (const event of mutate?.(cloned, request, worker) ?? [
+                    for (const event of mutate?.(cloned, walletRequestOf(request), worker) ?? [
                         { data: cloned, source: worker },
                     ]) {
                         for (const listener of [...listeners]) listener(event);
@@ -157,14 +171,17 @@ function deadlinePage(
                 listeners.delete(listener),
         },
     });
-    const page = new (ServiceWorkerWallet as any)(
-        worker,
-        wallet.identity,
-        new InMemoryWalletRepository(),
-        new InMemoryContractRepository(),
-        handler.messageTag,
-        false,
-    ) as ServiceWorkerWallet;
+    const page = bindTestWallet(
+        new (ServiceWorkerWallet as any)(
+            worker,
+            wallet.identity,
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            handler.messageTag,
+            false,
+        ) as ServiceWorkerWallet,
+        binding,
+    );
     return { page, worker, replies, handler };
 }
 
@@ -181,15 +198,18 @@ describe("Wallet.send validUntil", () => {
                 now = 1_700_000_001_000;
         });
         const submit = vi.spyOn(wallet.arkProvider, "submitTx");
-        const { page, worker, replies } = deadlinePage(wallet);
+        const { page, worker, replies } = await deadlinePage(wallet);
         try {
             await expect(
                 page.send(sendParams(wallet, 1_700_000_001, [coin(wallet)])),
             ).rejects.toBeInstanceOf(SendDeadlineExceededError);
             expect(submit).not.toHaveBeenCalled();
             expect(worker.postMessage.mock.calls.map(([request]) => request.type)).toEqual([
-                "SEND_WITH_DEADLINE",
+                "SCOPED_WALLET_REQUEST_V1",
             ]);
+            expect(
+                worker.postMessage.mock.calls.map(([request]) => walletRequestOf(request).type),
+            ).toEqual(["SEND_WITH_DEADLINE"]);
             expect(replies).toHaveLength(1);
             expect(replies[0]).toMatchObject({
                 type: "SEND_DEADLINE_EXCEEDED",
@@ -218,7 +238,7 @@ describe("Wallet.send validUntil", () => {
             },
         );
         const submit = vi.spyOn(wallet.arkProvider, "submitTx").mockRejectedValue(failure);
-        const { page, replies } = deadlinePage(wallet);
+        const { page, replies } = await deadlinePage(wallet);
         try {
             const error = await page
                 .send(sendParams(wallet, 1_700_000_001, [coin(wallet)]))
@@ -247,7 +267,7 @@ describe("Wallet.send validUntil", () => {
     ])("does not promote a %s mismatch into non-submission proof", async (change) => {
         const { wallet } = await makeWallet();
         vi.spyOn(Date, "now").mockReturnValue(1_700_000_001_000);
-        const { page, worker } = deadlinePage(wallet, (response, request, source) => {
+        const { page, worker } = await deadlinePage(wallet, (response, request, source) => {
             const forged = {
                 ...response,
                 type: "SEND_DEADLINE_EXCEEDED",
@@ -292,7 +312,7 @@ describe("Wallet.send validUntil", () => {
     it("does not accept a deadline marker for an untimed SEND", async () => {
         const { wallet } = await makeWallet();
         vi.spyOn(wallet, "send").mockRejectedValue(new Error("unknown outcome"));
-        const { page, worker } = deadlinePage(wallet, (response, _request, source) => [
+        const { page, worker } = await deadlinePage(wallet, (response, _request, source) => [
             {
                 source,
                 data: {
@@ -308,7 +328,8 @@ describe("Wallet.send validUntil", () => {
                 .catch((value) => value);
             expect(error).toBeInstanceOf(Error);
             expect(error).not.toBeInstanceOf(SendDeadlineExceededError);
-            expect(worker.postMessage.mock.calls[0][0].type).toBe("SEND");
+            expect(worker.postMessage.mock.calls[0][0].type).toBe("SCOPED_WALLET_REQUEST_V1");
+            expect(walletRequestOf(worker.postMessage.mock.calls[0][0]).type).toBe("SEND");
         } finally {
             await wallet.dispose();
             vi.unstubAllGlobals();
@@ -318,7 +339,7 @@ describe("Wallet.send validUntil", () => {
     it("refuses an unsupported timed request without falling back to an untimed send", async () => {
         const { wallet } = await makeWallet();
         const send = vi.spyOn(wallet, "send");
-        const { page, worker, handler } = deadlinePage(wallet);
+        const { page, worker, handler } = await deadlinePage(wallet);
         vi.spyOn(handler, "handleMessage").mockImplementation(
             async (request) =>
                 ({
@@ -334,8 +355,11 @@ describe("Wallet.send validUntil", () => {
             expect(error).toBeInstanceOf(Error);
             expect(error).not.toBeInstanceOf(SendDeadlineExceededError);
             expect(worker.postMessage.mock.calls.map(([request]) => request.type)).toEqual([
-                "SEND_WITH_DEADLINE",
+                "SCOPED_WALLET_REQUEST_V1",
             ]);
+            expect(
+                worker.postMessage.mock.calls.map(([request]) => walletRequestOf(request).type),
+            ).toEqual(["SEND_WITH_DEADLINE"]);
             expect(send).not.toHaveBeenCalled();
         } finally {
             await wallet.dispose();

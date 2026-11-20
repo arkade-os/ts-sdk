@@ -16,6 +16,7 @@ import {
     WalletRepository,
     BatchRegistrationRepository,
     VirtualTxRepository,
+    VtxoReservationRepository,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import type { Contract } from "../contracts/types";
@@ -37,6 +38,7 @@ export {
 import { DelegateProvider } from "../providers/delegate";
 import type { ExecutorProvider } from "../providers/executor";
 import type { ArkadeService } from "../arkade/service";
+import type { VtxoReservation } from "./wallet";
 
 /**
  * Wallet receive-address strategy.
@@ -290,6 +292,8 @@ export type StorageConfig = {
      * pending intent that instance is not settling itself.
      */
     intentRepository?: BatchRegistrationRepository;
+    /** Persistent external holds, restored before automatic wallet spending starts. */
+    vtxoReservationRepository?: VtxoReservationRepository;
     /**
      * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
      * VTXO's exit branch into it and prunes it on spend (both best-effort, see
@@ -1028,6 +1032,15 @@ export interface IWallet extends IReadonlyWallet {
      * a wallet with `WalletCannotSignError` before anything is funded.
      */
     identity: Identity;
+
+    /**
+     * Durable when the wallet has a reservation repository (always in the worker), else local to
+     * this instance. A durable hold needs a caller-persisted id until its release resolves.
+     */
+    reserveVtxos?(
+        outpoints: readonly Outpoint[],
+        reservationId: string,
+    ): VtxoReservation | Promise<VtxoReservation>;
 
     /**
      * Settle boarding inputs and/or preconfirmed virtual outputs into settled virtual outputs.

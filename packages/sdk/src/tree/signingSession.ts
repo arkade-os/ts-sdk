@@ -46,6 +46,7 @@ export class TreeSignerSession implements SignerSession {
     }
 
     async init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): Promise<void> {
+        if (this.myNonces) throw new Error("signer session already used; create a fresh one");
         this.graph = tree;
         this.scriptRoot = scriptRoot;
         this.rootSharedOutputAmount = rootInputAmount;

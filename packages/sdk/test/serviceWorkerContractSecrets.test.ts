@@ -50,6 +50,7 @@ import {
     provisionRefundKey,
 } from "../src/wallet/contractSecrets";
 import { jsonResponse } from "./helpers/response";
+import { bindTestWallet, testWalletBinding } from "./helpers/walletRequest";
 import { createHandlerBackedBus } from "./helpers/handlerBackedBus";
 
 const MNEMONIC =
@@ -129,26 +130,35 @@ async function makeInnerWallet(opts: {
  * construction rather than `create()` so the test drives descriptor traffic
  * only — `create()` would additionally require INIT_WALLET/GET_STATUS.
  */
-function makeServiceWorkerWallet(opts: {
+async function makeServiceWorkerWallet(opts: {
     identity: Identity;
     inner: Wallet;
     walletRepository: WalletRepository;
-}): ServiceWorkerWallet {
+}): Promise<ServiceWorkerWallet> {
     const handler = new WalletMessageHandler();
+    const binding = testWalletBinding(
+        await opts.identity.xOnlyPublicKey(),
+        "http://localhost:7070",
+        opts.inner.network.name,
+    );
+    (handler as any).walletRequestBinding = binding;
     (handler as any).readonlyWallet = opts.inner;
     (handler as any).wallet = opts.inner;
 
     const { navigatorServiceWorker, serviceWorker } = createHandlerBackedBus(handler);
     vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
-    return new (ServiceWorkerWallet as any)(
-        serviceWorker as unknown as ServiceWorker,
-        opts.identity,
-        opts.walletRepository,
-        new InMemoryContractRepository(),
-        DEFAULT_MESSAGE_TAG,
-        false,
-    ) as ServiceWorkerWallet;
+    return bindTestWallet(
+        new (ServiceWorkerWallet as any)(
+            serviceWorker as unknown as ServiceWorker,
+            opts.identity,
+            opts.walletRepository,
+            new InMemoryContractRepository(),
+            DEFAULT_MESSAGE_TAG,
+            false,
+        ) as ServiceWorkerWallet,
+        binding,
+    );
 }
 
 /** An HD wallet in both contexts, sharing one repository as they do in a browser. */
@@ -156,7 +166,7 @@ async function hdPair() {
     const identity = MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false });
     const walletRepository = new InMemoryWalletRepository();
     const inner = await makeInnerWallet({ identity, hd: true, walletRepository });
-    const sw = makeServiceWorkerWallet({ identity, inner, walletRepository });
+    const sw = await makeServiceWorkerWallet({ identity, inner, walletRepository });
     const provider = await HDDescriptorProvider.create(identity, walletRepository);
     return {
         identity,
@@ -172,7 +182,7 @@ async function staticPair() {
     const identity = SingleKey.fromHex(STATIC_KEY_HEX);
     const walletRepository = new InMemoryWalletRepository();
     const inner = await makeInnerWallet({ identity, hd: false, walletRepository });
-    const sw = makeServiceWorkerWallet({ identity, inner, walletRepository });
+    const sw = await makeServiceWorkerWallet({ identity, inner, walletRepository });
     return { identity, inner, sw, walletRepository };
 }
 
@@ -357,7 +367,7 @@ describe("contract secrets behind the service worker", () => {
         const { sw, identity, inner, walletRepository } = await hdPair();
         const secret = await provisionClaimSecret(sw as unknown as IWallet);
 
-        const reloaded = makeServiceWorkerWallet({ identity, inner, walletRepository });
+        const reloaded = await makeServiceWorkerWallet({ identity, inner, walletRepository });
 
         expect(
             hex.encode(await contractPreimage(reloaded as unknown as IWallet, secret.descriptor)),
@@ -406,7 +416,7 @@ describe("contract secrets behind the service worker", () => {
             xOnlyPublicKey: () => full.xOnlyPublicKey(),
             compressedPublicKey: () => full.compressedPublicKey(),
         } as unknown as Identity;
-        const sw = makeServiceWorkerWallet({ identity: watchOnly, inner, walletRepository });
+        const sw = await makeServiceWorkerWallet({ identity: watchOnly, inner, walletRepository });
         const descriptor = await bareDescriptorFor(watchOnly);
 
         // It IS our key — reporting it foreign would send the user after a

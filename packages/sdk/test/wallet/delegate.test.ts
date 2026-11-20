@@ -23,17 +23,17 @@ describe("default delegation schedule", () => {
         vi.useRealTimers();
     });
 
-    /** The `valid_at` signed for a coin expiring at `expiry`, delegated with no explicit date. */
-    async function validAt(
+    async function delegateOnce(
         expiry: number,
         sessionDuration: bigint,
         leaf: Partial<TapLeaves> = { proofTapLeafScript: testDelegateScript.delegate() },
-    ): Promise<number> {
+        fee = "0",
+    ) {
         const delegate = vi.fn(async (_intent: { message: { valid_at: number } }) => {});
         const provider = {
             getDelegateInfo: async () => ({
                 pubkey: hex.encode(TEST_DELEGATE_PUB_KEY),
-                fee: "0",
+                fee,
                 delegateAddress: TEST_DEFAULT_ARK_ADDRESS,
             }),
             delegate,
@@ -58,7 +58,12 @@ describe("default delegation schedule", () => {
 
         const manager = new DelegateManagerImpl(provider, { getInfo: async () => info }, identity);
         const { failed } = await manager.delegate([coin], TEST_DEFAULT_ARK_ADDRESS);
+        return { failed, delegate };
+    }
 
+    /** The `valid_at` signed for a coin expiring at `expiry`, delegated with no explicit date. */
+    async function validAt(...args: Parameters<typeof delegateOnce>): Promise<number> {
+        const { failed, delegate } = await delegateOnce(...args);
         expect(failed).toEqual([]);
         return delegate.mock.calls[0][0].message.valid_at;
     }
@@ -79,6 +84,15 @@ describe("default delegation schedule", () => {
 
     it("stays before expiry when already inside that window", async () => {
         expect(await validAt(NOW + 50_000, 30n)).toBe(NOW / 1000 + 2);
+    });
+
+    it.each([
+        ["a negative delegate fee", "-1000"],
+        ["a delegate fee above 10% of the coin", "100001"],
+    ])("refuses %s without contacting the delegate", async (_, fee) => {
+        const { failed, delegate } = await delegateOnce(NOW + 30 * 86_400_000, 60n, undefined, fee);
+        expect(String(failed[0]?.error)).toContain("delegate fee");
+        expect(delegate).not.toHaveBeenCalled();
     });
 });
 

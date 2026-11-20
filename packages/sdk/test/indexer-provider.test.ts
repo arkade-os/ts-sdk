@@ -236,10 +236,10 @@ describe("RestIndexerProvider", () => {
                 isSpent: false,
                 spentBy: "",
             });
-            const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`page0-${i}`));
-            // The server clamps page.index=0 to page 1 and echoes the 1-based
-            // page in `current`; `next` points at the following page until the
-            // last one, where it pins at `total`.
+            const fullPage = Array.from({ length: 100 }, (_, i) => vtxo(`page0-${i}`));
+            // The server caps page.size at 100, clamps page.index=0 to page 1 and
+            // echoes the 1-based page in `current`; `next` points at the following
+            // page until the last one, where it pins at `total`.
             mockFetch
                 .mockResolvedValueOnce(
                     jsonResponse({
@@ -258,8 +258,8 @@ describe("RestIndexerProvider", () => {
             const result = await provider.getVtxos({ scripts: ["script-a"] });
 
             expect(mockFetch).toHaveBeenCalledTimes(2);
-            expect(result.vtxos).toHaveLength(501);
-            expect(result.vtxos[500].txid).toBe("page1-0");
+            expect(result.vtxos).toHaveLength(101);
+            expect(result.vtxos[100].txid).toBe("page1-0");
             // Nothing is left to ask for, so there is no cursor to hand back.
             expect(result.page).toBeUndefined();
 

@@ -53,6 +53,12 @@ describe("BIP21", () => {
         expect(uri).toBe("bitcoin:bc1qexample");
     });
 
+    it("keeps the URI's address when a query parameter is also named address", () => {
+        const uri = "bitcoin:bc1qexample?address=bc1qother";
+
+        expect(BIP21.parse(uri).params.address).toBe("bc1qexample");
+    });
+
     describe("case", () => {
         // Base58 is case-SENSITIVE. Lowercasing produced a DIFFERENT address,
         // and silently: `isBtcAddress` admits a lowercase base58 string, so the

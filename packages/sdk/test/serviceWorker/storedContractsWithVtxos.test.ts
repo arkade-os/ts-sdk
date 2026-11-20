@@ -21,6 +21,7 @@ import {
 } from "../../src/wallet/serviceWorker/wallet-message-handler";
 import { MockEventSource } from "../mocks/eventSource";
 import { jsonResponse } from "../helpers/response";
+import { bindTestWallet, scopedWalletRequest, testWalletBinding } from "../helpers/walletRequest";
 import { createHandlerBackedBus } from "../helpers/handlerBackedBus";
 import { createMockExtendedVtxo } from "../contracts/helpers";
 
@@ -84,24 +85,33 @@ async function makePair() {
     openWallets.push(inner);
 
     const handler = new WalletMessageHandler();
+    const binding = testWalletBinding(
+        await identity.xOnlyPublicKey(),
+        "http://localhost:7070",
+        inner.network.name,
+    );
+    (handler as any).walletRequestBinding = binding;
     (handler as any).readonlyWallet = inner;
     const { navigatorServiceWorker, serviceWorker } = createHandlerBackedBus(handler);
     vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
-    const sw = new (ServiceWorkerReadonlyWallet as any)(
-        serviceWorker as unknown as ServiceWorker,
-        identity,
-        walletRepository,
-        new InMemoryContractRepository(),
-        DEFAULT_MESSAGE_TAG,
-    ) as ServiceWorkerReadonlyWallet;
+    const sw = bindTestWallet(
+        new (ServiceWorkerReadonlyWallet as any)(
+            serviceWorker as unknown as ServiceWorker,
+            identity,
+            walletRepository,
+            new InMemoryContractRepository(),
+            DEFAULT_MESSAGE_TAG,
+        ) as ServiceWorkerReadonlyWallet,
+        binding,
+    );
 
-    return { inner, sw, serviceWorker, walletRepository };
+    return { inner, sw, serviceWorker, walletRepository, binding };
 }
 
 describe("getStoredContractsWithVtxos through the service worker", () => {
     it("reads spent rows from worker storage without waiting on the indexer", async () => {
-        const { inner, sw, serviceWorker, walletRepository } = await makePair();
+        const { inner, sw, serviceWorker, walletRepository, binding } = await makePair();
 
         // a spent coin already stored under one of the wallet's own contracts
         const innerManager = await inner.getContractManager();
@@ -138,8 +148,17 @@ describe("getStoredContractsWithVtxos through the service worker", () => {
             });
 
             const [letter] = serviceWorker.postMessage.mock.calls.map(([message]) => message);
-            expect(letter.type).toBe("GET_STORED_CONTRACTS_WITH_VTXOS");
-            expect(letter.payload).toEqual({ filter: { script: contract.script } });
+            expect(letter).toEqual(
+                scopedWalletRequest(
+                    {
+                        id: expect.any(String),
+                        tag: DEFAULT_MESSAGE_TAG,
+                        type: "GET_STORED_CONTRACTS_WITH_VTXOS",
+                        payload: { filter: { script: contract.script } },
+                    },
+                    binding,
+                ),
+            );
         } finally {
             release();
         }

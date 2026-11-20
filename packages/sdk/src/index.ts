@@ -234,7 +234,11 @@ import {
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
 } from "./wallet/serviceWorker/wallet";
-import type { MessageTimeouts, ServiceWorkerWalletMode } from "./wallet/serviceWorker/wallet";
+import type {
+    MessageTimeouts,
+    ServiceWorkerWalletMode,
+    WalletUpdate,
+} from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./worker/browser/utils";
 import {
@@ -570,6 +574,16 @@ export {
 } from "./repositories/walletRepository";
 export { collectContracts } from "./repositories/contractRepository";
 export { collectBatchRegistrations, collectIntents } from "./repositories/intentRepository";
+export {
+    classifyBoardingExpiry,
+    decodeBoardingExit,
+    type BoardingExpiry,
+} from "./utils/arkTransaction";
+export type {
+    StoredVtxoReservation,
+    VtxoReservationRepository,
+} from "./repositories/vtxoReservationRepository";
+export { IndexedDBVtxoReservationRepository } from "./repositories/indexedDB/vtxoReservationRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
@@ -1243,6 +1257,7 @@ export type {
     ResponseEnvelope,
     MessageTimeouts,
     ServiceWorkerWalletMode,
+    WalletUpdate,
     // Arkade types
     ArkadeBatchInput,
     ArkadeExtendedCoin,

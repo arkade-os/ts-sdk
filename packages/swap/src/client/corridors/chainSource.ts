@@ -8,7 +8,7 @@
  * `getMtp` reads `/blocks`, where `mediantime` is explicit: an MTP that runs high makes
  * `classifyOnchainHtlc` report `refundable` early and abandons a still-live L1 claim. A `{ provider }`
  * override goes through `chainSourceFrom`, trusting `getChainTip().time`, which the interface pins to
- * MTP; Electrum degrades to the tip's nTime only when its header window fails.
+ * MTP.
  */
 import { hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";

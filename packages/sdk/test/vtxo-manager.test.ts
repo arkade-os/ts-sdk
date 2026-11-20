@@ -1899,6 +1899,7 @@ describe("SettlementConfig", () => {
             const contractManagerDispose = vi.fn();
             const wallet = Object.create(Wallet.prototype) as Wallet;
             Object.assign(wallet, {
+                reservationWrites: new Set(),
                 _vtxoManager: { dispose: managerDispose },
                 _contractManager: { dispose: contractManagerDispose },
             });
@@ -2178,6 +2179,25 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
                 "Boarding UTXO sweep requires a Wallet instance",
             );
+        });
+
+        it("signs a provider fee rate above 1000 sat/vB at 1000", async () => {
+            const sweptFee = async (feeRate: number) => {
+                const coin = createMockBoardingUtxo(
+                    1_000_000,
+                    Math.floor(Date.now() / 1000) - 700_000,
+                );
+                const wallet = createMockWalletWithBoarding([coin], {
+                    feeRate,
+                    boardingAddress: boardingScript().onchainAddress(regtest),
+                });
+                const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+                await manager.sweepExpiredBoardingUtxos();
+                await manager.dispose();
+                const tx: Transaction = wallet.signOnchainBoardingTx.mock.calls[0][0];
+                return 1_000_000n - tx.getOutput(0).amount!;
+            };
+            expect(await sweptFee(1e6)).toBe(1000n * (await sweptFee(1)));
         });
     });
 

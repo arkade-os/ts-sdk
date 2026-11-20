@@ -24,6 +24,7 @@ import {
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
 import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
+import { scopedWalletRequest, testWalletBinding } from "./helpers/walletRequest";
 import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
@@ -39,6 +40,7 @@ import {
 
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+const operatorUrl = "https://ark.test";
 
 const ESCROW_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000001";
 const MARKED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000002";
@@ -175,6 +177,7 @@ async function seededWallet(opts?: {
 
     const config = {
         arkProvider: {
+            serverUrl: operatorUrl,
             getInfo: async () => arkInfo(),
         } as Partial<OperatorProvider> as OperatorProvider,
         indexerProvider: opts?.indexerProvider ?? offlineIndexer(),
@@ -219,7 +222,13 @@ async function seededWallet(opts?: {
         ]);
     }
 
-    return { wallet, defaultScript, walletRepository, contractRepository };
+    return {
+        wallet,
+        defaultScript,
+        walletRepository,
+        contractRepository,
+        arkProvider: config.arkProvider,
+    };
 }
 
 const amountsOf = (txs: { amount: number }[]) => txs.map((t) => t.amount).sort((a, b) => a - b);
@@ -1200,16 +1209,29 @@ describe("main-thread / worker balance parity", () => {
         type: "GET_BALANCE" | "GET_TRANSACTION_HISTORY",
     ) => {
         const handler = new WalletMessageHandler();
-        (handler as any).readonlyWallet = seeded.wallet;
-        (handler as any).walletRepository = seeded.walletRepository;
-        (handler as any).indexerProvider = offlineIndexer();
-        (handler as any).arkProvider = {};
-
-        const response = await handler.handleMessage({
-            id: "1",
-            tag: DEFAULT_MESSAGE_TAG,
-            type,
-        } as any);
+        const binding = testWalletBinding(
+            await seeded.wallet.identity.xOnlyPublicKey(),
+            operatorUrl,
+            seeded.wallet.network.name,
+        );
+        await handler.start(
+            {
+                readonlyWallet: seeded.wallet,
+                arkProvider: seeded.arkProvider,
+                walletRequestBinding: binding,
+            },
+            { walletRepository: seeded.walletRepository },
+        );
+        const response = await handler.handleMessage(
+            scopedWalletRequest(
+                {
+                    id: "1",
+                    tag: DEFAULT_MESSAGE_TAG,
+                    type,
+                } as any,
+                binding,
+            ),
+        );
         expect(response.error).toBeUndefined();
         return (response as any).payload;
     };

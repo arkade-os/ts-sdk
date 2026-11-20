@@ -94,6 +94,18 @@ describe("submitViaEmulator", () => {
         ).rejects.toBeInstanceOf(ServerResponseMismatchError);
     });
 
+    it("rejects returned checkpoints that are not the submitted ones", async () => {
+        const emu = {
+            submitTx: vi.fn(async (arkTx: string) => ({
+                signedArkTx: arkTx,
+                signedCheckpointTxs: [],
+            })),
+        };
+        await expect(
+            submitViaEmulator(emu, await spend(), undefined, { inputIndexes: [] }),
+        ).rejects.toBeInstanceOf(ServerResponseMismatchError);
+    });
+
     it("refuses user inputs without a signer, before submitting", async () => {
         const emu = emulator();
         await expect(

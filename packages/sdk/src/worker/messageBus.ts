@@ -20,6 +20,9 @@ import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, BatchRegistrationRepository, WalletRepository } from "../repositories";
+import { IndexedDBVtxoReservationRepository } from "../repositories/indexedDB/vtxoReservationRepository";
+import { vtxoReservationScope } from "../wallet/vtxoReservationScope";
+import type { WalletRequestBinding } from "../wallet/serviceWorker/wallet-request";
 import {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
@@ -54,6 +57,8 @@ type MessageBusServices = {
     arkProvider: OperatorProvider;
     wallet?: Wallet;
     readonlyWallet: ReadonlyWallet;
+    vtxoReservationScope?: string;
+    walletRequestBinding?: WalletRequestBinding;
 };
 export interface MessageHandler<
     REQ extends RequestEnvelope = RequestEnvelope,
@@ -110,6 +115,8 @@ export interface MessageHandler<
      * Defaults to false.
      */
     isLongRunning?(message: REQ): boolean;
+    /** Logical operation for timeout overrides when a handler uses a transport wrapper. */
+    getRequestType?(message: REQ): string | undefined;
 }
 
 type Options = {
@@ -232,6 +239,7 @@ export class MessageBus {
     private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
     private readonly boundOnMessage = this.onMessage.bind(this);
     private readonly intentRepository?: BatchRegistrationRepository;
+    private reservationStore?: { scope: string; repository: IndexedDBVtxoReservationRepository };
     private readonly onchainProvider?: (network: NetworkName) => OnchainProvider;
     /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
     private broadcastQueue: ResponseEnvelope[] = [];
@@ -314,6 +322,8 @@ export class MessageBus {
         self.removeEventListener("message", this.boundOnMessage);
 
         await Promise.all(Array.from(this.handlers.values()).map((updater) => updater.stop()));
+        await this.reservationStore?.repository[Symbol.asyncDispose]();
+        this.reservationStore = undefined;
     }
 
     /** Invalidate every broadcast belonging to the outgoing generation. */
@@ -553,13 +563,29 @@ export class MessageBus {
 
         if (isSigningSerialized(serialized)) {
             const identity = hydrateIdentity(serialized) as Identity;
+            const reservationScope = vtxoReservationScope(
+                config.arkServer.url,
+                await identity.xOnlyPublicKey(),
+            );
+            if (this.reservationStore?.scope !== reservationScope) {
+                await this.reservationStore?.repository[Symbol.asyncDispose]();
+                this.reservationStore = {
+                    scope: reservationScope,
+                    repository: new IndexedDBVtxoReservationRepository(
+                        `arkade-reservations-${reservationScope}`,
+                    ),
+                };
+            }
             const wallet = await Wallet.create({
                 identity,
                 arkProvider,
                 arkServerPublicKey: config.arkServer.publicKey,
                 indexerProvider,
                 onchainProvider: this.onchainProvider,
-                storage,
+                storage: {
+                    ...storage,
+                    vtxoReservationRepository: this.reservationStore.repository,
+                },
                 delegateProvider,
                 executorProvider,
                 settlementConfig: config.settlementConfig,
@@ -571,7 +597,15 @@ export class MessageBus {
                 oneShotSubmit: config.oneShotSubmit,
                 minBatchExpirySeconds: config.minBatchExpirySeconds,
             });
-            return { wallet, arkProvider, readonlyWallet: wallet };
+            return {
+                wallet,
+                arkProvider,
+                readonlyWallet: wallet,
+                vtxoReservationScope: reservationScope,
+                walletRequestBinding: wallet.network.name
+                    ? { scope: reservationScope, network: wallet.network.name }
+                    : undefined,
+            };
         }
 
         const identity = hydrateIdentity(serialized) as ReadonlyIdentity;
@@ -587,7 +621,19 @@ export class MessageBus {
             executorProvider,
             watcherConfig: config.watcherConfig,
         });
-        return { readonlyWallet, arkProvider };
+        return {
+            readonlyWallet,
+            arkProvider,
+            walletRequestBinding: readonlyWallet.network.name
+                ? {
+                      scope: vtxoReservationScope(
+                          config.arkServer.url,
+                          await identity.xOnlyPublicKey(),
+                      ),
+                      network: readonlyWallet.network.name,
+                  }
+                : undefined,
+        };
     }
 
     private onMessage(event: ExtendableMessageEvent) {
@@ -672,21 +718,22 @@ export class MessageBus {
         if (broadcast) {
             const updaters = Array.from(this.handlers.values());
             const entries = updaters.map((updater) => {
-                const label = this.labelFor(messageType, updater.messageTag);
-                const timeoutMs = this.resolveTimeoutMs(messageType, updater.messageTag);
+                const requestType = updater.getRequestType?.(event.data) ?? messageType;
+                const label = this.labelFor(requestType, updater.messageTag);
+                const timeoutMs = this.resolveTimeoutMs(requestType, updater.messageTag);
                 const handlerPromise = updater.handleMessage(event.data);
                 const raced = updater.isLongRunning?.(event.data)
                     ? handlerPromise
                     : this.withTimeout(handlerPromise, timeoutMs, label);
-                return { updater, handlerPromise, raced };
+                return { updater, handlerPromise, raced, requestType };
             });
 
             const results = await Promise.allSettled(entries.map((e) => e.raced));
 
             results.forEach((result, index) => {
-                const { updater, handlerPromise } = entries[index];
+                const { updater, handlerPromise, requestType } = entries[index];
                 const handlerTag = updater.messageTag;
-                const context = { id, tag: handlerTag, messageType };
+                const context = { id, tag: handlerTag, messageType: requestType };
                 if (result.status === "fulfilled") {
                     const response = result.value;
                     // Always deliver a response so the caller's message id
@@ -711,7 +758,7 @@ export class MessageBus {
                             event.source,
                             id,
                             handlerTag,
-                            messageType,
+                            requestType,
                         );
                     }
                 }
@@ -734,10 +781,11 @@ export class MessageBus {
             return;
         }
 
-        const label = this.labelFor(messageType, tag);
-        const timeoutMs = this.resolveTimeoutMs(messageType, tag);
+        const requestType = updater.getRequestType?.(event.data) ?? messageType;
+        const label = this.labelFor(requestType, tag);
+        const timeoutMs = this.resolveTimeoutMs(requestType, tag);
         const handlerPromise = updater.handleMessage(event.data);
-        const context = { id, tag, messageType };
+        const context = { id, tag, messageType: requestType };
         try {
             const response = updater.isLongRunning?.(event.data)
                 ? await handlerPromise
@@ -754,7 +802,7 @@ export class MessageBus {
             // When we abandoned the handler via timeout, keep watching it
             // so the client's message id eventually gets a final response.
             if (err instanceof ServiceWorkerTimeoutError) {
-                this.attachLateDelivery(handlerPromise, event.source, id, tag, messageType);
+                this.attachLateDelivery(handlerPromise, event.source, id, tag, requestType);
             }
         }
     }

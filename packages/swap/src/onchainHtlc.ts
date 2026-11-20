@@ -167,9 +167,13 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
     if (params.claimKey.length !== 32 || params.refundKey.length !== 32) {
         throw new Error("claimKey and refundKey must be 32-byte x-only keys");
     }
-    if (!Number.isInteger(params.refundLocktime) || params.refundLocktime <= 0) {
+    if (
+        !Number.isInteger(params.refundLocktime) ||
+        params.refundLocktime <= 0 ||
+        params.refundLocktime > 0xffffffff
+    ) {
         throw new Error(
-            `refundLocktime must be a positive unix timestamp, got ${params.refundLocktime}`,
+            `refundLocktime must be a positive uint32 unix timestamp, got ${params.refundLocktime}`,
         );
     }
     // A height-shaped value (a dropped `/ 1000`, a solver quoting a height) would build a refund
@@ -537,15 +541,25 @@ export async function classifyOnchainHtlc(
     },
 ): Promise<OnchainHtlcPhase> {
     const utxos = await chain.getScriptUtxos(input.htlc.pkScript);
-    const best = utxos.sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
-    if (!best) {
-        if (!input.funding) return { phase: "unfunded" };
-        const spend = await chain.getSpendingTx(
-            input.funding.txid,
-            input.funding.vout,
-            input.htlc.pkScript,
-        );
-        if (!spend) return { phase: "unfunded" };
+    // Largest at depth first, as in `awaitOnchainFill`: a larger output that never confirms
+    // must not hold back a confirmed fill until the solver's refund leaf opens.
+    const deep = (u: ChainUtxo) => u.confirmations >= input.minConfirmations;
+    const best = utxos.sort((a, b) =>
+        deep(a) !== deep(b) ? (deep(a) ? -1 : 1) : b.amount > a.amount ? 1 : -1,
+    )[0];
+    const { funding } = input;
+    let spend: { txHex: string } | null = null;
+    if (funding && !utxos.some((u) => u.txid === funding.txid && u.vout === funding.vout)) {
+        try {
+            spend = await chain.getSpendingTx(funding.txid, funding.vout, input.htlc.pkScript);
+        } catch (error) {
+            // An RBF-replaced funding tx is unknown to the chain; `best` is then its replacement.
+            // Sources signal that differently, so a transient error also reads `best` for a pass:
+            // a refund needs the locktime, past which `best` is `refundable`, never `claimable`.
+            if (!best) throw error;
+        }
+    }
+    if (spend) {
         const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
         const txid = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
             allowUnknownInputs: true,
@@ -553,6 +567,7 @@ export async function classifyOnchainHtlc(
         }).id;
         return preimage ? { phase: "claimed", txid, preimage } : { phase: "swept", txid };
     }
+    if (!best) return { phase: "unfunded" };
     if (best.confirmations < input.minConfirmations)
         return { phase: "awaiting_confirmations", utxo: best };
     const mtp = await chain.getMtp();

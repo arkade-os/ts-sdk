@@ -684,9 +684,12 @@ function assertServerSignedLeaf(
             `${context}: input ${inputIndex} spend leaf names no signer key the server advertises`,
         );
     }
+    const probe = localTx.clone();
+    const { tapScriptSig } = serverTx.getInput(inputIndex);
+    probe.updateInput(inputIndex, { tapScriptSig }, true);
     try {
         verifyTapscriptSignatures(
-            serverTx,
+            probe,
             inputIndex,
             [signer],
             undefined,
@@ -765,9 +768,9 @@ export function assertCheckpointsMatchInputs(
  * machinery. Optional {@link hooks} let the wallet mark/clear its pending-tx
  * recovery flag around the network round-trip; a stateless caller omits them.
  *
- * `options.verifyServerSignatures` is off by default, so every existing caller
- * is unchanged; see {@link VerifyServerSignatures} for what it does and does
- * not prove.
+ * `options.verifyServerSignatures` is off by default here; the wallet's send
+ * path and swap claims pass it. See {@link VerifyServerSignatures} for what it
+ * does and does not prove.
  *
  * `options.oneShot` (default on): see `WalletConfig.oneShotSubmit`.
  *
@@ -1018,6 +1021,7 @@ export async function submitViaEmulator(
     );
     const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
     assertSubmittedArkTxid({ arkTxid: txid }, arkTx, "emulator submitTx");
+    matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "emulator submitTx");
     return { txid, signedArkTx: res.signedArkTx, signedCheckpointTxs: res.signedCheckpointTxs };
 }
 

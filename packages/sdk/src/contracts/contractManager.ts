@@ -359,6 +359,9 @@ export interface IContractManager extends Disposable {
      */
     whenBooted?(): Promise<void>;
 
+    /** Retries pending batch recovery, retaining the wallet's active-settlement guard. */
+    reconcilePendingBatchRegistrations?(): Promise<void>;
+
     /**
      * Stamp raw virtual outputs with their contract's tapscripts (forfeit, intent, tap tree).
      * Throws when a vtxo's script has no registered contract, so the wallet never silently stamps
@@ -1096,6 +1099,17 @@ export class ContractManager implements IContractManager {
             });
         } catch (e) {
             console.error("ContractManager: intent reconciliation failed", e);
+        }
+    }
+
+    async reconcilePendingBatchRegistrations(): Promise<void> {
+        if (this.disposed) return;
+        const reconciliation = this.reconcileStaleIntents();
+        this.inFlightEvents.add(reconciliation);
+        try {
+            await reconciliation;
+        } finally {
+            this.inFlightEvents.delete(reconciliation);
         }
     }
 

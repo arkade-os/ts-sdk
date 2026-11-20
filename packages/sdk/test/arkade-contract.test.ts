@@ -15,6 +15,7 @@ import {
     type EmulatorProvider,
     type IContractManager,
     type Identity,
+    type RelativeTimelock,
 } from "../src";
 import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
 
@@ -846,12 +847,13 @@ describe("arkade.Arkade / ArkadeContract", () => {
             functions: { exit: { tapscript: { signers: ["$server"] } } },
         } satisfies arkade.Program;
 
-        function arkProviderReporting(serverKey: Uint8Array, network?: string) {
+        function arkProviderReporting(
+            serverKey: Uint8Array,
+            network?: string,
+            timelock: RelativeTimelock = { type: "seconds", value: 86_016n },
+        ) {
             const checkpointTapscript = hex.encode(
-                CSVMultisigTapscript.encode({
-                    timelock: { type: "blocks", value: 10n },
-                    pubkeys: [serverKey],
-                }).script,
+                CSVMultisigTapscript.encode({ timelock, pubkeys: [serverKey] }).script,
             );
             return {
                 async getInfo() {
@@ -896,6 +898,20 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 arkade: arkProviderReporting(server, "constructor"),
             });
             expect(ark.contract(program).address.startsWith("ark1")).toBe(true);
+        });
+
+        it("checks the checkpoint delay against the resolved network", async () => {
+            const tenBlocks: RelativeTimelock = { type: "blocks", value: 10n };
+            await expect(
+                arkade.Arkade.connect({
+                    arkade: arkProviderReporting(server, "bitcoin", tenBlocks),
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProviderReporting(server, "bitcoin", tenBlocks),
+                network: networks.regtest,
+            });
+            expect(ark.checkpoint.params.timelock).toEqual(tenBlocks);
         });
     });
 
