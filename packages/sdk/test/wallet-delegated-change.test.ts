@@ -14,7 +14,7 @@ import {
 } from "../src";
 import { saveVtxosForContract } from "../src/contracts/vtxoOwnership";
 import { collectVtxos } from "../src/repositories/walletRepository";
-import { DELEGATION_STATUS_KEY } from "../src/wallet/executor";
+import { DELEGATION_REGISTERED_KEY, DELEGATION_STATUS_KEY } from "../src/wallet/executor";
 import { createMockExtendedVtxo } from "./contracts/helpers";
 import vectors from "./fixtures/executor/vectors.json";
 import { jsonResponse } from "./helpers/response";
@@ -60,6 +60,8 @@ interface RowOptions {
     maxFee?: number;
     server?: string;
     metadata?: Record<string, unknown>;
+    /** Compressed; the identity's by default. */
+    owner?: Uint8Array;
 }
 
 /** The identity's live renewal watch; `maxFee` tells two watches apart. */
@@ -67,10 +69,11 @@ async function renewalRow({
     maxFee = MAX_FEE,
     server = SERVER_KEY_HEX,
     metadata = { [DELEGATION_STATUS_KEY]: "active" },
+    owner,
 }: RowOptions = {}) {
     const params = ExecutorContractHandler.serializeParams({
         template: "renewal",
-        owner: await identity.compressedPublicKey(),
+        owner: owner ?? (await identity.compressedPublicKey()),
         exitDelay: 144,
         renewalWindow: 1000,
         maxFee,
@@ -274,5 +277,81 @@ describe("a send's change from a delegated coin", () => {
             history.some((tx) => tx.key.arkTxid === ARK_TXID && tx.type === TxType.TxReceived),
         ).toBe(false);
         await fx.wallet.dispose();
+    });
+});
+
+describe("the wallet's own renewals", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    const active = (registeredAt: number) => ({
+        [DELEGATION_STATUS_KEY]: "active",
+        [DELEGATION_REGISTERED_KEY]: registeredAt,
+    });
+
+    it("pay into the live renewal contract", async () => {
+        const row = await renewalRow();
+        const { wallet } = await walletWith(row);
+
+        expect(await wallet.renewalAddress(10_000n)).toBe(row.contract.address);
+        await wallet.dispose();
+    });
+
+    it("pay to the own address when no renewal watch is live", async () => {
+        const local = await renewalRow({ metadata: { [DELEGATION_STATUS_KEY]: "local" } });
+        const { wallet } = await walletWith(local);
+
+        expect(await wallet.renewalAddress(10_000n)).toBe(await wallet.getAddress());
+        await wallet.dispose();
+    });
+
+    it("pay to the own address for maxFee + dust or less", async () => {
+        const row = await renewalRow();
+        const { wallet } = await walletWith(row);
+        const floor = BigInt(MAX_FEE + DUST);
+
+        expect(await wallet.renewalAddress(floor)).toBe(await wallet.getAddress());
+        expect(await wallet.renewalAddress(floor + 1n)).toBe(row.contract.address);
+        await wallet.dispose();
+    });
+
+    it("pay into the most recently registered watch", async () => {
+        const older = await renewalRow({ metadata: active(1) });
+        const newer = await renewalRow({ maxFee: 200, metadata: active(2) });
+        const { wallet } = await walletWith(older, newer);
+
+        expect(await wallet.renewalAddress(10_000n)).toBe(newer.contract.address);
+        await wallet.dispose();
+    });
+
+    it("prefer a contract the displayed boarding key does not own, which would rotate it", async () => {
+        const rotatedKey = "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4";
+        const displayed = await renewalRow({ metadata: active(2) });
+        const rotated = await renewalRow({
+            owner: hex.decode(`02${rotatedKey}`),
+            metadata: { ...active(1), signingDescriptor: `tr(${rotatedKey})` },
+        });
+        const { wallet } = await walletWith(displayed, rotated);
+
+        expect(await wallet.renewalAddress(10_000n)).toBe(rotated.contract.address);
+        await wallet.dispose();
+    });
+
+    it("pay to the own address, with a warning, when the watches cannot be read", async () => {
+        const row = await renewalRow();
+        const { wallet } = await walletWith(row);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        vi.spyOn(wallet as any, "delegatedExecutorContracts").mockRejectedValue(
+            new Error("repository down"),
+        );
+
+        expect(await wallet.renewalAddress(10_000n)).toBe(await wallet.getAddress());
+        expect(warn).toHaveBeenCalledWith(
+            "Unable to inspect Executor renewal watches",
+            expect.any(Error),
+        );
+        await wallet.dispose();
     });
 });

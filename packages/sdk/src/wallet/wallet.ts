@@ -1397,7 +1397,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return hex.encode(this.offchainTapscript.pkScript);
     }
 
-    /** Returns the wallet's Arkade address. */
+    /**
+     * Returns the wallet's Arkade address. While an Executor renewal watch is live, the wallet's
+     * own renewals move coins received here into its renewal contract, which the Executor renews.
+     */
     async getAddress(): Promise<string> {
         return this.arkAddress.encode();
     }
@@ -7003,6 +7006,35 @@ export class Wallet
             console.warn("Unable to inspect Executor renewal watches", e);
         }
         return own;
+    }
+
+    /**
+     * @internal Where the wallet's own renewals pay `amount`: the newest live Executor renewal
+     * contract under the current operator, so the Executor renews the coin from then on. One the
+     * displayed boarding key does not own comes first: a coin at that key's contract rotates the
+     * boarding address. The wallet's address when none applies, or for `maxFee + dust` or less,
+     * which the Executor cannot renew, or when a renewed coin carries assets, which `settle()`
+     * places only at the wallet's address. Fail-open: a renewal must not fail over a delegation
+     * lookup.
+     */
+    async renewalAddress(amount: bigint): Promise<string> {
+        const own = await this.getAddress();
+        try {
+            const { hrp, serverPubKey } = ArkAddress.decode(own);
+            const signer = hex.encode(serverPubKey);
+            const displayed = hex.encode(this._boardingTapscript.options.pubKey);
+            const live = (await this.delegatedExecutorContracts("renewal")).filter(
+                (w) =>
+                    w.live &&
+                    w.signer === signer &&
+                    amount > BigInt(w.contract.params.maxFee) + this.dustAmount,
+            );
+            const watch = live.find((w) => w.owner !== displayed) ?? live[0];
+            return watch ? watch.script.address(hrp, serverPubKey).encode() : own;
+        } catch (e) {
+            console.warn("Unable to inspect Executor renewal watches", e);
+            return own;
+        }
     }
 
     /**

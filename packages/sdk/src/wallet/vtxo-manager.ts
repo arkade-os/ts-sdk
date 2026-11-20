@@ -927,6 +927,26 @@ function isExecutorRefreshCapable(
     );
 }
 
+/** A wallet whose own renewals may pay into its Executor renewal contract; duck-typed likewise. */
+interface RenewalAddressWallet {
+    renewalAddress(amount: bigint): Promise<string>;
+}
+
+/** Where a renewal of `amount` pays: the wallet's choice, else its address. */
+function renewalAddressOf(
+    wallet: IWallet,
+    amount: bigint,
+    inputs: readonly (ExtendedCoin | ExtendedVirtualCoin)[],
+): Promise<string> {
+    // settle() puts assets only on an output at getAddress()
+    if (inputs.some((input) => "assets" in input && (input.assets?.length ?? 0) > 0)) {
+        return wallet.getAddress();
+    }
+    return typeof (wallet as Partial<RenewalAddressWallet>).renewalAddress === "function"
+        ? (wallet as IWallet & RenewalAddressWallet).renewalAddress(amount)
+        : wallet.getAddress();
+}
+
 /**
  * Whether a contract's server signer classifies as non-`CURRENT` against the
  * fresh signer set. Mirrors the per-contract classification inside
@@ -1904,11 +1924,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 await this.rotateForRecoverableInputs(vtxos, info);
             }
 
+            const subtotal = subtotalOf(vtxos, net);
             // Read AFTER any rotation above, so the output fee is priced against
             // the script the renewed VTXO actually lands on.
-            const arkAddress = await this.wallet.getAddress();
-
-            const subtotal = subtotalOf(vtxos, net);
+            const arkAddress = await renewalAddressOf(this.wallet, subtotal, vtxos);
 
             const amounts = options?.split
                 ? planSplitOutputs(options.split, {
@@ -3165,7 +3184,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             await this.rotateForRecoverableInputs([...filteredBoarding, ...filteredVtxos], info);
         }
 
-        const arkAddress = await this.wallet.getAddress();
+        const arkAddress = await renewalAddressOf(this.wallet, totalAmount, [
+            ...filteredBoarding,
+            ...filteredVtxos,
+        ]);
 
         const outputFee = estimator.evalOffchainOutput({
             amount: totalAmount,

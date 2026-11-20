@@ -271,3 +271,31 @@ describe("VtxoManager defers Executor-renewable delegated coins", () => {
         expect(wallet.settle).not.toHaveBeenCalled();
     });
 });
+
+describe("VtxoManager renews where the wallet says", () => {
+    it("pays a renewal to the wallet's renewal address, asked for the amount it renews", async () => {
+        const vtxo = coin("51");
+        const wallet = walletWith([], [vtxo]);
+        const renewalAddress = vi.fn().mockResolvedValue(vectors.renewal.address);
+        Object.assign(wallet, { renewalAddress });
+
+        await new VtxoManager(wallet, {}).renewVtxos();
+
+        expect(renewalAddress).toHaveBeenCalledWith(5000n);
+        const [{ outputs }] = (wallet.settle as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(outputs).toEqual([{ address: vectors.renewal.address, amount: 5000n }]);
+    });
+
+    it("renews a coin that carries assets to getAddress(), where settle() places them", async () => {
+        const vtxo = coin("51", { assets: [{ assetId: "aa".repeat(32), amount: 5n }] });
+        const wallet = walletWith([], [vtxo]);
+        const renewalAddress = vi.fn().mockResolvedValue(vectors.renewal.address);
+        Object.assign(wallet, { renewalAddress });
+
+        await new VtxoManager(wallet, {}).renewVtxos();
+
+        expect(renewalAddress).not.toHaveBeenCalled();
+        const [{ outputs }] = (wallet.settle as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(outputs[0].address).toBe("arkade1myaddress");
+    });
+});

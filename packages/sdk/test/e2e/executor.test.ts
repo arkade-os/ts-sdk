@@ -267,7 +267,8 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
             interval: 2_000,
         });
         await alice.settle();
-        await alice.send({ address: renewal.address, amount: 9_000 });
+        // all of it: an own change coin would be renewed into this contract too
+        await alice.send({ address: renewal.address, amount: 10_000 });
         await waitFor(async () => (await atRenewal()) !== undefined, {
             timeout: 170_000,
             interval: 2_000,

@@ -220,13 +220,17 @@ style and have not been backfilled.
   `maxFee + dust`-or-less coin, which the Executor cannot renew. `renewVtxos()`
   skips the delegated coins too, including a manual call; `settle()` still moves
   them when the user asks. A send's change returns to the live renewal contract
-  of its first delegated input, unless it is `maxFee + dust` or less, so it
-  stays covered. Until the wallet's receive address becomes its renewal
-  contract, coins received at `getAddress()` and the fallback renewals are not
-  covered: they land at the wallet's own address, which the wallet renews
-  itself. A wallet with no Executor watches pays one repository read for all
-  this, in a send and in a renewal pass, and makes no operator or identity-key
-  lookup.
+  of its first delegated input, so it stays covered. The wallet's own renewals,
+  from `renewVtxos()` and the periodic settle (with the deposits that settle
+  boards), fallbacks included, pay into the newest live renewal contract under
+  the current operator: a coin received at `getAddress()` is covered from its
+  first renewal on, and until then the wallet renews it itself. On an HD wallet
+  a contract the displayed boarding key does not own comes first, since a coin
+  at that key's contract rotates the boarding address. Both stay at the
+  wallet's own address for `maxFee + dust` or less, when a renewed coin carries
+  assets, and when the watches cannot be read. A wallet with no Executor
+  watches pays one repository read for all this, in a send and in a renewal
+  pass, and makes no operator or identity-key lookup.
 
 - **Deposits waiting for the Executor are the wallet's boarding coins.** A
   deposit at a delegated boarding address shows in `getBoardingUtxos`,

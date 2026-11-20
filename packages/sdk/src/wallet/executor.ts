@@ -412,10 +412,10 @@ export interface IExecutorManager {
      * is thrown, and the error names the keys that failed, so a retry covers the rest.
      * `expiresAt` applies to every watch registered.
      *
-     * A send's change returns to the live renewal contract of its first delegated input, unless it
-     * is `maxFee + dust` or less, so it stays covered. Until the wallet's address becomes its
-     * renewal contract, coins received at `getAddress()` and the fallback renewals are not: they
-     * land at the wallet's own address, which the wallet renews itself.
+     * A send's change returns to the live renewal contract of its first delegated input, and the
+     * wallet's own renewals pay into the newest live one, unless the amount is `maxFee + dust` or
+     * less, or a renewed coin carries assets. A coin received at `getAddress()` is covered from its first renewal on; until then the
+     * wallet renews it itself.
      */
     registerRenewal(
         params: DelegationOptions,
