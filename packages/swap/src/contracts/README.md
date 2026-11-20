@@ -60,8 +60,8 @@ flowchart LR
     ck["cancel<br/>user + server"]
   end
   subgraph builds["who can build"]
-    fb["fulfill<br/>only the holder of taker"]
-    cb["cancel<br/>only the holder of user"]
+    fb["fulfill<br/>only the taker starts it;<br/>server + emulator co-sign"]
+    cb["cancel<br/>only the user starts it;<br/>server co-signs (2-of-2)"]
   end
   signs ~~~ builds
 ```
