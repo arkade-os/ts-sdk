@@ -224,6 +224,83 @@ export function offerContract(
     return compileSwapBinding(swapProgramBinding(offer, operatorPubkey, contractVersion));
 }
 
+// ── Offer binding ────────────────────────────────────────────────────────────
+
+/** Everything needed to recompile an offer covenant, with no TLV in the loop. */
+export interface OfferBinding {
+    /** Selects the program pair, so nothing is trial-compiled. */
+    readonly version: AssetSwapContractVersion;
+    /** 34-byte taproot scriptPubKey the fill must pay. */
+    readonly receiverPkScript: Uint8Array;
+    /** Asset units, or sats when the want side is BTC. */
+    readonly amount: bigint;
+    /** Exactly one of these two. */
+    readonly wantAsset?: asset.AssetId;
+    readonly offerAsset?: asset.AssetId;
+    /** The funder's x-only key: `cancel`'s and `exit`'s signer. */
+    readonly userPublicKey: Uint8Array;
+    /** x-only Arkade Service key the covenant was funded under. */
+    readonly serverPublicKey: Uint8Array;
+    readonly emulatorPublicKey: Uint8Array;
+    /** Omitted removes the exit leaf, which changes the address. */
+    readonly exitDelay?: RelativeTimelock;
+    /** The solver key `fulfill` requires; `asset-swap-v4` only. */
+    readonly taker?: Uint8Array;
+}
+
+const isOfferBinding = (offer: Offer | OfferBinding): offer is OfferBinding => "version" in offer;
+
+const termsOf = (binding: OfferBinding): Omit<Offer, "swapPkScript"> => ({
+    wantAmount: binding.amount,
+    ...(binding.wantAsset && { wantAsset: binding.wantAsset }),
+    ...(binding.offerAsset && { offerAsset: binding.offerAsset }),
+    makerPkScript: binding.receiverPkScript,
+    makerPublicKey: binding.userPublicKey,
+    emulatorPubkey: binding.emulatorPublicKey,
+    ...(binding.exitDelay && { exitDelay: binding.exitDelay }),
+    ...(binding.taker && { taker: binding.taker }),
+});
+
+/** Either form as an {@link Offer}, given the script a binding compiled to. */
+export const offerOf = (offer: Offer | OfferBinding, swapPkScript: Uint8Array): Offer =>
+    isOfferBinding(offer) ? { ...termsOf(offer), swapPkScript } : offer;
+
+/** The binding's program, args and keys, at the binding's own version. */
+export function bindingProgram(binding: OfferBinding): SwapProgramBinding {
+    if (Boolean(binding.wantAsset) === Boolean(binding.offerAsset)) {
+        throw new Error("an offer binding names exactly one of wantAsset or offerAsset");
+    }
+    return swapProgramBinding(termsOf(binding), binding.serverPublicKey, binding.version);
+}
+
+/**
+ * A decoded offer as a binding, at whichever version reproduces its `swapPkScript` under
+ * `operatorPubkey`. Throws {@link OfferCovenantMismatchError} when none does.
+ */
+export function bindingFromOffer(offer: Offer, operatorPubkey: Uint8Array): OfferBinding {
+    const program = swapProgramBinding(offer, operatorPubkey);
+    if (pkOf(program) !== hex.encode(offer.swapPkScript)) {
+        throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript));
+    }
+    return {
+        version: program.version,
+        receiverPkScript: offer.makerPkScript,
+        amount: offer.wantAmount,
+        ...(offer.wantAsset && { wantAsset: offer.wantAsset }),
+        ...(offer.offerAsset && { offerAsset: offer.offerAsset }),
+        userPublicKey: offer.makerPublicKey,
+        serverPublicKey: operatorPubkey,
+        emulatorPublicKey: offer.emulatorPubkey,
+        ...(offer.exitDelay && { exitDelay: offer.exitDelay }),
+        ...(offer.taker && { taker: offer.taker }),
+    };
+}
+
+/** The offer a binding compiles to: what its packet encodes. */
+export function offerFromBinding(binding: OfferBinding): Offer {
+    return offerOf(binding, compileSwapBinding(bindingProgram(binding)).pkScript);
+}
+
 // ── Offer wire format ────────────────────────────────────────────────────────
 // The offer travels inside the funding tx as an Extension packet (type 0x03)
 // so a solver can discover it from the txid alone.
@@ -841,7 +918,8 @@ export async function registerDerivedOffer(
  * gates implicit coin selection only; cancel names its input explicitly.
  *
  * `fundingTxid` selects the deposit (identical offers share an address); without it the address must
- * hold exactly one. `swapAddress` pins the funding-time operator key across a signer rotation. When
+ * hold exactly one. `swapAddress` pins the funding-time operator key across a signer rotation, and
+ * for an {@link OfferBinding}, which pins its own, must be the address it compiles to. When
  * `repository` holds the record, this writes `cancelling` (crash marker) then `cancelled`, so the
  * watcher has nothing to decide for our own cancels; otherwise the watcher/restore scan classifies.
  *
@@ -849,7 +927,7 @@ export async function registerDerivedOffer(
  */
 export async function cancelOffer(
     wallet: IWallet,
-    offerHex: string,
+    offerHex: string | OfferBinding,
     opts: {
         repository: AssetSwapRepository;
         fundingTxid?: string;
@@ -948,7 +1026,7 @@ export interface PreparedOfferCancel {
  */
 export async function prepareOfferCancel(
     wallet: IWallet,
-    offerHex: string,
+    offerHex: string | OfferBinding,
     opts: {
         fundingTxid?: string;
         fundingOutpoint?: FillOutpoint;
@@ -958,7 +1036,7 @@ export async function prepareOfferCancel(
     },
 ): Promise<PreparedOfferCancel> {
     const { fundingTxid, fundingOutpoint, swapAddress } = opts;
-    const offer = decodeOffer(hex.decode(offerHex));
+    const decoded = typeof offerHex === "string" ? decodeOffer(hex.decode(offerHex)) : undefined;
 
     const [contractManager, info, reader, broadcaster] = await Promise.all([
         wallet.getContractManager(),
@@ -978,23 +1056,27 @@ export async function prepareOfferCancel(
     });
 
     // the offer's own keys, not the client's, so the script matches the funded address exactly
-    const operatorPubkey = swapAddress
-        ? ArkAddress.decode(swapAddress).serverPubKey
-        : client.serverKey;
+    const pinned = swapAddress ? ArkAddress.decode(swapAddress) : undefined;
+    // a binding pins its own key, so there the funded address is only what it must compile to
+    const funded = decoded ? decoded.swapPkScript : pinned?.pkScript;
     // a mismatch means the wrong operator key; getUtxos would just return nothing, so fail with the
     // diagnosis instead
     let binding: SwapProgramBinding;
     let rebuilt: InstanceType<typeof arkade.ArkadeProgramScript>;
     try {
-        binding = swapProgramBinding(offer, operatorPubkey);
+        binding =
+            typeof offerHex === "string"
+                ? swapProgramBinding(decoded!, pinned?.serverPubKey ?? client.serverKey)
+                : bindingProgram(offerHex);
         rebuilt = compileSwapBinding(binding);
     } catch (cause) {
         // a pinned key that is not a curve point throws in the taproot encoder — same diagnosis
-        throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript), { cause });
+        throw new OfferCovenantMismatchError(hex.encode(funded ?? new Uint8Array()), { cause });
     }
-    if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
-        throw new OfferCovenantMismatchError(hex.encode(offer.swapPkScript));
+    if (funded && hex.encode(rebuilt.pkScript) !== hex.encode(funded)) {
+        throw new OfferCovenantMismatchError(hex.encode(funded));
     }
+    const offer = decoded ?? offerOf(offerHex as OfferBinding, rebuilt.pkScript);
     const contract = new arkade.ArkadeContract(client, binding.program, binding.args, binding.keys);
 
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
@@ -1080,7 +1162,7 @@ export interface SponsorFillInput {
 export async function fillOffer(
     wallet: IWallet,
     arkServerUrl: string,
-    offerHex: string,
+    offerHex: string | OfferBinding,
     opts: {
         fund: FillFunding[];
 
@@ -1109,8 +1191,8 @@ export async function fillOffer(
         emulator,
         emulatorPubkey,
     } = opts;
-    const offer = decodeOffer(hex.decode(offerHex));
-    const contract = await connectFillContract(wallet, arkServerUrl, offer, {
+    const target = typeof offerHex === "string" ? decodeOffer(hex.decode(offerHex)) : offerHex;
+    const contract = await connectFillContract(wallet, arkServerUrl, target, {
         swapAddress,
         emulator,
         emulatorPubkey,
@@ -1119,7 +1201,7 @@ export async function fillOffer(
     const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
     const fill = contract.functions.fulfill();
     assembleOfferFill(fill, {
-        offer,
+        offer: offerOf(target, contract.pkScript),
         vtxo,
         solverFund: fund,
         solverPayout: payoutScript ?? ArkAddress.decode(takerAddress).pkScript,
@@ -1132,7 +1214,7 @@ export async function fillOffer(
 export async function connectFillContract(
     wallet: IWallet,
     arkServerUrl: string,
-    offer: Offer,
+    offer: Offer | OfferBinding,
     opts: {
         swapAddress?: string;
         emulator?: EmulatorProvider | string;
@@ -1155,10 +1237,14 @@ export async function connectFillContract(
         ...(emulatorPubkey ? { emulatorPubkey } : {}),
     });
 
-    const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
-    const binding = swapProgramBinding(offer, serverKey);
+    const pinned = swapAddress ? ArkAddress.decode(swapAddress) : undefined;
+    // a binding pins its own key, so there the funded address is only what it must compile to
+    const binding = isOfferBinding(offer)
+        ? bindingProgram(offer)
+        : swapProgramBinding(offer, pinned?.serverPubKey ?? client.serverKey);
+    const funded = isOfferBinding(offer) ? pinned?.pkScript : offer.swapPkScript;
     const rebuilt = compileSwapBinding(binding);
-    if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
+    if (funded && hex.encode(rebuilt.pkScript) !== hex.encode(funded)) {
         throw new Error(
             "rebuilt covenant does not match the offer's swapPkScript — the server " +
                 "signing key has likely rotated since funding; pass swapAddress (the " +

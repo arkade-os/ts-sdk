@@ -114,6 +114,17 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: offers rebuild from a structured binding, no TLV needed.**
+  `OfferBinding` holds everything that compiles an offer covenant, its version
+  included, so nothing is trial-compiled. `bindingProgram`, `bindingFromOffer`
+  and `offerFromBinding` convert between it and an `Offer`; on a v2 or v3 offer
+  both directions reproduce the pinned scripts byte for byte. `cancelOffer`,
+  `prepareOfferCancel`, `fillOffer`, `buildOfferFillPlan`, `classifySpend` and
+  `classifyDepositSpend` take a binding where they took the offer hex or a
+  decoded `Offer`; the result is the same spend either way. A binding pins its
+  own operator key, and `swapAddress`, when passed beside one, must be the
+  address it compiles to.
+
 - **`@arkade-os/swap`: offer TLV record `0x04` carries the taker.** `Offer.taker`
   is the x-only solver key a directed offer binds, emitted after the maker key
   (`0x07`) and before the emulator key (`0x08`); `encodeOffer` and

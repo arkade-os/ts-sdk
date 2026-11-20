@@ -72,6 +72,8 @@ export {
 } from "./markets";
 export {
     ASSET_CARRIER_SATS,
+    bindingFromOffer,
+    bindingProgram,
     cancelOffer,
     createOffer,
     decodeOffer,
@@ -82,9 +84,11 @@ export {
     offerVtxoScript,
     NoSpendableDepositError,
     type Offer,
+    type OfferBinding,
     OFFER_PACKET_TYPE,
     offerContract,
     OfferCovenantMismatchError,
+    offerFromBinding,
     swapPrograms,
 } from "./offer";
 export {

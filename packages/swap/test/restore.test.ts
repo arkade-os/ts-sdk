@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
-import { encodeOffer, offerContract, Offer, OFFER_PACKET_TYPE } from "../src/offer";
+import {
+    bindingFromOffer,
+    encodeOffer,
+    offerContract,
+    Offer,
+    OFFER_PACKET_TYPE,
+} from "../src/offer";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -150,6 +156,27 @@ describe("classifySpend", () => {
         const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
         expect(classifySpend(offer, OPERATOR_KEY, parse(cancel.psbt), deposit)).toBe("cancelled");
         expect(classifySpend(offer, OPERATOR_KEY, parse(fill.psbt), deposit)).toBe("fulfilled");
+    });
+
+    it("reads the leaf off a binding as off the offer, a directed one included", () => {
+        const undirected = makeOffer("want-asset", BigInt(21_000));
+        const { swapPkScript: _, ...terms } = undirected;
+        const taker = key("66");
+        const directed: Offer = {
+            ...terms,
+            taker,
+            swapPkScript: offerContract({ ...terms, taker }, OPERATOR_KEY).pkScript,
+        };
+        const deposit = { txid: "ab".repeat(32), vout: 0 };
+        const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
+        for (const offer of [undirected, directed]) {
+            const binding = bindingFromOffer(offer, OPERATOR_KEY);
+            const cancel = parse(spendPsbt([{ offer, deposit, via: "cancel" }]).psbt);
+            const fill = parse(spendPsbt([{ offer, deposit, via: "fulfill" }]).psbt);
+            expect(classifySpend(binding, OPERATOR_KEY, cancel, deposit)).toBe("cancelled");
+            expect(classifySpend(binding, OPERATOR_KEY, fill, deposit)).toBe("fulfilled");
+            expect(classifyDepositSpend(binding, key("44"), [fill], deposit)).toBe("fulfilled");
+        }
     });
 
     it("reports a unilateral exit as cancelled — the deposit came back either way", async () => {

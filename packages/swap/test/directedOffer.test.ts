@@ -1,12 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
 import {
+    ArkAddress,
+    CSVMultisigTapscript,
+    Transaction,
+    arkade,
+    asset,
+    type IWallet,
+    type RelativeTimelock,
+} from "@arkade-os/sdk";
+import {
+    bindingFromOffer,
+    bindingProgram,
     decodeOffer,
     encodeOffer,
     offerContract,
+    offerFromBinding,
+    OfferCovenantMismatchError,
+    prepareOfferCancel,
     swapProgramBinding,
     withExitClosure,
     type Offer,
@@ -224,5 +237,125 @@ describe("which tree an offer compiles", () => {
             /binds no taker/,
         );
         expect(() => offerContract(terms, operatorPubkey, ASSET_SWAP_V4)).toThrow(/needs a taker/);
+    });
+});
+
+describe("the offer binding", () => {
+    // offer.test.ts's goldens, pinned before the binding existed
+    const undirected: [string, Omit<Offer, "swapPkScript">, string, string][] = [
+        [
+            "a v3 asset-want",
+            { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
+            ASSET_SWAP_V3,
+            "512004b3e3bdd36a1bc10cfc728958d0b5f3c077b1e817a97cc7bf23b47d437d0215",
+        ],
+        [
+            "a v3 sats-want",
+            { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys },
+            ASSET_SWAP_V3,
+            "5120d5e8866efe0d4339b36f442ae0cc033597fb7e40412b3db982dcaae0ab4b66e0",
+        ],
+        [
+            "a v2 asset-want",
+            { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
+            ASSET_SWAP_V2,
+            "5120380f74f6e40eb347c46294a601bc6edfff0d509beb513bac392e8bfc6dec1d84",
+        ],
+        [
+            "a v2 sats-want",
+            { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys },
+            ASSET_SWAP_V2,
+            "5120004739eb4ad3eab769b0c2278cd70cce628e20477e8b8c508bcf8519a5f451c9",
+        ],
+    ];
+    const pkScriptOf = (binding: ReturnType<typeof bindingFromOffer>) => {
+        const { program, args, keys: bound } = bindingProgram(binding);
+        return hex.encode(new arkade.ArkadeProgramScript(program, args, bound).pkScript);
+    };
+
+    it.each(undirected)("binds %s offer to its pinned script", (_, terms, version, golden) => {
+        const offer: Offer = { ...terms, swapPkScript: hex.decode(golden) };
+        const binding = bindingFromOffer(offer, operatorPubkey);
+        expect(binding.version).toBe(version);
+        expect(pkScriptOf(binding)).toBe(golden);
+        expect(hex.encode(encodeOffer(offerFromBinding(binding)))).toBe(
+            hex.encode(encodeOffer(offer)),
+        );
+    });
+
+    it.each(directions)("binds a directed %s offer at v4 with its taker", (_, terms, golden) => {
+        const offer: Offer = { ...terms, taker: TAKER, swapPkScript: hex.decode(golden) };
+        const binding = bindingFromOffer(offer, operatorPubkey);
+        expect(binding.version).toBe(ASSET_SWAP_V4);
+        expect(hex.encode(binding.taker ?? new Uint8Array())).toBe(hex.encode(TAKER));
+        expect(pkScriptOf(binding)).toBe(golden);
+        expect(decodeOffer(encodeOffer(offerFromBinding(binding)))).toEqual(offer);
+    });
+
+    it("refuses an offer no tree reproduces under the given key", () => {
+        const [, terms, , golden] = undirected[0];
+        const offer: Offer = { ...terms, swapPkScript: hex.decode(golden) };
+        expect(() => bindingFromOffer(offer, keys.emulatorPubkey)).toThrow(
+            OfferCovenantMismatchError,
+        );
+    });
+});
+
+describe("a cancel built from the binding", () => {
+    const CHECKPOINT = CSVMultisigTapscript.encode({
+        timelock: { type: "blocks", value: BigInt(10) },
+        pubkeys: [operatorPubkey],
+    }).script;
+    const fundingTxid = "ab".repeat(32);
+
+    /** Offline, signing nothing: `submitTx` records the unsigned spend and stops the send. */
+    const offlineWallet = (submitted: string[]): IWallet =>
+        ({
+            identity: {
+                xOnlyPublicKey: async () => keys.makerPublicKey,
+                sign: async (tx: Transaction) => tx,
+            },
+            getAddress: async () =>
+                new ArkAddress(operatorPubkey, keys.makerPkScript.subarray(2), "tark").encode(),
+            getContractManager: async () => undefined,
+            getArkadeInfo: async () => ({
+                signerPubkey: `02${hex.encode(operatorPubkey)}`,
+                checkpointTapscript: hex.encode(CHECKPOINT),
+                network: "regtest",
+            }),
+            getArkadeReader: async () => ({
+                getVtxos: async () => ({ vtxos: [{ txid: fundingTxid, vout: 0, value: 10_000 }] }),
+                getVirtualTxs: async () => ({ txs: [] }),
+            }),
+            getArkadeBroadcaster: async () => ({
+                submitTx: async (arkTx: string) => {
+                    submitted.push(arkTx);
+                    throw new Error("captured");
+                },
+                finalizeTx: async () => {},
+            }),
+        }) as unknown as IWallet;
+
+    it.each(directions)("spends a %s deposit exactly as its offerHex does", async (_, terms) => {
+        const swapPkScript = offerContract({ ...terms, taker: TAKER }, operatorPubkey).pkScript;
+        const offer: Offer = { ...terms, taker: TAKER, swapPkScript };
+        const submitted: string[] = [];
+        const wallet = offlineWallet(submitted);
+        const fromHex = await prepareOfferCancel(wallet, hex.encode(encodeOffer(offer)), {
+            fundingTxid,
+        });
+        await expect(fromHex.send()).rejects.toThrow("captured");
+        const fromBinding = await prepareOfferCancel(
+            wallet,
+            bindingFromOffer(offer, operatorPubkey),
+            { fundingTxid },
+        );
+        await expect(fromBinding.send()).rejects.toThrow("captured");
+        expect(submitted).toHaveLength(2);
+        expect(Transaction.fromPSBT(base64.decode(submitted[0])).getInput(0).tapScriptSig).toBe(
+            undefined,
+        );
+        expect(submitted[1]).toBe(submitted[0]);
+        expect(fromBinding.offer).toEqual(fromHex.offer);
     });
 });

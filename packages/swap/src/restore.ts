@@ -10,10 +10,18 @@ import {
     Extension,
     RestIndexerProvider,
     Transaction,
+    arkade,
     scriptFromTapLeafScript,
     type ArkTransaction,
 } from "@arkade-os/sdk";
-import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerContract } from "./offer";
+import {
+    bindingProgram,
+    decodeOffer,
+    Offer,
+    OFFER_PACKET_TYPE,
+    offerContract,
+    type OfferBinding,
+} from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
 
 // ponytail: fixed request size; tune only if histories outgrow it
@@ -119,18 +127,27 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
  * `indeterminate`. {@link classifyDepositSpend} tries both.
  *
  * @param operatorPubkey - The key the covenant was *funded* against. A rotated key fails
- *   the script match and yields `indeterminate` rather than a guess.
+ *   the script match and yields `indeterminate` rather than a guess. Unused for an
+ *   {@link OfferBinding}, which pins its own.
  */
 export function classifySpend(
-    offer: Offer,
+    offer: Offer | OfferBinding,
     operatorPubkey: Uint8Array,
     spendTx: Transaction,
     deposit: { txid: string; vout: number },
 ): SpendKind {
     let leaves: { returned: Uint8Array[]; fulfill?: Uint8Array };
     try {
-        const script = offerContract(offer, operatorPubkey);
-        if (hex.encode(script.pkScript) !== hex.encode(offer.swapPkScript)) return "indeterminate";
+        let script: InstanceType<typeof arkade.ArkadeProgramScript>;
+        if ("version" in offer) {
+            const { program, args, keys } = bindingProgram(offer);
+            script = new arkade.ArkadeProgramScript(program, args, keys);
+        } else {
+            script = offerContract(offer, operatorPubkey);
+            if (hex.encode(script.pkScript) !== hex.encode(offer.swapPkScript)) {
+                return "indeterminate";
+            }
+        }
         leaves = {
             // `exit` is absent on an offer with no exit closure, and drops out here
             returned: ["cancel", "exit"]
@@ -167,7 +184,7 @@ export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): stri
  * may be the same id for a settlement), taking the first definite answer.
  */
 export function classifyDepositSpend(
-    offer: Offer,
+    offer: Offer | OfferBinding,
     operatorPubkey: Uint8Array,
     spendTxs: Iterable<Transaction>,
     deposit: { txid: string; vout: number },
