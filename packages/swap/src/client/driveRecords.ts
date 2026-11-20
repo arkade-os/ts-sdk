@@ -42,7 +42,7 @@ import { toAtomicDecimal } from "./amount";
 import { arkadeAsset, btcOn, type AssetId, type NetworkRef } from "./assetId";
 import { railOfCorridor, type Corridor } from "./corridor";
 import type { QuoteId } from "./quote";
-import type { CorridorSwapRecord, OfferSwapRecord, SwapRecord } from "./record";
+import type { CorridorSwapRecord, OfferCovenant, OfferSwapRecord, SwapRecord } from "./record";
 
 /** Every stored corridor record, and every offer record, in one read. */
 export const splitRecords = (
@@ -236,10 +236,15 @@ export const corridorRecordStore = (
 };
 
 /** Whichever of the two covenant forms a swap holds, and nothing for the one it lacks. */
-const covenantOf = (swap: Pick<AssetSwap, "offerHex" | "binding">) => ({
-    ...(swap.offerHex === undefined ? {} : { offerHex: swap.offerHex }),
-    ...(swap.binding === undefined ? {} : { binding: swap.binding }),
-});
+const covenantOf = (swap: Pick<AssetSwap, "offerHex" | "binding">): OfferCovenant => {
+    if (swap.binding !== undefined)
+        return {
+            binding: swap.binding,
+            ...(swap.offerHex === undefined ? {} : { offerHex: swap.offerHex }),
+        };
+    if (swap.offerHex !== undefined) return { offerHex: swap.offerHex };
+    throw new Error("this offer swap carries neither a binding nor an offerHex to rebuild from");
+};
 
 /** A v2 offer record as the watcher and coverage read one. */
 export const offerFactsOf = (

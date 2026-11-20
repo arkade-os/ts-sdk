@@ -140,15 +140,18 @@ export interface SwapRecordCommon {
     readonly updatedAt: number;
 }
 
+/** What rebuilds an offer's covenant: the TLV hex, the binding (a directed swap's only form), or both. */
+export type OfferCovenant =
+    | { readonly offerHex: string; readonly binding?: RecordedOfferBinding }
+    | { readonly offerHex?: string; readonly binding: RecordedOfferBinding };
+
 /** `arkade <-> arkade`: the offer covenant, whole in `binding` or `offerHex`, so no tree params. */
-export interface OfferSwapRecord extends SwapRecordCommon {
+export type OfferSwapRecord = OfferSwapRecordFields & OfferCovenant;
+
+interface OfferSwapRecordFields extends SwapRecordCommon {
     readonly family: "offer";
     /** v1's raw status vocabulary, read verbatim by the drive's `RawState`. */
     readonly status: AssetSwapStatus;
-    /** The TLV offer, hex: what rebuilds the covenant when there is no `binding`. */
-    readonly offerHex?: string;
-    /** The covenant, structured. A directed swap carries this and no `offerHex`. */
-    readonly binding?: RecordedOfferBinding;
     readonly swapAddress: string;
     /** The covenant's scriptPubKey, hex — the indexer's monitoring key and the reconcile's match key. */
     readonly swapPkScript: string;
