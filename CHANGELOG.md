@@ -222,15 +222,20 @@ style and have not been backfilled.
   them when the user asks. A send's change returns to the live renewal contract
   of its first delegated input, so it stays covered. The wallet's own renewals,
   from `renewVtxos()` and the periodic settle (with the deposits that settle
-  boards), fallbacks included, pay into the newest live renewal contract under
-  the current operator: a coin received at `getAddress()` is covered from its
-  first renewal on, and until then the wallet renews it itself. On an HD wallet
-  a contract the displayed boarding key does not own comes first, since a coin
-  at that key's contract rotates the boarding address. Both stay at the
-  wallet's own address for `maxFee + dust` or less, when a renewed coin carries
-  assets, and when the watches cannot be read. A wallet with no Executor
-  watches pays one repository read for all this, in a send and in a renewal
-  pass, and makes no operator or identity-key lookup.
+  boards), pay into the newest live renewal contract under the current
+  operator: a coin received at `getAddress()` is covered from its first renewal
+  on, and until then the wallet renews it itself. On an HD wallet a contract
+  the displayed boarding key does not own comes first, since a coin at that
+  key's contract rotates the boarding address. Both stay at the wallet's own
+  address for `maxFee + dust` or less, when a renewed coin carries assets, and
+  when the watches cannot be read. A renewal that spends a coin at a live
+  renewal contract also pays to the wallet's own address, the fallback
+  included: the Executor missed that coin, and paying it back there would only
+  repeat the miss. Under an Executor that keeps failing, a coin therefore
+  alternates: one fallback renewal out, one ordinary renewal back in, so half
+  its renewals are late where every one would have been. A wallet with no
+  Executor watches pays one repository read for all this, in a send and in a
+  renewal pass, and makes no operator or identity-key lookup.
 
 - **Deposits waiting for the Executor are the wallet's boarding coins.** A
   deposit at a delegated boarding address shows in `getBoardingUtxos`,

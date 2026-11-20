@@ -281,9 +281,21 @@ describe("VtxoManager renews where the wallet says", () => {
 
         await new VtxoManager(wallet, {}).renewVtxos();
 
-        expect(renewalAddress).toHaveBeenCalledWith(5000n);
+        expect(renewalAddress).toHaveBeenCalledWith(5000n, [vtxo.script]);
         const [{ outputs }] = (wallet.settle as ReturnType<typeof vi.fn>).mock.calls[0];
         expect(outputs).toEqual([{ address: vectors.renewal.address, amount: 5000n }]);
+    });
+
+    it("tells the wallet which live renewal contract the coin it renews sits at", async () => {
+        const row = renewalRow(IDENTITY_X_ONLY);
+        const vtxo = coin(row.script, { expiresAt: new Date(Date.now() + 499_000) });
+        const wallet = walletWith([row], [vtxo]);
+        const renewalAddress = vi.fn().mockResolvedValue("arkade1myaddress");
+        Object.assign(wallet, { renewalAddress });
+
+        await new VtxoManager(wallet, {}).renewVtxos();
+
+        expect(renewalAddress).toHaveBeenCalledWith(5000n, [row.script]);
     });
 
     it("renews a coin that carries assets to getAddress(), where settle() places them", async () => {

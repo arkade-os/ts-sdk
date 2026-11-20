@@ -339,6 +339,55 @@ describe("the wallet's own renewals", () => {
         await wallet.dispose();
     });
 
+    it("pay to the own address when an input sits at a live renewal contract", async () => {
+        const row = await renewalRow();
+        const { wallet } = await walletWith(row);
+
+        expect(await wallet.renewalAddress(10_000n, [row.contract.script])).toBe(
+            await wallet.getAddress(),
+        );
+        await wallet.dispose();
+    });
+
+    it("pay into the contract when the inputs sit elsewhere", async () => {
+        const row = await renewalRow();
+        const { wallet } = await walletWith(row);
+
+        expect(await wallet.renewalAddress(10_000n, ["51" + "00".repeat(32)])).toBe(
+            row.contract.address,
+        );
+        await wallet.dispose();
+    });
+
+    it("pay into the live contract when an input sits at a contract that is not live", async () => {
+        const local = await renewalRow({
+            maxFee: 150,
+            metadata: { [DELEGATION_STATUS_KEY]: "local" },
+        });
+        const live = await renewalRow();
+        const { wallet } = await walletWith(local, live);
+
+        expect(await wallet.renewalAddress(10_000n, [local.contract.script])).toBe(
+            live.contract.address,
+        );
+        await wallet.dispose();
+    });
+
+    it("pay to the own address for an input at a rotated key's live contract", async () => {
+        const rotatedKey = "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4";
+        const displayed = await renewalRow({ metadata: active(2) });
+        const rotated = await renewalRow({
+            owner: hex.decode(`02${rotatedKey}`),
+            metadata: { ...active(1), signingDescriptor: `tr(${rotatedKey})` },
+        });
+        const { wallet } = await walletWith(displayed, rotated);
+
+        expect(await wallet.renewalAddress(10_000n, [rotated.contract.script])).toBe(
+            await wallet.getAddress(),
+        );
+        await wallet.dispose();
+    });
+
     it("pay to the own address, with a warning, when the watches cannot be read", async () => {
         const row = await renewalRow();
         const { wallet } = await walletWith(row);

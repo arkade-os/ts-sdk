@@ -414,8 +414,11 @@ export interface IExecutorManager {
      *
      * A send's change returns to the live renewal contract of its first delegated input, and the
      * wallet's own renewals pay into the newest live one, unless the amount is `maxFee + dust` or
-     * less, or a renewed coin carries assets. A coin received at `getAddress()` is covered from its first renewal on; until then the
-     * wallet renews it itself.
+     * less, or a renewed coin carries assets. A renewal spending a coin at a live renewal contract
+     * pays to `getAddress()` instead: the Executor missed that coin, so paying it back repeats the
+     * miss. A coin received at `getAddress()` is covered from its first renewal on; until then the
+     * wallet renews it itself. Under an Executor that keeps failing, a coin alternates: one
+     * fallback renewal out, one ordinary renewal back in.
      */
     registerRenewal(
         params: DelegationOptions,

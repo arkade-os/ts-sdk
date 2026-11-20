@@ -929,7 +929,7 @@ function isExecutorRefreshCapable(
 
 /** A wallet whose own renewals may pay into its Executor renewal contract; duck-typed likewise. */
 interface RenewalAddressWallet {
-    renewalAddress(amount: bigint): Promise<string>;
+    renewalAddress(amount: bigint, inputScripts?: readonly string[]): Promise<string>;
 }
 
 /** Where a renewal of `amount` pays: the wallet's choice, else its address. */
@@ -942,9 +942,11 @@ function renewalAddressOf(
     if (inputs.some((input) => "assets" in input && (input.assets?.length ?? 0) > 0)) {
         return wallet.getAddress();
     }
-    return typeof (wallet as Partial<RenewalAddressWallet>).renewalAddress === "function"
-        ? (wallet as IWallet & RenewalAddressWallet).renewalAddress(amount)
-        : wallet.getAddress();
+    if (typeof (wallet as Partial<RenewalAddressWallet>).renewalAddress !== "function") {
+        return wallet.getAddress();
+    }
+    const scripts = inputs.flatMap((input) => ("script" in input ? [input.script] : []));
+    return (wallet as IWallet & RenewalAddressWallet).renewalAddress(amount, scripts);
 }
 
 /**

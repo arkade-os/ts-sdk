@@ -7012,22 +7012,25 @@ export class Wallet
      * @internal Where the wallet's own renewals pay `amount`: the newest live Executor renewal
      * contract under the current operator, so the Executor renews the coin from then on. One the
      * displayed boarding key does not own comes first: a coin at that key's contract rotates the
-     * boarding address. The wallet's address when none applies, or for `maxFee + dust` or less,
-     * which the Executor cannot renew, or when a renewed coin carries assets, which `settle()`
-     * places only at the wallet's address. Fail-open: a renewal must not fail over a delegation
-     * lookup.
+     * boarding address. The wallet's address when none applies, for `maxFee + dust` or less, which
+     * the Executor cannot renew, or when a renewed coin carries assets, which `settle()` places
+     * only at the wallet's address. Also the wallet's address when any of `inputScripts` sits at a
+     * live renewal contract, whatever the reason: the Executor had its chance at that coin, and
+     * paying it back there only repeats the miss. Fail-open: a renewal must not fail over a
+     * delegation lookup.
      */
-    async renewalAddress(amount: bigint): Promise<string> {
+    async renewalAddress(amount: bigint, inputScripts: readonly string[] = []): Promise<string> {
         const own = await this.getAddress();
         try {
             const { hrp, serverPubKey } = ArkAddress.decode(own);
             const signer = hex.encode(serverPubKey);
             const displayed = hex.encode(this._boardingTapscript.options.pubKey);
-            const live = (await this.delegatedExecutorContracts("renewal")).filter(
-                (w) =>
-                    w.live &&
-                    w.signer === signer &&
-                    amount > BigInt(w.contract.params.maxFee) + this.dustAmount,
+            const underOperator = (await this.delegatedExecutorContracts("renewal")).filter(
+                (w) => w.live && w.signer === signer,
+            );
+            if (underOperator.some((w) => inputScripts.includes(w.contract.script))) return own;
+            const live = underOperator.filter(
+                (w) => amount > BigInt(w.contract.params.maxFee) + this.dustAmount,
             );
             const watch = live.find((w) => w.owner !== displayed) ?? live[0];
             return watch ? watch.script.address(hrp, serverPubKey).encode() : own;
