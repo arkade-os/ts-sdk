@@ -79,7 +79,7 @@ const binding: Omit<Offer, "swapPkScript"> = {
     makerPublicKey: hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1"),
     emulatorPubkey: hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"),
 };
-const contract = offerContract(binding, fundedOperatorKey, "asset-swap-v3");
+const contract = offerContract(binding, fundedOperatorKey);
 const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: contract.pkScript }));
 const fundedAddress = new ArkAddress(fundedOperatorKey, contract.tweakedPublicKey, "tark").encode();
 
@@ -131,9 +131,9 @@ describe("cancelOffer guards", () => {
         const taker = hex.decode(
             "531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
         );
-        const onV3 = encodeOffer({ ...binding, taker, swapPkScript: contract.pkScript });
+        const onV2 = encodeOffer({ ...binding, taker, swapPkScript: contract.pkScript });
         await expect(
-            cancelOffer(wallet, hex.encode(onV3), {
+            cancelOffer(wallet, hex.encode(onV2), {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toBeInstanceOf(OfferCovenantMismatchError);

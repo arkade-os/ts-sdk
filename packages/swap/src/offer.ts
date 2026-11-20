@@ -3,9 +3,9 @@
  *
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
- * README's Roles section). `fulfill` pays `receiver` at least `amount` on the output at the
- * spending input's index and never inspects the deposit. The programs are loaded from
- * `contracts/*.ark` in `program.ts`. A funded script from the previous leaf still selects that tree.
+ * README's Roles section). `fulfill` pays the receiver at least the wanted amount and never
+ * inspects the deposit: at output 0 on `asset-swap-v2`, and on the directed `asset-swap-v4` at the
+ * output with the spending input's index. `program.ts` loads both.
  */
 import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
@@ -31,10 +31,9 @@ import {
 import {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_CONTRACTS,
-    ASSET_SWAP_V3,
     ASSET_SWAP_V4,
     type AssetSwapContractVersion,
-    legacySwapPrograms,
+    assetSwapContractVersion,
     swapPrograms,
 } from "./program";
 import {
@@ -52,7 +51,7 @@ import {
     updateAssetSwapBestEffort,
 } from "./store";
 
-export { legacySwapPrograms, swapPrograms };
+export { swapPrograms };
 
 // ── Offer ────────────────────────────────────────────────────────────────────
 
@@ -151,16 +150,10 @@ export function swapProgramBinding(
     const version = contractVersion ?? (directed ? ASSET_SWAP_V4 : ASSET_SWAP_BASELINE);
     const expected = offer.swapPkScript;
     if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, version);
-    const funded = hex.encode(expected);
-    // Baseline first: nearly every funded offer is on it, so the common case compiles once.
-    const order: AssetSwapContractVersion[] = directed
-        ? [ASSET_SWAP_V4]
-        : [ASSET_SWAP_BASELINE, ASSET_SWAP_V3];
-    for (const candidate of order) {
-        const binding = bindSwapProgram(offer, operatorPubkey, candidate);
-        if (pkOf(binding) === funded) return binding;
-    }
-    // None matches (usually a rotated operator key): callers throw with that diagnosis.
+    const candidate = directed ? ASSET_SWAP_V4 : ASSET_SWAP_BASELINE;
+    const binding = bindSwapProgram(offer, operatorPubkey, candidate);
+    if (pkOf(binding) === hex.encode(expected)) return binding;
+    // No match (usually a rotated operator key): callers throw with that diagnosis.
     return bindSwapProgram(offer, operatorPubkey, directed ? ASSET_SWAP_V4 : version);
 }
 
@@ -169,7 +162,7 @@ function bindSwapProgram(
     operatorPubkey: Uint8Array,
     contractVersion: AssetSwapContractVersion,
 ): SwapProgramBinding {
-    const { programs, args } = ASSET_SWAP_CONTRACTS[contractVersion];
+    const { programs, args } = ASSET_SWAP_CONTRACTS[assetSwapContractVersion(contractVersion)];
     const user = offer.makerPublicKey;
     const assetId = offer.wantAsset;
     return {

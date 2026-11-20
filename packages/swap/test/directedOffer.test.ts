@@ -38,7 +38,6 @@ import {
     ASSET_SWAP_CONTRACT_VERSIONS,
     ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_V2,
-    ASSET_SWAP_V3,
     ASSET_SWAP_V4,
 } from "../src/program";
 
@@ -75,11 +74,27 @@ const directions: [string, Terms, string][] = [
 const artifact = (name: string) =>
     JSON.parse(readFileSync(new URL(`../src/contracts/${name}.json`, import.meta.url), "utf8"));
 
-/** The construction proven on regtest: the v3 binding's args plus `taker`, on the v4 artifact. */
+/** The construction proven on regtest: the artifact's constructor args by hand, on the v4 artifact. */
 const handBuilt = (name: string, terms: Terms, taker: Uint8Array) => {
-    const v3 = swapProgramBinding(terms, operatorPubkey, ASSET_SWAP_V3);
     const program = withExitClosure(arkade.programFromArtifact(artifact(name)), terms.exitDelay);
-    return new arkade.ArkadeProgramScript(program, { ...v3.args, taker }, v3.keys);
+    const id = terms.wantAsset;
+    return new arkade.ArkadeProgramScript(
+        program,
+        {
+            receiver: terms.makerPkScript.subarray(2),
+            amount: terms.wantAmount,
+            ...(id && { assetTxid: id.txid.slice().reverse(), assetGroupIndex: id.groupIndex }),
+            user: terms.makerPublicKey,
+            server: operatorPubkey,
+            exitDelay: terms.exitDelay.value,
+            taker,
+        },
+        {
+            serverKey: operatorPubkey,
+            userKey: terms.makerPublicKey,
+            emulatorKey: terms.emulatorPubkey,
+        },
+    );
 };
 
 const registered = (terms: Terms, taker: Uint8Array | undefined) => {
@@ -147,7 +162,7 @@ describe("the directed contracts (asset-swap-v4)", () => {
         );
     });
 
-    it("refuses v4 without a taker, and v2 or v3 with one", () => {
+    it("refuses v4 without a taker, and v2 with one", () => {
         const [, terms] = directions[0];
         expect(() => registered(terms, undefined)).toThrow(/asset-swap-v4 needs a taker/);
         const inputs = {
@@ -157,16 +172,11 @@ describe("the directed contracts (asset-swap-v4)", () => {
             server: operatorPubkey,
             taker: TAKER,
         };
-        expect(() => ASSET_SWAP_CONTRACTS[ASSET_SWAP_V3].args(inputs)).toThrow(/binds no taker/);
         expect(() => ASSET_SWAP_CONTRACTS[ASSET_SWAP_V2].args(inputs)).toThrow(/binds no taker/);
     });
 
-    it("advertises v4 alone, and still derives v3 and v2", () => {
-        expect(ASSET_SWAP_DERIVABLE_VERSIONS).toEqual([
-            ASSET_SWAP_V4,
-            ASSET_SWAP_V3,
-            ASSET_SWAP_V2,
-        ]);
+    it("advertises v4 alone, and derives v4 and v2", () => {
+        expect(ASSET_SWAP_DERIVABLE_VERSIONS).toEqual([ASSET_SWAP_V4, ASSET_SWAP_V2]);
         expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([ASSET_SWAP_V4]);
     });
 });
@@ -220,28 +230,24 @@ describe("the taker record (0x04)", () => {
 
 describe("which tree an offer compiles", () => {
     const [, terms] = directions[0];
-    const v3Script = offerContract(terms, operatorPubkey, ASSET_SWAP_V3).pkScript;
+    const v2Script = offerContract(terms, operatorPubkey).pkScript;
     const v4Script = offerContract({ ...terms, taker: TAKER }, operatorPubkey).pkScript;
     const versionOf = (offer: Parameters<typeof swapProgramBinding>[0]) =>
         swapProgramBinding(offer, operatorPubkey).version;
 
     it("never compiles v4 without a taker", () => {
         expect(versionOf(terms)).toBe(ASSET_SWAP_V2);
-        expect(versionOf({ ...terms, swapPkScript: v3Script })).toBe(ASSET_SWAP_V3);
         expect(versionOf({ ...terms, swapPkScript: v4Script })).toBe(ASSET_SWAP_V2);
     });
 
-    it("never compiles v2 or v3 with a taker", () => {
+    it("never compiles v2 with a taker", () => {
         expect(versionOf({ ...terms, taker: TAKER })).toBe(ASSET_SWAP_V4);
         expect(versionOf({ ...terms, taker: TAKER, swapPkScript: v4Script })).toBe(ASSET_SWAP_V4);
-        expect(versionOf({ ...terms, taker: TAKER, swapPkScript: v3Script })).toBe(ASSET_SWAP_V4);
+        expect(versionOf({ ...terms, taker: TAKER, swapPkScript: v2Script })).toBe(ASSET_SWAP_V4);
     });
 
-    it("refuses a taker on an explicit v2 or v3, and v4 without one", () => {
+    it("refuses a taker on an explicit v2, and v4 without one", () => {
         const directed = { ...terms, taker: TAKER };
-        expect(() => offerContract(directed, operatorPubkey, ASSET_SWAP_V3)).toThrow(
-            /binds no taker/,
-        );
         expect(() => offerContract(directed, operatorPubkey, ASSET_SWAP_V2)).toThrow(
             /binds no taker/,
         );
@@ -252,18 +258,6 @@ describe("which tree an offer compiles", () => {
 describe("the offer binding", () => {
     // offer.test.ts's goldens, pinned before the binding existed
     const undirected: [string, Omit<Offer, "swapPkScript">, string, string][] = [
-        [
-            "a v3 asset-want",
-            { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
-            ASSET_SWAP_V3,
-            "512004b3e3bdd36a1bc10cfc728958d0b5f3c077b1e817a97cc7bf23b47d437d0215",
-        ],
-        [
-            "a v3 sats-want",
-            { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys },
-            ASSET_SWAP_V3,
-            "5120d5e8866efe0d4339b36f442ae0cc033597fb7e40412b3db982dcaae0ab4b66e0",
-        ],
         [
             "a v2 asset-want",
             { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
@@ -324,6 +318,7 @@ describe("a recorded binding", () => {
 
     it.each([
         ["an unknown version", { version: "asset-swap-v9" }],
+        ["the removed asset-swap-v3", { version: "asset-swap-v3" }],
         ["no version", { version: undefined }],
         ["a negative amount", { amount: "-1" }],
         ["a fractional amount", { amount: "1.5" }],

@@ -3,12 +3,7 @@ import { hex } from "@scure/base";
 import { asset } from "@arkade-os/sdk";
 import { requestArkadeSwap, requestVersionedQuote, SwapRefusal, type RfqQuote } from "../src/rfq";
 import { createOffer, decodeOffer, deriveOffer, offerContract } from "../src/offer";
-import {
-    ASSET_SWAP_V2,
-    ASSET_SWAP_V3,
-    ASSET_SWAP_V4,
-    type AssetSwapContractVersion,
-} from "../src/program";
+import { ASSET_SWAP_V2, ASSET_SWAP_V4, type AssetSwapContractVersion } from "../src/program";
 import type { AttestingRfqTransport } from "../src/client/transport";
 import { acceptWallet, SOLVER_DISCOVERY_KEY } from "./client/fixtures";
 
@@ -107,16 +102,13 @@ describe("requestArkadeSwap contract version negotiation", () => {
         expect(createOffer).not.toHaveBeenCalled();
     });
 
-    it.each([ASSET_SWAP_V3, ASSET_SWAP_V2] as const)(
-        "refuses a quote echoing %s",
-        async (version) => {
-            const f = await setup(version, version);
-            await expect(f.request()).rejects.toThrow(
-                `solver chose contract version ${version}, not one of ${ASSET_SWAP_V4}`,
-            );
-            expect(createOffer).not.toHaveBeenCalled();
-        },
-    );
+    it.each(["asset-swap-v3", ASSET_SWAP_V2])("refuses a quote echoing %s", async (version) => {
+        const f = await setup(ASSET_SWAP_V2, version);
+        await expect(f.request()).rejects.toThrow(
+            `solver chose contract version ${version}, not one of ${ASSET_SWAP_V4}`,
+        );
+        expect(createOffer).not.toHaveBeenCalled();
+    });
 
     it("does not ask again without the list after a bare unsupported_payload", async () => {
         const f = await setup(ASSET_SWAP_V2);
@@ -147,7 +139,7 @@ describe("requestArkadeSwap contract version negotiation", () => {
 });
 
 describe("requestVersionedQuote", () => {
-    const advertised = [ASSET_SWAP_V3, ASSET_SWAP_V2];
+    const advertised = [ASSET_SWAP_V4, ASSET_SWAP_V2];
     const request = { rfq_id: "33".repeat(32), contract_versions: advertised };
     const answering = (contractVersion?: string) => ({
         requestQuote: vi.fn(async (_payload: Record<string, unknown>) =>
@@ -191,7 +183,7 @@ describe("requestVersionedQuote", () => {
     });
 
     it("refuses a retried quote that names a contract version nobody advertised", async () => {
-        const transport = answering(ASSET_SWAP_V3);
+        const transport = answering(ASSET_SWAP_V4);
         transport.requestQuote.mockRejectedValueOnce(new SwapRefusal("unsupported_payload"));
         await expect(requestVersionedQuote(transport, request, advertised)).rejects.toThrow(
             "but none was advertised",
@@ -217,5 +209,22 @@ describe("offer contract version default", () => {
         expect(hex.encode(offerContract(previous.binding, previous.operatorPubkey).pkScript)).toBe(
             hex.encode(previous.swapPkScript),
         );
+    });
+
+    it("refuses asset-swap-v3 as an unknown version, and registers nothing", async () => {
+        const f = await acceptWallet();
+        const params = {
+            wantAmount: 50_000n,
+            wantAsset,
+            emulatorPubkey,
+            contractVersion: "asset-swap-v3" as never,
+        };
+        await expect(deriveOffer(f.wallet, params)).rejects.toThrow(
+            "unknown contract version asset-swap-v3",
+        );
+        await expect(createOffer(f.wallet, params)).rejects.toThrow(
+            "unknown contract version asset-swap-v3",
+        );
+        expect(f.contracts).toHaveLength(0);
     });
 });

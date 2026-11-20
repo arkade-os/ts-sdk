@@ -29,7 +29,7 @@ import {
     type TransportCard,
 } from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
-import { ASSET_SWAP_V2, ASSET_SWAP_V3, ASSET_SWAP_V4 } from "../../src/program";
+import { ASSET_SWAP_V2, ASSET_SWAP_V4 } from "../../src/program";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -570,7 +570,7 @@ export const arkadeAssetAnswer = (
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
     // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
     const version = (payload.contract_versions as string[] | undefined)?.find(
-        (v) => v === ASSET_SWAP_V4 || v === ASSET_SWAP_V3 || v === ASSET_SWAP_V2,
+        (v) => v === ASSET_SWAP_V4 || v === ASSET_SWAP_V2,
     );
     const taker =
         version === ASSET_SWAP_V4 ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY)) : undefined;
@@ -587,7 +587,7 @@ export const arkadeAssetAnswer = (
             ...(taker && { taker }),
         },
         OPERATOR_PUBKEY,
-        version === ASSET_SWAP_V3 || version === ASSET_SWAP_V4 ? version : ASSET_SWAP_V2,
+        version === ASSET_SWAP_V4 ? version : ASSET_SWAP_V2,
     );
     return {
         v: 1,

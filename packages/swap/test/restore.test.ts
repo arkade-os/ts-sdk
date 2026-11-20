@@ -56,7 +56,7 @@ const makeOffer = (
     };
     return {
         ...binding,
-        swapPkScript: offerContract(binding, OPERATOR_KEY, "asset-swap-v3").pkScript,
+        swapPkScript: offerContract(binding, OPERATOR_KEY).pkScript,
     };
 };
 
@@ -818,7 +818,7 @@ describe("restoreAssetSwaps — recovery sources", () => {
     });
 
     // A source's binding is proven by the deposit at its script; the packet bytes it sends beside
-    // it are not, and a v2/v3 record is rebuilt from those bytes.
+    // it are not, and a v2 record is rebuilt from those bytes.
     const answering = (found: Awaited<ReturnType<OfferRecoverySource["discover"]>>["found"]) => ({
         name: "answering",
         discover: async () => ({ found, declined: [] }),

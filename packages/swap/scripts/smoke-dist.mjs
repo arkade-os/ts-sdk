@@ -78,7 +78,9 @@ for (const specifier of specifiers) {
 //
 // Only value exports are checkable at runtime. Types are covered by
 // `tsconfig.test.json` and by the barrel typechecking at all.
-const dispositions = JSON.parse(readFileSync(resolve(pkgRoot, "scripts/dispositions.json"), "utf8"));
+const dispositions = JSON.parse(
+    readFileSync(resolve(pkgRoot, "scripts/dispositions.json"), "utf8"),
+);
 const isValue = (mod, name) => Object.hasOwn(mod, name) && mod[name] !== undefined;
 
 const [rootEsm, rootCjs] = [await import("@arkade-os/swap"), require("@arkade-os/swap")];
@@ -132,7 +134,9 @@ for (const [condition, root, protocol] of [
     // where the module resolved empty and nothing was checked.
     const values = dispositions.P.filter((name) => isValue(protoEsm, name));
     if (values.length < 100) {
-        throw new Error(`@arkade-os/swap/protocol (${condition}) exports only ${values.length} values`);
+        throw new Error(
+            `@arkade-os/swap/protocol (${condition}) exports only ${values.length} values`,
+        );
     }
     const missing = values.filter((name) => !isValue(protocol, name));
     if (missing.length) {
@@ -158,7 +162,9 @@ for (const [condition, root, protocol] of [
         (name) => isValue(root, name) || isValue(protocol, name),
     );
     if (returned.length) {
-        throw new Error(`(${condition}) internalized/deleted names are exported again: ${returned}`);
+        throw new Error(
+            `(${condition}) internalized/deleted names are exported again: ${returned}`,
+        );
     }
 }
 
@@ -187,7 +193,9 @@ if (new Set(schemaNames).size !== schemaNames.length) {
     throw new Error(`AssetSwapRealmSchemas has duplicate names: [${schemaNames}]`);
 }
 
-const operatorPubkey = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
+const operatorPubkey = hex.decode(
+    "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+);
 const offer = {
     swapPkScript: new Uint8Array(0),
     wantAmount: 50_000n,
@@ -200,10 +208,18 @@ const offer = {
 };
 
 const contract = offerContract(offer, operatorPubkey);
-const current = offerContract(offer, operatorPubkey, "asset-swap-v3");
+const removed = (() => {
+    try {
+        offerContract(offer, operatorPubkey, "asset-swap-v3");
+    } catch (error) {
+        return String(error);
+    }
+})();
+if (!removed?.includes("unknown contract version asset-swap-v3")) {
+    throw new Error(`asset-swap-v3 still compiles: ${removed}`);
+}
 offer.swapPkScript = contract.pkScript;
 const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
-const currentAddress = new ArkAddress(operatorPubkey, current.tweakedPublicKey, "tark").encode();
 
 const payload = encodeOffer(offer);
 const roundtripped = encodeOffer(decodeOffer(payload));
@@ -213,8 +229,5 @@ if (hex.encode(payload) !== hex.encode(roundtripped)) {
 const golden =
     "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2";
 if (address !== golden) throw new Error(`address drift: ${address}`);
-const currentGolden =
-    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65p9nuw7ax6smcyx0cu5ftrgttu7qw7c7s9af0nrm7ga504ph6qs4c4p7zf";
-if (currentAddress !== currentGolden) throw new Error(`current address drift: ${currentAddress}`);
 
-console.log("smoke OK:", payload.length, "byte payload,", address, currentAddress);
+console.log("smoke OK:", payload.length, "byte payload,", address);

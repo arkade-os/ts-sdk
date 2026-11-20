@@ -35,7 +35,7 @@ import {
     offerContract,
     recordOfferBinding,
 } from "../../src/offer";
-import { ASSET_SWAP_V2, ASSET_SWAP_V3, ASSET_SWAP_V4 } from "../../src/program";
+import { ASSET_SWAP_V2, ASSET_SWAP_V4 } from "../../src/program";
 import { verifyTaker } from "../../src/client/verify";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
@@ -256,10 +256,10 @@ describe("quote() on a negotiated asset market", () => {
             expect(deriveOffer).not.toHaveBeenCalled();
         });
 
-        it.each([ASSET_SWAP_V3, ASSET_SWAP_V2])("refuses a quote echoing %s", async (version) => {
+        it.each(["asset-swap-v3", ASSET_SWAP_V2])("refuses a quote echoing %s", async (version) => {
             const { client } = await setup({
                 answer: (payload) =>
-                    arkadeAssetAnswer({ ...payload, contract_versions: [version] }, CLOCK),
+                    arkadeAssetAnswer(payload, CLOCK, { quote: { contract_version: version } }),
             });
             vi.mocked(deriveOffer).mockClear();
             await expect(client.quote(buy())).rejects.toThrow(
