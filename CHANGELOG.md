@@ -16,6 +16,8 @@ style and have not been backfilled.
 
 - **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
 
+- **`@arkade-os/swap`: a fee ceiling on a cross-asset swap is refused.** The fee of a cross-asset swap is measured against the solver's own price feed, so `maxFee` or `policy.maxFee` cannot bound it. Setting either on such a swap now throws before anything is funded; same-asset ceilings are unchanged.
+
 - **Inert open-RFQ placeholders are removed.** `SwapPolicy.selectBid`, `RfqAuctionPolicy.freshTransportKey` and `AuctionMarketRef` (a `MarketRef` member) were exported since 0.1.0 but never read or populated. Remove references to them; `openRfq()` and `quoteBid()` replace the auction they reserved, and an auction-closed quote keeps a card `MarketRef` with its `quote.auction` provenance.
 
 - **`@arkade-os/swap`: `asset-swap-v3` is removed.** It never saw use:
@@ -328,6 +330,8 @@ style and have not been backfilled.
 - **`OnchainWallet.bumpP2A` funds the fee child from confirmed coins first**, falling back to unconfirmed ones only when confirmed coins cannot pay, as a TRUC child relays only on confirmed fee inputs. Coin selection for both P2A bumps now prices the fee at the number of inputs it selects and keeps the change above dust.
 
 - **ArkadeCash claims check the operator's signatures, and imported-key recovery releases keys it can no longer use.** `claimCash` verifies the operator's signatures on the sweep, so a sweep the operator did not co-sign is reported as failed. Recovery treats subdust and exited coins as unsettleable, so a key whose only remaining coins are those is purged instead of kept.
+
+- **`@arkade-os/swap`: a solver's asset carrier is capped at the operator's dust.** A quote whose `carrier_sats` exceeds the operator's dust (at least 330 sats) is refused before anything is registered or funded, and a carrier the payout does not return now counts as fee.
 
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the

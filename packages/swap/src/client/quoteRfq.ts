@@ -487,7 +487,8 @@ const quoteArkadeAsset = async (
     if (assetPayment !== undefined) deepFreeze(assetPayment);
     // The solver's carrier for an asset deposit, parsed before anything is derived. A BTC
     // deposit funds none, so its wire `carrier_sats` is deliberately not read.
-    const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
+    const carrierSats =
+        sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire, input.info.dust);
     // The RFQ already disclosed amount, pair and maker script/key; feed failure may try another
     // solver before any covenant is derived or accepted. This asset path sends no invoice.
     const reference = await quoteAdvertisedPlan(

@@ -269,8 +269,7 @@ describe("offer contract registration", () => {
         expect((await request(quoteWith("1000"))).carrierSats).toBe(1000n);
         expect((await request(quoteWith(undefined))).carrierSats).toBe(330n);
         expect((await request(quoteWith("0"))).carrierSats).toBe(330n);
-        expect((await request(quoteWith("1000000"))).carrierSats).toBe(1_000_000n);
-        for (const carrier of ["1e3", "-1"]) {
+        for (const carrier of ["1e3", "-1", "1001", "1000000"]) {
             await expect(request(quoteWith(carrier))).rejects.toMatchObject({
                 reason: "carrier_malformed",
             });
