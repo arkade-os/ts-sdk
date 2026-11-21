@@ -315,6 +315,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: repeat asset RFQs derive distinct deposits.** Clients
+  prefer `asset-swap-directed-nonce`, which binds a hash of the request ID to
+  the covenant through a dedicated compiler artifact in each payout direction.
+  Equal terms on separate requests can now settle independently.
+  The client still negotiates `asset-swap-directed` with older solvers and can
+  recover previously funded deposits.
+
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the
   open, so a client a second or two ahead of the solver received no bids at

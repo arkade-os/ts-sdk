@@ -97,7 +97,9 @@ export {
     ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_V2,
     ASSET_SWAP_DIRECTED,
+    ASSET_SWAP_DIRECTED_NONCE,
     type AssetSwapContractVersion,
+    assetRfqNonce,
     assetSwapContractVersion,
 } from "./program";
 export {

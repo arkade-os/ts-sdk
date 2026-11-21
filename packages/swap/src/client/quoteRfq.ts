@@ -32,7 +32,7 @@ import {
     resolveReceivePkScript,
     type DerivedOffer,
 } from "../offer";
-import { ASSET_SWAP_CONTRACT_VERSIONS } from "../program";
+import { ASSET_SWAP_CONTRACT_VERSIONS, assetRfqNonce } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
@@ -42,7 +42,7 @@ import {
     type OnchainNetwork,
 } from "../onchainHtlc";
 import { claimFeeSats } from "../payment/onchainSwap";
-import { ASSET_SWAP_DIRECTED } from "../rfq-contract";
+import { ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE } from "../rfq-contract";
 import {
     arkadeSwapRequest,
     deriveLightningReceive,
@@ -433,7 +433,7 @@ const quoteArkadeAsset = async (
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire, input.policy);
     const taker =
-        contractVersion === ASSET_SWAP_DIRECTED
+        contractVersion === ASSET_SWAP_DIRECTED || contractVersion === ASSET_SWAP_DIRECTED_NONCE
             ? verifyTaker({
                   attested: input.transport.attestedResponder,
                   solverPubkey: parsed.solver,
@@ -518,6 +518,7 @@ const quoteArkadeAsset = async (
         info: input.info,
         contractVersion,
         ...(taker === undefined ? {} : { taker }),
+        ...(contractVersion === ASSET_SWAP_DIRECTED_NONCE ? { nonce: assetRfqNonce(rfqId) } : {}),
     });
     // Compare-only, and never the other way round: the address the trader funds
     // is the one the trader derived, and a solver naming another one is refused

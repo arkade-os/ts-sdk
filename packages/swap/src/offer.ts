@@ -32,6 +32,7 @@ import {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_CONTRACTS,
     ASSET_SWAP_DIRECTED,
+    ASSET_SWAP_DIRECTED_NONCE,
     type AssetSwapContractVersion,
     assetSwapContractVersion,
     swapPrograms,
@@ -84,9 +85,10 @@ export interface Offer {
     /** The maker's unilateral exit path. Present adds a third closure to the
      * taproot tree, so it changes `swapPkScript` — see {@link offerVtxoScript}. */
     exitDelay?: RelativeTimelock;
-    /** The solver key `fulfill` requires, x-only. Present on directed versions only, and its
-     * presence is what selects the `asset-swap-directed` tree. */
+    /** The solver key `fulfill` requires, x-only. Present on directed versions only. */
     taker?: Uint8Array;
+    /** The 32-byte public commitment that selects the nonce-bearing directed tree. */
+    nonce?: Uint8Array;
 }
 
 /** Program + args + keys of an offer's contract: the single source for address derivation and
@@ -132,8 +134,7 @@ export function withExitClosure(
 /** Exported for the asset-id vector tests (the args are the only place both asset-id forms are
  * visible). Deliberately absent from the package index -- not public API.
  * A carried `swapPkScript` selects the version that compiles to it; without one,
- * `contractVersion` picks, defaulting to `asset-swap-directed` for an offer with a `taker` and to
- * {@link ASSET_SWAP_BASELINE} otherwise.
+ * `contractVersion` picks, defaulting to the version implied by the `nonce` and `taker` fields.
  */
 export function swapProgramBinding(
     offer: Omit<Offer, "swapPkScript"> & { swapPkScript?: Uint8Array },
@@ -145,16 +146,20 @@ export function swapProgramBinding(
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
-    // A taker selects the directed tree: it is never tried without one, nor anything else with one.
     const directed = offer.taker !== undefined;
-    const version = contractVersion ?? (directed ? ASSET_SWAP_DIRECTED : ASSET_SWAP_BASELINE);
+    const candidate =
+        offer.nonce !== undefined
+            ? ASSET_SWAP_DIRECTED_NONCE
+            : directed
+              ? ASSET_SWAP_DIRECTED
+              : ASSET_SWAP_BASELINE;
+    const version = contractVersion ?? candidate;
     const expected = offer.swapPkScript;
     if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, version);
-    const candidate = directed ? ASSET_SWAP_DIRECTED : ASSET_SWAP_BASELINE;
     const binding = bindSwapProgram(offer, operatorPubkey, candidate);
     if (pkOf(binding) === hex.encode(expected)) return binding;
     // No match (usually a rotated operator key): callers throw with that diagnosis.
-    return bindSwapProgram(offer, operatorPubkey, directed ? ASSET_SWAP_DIRECTED : version);
+    return bindSwapProgram(offer, operatorPubkey, directed ? candidate : version);
 }
 
 function bindSwapProgram(
@@ -162,6 +167,9 @@ function bindSwapProgram(
     operatorPubkey: Uint8Array,
     contractVersion: AssetSwapContractVersion,
 ): SwapProgramBinding {
+    if (offer.nonce !== undefined && contractVersion !== ASSET_SWAP_DIRECTED_NONCE) {
+        throw new Error(`${contractVersion} binds no nonce`);
+    }
     const { programs, args } = ASSET_SWAP_CONTRACTS[assetSwapContractVersion(contractVersion)];
     const user = offer.makerPublicKey;
     const assetId = offer.wantAsset;
@@ -179,6 +187,7 @@ function bindSwapProgram(
             server: operatorPubkey,
             ...(offer.exitDelay && { exitDelay: offer.exitDelay.value }),
             ...(offer.taker && { taker: offer.taker }),
+            ...(offer.nonce && { nonce: offer.nonce }),
         }),
         keys: {
             serverKey: operatorPubkey,
@@ -237,8 +246,9 @@ export interface OfferBinding {
     readonly emulatorPublicKey: Uint8Array;
     /** Omitted removes the exit leaf, which changes the address. */
     readonly exitDelay?: RelativeTimelock;
-    /** The solver key `fulfill` requires; `asset-swap-directed` only. */
+    /** The solver key `fulfill` requires on directed versions. */
     readonly taker?: Uint8Array;
+    readonly nonce?: Uint8Array;
 }
 
 const isOfferBinding = (offer: Offer | OfferBinding): offer is OfferBinding => "version" in offer;
@@ -252,6 +262,7 @@ const termsOf = (binding: OfferBinding): Omit<Offer, "swapPkScript"> => ({
     emulatorPubkey: binding.emulatorPublicKey,
     ...(binding.exitDelay && { exitDelay: binding.exitDelay }),
     ...(binding.taker && { taker: binding.taker }),
+    ...(binding.nonce && { nonce: binding.nonce }),
 });
 
 /** Either form as an {@link Offer}, given the script a binding compiled to. */
@@ -286,6 +297,7 @@ export function bindingFromOffer(offer: Offer, operatorPubkey: Uint8Array): Offe
         emulatorPublicKey: offer.emulatorPubkey,
         ...(offer.exitDelay && { exitDelay: offer.exitDelay }),
         ...(offer.taker && { taker: offer.taker }),
+        ...(offer.nonce && { nonce: offer.nonce }),
     };
 }
 
@@ -306,6 +318,7 @@ export interface RecordedOfferBinding {
     readonly emulatorPublicKey: string;
     readonly exitDelay?: { readonly type: RelativeTimelock["type"]; readonly value: string };
     readonly taker?: string;
+    readonly nonce?: string;
 }
 
 export const recordOfferBinding = (binding: OfferBinding): RecordedOfferBinding => ({
@@ -321,6 +334,7 @@ export const recordOfferBinding = (binding: OfferBinding): RecordedOfferBinding 
         exitDelay: { type: binding.exitDelay.type, value: binding.exitDelay.value.toString() },
     }),
     ...(binding.taker && { taker: hex.encode(binding.taker) }),
+    ...(binding.nonce && { nonce: hex.encode(binding.nonce) }),
 });
 
 const decimal = (value: string, name: string): bigint => {
@@ -336,7 +350,12 @@ export const offerBindingOf = (recorded: RecordedOfferBinding): OfferBinding => 
     ) {
         throw new Error(`recorded binding names no known contract version (${recorded.version})`);
     }
-    const { exitDelay, wantAsset, offerAsset, taker } = recorded;
+    const { exitDelay, wantAsset, offerAsset, taker, nonce } = recorded;
+    if ((recorded.version === ASSET_SWAP_DIRECTED_NONCE) !== (nonce !== undefined)) {
+        throw new Error(
+            `recorded binding nonce does not match contract version ${recorded.version}`,
+        );
+    }
     return {
         version: recorded.version,
         receiverPkScript: hex.decode(recorded.receiverPkScript),
@@ -350,6 +369,9 @@ export const offerBindingOf = (recorded: RecordedOfferBinding): OfferBinding => 
             exitDelay: { type: exitDelay.type, value: decimal(exitDelay.value, "exitDelay") },
         }),
         ...(taker !== undefined && { taker: hex.decode(taker) }),
+        ...(nonce !== undefined && {
+            nonce: hex.decode(parseHex32(nonce, "recorded binding nonce")),
+        }),
     };
 };
 
@@ -390,6 +412,7 @@ const FIELDS = {
     ratioDen: { tag: 0x0a, width: 8 },
     offerAsset: { tag: 0x0b, width: undefined },
     exitTimelock: { tag: 0x0c, width: 9 },
+    nonce: { tag: 0x0d, width: 32 },
 } as const;
 
 /** The `ExitTimelock` locktime types, indexed by their wire byte. */
@@ -455,6 +478,12 @@ export function encodeOffer(offer: Offer): Uint8Array {
     if (offer.taker !== undefined && offer.taker.length !== FIELDS.taker.width) {
         throw new Error(`taker must be ${FIELDS.taker.width} bytes`);
     }
+    if (offer.nonce !== undefined) {
+        if (offer.nonce.length !== FIELDS.nonce.width) {
+            throw new Error(`nonce must be ${FIELDS.nonce.width} bytes`);
+        }
+        if (offer.taker === undefined) throw new Error("an offer with a nonce needs a taker key");
+    }
     const ratioNum = setRatio("ratioNum", offer.ratioNum);
     const ratioDen = setRatio("ratioDen", offer.ratioDen);
     // a numerator without its denominator prices nothing
@@ -478,6 +507,7 @@ export function encodeOffer(offer: Offer): Uint8Array {
     if (offer.taker) recs.push(tlv(FIELDS.taker.tag, offer.taker));
     recs.push(tlv(FIELDS.emulatorPubkey.tag, offer.emulatorPubkey));
     if (offer.exitDelay) recs.push(tlv(FIELDS.exitTimelock.tag, encodeExitDelay(offer.exitDelay)));
+    if (offer.nonce) recs.push(tlv(FIELDS.nonce.tag, offer.nonce));
     return concatBytes(...recs);
 }
 
@@ -553,6 +583,7 @@ export function decodeOffer(data: Uint8Array): Offer {
     if (Boolean(fields.wantAsset) === Boolean(fields.offerAsset)) {
         throw new Error("offer must carry exactly one of wantAsset or offerAsset");
     }
+    if (fields.nonce && !fields.taker) throw new Error("an offer with a nonce needs a taker key");
     // a present record valued `0` contradicts itself: `0` is the reference's spelling of "unset"
     const readRatio = (name: "ratioNum" | "ratioDen"): bigint | undefined => {
         const raw = fields[name];
@@ -579,6 +610,7 @@ export function decodeOffer(data: Uint8Array): Offer {
         ...(ratioDen !== undefined && { ratioDen }),
         ...(fields.exitTimelock && { exitDelay: decodeExitDelay(fields.exitTimelock) }),
         ...(fields.taker && { taker: fields.taker }),
+        ...(fields.nonce && { nonce: fields.nonce }),
     };
 }
 
@@ -830,10 +862,11 @@ export interface OfferParams {
      * rotation between the two reads derive a covenant the solver never quoted.
      */
     maker?: { pkScript: Uint8Array; publicKey: Uint8Array };
-    /** Defaults to {@link ASSET_SWAP_BASELINE}, or to `asset-swap-directed` with a `taker`. */
+    /** Defaults to the version implied by `nonce` and `taker`. */
     contractVersion?: AssetSwapContractVersion;
     /** The quoting solver's x-only key, for a directed offer. */
     taker?: Uint8Array;
+    nonce?: Uint8Array;
 }
 
 /**
@@ -936,6 +969,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
               ? assertExitDelay(params.exitDelay)
               : serverExitDelay(info.unilateralExitDelay),
         ...(params.taker && { taker: params.taker }),
+        ...(params.nonce && { nonce: params.nonce }),
     });
     const script = offerContract(binding, operatorPubKey, params.contractVersion);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
