@@ -163,6 +163,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **Arkade scripts name `0xb3` `OP_MERKLEBRANCHROOT`.** Emulator v0.2.0 renamed the opcode, which computes and pushes a Merkle root, and the Arkade compiler emits the new name from 0.1.0. Opcode lookup, ASM parsing and compiler artifact import accept `OP_MERKLEBRANCHROOT`, and still accept `OP_MERKLEBRANCHVERIFY` from 0.1.0-rc.1 artifacts; both assemble to `0xb3`. Disassembly now renders `0xb3` as `OP_MERKLEBRANCHROOT`, and `ArkadeScript.decode` returns `"MERKLEBRANCHROOT"`.
+
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,
   completed usage (`completedSolverUsage`) or amount-aware advertised cost, after

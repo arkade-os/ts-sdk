@@ -17,6 +17,8 @@ import {
     getOpcodeValue,
     toASM,
     fromASM,
+    asmToBytes,
+    bytesToASM,
     ArkadeScript,
     type ArkadeScriptType,
     ARKADE_OPS,
@@ -34,8 +36,10 @@ describe("Arkade Opcodes", () => {
     // The compiler emits these bytes; the SDK disassembles and re-serializes
     // them. A one-way lookup yields an unspendable script, so every opcode
     // round-trips instead of a hand-picked few. The byte values are ARKADE_OP's
-    // own: the emulator's opcode table stays the reference for those.
-    it.each(Object.entries(ARKADE_OP) as [keyof typeof ARKADE_OPS, number][])(
+    // own: the emulator's opcode table stays the reference for those. The
+    // MERKLEBRANCHVERIFY alias never disassembles; the test below covers it.
+    const canonical = Object.entries(ARKADE_OP).filter(([name]) => name !== "MERKLEBRANCHVERIFY");
+    it.each(canonical as [keyof typeof ARKADE_OPS, number][])(
         "should round-trip OP_%s",
         (name, value) => {
             expect(getOpcodeName(value)).toBe(`OP_${name}`);
@@ -47,6 +51,13 @@ describe("Arkade Opcodes", () => {
             expect(toASM(fromASM(`OP_${name}`))).toBe(`OP_${name}`);
         },
     );
+
+    // Compiler 0.1.0-rc.1 artifacts still use the pre-v0.2.0 emulator name.
+    it("reads OP_MERKLEBRANCHVERIFY as 0xb3 and disassembles 0xb3 as OP_MERKLEBRANCHROOT", () => {
+        const bytes = asmToBytes("OP_MERKLEBRANCHVERIFY OP_MERKLEBRANCHROOT");
+        expect(bytes).toEqual(Uint8Array.of(0xb3, 0xb3));
+        expect(bytesToASM(bytes)).toBe("OP_MERKLEBRANCHROOT OP_MERKLEBRANCHROOT");
+    });
 });
 
 describe("Script Encoding/Decoding", () => {
