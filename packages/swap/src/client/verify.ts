@@ -407,14 +407,14 @@ export const verifyCrossAssetAmount = (input: {
  * The solver's carrier for an asset deposit, well-formed. Reported as the `pair` check, like the
  * amounts: it is sats the trader funds on top of the quoted give leg.
  */
-export const verifiedCarrierSats = (quote: RfqQuote): bigint => {
+export const verifiedCarrierSats = (quote: RfqQuote, dust: bigint): bigint => {
     try {
-        return quoteCarrierSats(quote);
+        return quoteCarrierSats(quote, dust);
     } catch (error) {
         if (reasonOf(error) !== "carrier_malformed") throw error;
         throw new QuoteVerificationFailed(
             "pair",
-            "carrier_sats a non-negative integer",
+            "carrier_sats a non-negative integer, at most the operator's dust",
             String(quote.carrier_sats),
             { cause: error },
         );

@@ -14,6 +14,10 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
+
+- **`@arkade-os/swap`: a fee ceiling on a cross-asset swap is refused.** The fee of a cross-asset swap is measured against the solver's own price feed, so `maxFee` or `policy.maxFee` cannot bound it. Setting either on such a swap now throws before anything is funded; same-asset ceilings are unchanged.
+
 - **Inert open-RFQ placeholders are removed.** `SwapPolicy.selectBid`, `RfqAuctionPolicy.freshTransportKey` and `AuctionMarketRef` (a `MarketRef` member) were exported since 0.1.0 but never read or populated. Remove references to them; `openRfq()` and `quoteBid()` replace the auction they reserved, and an auction-closed quote keeps a card `MarketRef` with its `quote.auction` provenance.
 
 - **`@arkade-os/swap`: `asset-swap-v3` is removed.** It never saw use:
@@ -314,6 +318,20 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
+
+- **Boarding inputs in a commitment transaction are signed with the default sighash**, whatever sighash type the operator's PSBT declares, as forfeits already were.
+
+- **`arkServerPublicKey` and `ServiceWorkerWallet`'s `arkServer.publicKey` are marked deprecated.** Neither has been read since the signer key moved to the operator's info, which may rotate it.
+
+- **A negative or non-integer relative timelock is rejected** instead of encoding a different or unspendable CSV. `Wallet.create` now fails against an operator that advertises one as its exit delay.
+
+- **`OnchainWallet.bumpP2A` funds the fee child from confirmed coins first**, falling back to unconfirmed ones only when confirmed coins cannot pay, as a TRUC child relays only on confirmed fee inputs. Coin selection for both P2A bumps now prices the fee at the number of inputs it selects and keeps the change above dust, and refuses a child over TRUC's 1000 vB limit instead of building one that cannot relay.
+
+- **ArkadeCash claims check the operator's signatures.** `claimCash` verifies the operator's signatures on the sweep, as sends do, so a sweep the operator did not co-sign is reported as failed.
+
+- **`@arkade-os/swap`: a solver's asset carrier is capped at the operator's dust.** A quote whose `carrier_sats` exceeds the operator's dust (at least 330 sats) is refused before anything is registered or funded, and a carrier the payout does not return now counts as fee.
 
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the

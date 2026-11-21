@@ -105,7 +105,7 @@ export interface NewAddress {
  * @see StorageConfig
  */
 export interface BaseWalletConfig {
-    /** Optional operator public key used to construct and validate Arkade addresses. */
+    /** @deprecated Ignored: the signer key comes from the operator's info, which may rotate it. */
     arkServerPublicKey?: string;
     /** Relative timelock applied to boarding scripts. */
     boardingTimelock?: RelativeTimelock;

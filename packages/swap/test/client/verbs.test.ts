@@ -272,7 +272,7 @@ describe("the fee ceiling", () => {
         ).resolves.toMatchObject({ kind: "swap" });
     });
 
-    it("guards receive and exchange the same way", async () => {
+    it("guards receive the same way, and refuses any ceiling on a cross-asset exchange", async () => {
         const { client } = await harness();
         await expect(
             client.receive({ amount: 4_950n, via: "lightning", maxFee: ceiling(1n) }),
@@ -285,7 +285,7 @@ describe("the fee ceiling", () => {
                 amountOn: "give",
                 maxFee: ceiling(1n, USD),
             }),
-        ).rejects.toBeInstanceOf(MaxFeeExceeded);
+        ).rejects.toThrow(/cannot gate a cross-asset swap/);
     });
 });
 

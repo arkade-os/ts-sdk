@@ -617,6 +617,23 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
     });
 
+    it("full Wallet.create rejects a negative unilateralExitDelay and does not cache", async () => {
+        const walletRepository = new InMemoryWalletRepository();
+        const contractRepository = new InMemoryContractRepository();
+        await expect(
+            Wallet.create({
+                identity: SingleKey.fromHex(privKeyHex),
+                arkProvider: {
+                    getInfo: async () => makeArkInfo({ unilateralExitDelay: -200n }),
+                } as Partial<OperatorProvider> as OperatorProvider,
+                indexerProvider: indexerStub(),
+                onchainProvider: {} as OnchainProvider,
+                storage: { walletRepository, contractRepository },
+            }),
+        ).rejects.toThrow(/invalid blocks timelock -200/);
+        expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
+    });
+
     it("full Wallet.create rejects a checkpoint script pinned to the wrong pubkey [P720-2] and does not cache", async () => {
         const walletRepository = new InMemoryWalletRepository();
         const contractRepository = new InMemoryContractRepository();
