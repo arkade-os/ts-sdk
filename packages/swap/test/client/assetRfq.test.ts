@@ -36,6 +36,7 @@ import {
     recordOfferBinding,
 } from "../../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "../../src/program";
+import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../../src/protocol";
 import { verifyTaker } from "../../src/client/verify";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
@@ -138,6 +139,30 @@ afterEach(() => {
 });
 
 describe("quote() on a negotiated asset market", () => {
+    it.each([
+        ["BTC to asset", buy()],
+        ["asset to BTC", sell()],
+    ])("derives distinct deposits for repeat %s swaps with identical terms", async (_, input) => {
+        const { client, transport } = await setup({
+            answer: (payload) => arkadeAssetAnswer(payload, CLOCK, { supportsNonce: true }),
+        });
+        const first = await client.quote(input);
+        const second = await client.quote(input);
+
+        expect(first.give).toEqual(second.give);
+        expect(first.take).toEqual(second.take);
+        expect(transport.sent[0]?.rfq_id).not.toBe(transport.sent[1]?.rfq_id);
+        const scriptFor = (id: string) => {
+            const preparation = client.preparationOf(id);
+            if (!preparation || !("offer" in preparation)) {
+                throw new Error("missing offer preparation");
+            }
+            expect(preparation.offer.offerBinding.version).toBe(ASSET_SWAP_DIRECTED_NONCE);
+            return hex.encode(preparation.offer.swapPkScript);
+        };
+        expect(scriptFor(first.id)).not.toBe(scriptFor(second.id));
+    });
+
     it("asks the solver once, and returns the terms it answered", async () => {
         // A payout the card's own formula would not have produced: 990 against
         // the 997 the feed prices. A client reading the feed for its terms
@@ -169,7 +194,7 @@ describe("quote() on a negotiated asset market", () => {
             // one.
             amount_side: "from",
             amount: "10000",
-            contract_versions: [ASSET_SWAP_DIRECTED],
+            contract_versions: [ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED],
             profile: {
                 maker_pk_script: expect.stringMatching(/^5120[0-9a-f]{64}$/),
                 maker_public_key: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -263,7 +288,7 @@ describe("quote() on a negotiated asset market", () => {
             });
             vi.mocked(deriveOffer).mockClear();
             await expect(client.quote(buy())).rejects.toThrow(
-                `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED}`,
+                `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED_NONCE}, ${ASSET_SWAP_DIRECTED}`,
             );
             expect(deriveOffer).not.toHaveBeenCalled();
         });
@@ -544,10 +569,16 @@ describe("a directed quote (asset-swap-directed)", () => {
                 : base(payload);
     };
 
-    it("advertises asset-swap-directed alone", async () => {
+    it("prefers the nonce contract but still accepts a legacy directed solver", async () => {
         const { client, transport } = await setup({ answer: directed(TAKER_KEY) });
-        await client.quote(buy());
-        expect(transport.sent[0]?.contract_versions).toEqual([ASSET_SWAP_DIRECTED]);
+        const quote = await client.quote(buy());
+        expect(transport.sent[0]?.contract_versions).toEqual([
+            ASSET_SWAP_DIRECTED_NONCE,
+            ASSET_SWAP_DIRECTED,
+        ]);
+        expect(client.preparationOf(quote.id)).toMatchObject({
+            offer: { offerBinding: { version: ASSET_SWAP_DIRECTED } },
+        });
     });
 
     it("derives under the key that answered, and records the covenant as a binding", async () => {
@@ -598,9 +629,12 @@ describe("a directed quote (asset-swap-directed)", () => {
 });
 
 describe("accept() on a negotiated asset market", () => {
-    const harness = async (over: Parameters<typeof acceptWallet>[0] = {}) => {
+    const harness = async (
+        over: Parameters<typeof acceptWallet>[0] = {},
+        answer?: SolverAnswer,
+    ) => {
         const wallet = await acceptWallet(over);
-        const { client, repository, transport } = await setup({ wallet });
+        const { client, repository, transport } = await setup({ wallet, answer });
         return { client, repository, transport, wallet };
     };
 
@@ -653,24 +687,39 @@ describe("accept() on a negotiated asset market", () => {
         expect(wallet.sent).toHaveLength(0);
     });
 
-    it("resumes a record that carries only its binding with the packet it encodes", async () => {
-        let failing = true;
-        const { client, repository, wallet } = await harness({
-            failSend: () => (failing ? new Error("send exploded") : (undefined as never)),
-        });
-        const quote = await client.quote(buy());
-        await expect(client.accept(quote)).rejects.toThrow(/send exploded/);
-        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
-        expect(stored.offerHex).toBeUndefined();
-        failing = false;
+    it.each([ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE])(
+        "resumes a %s record from its binding and rebuilds the funding packet",
+        async (version) => {
+            let failing = true;
+            const { client, repository, transport, wallet } = await harness(
+                { failSend: () => (failing ? new Error("send exploded") : (undefined as never)) },
+                (payload) =>
+                    arkadeAssetAnswer(payload, CLOCK, {
+                        supportsNonce: version === ASSET_SWAP_DIRECTED_NONCE,
+                    }),
+            );
+            const quote = await client.quote(buy());
+            await expect(client.accept(quote)).rejects.toThrow(/send exploded/);
+            const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+            expect(stored.offerHex).toBeUndefined();
+            expect(stored.binding?.version).toBe(version);
+            const rfqId = transport.sent[0]?.rfq_id as string;
+            expect(stored.binding?.nonce).toEqual(
+                version === ASSET_SWAP_DIRECTED_NONCE
+                    ? hex.encode(assetRfqNonce(rfqId))
+                    : undefined,
+            );
+            failing = false;
 
-        await client.accept(quote);
+            await client.accept(quote);
 
-        const [extension] = wallet.sent[0]?.extensions ?? [];
-        expect(extension?.type).toBe(OFFER_PACKET_TYPE);
-        const sent = bindingFromOffer(decodeOffer(extension!.payload), OPERATOR_PUBKEY);
-        expect(recordOfferBinding(sent)).toEqual(stored.binding);
-    });
+            const [extension] = wallet.sent[0]?.extensions ?? [];
+            expect(extension?.type).toBe(OFFER_PACKET_TYPE);
+            expect(hex.encode(extension!.payload)).not.toContain(rfqId);
+            const sent = bindingFromOffer(decodeOffer(extension!.payload), OPERATOR_PUBKEY);
+            expect(recordOfferBinding(sent)).toEqual(stored.binding);
+        },
+    );
 
     it("leaves nothing durable when registration fails", async () => {
         const { client, repository, wallet } = await harness({
