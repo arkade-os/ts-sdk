@@ -256,8 +256,8 @@ describe("offer contract registration", () => {
             status: vi.fn(async () => null),
             close: vi.fn(async () => undefined),
         });
-        const request = (transport: AttestingRfqTransport) =>
-            requestArkadeSwap(wallet, transport, {
+        const request = (transport: AttestingRfqTransport, maker: IWallet = wallet) =>
+            requestArkadeSwap(maker, transport, {
                 offerAsset,
                 wantAsset: testAsset,
                 amount: 700n,
@@ -274,6 +274,14 @@ describe("offer contract registration", () => {
                 reason: "carrier_malformed",
             });
         }
+
+        const reads: unknown[] = [];
+        const counted = {
+            ...wallet,
+            getArkadeInfo: (opts?: unknown) => (reads.push(opts), wallet.getArkadeInfo()),
+        } as unknown as IWallet;
+        await request(quoteWith("1000"), counted);
+        expect(reads).toEqual([{ requireLive: true }]);
     });
 
     it("registers the funded covenant as an escrowed arkade contract", async () => {

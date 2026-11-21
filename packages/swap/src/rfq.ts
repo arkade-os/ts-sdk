@@ -1584,13 +1584,12 @@ export async function requestArkadeSwap(
             );
         }
     }
+    const offerInfo = info ?? (await wallet.getArkadeInfo({ requireLive: true }));
     const carrierSats =
-        params.offerAsset === undefined
-            ? 0n
-            : quoteCarrierSats(quote, (info ?? (await wallet.getArkadeInfo())).dust);
+        params.offerAsset === undefined ? 0n : quoteCarrierSats(quote, offerInfo.dust);
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
-        ...(info === undefined ? {} : { info }),
+        info: offerInfo,
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
