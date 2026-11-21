@@ -3,7 +3,7 @@
  * L1 HTLC itself. Every case pins the no-double-payment invariants: the solver funds the HTLC
  * once, the recipient is paid once, and the solver takes no more of the lockup than it quoted.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
 import {
     EsploraProvider,
@@ -25,6 +25,7 @@ import {
     type SwapClient,
 } from "../../src";
 import { attesting } from "../../src/client/transport";
+import { ONCHAIN_CLAIM_BUMP_SECONDS } from "../../src/onchainHtlc";
 
 const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
@@ -34,6 +35,7 @@ const bccli = "docker exec bitcoin bitcoin-cli -regtest -rpcuser=admin1 -rpcpass
 const lncli = "docker exec lnd lncli --network=regtest";
 
 const PAYOUT_SATS = 20_000n;
+const EXTRA_SATS = 1_000;
 
 const sh = (command: string): string =>
     execSync(command, { encoding: "utf8" })
@@ -47,15 +49,21 @@ const mine = (blocks = 1): void => {
     sh(`${bccli} generatetoaddress ${blocks} ${sh(`${bccli} getnewaddress`)}`);
 };
 
+/** A block with no mempool transactions in it, so an unconfirmed claim stays unconfirmed. */
+const mineEmpty = (): void => {
+    sh(`${bccli} generateblock ${sh(`${bccli} getnewaddress`)} '[]'`);
+};
+
 const waitFor = async (
     what: string,
     fn: () => Promise<boolean>,
-    { timeout = 300_000, interval = 2_000, mining = false } = {},
+    { timeout = 300_000, interval = 2_000, mining = false as boolean | "empty" } = {},
 ): Promise<void> => {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
         if (await fn()) return;
-        if (mining) mine();
+        if (mining === "empty") mineEmpty();
+        else if (mining) mine();
         await new Promise((r) => setTimeout(r, interval));
     }
     throw new Error(`timeout waiting for ${what}`);
@@ -70,6 +78,30 @@ const outputsPaying = async (address: string): Promise<number[]> => {
         tx.vout.filter((o) => o.scriptpubkey_address === address).map((o) => o.value),
     );
 };
+
+type Utxo = { txid: string; vout: number; value: number; status: { confirmed: boolean } };
+
+const unspentAt = async (address: string): Promise<Utxo[]> =>
+    (await (await fetch(`${ESPLORA_API_URL}/address/${address}/utxo`)).json()) as Utxo[];
+
+const spenderOf = async (address: string, { txid, vout }: Utxo): Promise<string | undefined> => {
+    const txs = (await (await fetch(`${ESPLORA_API_URL}/address/${address}/txs`)).json()) as
+        | { txid: string; vin: { txid: string; vout: number }[] }[]
+        | { error: string };
+    if (!Array.isArray(txs)) return undefined;
+    return txs.find((tx) => tx.vin.some((i) => i.txid === txid && i.vout === vout))?.txid;
+};
+
+const paidBy = async (txid: string, address: string): Promise<bigint> => {
+    const tx = (await (await fetch(`${ESPLORA_API_URL}/tx/${txid}`)).json()) as {
+        vout: { scriptpubkey_address?: string; value: number }[];
+    };
+    return BigInt(tx.vout.find((o) => o.scriptpubkey_address === address)?.value ?? 0);
+};
+
+const confirmed = async (txid: string): Promise<boolean> =>
+    ((await (await fetch(`${ESPLORA_API_URL}/tx/${txid}/status`)).json()) as { confirmed: boolean })
+        .confirmed;
 
 const receivedBy = (address: string): bigint =>
     BigInt(Math.round(Number(sh(`${bccli} getreceivedbyaddress ${address} 1`)) * 1e8));
@@ -154,7 +186,10 @@ const send = async (client: SwapClient) => {
 };
 
 /** Drive to the end, then assert both legs moved exactly once and the client paid exactly `give`. */
-const settles = async (s: Awaited<ReturnType<typeof send>>): Promise<void> => {
+const settles = async (
+    s: Awaited<ReturnType<typeof send>>,
+    { htlcPayments = 1, payout = PAYOUT_SATS } = {},
+): Promise<void> => {
     await waitFor("the client's L1 claim", async () => seen.get(s.swap.id)?.outcome === "claimed", {
         mining: true,
     });
@@ -162,14 +197,10 @@ const settles = async (s: Awaited<ReturnType<typeof send>>): Promise<void> => {
         (await lockupVtxos(s.record)).every((v) => v.isSpent),
     );
 
-    await waitFor(
-        "the L1 payout to confirm",
-        async () => receivedBy(s.destination) >= PAYOUT_SATS,
-        {
-            mining: true,
-        },
-    );
-    expect(await htlcOutputs(s.record)).toHaveLength(1);
+    await waitFor("the L1 payout to confirm", async () => receivedBy(s.destination) >= payout, {
+        mining: true,
+    });
+    expect(await htlcOutputs(s.record)).toHaveLength(htlcPayments);
     expect(await outputsPaying(s.destination)).toHaveLength(1);
 
     const paid = s.balanceBefore - s.quote.give.amount;
@@ -292,5 +323,53 @@ describe("arkade -> onchain against the real solver (regtest)", () => {
         const second = clientOn();
         await second.ready;
         await settles(s);
+    }, 600_000);
+
+    it("bumps a stuck claim while a later output sits at the HTLC script", async () => {
+        const s = await send(clientOn());
+        const htlcAddress = s.record.profile.htlcAddress as string;
+        await waitFor(
+            "the solver's HTLC funding",
+            async () => (await htlcOutputs(s.record)).length > 0,
+        );
+        sh(`${bccli} sendtoaddress ${htlcAddress} ${EXTRA_SATS / 1e8}`);
+        await waitFor(
+            "both outputs at the HTLC",
+            async () => (await unspentAt(htlcAddress)).length === 2,
+        );
+        const [fill] = (await unspentAt(htlcAddress)).filter((u) => u.value !== EXTRA_SATS);
+        mine();
+
+        let claim: string | undefined;
+        await waitFor(
+            "the client's claim of the fill",
+            async () => (claim = await spenderOf(htlcAddress, fill)) !== undefined,
+            { mining: "empty" },
+        );
+        const claimTxid = claim as string;
+        expect(await confirmed(claimTxid)).toBe(false);
+        expect((await unspentAt(htlcAddress)).map((u) => u.value)).toEqual([EXTRA_SATS]);
+
+        const realNow = Date.now.bind(Date);
+        const clock = vi
+            .spyOn(Date, "now")
+            .mockImplementation(() => realNow() + (ONCHAIN_CLAIM_BUMP_SECONDS + 60) * 1000);
+        let bump: string | undefined;
+        try {
+            await waitFor(
+                "the claim's fee bump",
+                async () =>
+                    ![undefined, claimTxid].includes((bump = await spenderOf(htlcAddress, fill))),
+                { timeout: 120_000 },
+            );
+        } finally {
+            clock.mockRestore();
+        }
+        const bumpTxid = bump as string;
+
+        // The bump's extra fee comes out of the payout.
+        await settles(s, { htlcPayments: 2, payout: await paidBy(bumpTxid, s.destination) });
+        expect(await spenderOf(htlcAddress, fill)).toBe(bumpTxid);
+        expect((await unspentAt(htlcAddress)).map((u) => u.value)).toEqual([EXTRA_SATS]);
     }, 600_000);
 });
