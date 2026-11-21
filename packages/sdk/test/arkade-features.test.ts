@@ -927,7 +927,7 @@ describe("ArkadeContract — extended features", () => {
             h: new Uint8Array(20),
         });
         await c.functions
-            .claim(new Uint8Array(32).fill(0x42))
+            .claim({ tapscript: [new Uint8Array(32).fill(0x42)] })
             .from(COIN)
             .to(p2tr(receiver), AMOUNT)
             .send();
@@ -959,8 +959,8 @@ describe("ArkadeContract — extended features", () => {
         await expect(
             ark
                 .transaction()
-                .from(COIN, viaEmulator.unlock.claim(preimage))
-                .from(COIN2, viaArkd.unlock.claim(preimage))
+                .from(COIN, viaEmulator.unlock.claim({ tapscript: [preimage] }))
+                .from(COIN2, viaArkd.unlock.claim({ tapscript: [preimage] }))
                 .to(p2tr(receiver), AMOUNT)
                 .change(p2tr())
                 .send(),
