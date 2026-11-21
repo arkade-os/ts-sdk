@@ -327,7 +327,7 @@ style and have not been backfilled.
 
 - **A negative or non-integer relative timelock is rejected** instead of encoding a different or unspendable CSV. `Wallet.create` now fails against an operator that advertises one as its exit delay.
 
-- **`OnchainWallet.bumpP2A` funds the fee child from confirmed coins first**, falling back to unconfirmed ones only when confirmed coins cannot pay, as a TRUC child relays only on confirmed fee inputs. Coin selection for both P2A bumps now prices the fee at the number of inputs it selects and keeps the change above dust.
+- **`OnchainWallet.bumpP2A` funds the fee child from confirmed coins first**, falling back to unconfirmed ones only when confirmed coins cannot pay, as a TRUC child relays only on confirmed fee inputs. Coin selection for both P2A bumps now prices the fee at the number of inputs it selects and keeps the change above dust, and refuses a child over TRUC's 1000 vB limit instead of building one that cannot relay.
 
 - **ArkadeCash claims check the operator's signatures.** `claimCash` verifies the operator's signatures on the sweep, as sends do, so a sweep the operator did not co-sign is reported as failed.
 

@@ -290,14 +290,22 @@ export class OnchainWallet implements AnchorBumper {
 
         const anchor = Number(findP2AOutput(parent).witnessUtxo!.amount);
         let selected: ReturnType<typeof selectCoins> = { inputs: [], changeAmount: 0n };
+        let childVsize = 0;
         for (let n = 1; ; n = selected.inputs.length) {
             const estimator = TxWeightEstimator.create()
                 .addP2AInput()
                 .addOutputAddress(this.address, this.network);
             for (let i = 0; i < n; i++) estimator.addKeySpendInput(true);
-            const fee = Math.ceil(rate * (parent.vsize + Number(estimator.vsize().value)));
+            childVsize = Number(estimator.vsize().value);
+            const fee = Math.ceil(rate * (parent.vsize + childVsize));
             selected = selectCoins(coins, Math.max(1, fee + CHILD_DUST_AMOUNT - anchor));
             if (selected.inputs.length <= n) break;
+        }
+        // TRUC (BIP 431) caps a child of an unconfirmed v3 parent at 1000 vB.
+        if (childVsize > 1000) {
+            throw new Error(
+                `fee child needs ${selected.inputs.length} inputs (${childVsize} vB, over the 1000 vB TRUC limit); consolidate the wallet's coins first`,
+            );
         }
 
         const { child } = buildAnchorChild({

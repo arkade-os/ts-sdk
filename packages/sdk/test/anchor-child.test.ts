@@ -166,4 +166,9 @@ describe("OnchainWallet.bumpP2A coin selection", () => {
         const inputs = await feeInputs([coin("11", 600, true), coin("22", 600, true)], 1);
         expect(inputs).toHaveLength(2);
     });
+
+    it("refuses a fee child over the 1000 vB TRUC limit", async () => {
+        const coins = Array.from({ length: 20 }, (_, i) => coin((i + 16).toString(16), 600, true));
+        await expect(feeInputs(coins, 8)).rejects.toThrow(/1000 vB TRUC limit/);
+    });
 });
