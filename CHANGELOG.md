@@ -315,13 +315,6 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
-- **`@arkade-os/swap`: repeat asset RFQs derive distinct deposits.** Clients
-  prefer `asset-swap-directed-nonce`, which binds a hash of the request ID to
-  the covenant through a dedicated compiler artifact in each payout direction.
-  Equal terms on separate requests can now settle independently.
-  The client still negotiates `asset-swap-directed` with older solvers and can
-  recover previously funded deposits.
-
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the
   open, so a client a second or two ahead of the solver received no bids at
@@ -1834,6 +1827,17 @@ style and have not been backfilled.
   `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
   audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
   high` and fails on any new high or critical advisory.
+
+## [0.1.13] - 2026-11-21
+
+### Bug Fixes
+
+- **`@arkade-os/swap`: repeat asset RFQs derive distinct deposits.** Clients
+  prefer `asset-swap-directed-nonce`, which binds a hash of the request ID to
+  the covenant through a dedicated compiler artifact in each payout direction.
+  Equal terms on separate requests can now settle independently.
+  The client still negotiates `asset-swap-directed` with older solvers and can
+  recover previously funded deposits.
 
 ## [0.4.77] - 2026-09-30
 
