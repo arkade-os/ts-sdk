@@ -330,6 +330,8 @@ type Profile = Record<string, unknown>;
 
 const profileOf = (payload: Payload): Profile => payload.profile as Profile;
 
+const cosignerOf = (profile: Profile): Uint8Array => hex.decode(profile.emulator_pubkey as string);
+
 const baseQuote = (payload: Payload, clock: SolverClock): Omit<RfqQuote, "profile"> => ({
     v: 1,
     type: "rfq_quote",
@@ -364,7 +366,7 @@ export const lightningSendAnswer = (
         paymentHash: PAYMENT_HASH,
         claimDelay: CLAIM_DELAY,
         refundWithoutReceiverDelay,
-        emulatorPubkey: EMULATOR_PUBKEY,
+        emulatorPubkey: cosignerOf(profile),
         senderPubkey: hex.decode(profile.client_refund_pubkey as string),
         receiverPkScript: RECEIVER_PK_SCRIPT,
         refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
@@ -398,7 +400,7 @@ export const lightningReceiveAnswer = (
         operatorPubkey: OPERATOR_PUBKEY,
         paymentHash,
         claimDelay: CLAIM_DELAY,
-        emulatorPubkey: EMULATOR_PUBKEY,
+        emulatorPubkey: cosignerOf(profile),
         solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
         payoutPubkey: hex.decode(profile.payout_pubkey as string),
         payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
@@ -437,7 +439,7 @@ export const onchainSendAnswer = (
         paymentHash,
         claimDelay: CLAIM_DELAY,
         refundWithoutReceiverDelay: over.refundWithoutReceiverDelay,
-        emulatorPubkey: EMULATOR_PUBKEY,
+        emulatorPubkey: cosignerOf(profile),
         senderPubkey: hex.decode(profile.client_refund_pubkey as string),
         receiverPkScript: RECEIVER_PK_SCRIPT,
         refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
@@ -499,7 +501,7 @@ export const onchainReceiveAnswer = (
         operatorPubkey: OPERATOR_PUBKEY,
         paymentHash,
         claimDelay: CLAIM_DELAY,
-        emulatorPubkey: EMULATOR_PUBKEY,
+        emulatorPubkey: cosignerOf(profile),
         solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
         payoutPubkey: hex.decode(profile.payout_pubkey as string),
         payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
@@ -584,7 +586,7 @@ export const arkadeAssetAnswer = (
             ...(buying ? { wantAsset: usd } : { offerAsset: usd }),
             makerPkScript: hex.decode(profile.maker_pk_script as string),
             makerPublicKey: hex.decode(profile.maker_public_key as string),
-            emulatorPubkey: EMULATOR_PUBKEY,
+            emulatorPubkey: cosignerOf(profile),
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
             ...(taker && { taker }),
         },

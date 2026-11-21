@@ -86,7 +86,8 @@ export function createArkadeBatchHandler(
     message: Proof.RegisterMessage,
     session: SignerSession,
     arkProvider: OperatorProvider,
-    emulator: EmulatorProvider,
+    /** Undefined when arkd itself runs the inputs' Arkade Script and signs at finalization. */
+    emulator: EmulatorProvider | undefined,
     network: Network,
     /**
      * Expected recipients of the settlement, validated against the virtual
@@ -359,12 +360,14 @@ export function createArkadeBatchHandler(
                 : event.commitmentTx;
 
             // Submit to the emulator for counter-signing
-            const emuResult = await emulator.submitFinalization(
-                { proof: signedProof, message },
-                signedForfeits,
-                connectorTreeNodes,
-                commitmentB64,
-            );
+            const emuResult = emulator
+                ? await emulator.submitFinalization(
+                      { proof: signedProof, message },
+                      signedForfeits,
+                      connectorTreeNodes,
+                      commitmentB64,
+                  )
+                : { signedForfeits, signedCommitmentTx: undefined };
 
             // Submit to server
             await arkProvider.submitSignedForfeitTxs(
