@@ -329,7 +329,7 @@ style and have not been backfilled.
 
 - **`OnchainWallet.bumpP2A` funds the fee child from confirmed coins first**, falling back to unconfirmed ones only when confirmed coins cannot pay, as a TRUC child relays only on confirmed fee inputs. Coin selection for both P2A bumps now prices the fee at the number of inputs it selects and keeps the change above dust.
 
-- **ArkadeCash claims check the operator's signatures, and imported-key recovery releases keys it can no longer use.** `claimCash` verifies the operator's signatures on the sweep, so a sweep the operator did not co-sign is reported as failed. Recovery treats subdust and exited coins as unsettleable, so a key whose only remaining coins are those is purged instead of kept.
+- **ArkadeCash claims check the operator's signatures.** `claimCash` verifies the operator's signatures on the sweep, as sends do, so a sweep the operator did not co-sign is reported as failed.
 
 - **`@arkade-os/swap`: a solver's asset carrier is capped at the operator's dust.** A quote whose `carrier_sats` exceeds the operator's dust (at least 330 sats) is refused before anything is registered or funded, and a carrier the payout does not return now counts as fee.
 
