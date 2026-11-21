@@ -1,6 +1,11 @@
 import { ExtendedCoin, IWallet } from ".";
 import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "./vtxo";
-import { OperatorInfo, FeeInfo, SettlementEvent } from "../providers/ark";
+import {
+    OperatorInfo,
+    FeeInfo,
+    SettlementEvent,
+    OnchainCosignRejectedError,
+} from "../providers/ark";
 import { Estimator } from "../arkfee";
 import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
@@ -461,7 +466,8 @@ export class Ramps {
                 outputs: [{ address, amount: Number(amount) }],
             });
         } catch (e) {
-            if (!isCosignFallback(e)) throw e;
+            // arkd answers only once it holds the signed tx, so settling as well could pay twice.
+            if (!isCosignFallback(e) || e instanceof OnchainCosignRejectedError) throw e;
             return undefined;
         }
     }
