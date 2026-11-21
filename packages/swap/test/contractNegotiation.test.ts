@@ -4,6 +4,7 @@ import { asset } from "@arkade-os/sdk";
 import { requestArkadeSwap, requestVersionedQuote, SwapRefusal, type RfqQuote } from "../src/rfq";
 import { createOffer, decodeOffer, deriveOffer, offerContract } from "../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED, type AssetSwapContractVersion } from "../src/program";
+import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../src/protocol";
 import type { AttestingRfqTransport } from "../src/client/transport";
 import { canFailoverQuote } from "../src/client/solverRouting";
 import { SolverResponseInvalid } from "../src/transportErrors";
@@ -17,6 +18,7 @@ vi.mock("../src/offer", async (original) => {
 const wantAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const emulatorPubkey = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
 const TAKER = SOLVER_DISCOVERY_KEY;
+const RFQ_ID = "11".repeat(32);
 
 const quoteOf = (
     offer: { address: string; swapPkScript: Uint8Array },
@@ -24,7 +26,7 @@ const quoteOf = (
 ): RfqQuote => ({
     v: 1,
     type: "rfq_quote",
-    rfq_id: "11".repeat(32),
+    rfq_id: RFQ_ID,
     pair: `arkade:BTC->arkade:${wantAsset}`,
     from_amount: "700",
     to_amount: "50000",
@@ -45,7 +47,8 @@ const setup = async (
         wantAsset,
         emulatorPubkey,
         contractVersion: quotedVersion,
-        ...(quotedVersion === ASSET_SWAP_DIRECTED ? { taker: hex.decode(TAKER) } : {}),
+        ...(quotedVersion !== ASSET_SWAP_V2 ? { taker: hex.decode(TAKER) } : {}),
+        ...(quotedVersion === ASSET_SWAP_DIRECTED_NONCE ? { nonce: assetRfqNonce(RFQ_ID) } : {}),
     });
     const requestQuote = vi.fn(async (_payload: Record<string, unknown>) =>
         quoteOf(quoted, contractVersion),
@@ -62,18 +65,27 @@ const setup = async (
             wantAsset,
             amount: 700n,
             emulatorPubkey,
+            rfqId: RFQ_ID,
             now: 1_800_000_000,
         });
     return { ...f, quoted, request, requestQuote };
 };
 
 describe("requestArkadeSwap contract version negotiation", () => {
-    it("advertises asset-swap-directed alone", async () => {
+    it("prefers the nonce version and accepts the original directed version", async () => {
         const f = await setup(ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED);
         await f.request();
         expect(f.requestQuote.mock.calls[0]?.[0]).toMatchObject({
-            contract_versions: [ASSET_SWAP_DIRECTED],
+            contract_versions: [ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED],
         });
+    });
+
+    it("derives a nonce-bound offer from the requested RFQ id", async () => {
+        const f = await setup(ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE);
+        const result = await f.request();
+        expect(result.address).toBe(f.quoted.address);
+        expect(decodeOffer(hex.decode(result.offerHex)).nonce).toEqual(assetRfqNonce(RFQ_ID));
+        expect(result.offerHex).not.toContain(RFQ_ID);
     });
 
     it("binds the attested responder as the taker of the offer it registers", async () => {
@@ -110,7 +122,7 @@ describe("requestArkadeSwap contract version negotiation", () => {
     it.each(["asset-swap-v3", ASSET_SWAP_V2])("refuses a quote echoing %s", async (version) => {
         const f = await setup(ASSET_SWAP_V2, version);
         await expect(f.request()).rejects.toThrow(
-            `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED}`,
+            `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED_NONCE}, ${ASSET_SWAP_DIRECTED}`,
         );
         expect(createOffer).not.toHaveBeenCalled();
     });

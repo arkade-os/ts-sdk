@@ -30,6 +30,7 @@ import {
 } from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "../../src/program";
+import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../../src/protocol";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -554,6 +555,7 @@ export const arkadeAssetAnswer = (
         toAmount?: bigint;
         /** Quotes and derives `asset-swap-directed` under this key; default, the one the transport attests. */
         taker?: Uint8Array;
+        supportsNonce?: boolean;
     } = {},
 ): RfqQuote => {
     const profile = profileOf(payload);
@@ -570,10 +572,13 @@ export const arkadeAssetAnswer = (
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
     // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
     const version = (payload.contract_versions as string[] | undefined)?.find(
-        (v) => v === ASSET_SWAP_DIRECTED || v === ASSET_SWAP_V2,
+        (v) =>
+            v === ASSET_SWAP_DIRECTED ||
+            v === ASSET_SWAP_V2 ||
+            (over.supportsNonce && v === ASSET_SWAP_DIRECTED_NONCE),
     );
     const taker =
-        version === ASSET_SWAP_DIRECTED
+        version === ASSET_SWAP_DIRECTED || version === ASSET_SWAP_DIRECTED_NONCE
             ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY))
             : undefined;
     const script = offerContract(
@@ -587,9 +592,14 @@ export const arkadeAssetAnswer = (
             emulatorPubkey: EMULATOR_PUBKEY,
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
             ...(taker && { taker }),
+            ...(version === ASSET_SWAP_DIRECTED_NONCE && {
+                nonce: assetRfqNonce(payload.rfq_id as string),
+            }),
         },
         OPERATOR_PUBKEY,
-        version === ASSET_SWAP_DIRECTED ? version : ASSET_SWAP_V2,
+        version === ASSET_SWAP_DIRECTED || version === ASSET_SWAP_DIRECTED_NONCE
+            ? version
+            : ASSET_SWAP_V2,
     );
     return {
         v: 1,
