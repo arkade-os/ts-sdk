@@ -18,6 +18,7 @@ import {
     type RelativeTimelock,
 } from "../src";
 import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
+import { compile } from "../src/compiler";
 
 function xOnly(): Uint8Array {
     return schnorr.getPublicKey(schnorr.utils.randomSecretKey());
@@ -707,6 +708,90 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 oracles,
             }).args["policy.outs.1.vout"],
         ).toBe(0n);
+    });
+
+    it("binds a compiled contract's nested arrays and asset group records", async () => {
+        const { ark } = await connect();
+        const { program } = await compile({
+            entry: "grid.ark",
+            files: {
+                "grid.ark": `pragma arkade ^0.1.0;
+struct Board { pubkey owner; int[2][2] cells; }
+contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
+  function spend(int[2][2] m, AssetGroupInput record) {
+    require(tx.outputs[0].value == grid[0][1] + grid[1][2] + board.cells[1][0] + expected.amount + m[1][0] + record.amount);
+  }
+}`,
+            },
+        });
+        const deployed = {
+            "grid.0.0": 1n,
+            "grid.0.1": 2n,
+            "grid.0.2": 3n,
+            "grid.1.0": 4n,
+            "grid.1.1": 5n,
+            "grid.1.2": 6n,
+            "board.owner": receiver,
+            "board.cells.0.0": 7n,
+            "board.cells.0.1": 8n,
+            "board.cells.1.0": 9n,
+            "board.cells.1.1": 10n,
+            "expected.type": 11n,
+            "expected.index": 12n,
+            "expected.amount": 13n,
+        };
+        expect(program.params!.map((p) => p.name)).toEqual([...Object.keys(deployed), "server"]);
+        const whole = {
+            grid: [
+                [1n, 2n, 3n],
+                [4n, 5n, 6n],
+            ],
+            board: {
+                owner: receiver,
+                cells: [
+                    [7n, 8n],
+                    [9n, 10n],
+                ],
+            },
+            expected: { type: 11n, index: 12n, amount: 13n },
+        };
+        const contract = ark.contract(program, whole);
+        expect({ ...contract.args }).toEqual({ ...deployed, server });
+        expect({ ...ark.contract(program, deployed).args }).toEqual({ ...deployed, server });
+        // The covenant pushes grid[0][1], grid[1][2], board.cells[1][0] and expected.amount.
+        const covenant = contract.vtxoScript.functionByName("spend")!.arkadeScript!;
+        const pushes = arkade.ArkadeScript.decode(covenant).slice(2, 8);
+        expect(pushes).toEqual([2, 6, "ADD", 9, "ADD", 13]);
+        expect(() =>
+            ark.contract(program, { ...whole, grid: [whole.grid[0], [...whole.grid[1], 7n]] }),
+        ).toThrow(/undeclared argument 'grid.1.3'/);
+        expect(() => ark.contract(program, { ...whole, grid: whole.grid.flat() })).toThrow(
+            /'grid.0.0' is declared but not bound/,
+        );
+
+        const called = {
+            "m.0.0": 1n,
+            "m.0.1": 2n,
+            "m.1.0": 3n,
+            "m.1.1": 4n,
+            "record.type": 0n,
+            "record.index": 1n,
+            "record.amount": 5n,
+        };
+        expect(program.functions.spend.arkadeScript!.witness).toEqual(
+            Object.keys(called).reverse(),
+        );
+        const record = { type: 0n, index: 1n, amount: 5n };
+        const m = [
+            [1n, 2n],
+            [3n, 4n],
+        ];
+        expect({
+            ...contract.unlock.spend({ arkadeScript: [m, record] }).args.arkadeScript,
+        }).toEqual(called);
+        expect(() => contract.unlock.spend({ arkadeScript: [[m[0], [3n]], record] })).toThrow(
+            /missing input 'm.1.1'/,
+        );
     });
 
     it("fails locally when leaf signing needs another identity or a covenant tweak", async () => {

@@ -72,6 +72,12 @@ export interface ContractDebugInfo {
     functions: Record<string, { sourceMap: SourceRange[] }>;
 }
 
+const ASSET_GROUP_RECORD: [string, string][] = [
+    ["type", "int"],
+    ["index", "int"],
+    ["amount", "int"],
+];
+
 /** Native result structs, in the field order the compiler flattens them. */
 const NATIVE_STRUCTS: Record<string, [string, string][]> = {
     AssetId: [
@@ -98,6 +104,8 @@ const NATIVE_STRUCTS: Record<string, [string, string][]> = {
         ["amount", "int"],
         ["found", "bool"],
     ],
+    AssetGroupInput: ASSET_GROUP_RECORD,
+    AssetGroupOutput: ASSET_GROUP_RECORD,
     G2Point: [
         ["xC1", "int"],
         ["xC0", "int"],
@@ -205,13 +213,11 @@ function argType(arkType: string): ArkadeArgType {
     return arkType as ArkadeArgType;
 }
 
+/** `int[2][3]` → `["int[3]", 2]`: the first size is the outermost. */
 function arrayParts(type: string): [string, number] {
-    const open = type.indexOf("[");
-    if (open < 0 || !type.endsWith("]")) return [type, 0];
-    const length = Number(type.slice(open + 1, -1));
-    return Number.isSafeInteger(length) && length > 0 && /^\d+$/.test(type.slice(open + 1, -1))
-        ? [type.slice(0, open), length]
-        : [type, 0];
+    const [, base, size, inner] = /^([^[\]]+)\[(\d+)\]((?:\[\d+\])*)$/.exec(type) ?? [];
+    const length = Number(size);
+    return Number.isSafeInteger(length) && length > 0 ? [base + inner, length] : [type, 0];
 }
 
 // One budget per artifact, charged per generated name: nesting and struct fan-out multiply.

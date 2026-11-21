@@ -165,6 +165,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **`programFromArtifact` reads 0.1.0 nested arrays and asset group records.** It refused them as `invalid array type 'int[2][3]'` and `unknown type 'AssetGroupOutput'`. A nested array, as a constructor or Arkade Script input or a struct field, flattens outer index first (`grid.1.2`) and binds whole (`{ grid: [[1n, 2n, 3n], [4n, 5n, 6n]] }`) or by those names; `AssetGroupInput` and `AssetGroupOutput` flatten to `type`, `index` and `amount`.
+
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,
   completed usage (`completedSolverUsage`) or amount-aware advertised cost, after
