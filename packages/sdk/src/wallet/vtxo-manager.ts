@@ -1515,8 +1515,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         dustAmount: bigint,
     ): Promise<void> {
         // Only swept-but-unspent VTXOs can be recovered; a re-run after a
-        // partial/complete recovery sees the rest already spent.
-        const recoverable = vtxos.filter((vtxo) => vtxo.isSwept && !isVtxoSpent(vtxo));
+        // partial/complete recovery sees the rest already spent. Subdust and exited
+        // coins never settle here, so they must not keep the key at rest either.
+        const settleable = (vtxo: ExtendedContractVtxo) =>
+            !isVtxoSpent(vtxo) && !vtxo.isUnrolled && !isSubdust(vtxo, dustAmount);
+        const recoverable = vtxos.filter((vtxo) => vtxo.isSwept && settleable(vtxo));
 
         // Price against the intent-fee policy BEFORE capping, so an input that
         // can't pay its own fee neither takes a viable one's slot nor joins the
@@ -1603,7 +1606,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const spent = new Set(batch.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
         const stillSpendable = vtxos.some(
-            (vtxo) => !isVtxoSpent(vtxo) && !spent.has(`${vtxo.txid}:${vtxo.vout}`),
+            (vtxo) => settleable(vtxo) && !spent.has(`${vtxo.txid}:${vtxo.vout}`),
         );
         if (!stillSpendable) {
             await wallet.removeRecoveryContract(contract.script);

@@ -45,6 +45,11 @@ const info = {
     version: "1",
 };
 
+// The fixture's signer is the generator point, so its private key is 1.
+const operator = SingleKey.fromHex("00".repeat(31) + "01");
+const cosign = async (psbt: string) =>
+    base64.encode((await operator.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
+
 function chain() {
     return {
         getCoins: vi.fn(async () => []),
@@ -65,10 +70,10 @@ async function fakeWallet(cash: ArkadeCash, coins: VirtualCoin[] = []) {
         arkProvider: {
             getInfo: vi.fn(async () => info),
             getPendingTxs: vi.fn(async () => []),
-            submitTx: vi.fn((ark: string, checkpoints: string[]) => ({
+            submitTx: vi.fn(async (ark: string, checkpoints: string[]) => ({
                 arkTxid: Transaction.fromPSBT(base64.decode(ark)).id,
-                finalArkTx: ark,
-                signedCheckpointTxs: checkpoints,
+                finalArkTx: await cosign(ark),
+                signedCheckpointTxs: await Promise.all(checkpoints.map(cosign)),
             })),
         } as never,
         indexerProvider: {

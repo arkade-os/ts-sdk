@@ -248,6 +248,35 @@ describe("claimCash operator check", () => {
         expect(getInfo).toHaveBeenCalledOnce();
     });
 
+    it("reports a sweep the operator did not co-sign as sweep-failed", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const unspent = { ...spentCashVtxo(cashPkScript), isSpent: false };
+        // Hands back exactly what was submitted: our signatures, none of its own.
+        const submitTx = vi.fn(async (arkTx: string, checkpoints: string[]) => ({
+            arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
+            finalArkTx: arkTx,
+            signedCheckpointTxs: checkpoints,
+        }));
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [unspent]), {
+            getPendingTxs: vi.fn(async () => []),
+            submitTx,
+        });
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+            const result = await wallet.claimCash(cash.toString());
+
+            expect(submitTx).toHaveBeenCalledOnce();
+            expect(result.swept).toBe(0);
+            expect(result.unclaimed.vtxos).toEqual([
+                { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "sweep-failed" },
+            ]);
+        } finally {
+            errorLog.mockRestore();
+        }
+    });
+
     // A rotation must not lock the holder out of this operator's cash: before the cutoff it can
     // migrate; after it, once the batch expires and is swept, the claim recovers it.
     it.each([
@@ -1139,6 +1168,67 @@ describe("claimCash import-for-recovery", () => {
         } finally {
             vi.unstubAllGlobals();
         }
+    });
+
+    async function importWith(cash: ArkadeCash, extra: VirtualCoin[]) {
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const index = { view: [sweptCashVtxo(cashPkScript), ...extra] };
+        const indexer = {
+            ...(cashIndexer(cashPkScript, []) as Record<string, unknown>),
+            getVtxos: vi.fn(async (opts?: { scripts?: string[] }) => ({
+                vtxos: opts?.scripts?.includes(cashPkScript) ? index.view : [],
+            })),
+        } as never;
+        const wallet = await makeWallet(indexer, { getPendingTxs: vi.fn(async () => []) });
+        const manager = await wallet.getVtxoManager();
+        const kick = vi.spyOn(manager, "recoverImportedContracts").mockResolvedValue();
+        await wallet.claimCash(cash.toString());
+        kick.mockRestore();
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        const settledTxids = () =>
+            settle.mock.calls[0][0]!.inputs.map((i) => (i as { txid: string }).txid);
+        return { wallet, manager, settle, settledTxids, index };
+    }
+
+    it("purges the key once only a subdust VTXO is left at the address", async () => {
+        const cash = makeCash();
+        const pk = hex.encode(cash.vtxoScript.pkScript);
+        const subdust = { ...sweptCashVtxo(pk), txid: "b".repeat(64), value: 500 };
+        const { wallet, manager, settle, index } = await importWith(cash, [subdust]);
+        index.view = [spentCashVtxo(pk), subdust];
+
+        await manager.recoverImportedContracts();
+
+        expect(settle).not.toHaveBeenCalled();
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
+    });
+
+    it("purges the key after settling when the intent fee leaves the subdust out", async () => {
+        const cash = makeCash();
+        const pk = hex.encode(cash.vtxoScript.pkScript);
+        const subdust = { ...sweptCashVtxo(pk), txid: "b".repeat(64), value: 500 };
+        const { wallet, manager, settledTxids } = await importWith(cash, [subdust]);
+        vi.mocked(wallet.arkProvider.getInfo).mockResolvedValue({
+            ...info,
+            fees: { intentFee: { offchainInput: "600.0" }, txFeeRate: "0" },
+        } as never);
+
+        await manager.recoverImportedContracts();
+
+        expect(settledTxids()).toEqual([CASH_TXID]);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
+    });
+
+    it("purges the key after settling when an exited VTXO shares the address", async () => {
+        const cash = makeCash();
+        const pk = hex.encode(cash.vtxoScript.pkScript);
+        const exited = { ...exitedCashVtxo(pk), txid: "d".repeat(64) };
+        const { wallet, manager, settledTxids } = await importWith(cash, [exited]);
+
+        await manager.recoverImportedContracts();
+
+        expect(settledTxids()).toEqual([CASH_TXID]);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
     });
 });
 

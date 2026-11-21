@@ -5660,6 +5660,7 @@ export class Wallet
                         ],
                         outputs: [{ script: myPkScript, amount: BigInt(vtxo.value) }],
                         serverUnrollScript,
+                        verifyServerSignatures: { serverPubkey: cash.serverPubKey },
                         oneShot: this.oneShotSubmit,
                     });
                     claims.push({ txid: registeredTxid, amount: vtxo.value });
