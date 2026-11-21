@@ -1100,7 +1100,10 @@ describe("arkade.Arkade / ArkadeContract", () => {
             expect(hex.encode(contract.pkScript)).toBe(hex.encode(new VtxoScript([leaf]).pkScript));
 
             const out = new Uint8Array([0x51, 0x20, ...receiver]);
-            await contract.functions.claim(new Uint8Array(32)).to(out, AMOUNT).send();
+            await contract.functions
+                .claim({ tapscript: [new Uint8Array(32)] })
+                .to(out, AMOUNT)
+                .send();
             expect(toArkd.arkTx).toBeDefined();
             expect(captured.arkTx).toBeUndefined();
         });
