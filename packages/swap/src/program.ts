@@ -2,7 +2,9 @@ import { arkade } from "@arkade-os/sdk";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 
+import assetSwapDirectedNonceArtifact from "./contracts/asset-swap-directed-nonce.json";
 import assetSwapDirectedArtifact from "./contracts/asset-swap-directed.json";
+import satsSwapDirectedNonceArtifact from "./contracts/sats-swap-directed-nonce.json";
 import satsSwapDirectedArtifact from "./contracts/sats-swap-directed.json";
 import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
 import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
@@ -41,26 +43,9 @@ const directedSwapPrograms: typeof swapPrograms = {
     wantBtc: arkade.programFromArtifact(satsSwapDirectedArtifact as ContractArtifact),
 };
 
-function withRfqNonce(program: (typeof swapPrograms)["wantAsset"]): typeof program {
-    const fulfill = program.functions.fulfill;
-    const script = fulfill.arkadeScript;
-    if (!script) throw new Error("directed fulfill has no Arkade script");
-    return {
-        ...program,
-        params: [...(program.params ?? []), { name: "nonce", type: "bytes32" }],
-        functions: {
-            ...program.functions,
-            fulfill: {
-                ...fulfill,
-                arkadeScript: { ...script, asm: ["$nonce", "DROP", ...script.asm] },
-            },
-        },
-    };
-}
-
 const nonceSwapPrograms: typeof swapPrograms = {
-    wantAsset: withRfqNonce(directedSwapPrograms.wantAsset),
-    wantBtc: withRfqNonce(directedSwapPrograms.wantBtc),
+    wantAsset: arkade.programFromArtifact(assetSwapDirectedNonceArtifact as ContractArtifact),
+    wantBtc: arkade.programFromArtifact(satsSwapDirectedNonceArtifact as ContractArtifact),
 };
 
 const assetRfqNonceDomain = new TextEncoder().encode("arkade/asset-rfq-nonce/v1");

@@ -317,7 +317,8 @@ style and have not been backfilled.
 
 - **`@arkade-os/swap`: repeat asset RFQs derive distinct deposits.** Clients
   prefer `asset-swap-directed-nonce`, which binds a hash of the request ID to
-  the covenant. Equal terms on separate requests can now settle independently.
+  the covenant through a dedicated compiler artifact in each payout direction.
+  Equal terms on separate requests can now settle independently.
   The client still negotiates `asset-swap-directed` with older solvers and can
   recover previously funded deposits.
 
