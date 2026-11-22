@@ -1455,6 +1455,7 @@ function instantiate(
     keys: Pick<ProgramKeys, "serverKey" | "emulatorKey">,
     exitDelay: bigint | undefined,
 ): void {
+    const defs = new Map((program.params ?? []).map((def) => [def.name, def]));
     for (const [param, child] of Object.entries(instantiatedContracts(program))) {
         const childArgs: Record<string, ArkadeParamValue> = { server: keys.serverKey };
         for (const [name, from] of Object.entries(child.args)) {
@@ -1467,7 +1468,7 @@ function instantiate(
             if (value === undefined) {
                 throw new Error(`program parameter '${from}' is declared but not bound in args`);
             }
-            validateParamValue(program.params!.find((p) => p.name === from)!, value);
+            validateParamValue(defs.get(from)!, value);
             childArgs[name] = value;
         }
         if (child.program.params?.some((p) => p.name === "SERVER_EXIT_DELAY")) {

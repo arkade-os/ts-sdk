@@ -11,6 +11,7 @@ import { ARKADE_OPS } from "./script";
 import {
     SUPPORTED_PROGRAM_VERSION,
     ARKADE_TYPE_ENCODINGS,
+    stringifyArtifact,
     validateParamValue,
     type ArkadeArgType,
     type ArkadeParamValue,
@@ -79,8 +80,9 @@ export interface ProgramFromArtifactOptions {
      * The artifact of every contract instantiated with `new`, directly or through another one, in
      * any order. Each must match the `codeHash` its parent pins in `contracts`. That hash covers the
      * fields in arkadec's order, so an artifact re-serialized with reordered keys (as Postgres
-     * `jsonb` does) is refused: keep the JSON arkadec wrote. At most 256 instantiations are read,
-     * counting a child once per path that reaches it.
+     * `jsonb` does) is refused: keep the JSON arkadec wrote. At most 256 instantiations, with
+     * programs of at most 1,048,576 characters in all, are read, counting a child once per path
+     * that reaches it.
      */
     contracts?: readonly ContractArtifact[];
 }
@@ -361,11 +363,11 @@ function codeHash(artifact: ContractArtifact): [string, ContractArtifact] {
 function instantiationArg(
     token: string,
     def: InputDef,
-    params: readonly InputDef[],
+    params: ReadonlySet<string>,
 ): string | ArkadeParamValue {
     if (token.startsWith("<") && token.endsWith(">")) {
         const name = token.slice(1, -1);
-        if (!params.some((param) => param.name === name)) {
+        if (!params.has(name)) {
             fail(`instantiation argument '${token}' is not a constructor parameter`);
         }
         return name;
@@ -382,21 +384,24 @@ function instantiationArg(
 }
 
 // ponytail: a child reached along several paths is read, and later compiled, once per path, so a
-// list that shares children across levels grows exponentially; this caps the expanded tree. Memoize
-// by code hash (and by mapped values when compiling) if legitimate trees outgrow it.
+// list that shares children across levels grows exponentially. These cap the expanded tree: its
+// children, for the fixed cost of each, and the size of their programs as `stringifyArtifact`
+// writes them, for the cost that grows with each. Memoize by code hash (and by mapped values when
+// compiling) if legitimate trees outgrow them.
 const MAX_INSTANTIATIONS = 256;
+const MAX_INSTANTIATED_CHARS = 1 << 20;
 
 /** Resolve `<CONTRACT:body>` in `parent` to the supplied artifact its pin names, read in turn. */
 function link(
     parent: ContractArtifact,
-    params: readonly InputDef[],
+    params: ReadonlySet<string>,
     body: string,
     supplied: Map<string, ContractArtifact>,
     stack: string[],
-    tree: { left: number },
+    tree: { links: number; chars: number },
 ): Instantiation {
     const [, name, list] = body.match(/^([A-Za-z]\w*)\((.*)\)$/) ?? fail(`malformed '${body}'`);
-    if (--tree.left < 0) {
+    if (--tree.links < 0) {
         fail(`more than ${MAX_INSTANTIATIONS} instantiated contracts, counted once per path`);
     }
     const chain = [...stack, parent.contractName];
@@ -417,6 +422,11 @@ function link(
         );
     }
     const program = readArtifact(child, undefined, supplied, chain, tree);
+    if ((tree.chars -= stringifyArtifact(program).length) < 0) {
+        fail(
+            `instantiated programs exceed ${MAX_INSTANTIATED_CHARS} characters, counted once per path`,
+        );
+    }
     const structs = new Map((child.structs ?? []).map((struct) => [struct.name, struct] as const));
     const layout = { left: MAX_LAYOUT_CHARS };
     const inputs = child.constructorInputs.flatMap((input) => flatten(input, structs, layout));
@@ -592,7 +602,10 @@ export function programFromArtifact(
         if (!isContractArtifact(child)) fail("each of `contracts` must be an arkadec artifact");
         supplied.set(...codeHash(child));
     }
-    return readArtifact(artifact, debug, supplied, [], { left: MAX_INSTANTIATIONS });
+    return readArtifact(artifact, debug, supplied, [], {
+        links: MAX_INSTANTIATIONS,
+        chars: MAX_INSTANTIATED_CHARS,
+    });
 }
 
 function readArtifact(
@@ -600,7 +613,7 @@ function readArtifact(
     debug: ContractDebugInfo | undefined,
     supplied: Map<string, ContractArtifact>,
     stack: string[],
-    tree: { left: number },
+    tree: { links: number; chars: number },
 ): Program {
     if (!isContractArtifact(artifact)) {
         fail(
@@ -726,7 +739,7 @@ function readArtifact(
     for (const param of params) claim(paramNames, param.name, "program parameter");
     const linked: Record<string, Instantiation> = Object.create(null);
     for (const [name, body] of instantiations) {
-        linked[name] = link(artifact, params, body, supplied, stack, tree);
+        linked[name] = link(artifact, paramNames, body, supplied, stack, tree);
     }
 
     return {

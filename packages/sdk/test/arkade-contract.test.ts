@@ -1076,50 +1076,96 @@ describe("arkade.Arkade / ArkadeContract", () => {
             expect(() => arkade.programFromArtifact(parent, { contracts })).toThrow(error);
         });
 
+        const hash = (artifact: object) =>
+            `sha256:${createHash("sha256").update(JSON.stringify(artifact)).digest("hex")}`;
+        // One covenant `go` over `asm`, pinning `children`.
+        const covenantArtifact = (
+            contractName: string,
+            asm: string[],
+            children: arkade.ContractArtifact[] = [],
+            constructorInputs = [{ name: "k", type: "pubkey" }],
+        ): arkade.ContractArtifact => ({
+            contractName,
+            constructorInputs,
+            functions: [
+                {
+                    name: "go",
+                    arkade: { inputs: [], asm: [...asm, "OP_1"] },
+                    leaves: [
+                        {
+                            name: "go",
+                            asm: [
+                                "<SERVER_KEY>",
+                                "OP_CHECKSIGVERIFY",
+                                "<EMULATOR_KEY:go>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
+                },
+            ],
+            contracts: Object.fromEntries(children.map((n) => [n.contractName, hash(n)])),
+        });
+        const pay = (children: arkade.ContractArtifact[], args: string) =>
+            children.flatMap((n) => [`<CONTRACT:${n.contractName}(${args})>`, "OP_DROP"]);
+
         it("refuses a list whose shared children expand past the cap", () => {
-            const hash = (artifact: object) =>
-                `sha256:${createHash("sha256").update(JSON.stringify(artifact)).digest("hex")}`;
             // Eight levels of two contracts, each instantiating both of the next: 510 paths.
             const all: arkade.ContractArtifact[] = [];
             let level: arkade.ContractArtifact[] = [];
             for (let depth = 8; depth >= 0; depth--) {
                 const next = level;
-                level = (depth ? [`A${depth}`, `B${depth}`] : ["Root"]).map((contractName) => ({
-                    contractName,
-                    constructorInputs: [{ name: "k", type: "pubkey" }],
-                    functions: [
-                        {
-                            name: "go",
-                            arkade: {
-                                inputs: [],
-                                asm: [
-                                    ...next.flatMap((n) => [
-                                        `<CONTRACT:${n.contractName}(<k>)>`,
-                                        "OP_DROP",
-                                    ]),
-                                    "OP_1",
-                                ],
-                            },
-                            leaves: [
-                                {
-                                    name: "go",
-                                    asm: [
-                                        "<SERVER_KEY>",
-                                        "OP_CHECKSIGVERIFY",
-                                        "<EMULATOR_KEY:go>",
-                                        "OP_CHECKSIG",
-                                    ],
-                                },
-                            ],
-                        },
-                    ],
-                    contracts: Object.fromEntries(next.map((n) => [n.contractName, hash(n)])),
-                }));
+                level = (depth ? [`A${depth}`, `B${depth}`] : ["Root"]).map((name) =>
+                    covenantArtifact(name, pay(next, "<k>"), next),
+                );
                 all.push(...next);
             }
             expect(() => arkade.programFromArtifact(level[0], { contracts: all })).toThrow(
                 /more than 256 instantiated contracts/,
             );
+        });
+
+        it("refuses instantiated programs that add up past the size cap", () => {
+            // 255 paths to one child of 2,000 opcodes, each passing its own key.
+            const heavy = covenantArtifact("H", [
+                ...Array(1000).fill("OP_DUP"),
+                ...Array(1000).fill("OP_DROP"),
+            ]);
+            const keys = Array.from(
+                { length: 255 },
+                (_, i) => `0x${(i + 1).toString(16).padStart(64, "0")}`,
+            );
+            const root = covenantArtifact(
+                "Root",
+                keys.flatMap((key) => pay([heavy], key)),
+                [heavy],
+            );
+            expect(() => arkade.programFromArtifact(root, { contracts: [heavy] })).toThrow(
+                /instantiated programs exceed 1048576 characters/,
+            );
+        });
+
+        it("maps a long argument list in linear time", async () => {
+            const ark = await client();
+            const n = 20_000;
+            const child = covenantArtifact("C", [], [], [{ name: "b", type: `int[${n}]` }]);
+            const parent = covenantArtifact(
+                "Root",
+                pay(
+                    [child],
+                    Array(n)
+                        .fill(`<a.${n - 1}>`)
+                        .join(","),
+                ),
+                [child],
+                [{ name: "a", type: `int[${n}]` }],
+            );
+            let start = performance.now();
+            const program = arkade.programFromArtifact(parent, { contracts: [child] });
+            expect(performance.now() - start).toBeLessThan(500);
+            start = performance.now();
+            ark.contract(program, { a: Array(n).fill(7n) });
+            expect(performance.now() - start).toBeLessThan(500);
         });
 
         it("derives the key in new ArkadeContract too, and refuses a hand-passed mismatch", async () => {
