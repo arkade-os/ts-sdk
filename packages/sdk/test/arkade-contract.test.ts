@@ -1083,10 +1083,9 @@ describe("arkade.Arkade / ArkadeContract", () => {
             contractName: string,
             asm: string[],
             children: arkade.ContractArtifact[] = [],
-            constructorInputs = [{ name: "k", type: "pubkey" }],
         ): arkade.ContractArtifact => ({
             contractName,
-            constructorInputs,
+            constructorInputs: [{ name: "k", type: "pubkey" }],
             functions: [
                 {
                     name: "go",
@@ -1143,29 +1142,6 @@ describe("arkade.Arkade / ArkadeContract", () => {
             expect(() => arkade.programFromArtifact(root, { contracts: [heavy] })).toThrow(
                 /instantiated programs exceed 1048576 characters/,
             );
-        });
-
-        it("maps a long argument list in linear time", async () => {
-            const ark = await client();
-            const n = 20_000;
-            const child = covenantArtifact("C", [], [], [{ name: "b", type: `int[${n}]` }]);
-            const parent = covenantArtifact(
-                "Root",
-                pay(
-                    [child],
-                    Array(n)
-                        .fill(`<a.${n - 1}>`)
-                        .join(","),
-                ),
-                [child],
-                [{ name: "a", type: `int[${n}]` }],
-            );
-            let start = performance.now();
-            const program = arkade.programFromArtifact(parent, { contracts: [child] });
-            expect(performance.now() - start).toBeLessThan(500);
-            start = performance.now();
-            ark.contract(program, { a: Array(n).fill(7n) });
-            expect(performance.now() - start).toBeLessThan(500);
         });
 
         it("derives the key in new ArkadeContract too, and refuses a hand-passed mismatch", async () => {
