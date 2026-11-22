@@ -220,7 +220,8 @@ function arrayParts(type: string): [string, number] {
     return Number.isSafeInteger(length) && length > 0 ? [base + inner, length] : [type, 0];
 }
 
-// One budget per artifact, charged per generated name: nesting and struct fan-out multiply.
+// One budget per artifact, charged per generated name and per array type parsed: nesting and
+// struct fan-out multiply.
 const MAX_LAYOUT_CHARS = 1 << 18;
 
 function flatten(
@@ -231,8 +232,9 @@ function flatten(
 ): InputDef[] {
     if (!isNamed(param)) fail("parameter needs a name and a type");
 
+    budget.left -= param.name.length + (param.type.includes("[") ? param.type.length : 0);
+    if (budget.left < 0) fail(`layouts exceed ${MAX_LAYOUT_CHARS} name characters`);
     const [element, length] = arrayParts(param.type);
-    budget.left -= param.name.length;
     if (budget.left < length) fail(`layouts exceed ${MAX_LAYOUT_CHARS} name characters`);
     if (length > 0) {
         return Array.from({ length }, (_, index) =>
