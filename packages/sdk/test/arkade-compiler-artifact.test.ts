@@ -1091,6 +1091,19 @@ describe("reading an arkadec artifact", () => {
             /signer role/,
         ],
         [
+            "an untweaked operator key in a covenant",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["<OPERATOR_KEY>", "OP_DROP", "OP_1"] },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+            /signer role/,
+        ],
+        [
             "an operator key tweaked by another group's covenant",
             demo({
                 functions: [

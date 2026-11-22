@@ -332,7 +332,8 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
         if (
             inner === "SERVER_KEY" ||
             inner.startsWith("EMULATOR_KEY:") ||
-            inner.split(":")[0] === "OPERATOR_KEY"
+            inner === "OPERATOR_KEY" ||
+            inner.startsWith("OPERATOR_KEY:")
         ) {
             fail(`${token} is a signer role and cannot appear in a covenant`);
         }
