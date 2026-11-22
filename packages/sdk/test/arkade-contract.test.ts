@@ -920,15 +920,12 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
     describe("instantiated contracts", () => {
         // Compiled by arkadec v0.1.0 (4075d82c): htlc, single_sig and struct_vault from its
-        // examples, relay.ark beside copies of the last two, and top, mid and leaf.ark together.
-        const [HTLC, SINGLE_SIG, STRUCT_VAULT, RELAY, TOP, MID, LEAF] = [
+        // examples, and relay beside copies of the last two. Each bundles its source.
+        const [HTLC, SINGLE_SIG, STRUCT_VAULT, RELAY] = [
             "htlc",
             "single_sig",
             "struct_vault",
             "relay",
-            "top",
-            "mid",
-            "leaf",
         ].map(
             (name): arkade.ContractArtifact =>
                 JSON.parse(
@@ -981,23 +978,6 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
             );
             expect(relay).toContain(key(build(SINGLE_SIG, { user: literal })));
-        });
-
-        it("derives the keys of children's children", async () => {
-            const ark = await client();
-            const [x, y] = [xOnly(), xOnly()];
-            const mid = ark.contract(arkade.programFromArtifact(MID, { contracts: [LEAF] }), {
-                k: x,
-                other: y,
-            });
-            const top = ark.contract(arkade.programFromArtifact(TOP, { contracts: [MID, LEAF] }), {
-                x,
-                y,
-            });
-            expect(covenant(top, "go")).toContain(key(mid));
-            expect(covenant(mid, "go")).toContain(
-                key(ark.contract(arkade.programFromArtifact(LEAF), { k: y })),
-            );
         });
 
         it("derives the key with the keys the contract is built against", async () => {
@@ -1103,10 +1083,28 @@ describe("arkade.Arkade / ArkadeContract", () => {
                     ],
                 },
             ],
-            contracts: Object.fromEntries(children.map((n) => [n.contractName, hash(n)])),
+            contracts: Object.fromEntries(
+                children.map((n) => [n.contractName, n.codeHash ?? hash(n)]),
+            ),
         });
         const pay = (children: arkade.ContractArtifact[], args: string) =>
             children.flatMap((n) => [`<CONTRACT:${n.contractName}(${args})>`, "OP_DROP"]);
+
+        it("derives the keys of children's children", async () => {
+            const ark = await client();
+            // Only the grandchild, SingleSig, uses the exit delay.
+            const mid = covenantArtifact("Mid", pay([SINGLE_SIG], "<k>"), [SINGLE_SIG]);
+            const top = covenantArtifact("Top", pay([mid], "<k>"), [mid]);
+            const k = xOnly();
+            const build = (artifact: arkade.ContractArtifact, args: Args) =>
+                ark.contract(
+                    arkade.programFromArtifact(artifact, { contracts: [mid, SINGLE_SIG] }),
+                    args,
+                );
+            const child = build(mid, { k });
+            expect(covenant(build(top, { k }), "go")).toContain(key(child));
+            expect(covenant(child, "go")).toContain(key(build(SINGLE_SIG, { user: k })));
+        });
 
         it("refuses a list whose shared children expand past the cap", () => {
             // Eight levels of two contracts, each instantiating both of the next: 510 paths.
