@@ -541,7 +541,7 @@ describe("open RFQ onchain sends with a fixed take amount", () => {
             onchainSendAnswer(payload, clockAt(NOW), {
                 quote: { from_amount: Number(payload.amount) + spread },
             });
-    const bidsAtSpread = (grossDelta = 0n) =>
+    const bidsAtSpread = () =>
         vi.mocked(collectOpenRfqBids).mockImplementation(async (r) => [
             {
                 ...bid(),
@@ -549,8 +549,8 @@ describe("open RFQ onchain sends with a fixed take amount", () => {
                 pair: r.pair,
                 amountSide: "to",
                 card: rawCard(onchainCard),
-                fromAmount: r.amount + grossDelta + 1_000n,
-                toAmount: r.amount + grossDelta,
+                fromAmount: r.amount + 1_000n,
+                toAmount: r.amount,
             },
         ]);
 
@@ -567,38 +567,6 @@ describe("open RFQ onchain sends with a fixed take amount", () => {
         expect(quote.give.amount).toBe(net + claimFee + 1_000n);
         expect(quote.take.amount).toBe(net);
         expect(attempted).toEqual(["open-solver"]);
-        await client[Symbol.asyncDispose]();
-    });
-
-    it("uses one exact claim budget for the public request and the selected firm quote", async () => {
-        const { client } = await setup({ answer: pricing(1_000) });
-        bidsAtSpread();
-        const rate = 4;
-        const budget = claimFeeSats({ claimFeeRateSatVb: rate });
-        const auction = await client.openRfq(
-            { ...send, amountOn: "take", onchainClaimFeeRateSatVb: rate },
-            options,
-        );
-        const [published] = vi.mocked(collectOpenRfqBids).mock.calls[0];
-        expect(published.amount).toBe(net + budget);
-        expect(published).not.toHaveProperty("to");
-        expect(published).not.toHaveProperty("onchainClaimFeeRateSatVb");
-        const quote = await client.quoteBid(auction, auction.bids[0]);
-        expect(quote.take.amount).toBe(net);
-        expect(quote.give.amount).toBe(net + budget + 1_000n);
-        expect(quote.onchainClaimFee).toBe(budget);
-        await client[Symbol.asyncDispose]();
-    });
-
-    it("does not offer a bid which changes the requested gross Bitcoin amount", async () => {
-        const { client, attempted } = await setup({ answer: pricing(1_000) });
-        bidsAtSpread(1n);
-        const auction = await client.openRfq(
-            { ...send, amountOn: "take", onchainClaimFeeRateSatVb: 4 },
-            options,
-        );
-        expect(auction.bids).toEqual([]);
-        expect(attempted).toEqual([]);
         await client[Symbol.asyncDispose]();
     });
     it("still refuses a directed quote asking more than the bid", async () => {

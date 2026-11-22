@@ -397,22 +397,11 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         market: MarketCandidate,
         assetPayment?: ReturnType<typeof captureAssetPayment>,
         auction?: AuctionProvenance,
-        onchainClaimFeeRateSatVb?: number,
     ): Promise<Quote> => {
         const { corridors } = await resolved();
         corridors.get(resolvedRoute.legs.give.corridor);
         corridors.get(resolvedRoute.legs.take.corridor);
         ensureLive("quote");
-        if (onchainClaimFeeRateSatVb !== undefined) {
-            if (resolvedRoute.amount === undefined || market.backend !== "rfq")
-                throw new UnsupportedRoute("an exact Bitcoin payout needs a negotiated amount");
-            solverFacingAmount(
-                resolvedRoute.pair,
-                resolvedRoute.amount,
-                corridors,
-                onchainClaimFeeRateSatVb,
-            );
-        }
         const quoteId = mintQuoteId();
         const now = Math.floor(Date.now() / 1000);
         const marketRef = marketRefOf(market, resolvedRoute.snapshot.ref);
@@ -479,7 +468,6 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 quoteId,
                 route: resolvedRoute.pair,
                 ...(assetPayment === undefined ? {} : { assetPayment }),
-                ...(onchainClaimFeeRateSatVb === undefined ? {} : { onchainClaimFeeRateSatVb }),
                 candidate: market,
                 market: marketRef,
                 legs: resolvedRoute.legs,
@@ -556,13 +544,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 routed.pair,
                 routed.amount,
                 corridors,
-                canonicalInput.onchainClaimFeeRateSatVb,
             );
-            if (
-                canonicalInput.onchainClaimFeeRateSatVb !== undefined &&
-                routed.take.instrument?.kind !== "address"
-            )
-                throw new UnsupportedRoute("an exact Bitcoin payout needs a destination address");
             const windowMs = options.windowMs ?? config.policy?.rfq?.windowMs ?? 3_000;
             if (!Number.isSafeInteger(windowMs) || windowMs < 1 || windowMs > 30_000)
                 throw new RangeError("open RFQ windowMs must be between 1 and 30000");
@@ -773,18 +755,12 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             checkExpiry();
             let quote: Quote | undefined;
             try {
-                quote = await prepare(
-                    routed,
-                    candidate,
-                    undefined,
-                    {
-                        marketKey: auction.pair,
-                        winner: ranked(bid),
-                        losers: auction.bids.filter((other) => other !== bid).map(ranked),
-                        closedAt: auction.closedAt,
-                    },
-                    session.input.onchainClaimFeeRateSatVb,
-                );
+                quote = await prepare(routed, candidate, undefined, {
+                    marketKey: auction.pair,
+                    winner: ranked(bid),
+                    losers: auction.bids.filter((other) => other !== bid).map(ranked),
+                    closedAt: auction.closedAt,
+                });
                 ensureLive("quoteBid");
                 checkExpiry();
                 if (quote.give.amount > bid.fromAmount || quote.take.amount < bid.toAmount)
@@ -858,7 +834,6 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         quote: async (input, options) => {
             const assetPayment = captureAssetPayment(input.assetPayment);
             const solverId = options?.solverId;
-            const onchainClaimFeeRateSatVb = input.onchainClaimFeeRateSatVb;
             ensureLive("quote");
             const { base, corridors, discovery } = await resolved();
             let resolvedRoute = await route(input, "quote");
@@ -919,13 +894,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 if (attempted.has(candidate.solverId)) continue;
                 attempted.add(candidate.solverId);
                 try {
-                    const quote = await prepare(
-                        resolvedRoute,
-                        candidate,
-                        assetPayment,
-                        undefined,
-                        onchainClaimFeeRateSatVb,
-                    );
+                    const quote = await prepare(resolvedRoute, candidate, assetPayment);
                     recordHealth(candidate, "success", base.networkName);
                     return quote;
                 } catch (error) {

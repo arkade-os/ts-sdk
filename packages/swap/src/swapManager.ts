@@ -168,8 +168,6 @@ export interface OnchainSendSwap extends RfqSwapCommon {
     /** The quote's `to_amount`, captured at REQUEST time: read at claim time it
      * would be whatever the solver funded. */
     expectedAmount: number;
-    /** Exact net payout to the recipient, if requested when quoted. */
-    exactPayoutAmount?: number;
     /** Where {@link RfqSwapManagerCallbacks.claimOnchain} pays; optional only
      * so records predating its profile slot still restore. */
     payoutPkScript?: Uint8Array;
@@ -1804,7 +1802,6 @@ export class RfqSwapManager {
         // it never comes. Past the claim window too, where `P` is already public.
         if (swap.claimTxid && (phase.phase === "claimable" || phase.phase === "refundable")) {
             const due =
-                swap.exactPayoutAmount === undefined &&
                 this.reportsConfirmations &&
                 this.config.now() - (swap.claimBroadcastAt ?? 0) >= ONCHAIN_CLAIM_BUMP_SECONDS;
             if (due || (await this.claimVanished(swap.claimTxid))) {
@@ -1907,8 +1904,6 @@ export class RfqSwapManager {
      * refund leaf. Needs `getTxStatus`: blind, it would replace claims that already landed. */
     private async bumpOnchainClaim(swap: OnchainSendSwap): Promise<void> {
         if ((await this.readClaimConfirmed(swap)) !== false) return;
-        // One input and one exact output fix the absolute fee.
-        if (swap.exactPayoutAmount !== undefined) return;
         const funding = swap.funding;
         if (funding?.amount === undefined) return;
         if (this.config.now() - (swap.claimBroadcastAt ?? 0) < ONCHAIN_CLAIM_BUMP_SECONDS) return;

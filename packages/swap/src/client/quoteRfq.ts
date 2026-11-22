@@ -36,7 +36,6 @@ import { ASSET_SWAP_CONTRACT_VERSIONS, assetRfqNonce } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
-    ONCHAIN_CLAIM_VSIZE,
     ONCHAIN_DUST_SATS,
     type OnchainHtlc,
     type OnchainHtlcParams,
@@ -180,8 +179,6 @@ export type CorridorRfqPreparation =
           readonly fundAmount: bigint;
           /** What the solver's HTLC must carry — the claim refuses less. */
           readonly expectedAmount: bigint;
-          /** Net amount that the accepted L1 transaction must pay to the recipient. */
-          readonly exactPayoutAmount?: bigint;
           /** The L1 claim key, provisioned by the wallet like every other key. */
           readonly payoutKey: ProvisionedKey;
           /** Where the claim PAYS — the take endpoint's address, encoded. Distinct from
@@ -212,7 +209,6 @@ export type CorridorRfqPreparation =
 
 export interface RfqQuoteInput {
     readonly assetPayment?: AssetPaymentInput;
-    readonly onchainClaimFeeRateSatVb?: number;
     readonly quoteId: QuoteId;
     readonly route:
         | "arkade->arkade"
@@ -846,28 +842,14 @@ export const solverFacingAmount = (
     route: RfqQuoteInput["route"],
     pinned: PinnedAmount,
     corridors: CorridorSet,
-    exactPayoutRate?: number,
 ): { quoted: PinnedAmount; claimFee?: bigint } => {
-    if (route !== "arkade->onchain" || pinned.on !== "take") {
-        if (exactPayoutRate !== undefined)
-            throw new UnsupportedRoute("a claim fee budget needs an exact-output Bitcoin payment");
-        return { quoted: pinned };
-    }
+    if (route !== "arkade->onchain" || pinned.on !== "take") return { quoted: pinned };
     const onchain = corridors.get("onchain").deps;
-    const claimFeeRateSatVb = exactPayoutRate ?? onchain.claimFeeRateSatVb;
-    if (claimFeeRateSatVb === undefined) return { quoted: pinned };
-    const configuredVsize = onchain.claimVsize ?? ONCHAIN_CLAIM_VSIZE;
-    const claimVsize =
-        exactPayoutRate === undefined
-            ? configuredVsize
-            : Math.max(configuredVsize, ONCHAIN_CLAIM_VSIZE);
-    if (exactPayoutRate !== undefined) {
-        if (exactPayoutRate <= 0 || !Number.isSafeInteger(Math.ceil(exactPayoutRate * claimVsize)))
-            throw new RangeError("invalid Bitcoin claim fee rate");
-        if (pinned.value < ONCHAIN_DUST_SATS)
-            throw new Error("the Bitcoin payout is below the dust limit");
-    }
-    const claimFee = claimFeeSats({ claimFeeRateSatVb, claimVsize });
+    if (onchain.claimFeeRateSatVb === undefined) return { quoted: pinned };
+    const claimFee = claimFeeSats({
+        claimFeeRateSatVb: onchain.claimFeeRateSatVb,
+        claimVsize: onchain.claimVsize,
+    });
     return { quoted: { ...pinned, value: pinned.value + claimFee }, claimFee };
 };
 
@@ -885,13 +867,7 @@ const quoteOnchainSend = async (
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
 
-    const exactPayoutRate = input.onchainClaimFeeRateSatVb;
-    const { quoted, claimFee } = solverFacingAmount(
-        input.route,
-        pinned,
-        input.corridors,
-        exactPayoutRate,
-    );
+    const { quoted, claimFee } = solverFacingAmount(input.route, pinned, input.corridors);
 
     // Two wallet keys: the claim secret (P, covenant sender role) and the L1 HTLC claim key.
     // Asking twice keeps them distinct; minting one here is what key provisioning forbids.
@@ -991,9 +967,6 @@ const quoteOnchainSend = async (
             // Off the derivation, not the wire: it settles which locktime this covenant used.
             refundLocktime: derived.refundLocktime,
             fee: { amount: reportedFee, asset: input.endpoints.give.asset },
-            ...(exactPayoutRate === undefined || claimFee === undefined
-                ? {}
-                : { onchainClaimFee: claimFee }),
         },
         preparation: {
             backend: "rfq",
@@ -1007,7 +980,6 @@ const quoteOnchainSend = async (
             fundAmount: parsed.give,
             // Gross, not `reportedTake`: netting would accept an HTLC short by the fee.
             expectedAmount: parsed.take,
-            ...(exactPayoutRate === undefined ? {} : { exactPayoutAmount: reportedTake }),
             payoutKey,
             payoutPkScript,
             htlc: derived.htlc,

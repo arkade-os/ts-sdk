@@ -8,7 +8,7 @@
  * script-path spends end to end: recomputed sighash, valid schnorr signature,
  * preimage recoverable from the witness.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import * as btc from "@scure/btc-signer";
@@ -344,34 +344,6 @@ describe("claimOnchainFill", () => {
         });
         expect(chain.broadcasts).toHaveLength(1);
         expect(result.payoutAmount).toBeGreaterThan(0n);
-    });
-
-    it("pays exactly the agreed amount, or refuses before signing if the budget is too small", async () => {
-        const chain = fakeChain({});
-        const sign = vi.fn(signWith(1));
-        const payoutAmount = UTXO.amount - 1_000n;
-        const claim = {
-            htlc: htlc(),
-            utxo: UTXO,
-            preimage: PREIMAGE,
-            payoutPkScript: PAYOUT,
-            payoutAmount,
-            sign,
-            now: LOCKTIME - ONCHAIN_CLAIM_MARGIN_SECONDS - 60,
-        };
-        await expect(claimOnchainFill(chain, { ...claim, feeRateSatVb: 7 })).rejects.toMatchObject({
-            reason: "claim_fee_budget_exhausted",
-        });
-        expect(sign).not.toHaveBeenCalled();
-        expect(chain.broadcasts).toHaveLength(0);
-
-        const result = await claimOnchainFill(chain, { ...claim, feeRateSatVb: 5 });
-        expect(result.payoutAmount).toBe(payoutAmount);
-        const tx = btc.Transaction.fromRaw(hex.decode(chain.broadcasts[0]!), {
-            allowUnknownInputs: true,
-            allowUnknownOutputs: true,
-        });
-        expect(tx.getOutput(0).amount).toBe(payoutAmount);
     });
 
     it("refuses to publish P into the counterparty's refund window", async () => {

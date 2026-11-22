@@ -40,9 +40,6 @@ export type AssetRef = AssetId | (string & {});
  */
 export interface QuoteInput {
     assetPayment?: AssetPaymentInput;
-    /** Rate for the claim fee budget on exact-output Arkade-to-Bitcoin payments. An accepted
-     * claim must deliver the take amount even if fees later rise. */
-    onchainClaimFeeRateSatVb?: number;
     /** Omitted when the route determines it: the give leg is the wallet's. */
     give?: AssetRef;
     /** Omitted when `to` determines it — a corridor that carries BTC only does. */
@@ -156,8 +153,6 @@ export interface QuoteLeg {
  */
 export interface Quote {
     readonly assetPayment?: AssetPaymentTerms;
-    /** Miner fee already included in the give leg for an exact-output Bitcoin claim. */
-    readonly onchainClaimFee?: bigint;
     readonly id: QuoteId;
     /** Both endpoints resolved, instruments included. */
     readonly route: Route;
