@@ -79,7 +79,8 @@ export interface ProgramFromArtifactOptions {
      * The artifact of every contract instantiated with `new`, directly or through another one, in
      * any order. Each must match the `codeHash` its parent pins in `contracts`. That hash covers the
      * fields in arkadec's order, so an artifact re-serialized with reordered keys (as Postgres
-     * `jsonb` does) is refused: keep the JSON arkadec wrote.
+     * `jsonb` does) is refused: keep the JSON arkadec wrote. At most 256 instantiations are read,
+     * counting a child once per path that reaches it.
      */
     contracts?: readonly ContractArtifact[];
 }
@@ -380,6 +381,11 @@ function instantiationArg(
     return value;
 }
 
+// ponytail: a child reached along several paths is read, and later compiled, once per path, so a
+// list that shares children across levels grows exponentially; this caps the expanded tree. Memoize
+// by code hash (and by mapped values when compiling) if legitimate trees outgrow it.
+const MAX_INSTANTIATIONS = 256;
+
 /** Resolve `<CONTRACT:body>` in `parent` to the supplied artifact its pin names, read in turn. */
 function link(
     parent: ContractArtifact,
@@ -387,8 +393,12 @@ function link(
     body: string,
     supplied: Map<string, ContractArtifact>,
     stack: string[],
+    tree: { left: number },
 ): Instantiation {
     const [, name, list] = body.match(/^([A-Za-z]\w*)\((.*)\)$/) ?? fail(`malformed '${body}'`);
+    if (--tree.left < 0) {
+        fail(`more than ${MAX_INSTANTIATIONS} instantiated contracts, counted once per path`);
+    }
     const chain = [...stack, parent.contractName];
     if (chain.includes(name)) fail(`instantiation loop ${[...chain, name].join(" → ")}`);
     const pins = parent.contracts;
@@ -406,14 +416,10 @@ function link(
                 : `${parent.contractName} instantiates ${name}; pass its artifact in \`contracts\``,
         );
     }
-    // ponytail: a child reached along several paths is read once per path, so a list that shares
-    // children across many levels is read exponentially often; memoize by code hash if that bites.
-    const program = readArtifact(child, undefined, supplied, chain);
-    // The flattened constructor inputs come first in `params`, then the reserved `server`.
-    const inputs = program.params!.slice(
-        0,
-        program.params!.findIndex((p) => p.name === "server"),
-    );
+    const program = readArtifact(child, undefined, supplied, chain, tree);
+    const structs = new Map((child.structs ?? []).map((struct) => [struct.name, struct] as const));
+    const layout = { left: MAX_LAYOUT_CHARS };
+    const inputs = child.constructorInputs.flatMap((input) => flatten(input, structs, layout));
     const values = list === "" ? [] : list.split(",");
     if (values.length !== inputs.length) {
         fail(
@@ -586,7 +592,7 @@ export function programFromArtifact(
         if (!isContractArtifact(child)) fail("each of `contracts` must be an arkadec artifact");
         supplied.set(...codeHash(child));
     }
-    return readArtifact(artifact, debug, supplied, []);
+    return readArtifact(artifact, debug, supplied, [], { left: MAX_INSTANTIATIONS });
 }
 
 function readArtifact(
@@ -594,6 +600,7 @@ function readArtifact(
     debug: ContractDebugInfo | undefined,
     supplied: Map<string, ContractArtifact>,
     stack: string[],
+    tree: { left: number },
 ): Program {
     if (!isContractArtifact(artifact)) {
         fail(
@@ -719,7 +726,7 @@ function readArtifact(
     for (const param of params) claim(paramNames, param.name, "program parameter");
     const linked: Record<string, Instantiation> = Object.create(null);
     for (const [name, body] of instantiations) {
-        linked[name] = link(artifact, params, body, supplied, stack);
+        linked[name] = link(artifact, params, body, supplied, stack, tree);
     }
 
     return {

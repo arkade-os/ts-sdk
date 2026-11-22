@@ -644,7 +644,7 @@ export class Arkade {
             args = { ...args, user: this.userKey };
         }
         if (declared.includes("SERVER_EXIT_DELAY")) {
-            const sequence = this.exitDelaySequence();
+            const sequence = exitDelaySequence(this.serverExitDelay);
             if (
                 args.SERVER_EXIT_DELAY !== undefined &&
                 args.SERVER_EXIT_DELAY !== sequence &&
@@ -657,69 +657,6 @@ export class Arkade {
             args = { ...args, SERVER_EXIT_DELAY: sequence };
         }
         return new ArkadeContract(this, program, args);
-    }
-
-    /** The server exit delay as the BIP68 sequence `<SERVER_EXIT_DELAY>` binds. */
-    private exitDelaySequence(): bigint {
-        const delay = this.serverExitDelay;
-        if (delay === undefined || delay <= 0n)
-            throw new Error(
-                "compiler artifact: server must provide a positive unilateral exit delay",
-            );
-        const typed = toTimelock(delay);
-        if (typed.type === "seconds" && delay % 512n !== 0n) {
-            throw new Error(
-                `compiler artifact: server exit delay ${delay}s must be a multiple of 512 seconds`,
-            );
-        }
-        return BigInt(timelockToSequence(typed));
-    }
-
-    /**
-     * @internal Bind each contract `program` instantiates, in the flat `args`, to its witness
-     * program: the child compiled with `keys` and this client's exit delay, from only the values its
-     * placeholder passes. A value passed by hand must equal it.
-     */
-    instantiate(
-        program: Program,
-        args: Record<string, ArkadeParamValue>,
-        keys: Pick<ProgramKeys, "serverKey" | "emulatorKey">,
-    ): void {
-        // ponytail: a child reached along several paths is compiled once per path; memoize by
-        // child and arguments if deep shared trees get slow.
-        for (const [param, child] of Object.entries(instantiatedContracts(program))) {
-            const childArgs: Record<string, ArkadeParamValue> = { server: keys.serverKey };
-            for (const [name, from] of Object.entries(child.args)) {
-                if (typeof from !== "string") {
-                    childArgs[name] = from;
-                    continue;
-                }
-                // Checked as the parent's param, so an error names the value the caller passed.
-                const value = Object.hasOwn(args, from) ? args[from] : undefined;
-                if (value === undefined) {
-                    throw new Error(
-                        `program parameter '${from}' is declared but not bound in args`,
-                    );
-                }
-                validateParamValue(program.params!.find((p) => p.name === from)!, value);
-                childArgs[name] = value;
-            }
-            if (child.program.params?.some((p) => p.name === "SERVER_EXIT_DELAY")) {
-                childArgs.SERVER_EXIT_DELAY = this.exitDelaySequence();
-            }
-            this.instantiate(child.program, childArgs, keys);
-            const key = new ArkadeProgramScript(child.program, childArgs, keys).tweakedPublicKey;
-            const passed = args[param];
-            if (
-                passed !== undefined &&
-                !(passed instanceof Uint8Array && equalBytes(passed, key))
-            ) {
-                throw new Error(
-                    `compiler artifact: '${param}' must be the ${child.program.name} witness program derived from its arguments`,
-                );
-            }
-            args[param] = key;
-        }
     }
 
     /**
@@ -764,7 +701,7 @@ export class ArkadeContract<P extends Program = Program> {
             userKey: client.userKey,
             emulatorKey: client.emulatorKey,
         };
-        client.instantiate(program, this.args, this.keys);
+        instantiate(program, this.args, this.keys, client.serverExitDelay);
         this.vtxoScript = new ArkadeProgramScript(program, this.args, this.keys);
         this.tapTree = this.vtxoScript.encode();
         this.compiled = this.vtxoScript.compiled;
@@ -1492,6 +1429,60 @@ function witnessBytes(
     ref: WitnessRef,
 ): Uint8Array {
     return witnessRefToBytes(ref, args[segment], contract.args);
+}
+
+/** The server exit delay as the BIP68 sequence `<SERVER_EXIT_DELAY>` binds. */
+function exitDelaySequence(delay: bigint | undefined): bigint {
+    if (delay === undefined || delay <= 0n)
+        throw new Error("compiler artifact: server must provide a positive unilateral exit delay");
+    const typed = toTimelock(delay);
+    if (typed.type === "seconds" && delay % 512n !== 0n) {
+        throw new Error(
+            `compiler artifact: server exit delay ${delay}s must be a multiple of 512 seconds`,
+        );
+    }
+    return BigInt(timelockToSequence(typed));
+}
+
+/**
+ * Bind each contract `program` instantiates, in the flat `args`, to its witness program: the child
+ * compiled with `keys` and the server exit delay, from only the values its placeholder passes. A
+ * value passed by hand must equal it. `programFromArtifact` caps how many children this compiles.
+ */
+function instantiate(
+    program: Program,
+    args: Record<string, ArkadeParamValue>,
+    keys: Pick<ProgramKeys, "serverKey" | "emulatorKey">,
+    exitDelay: bigint | undefined,
+): void {
+    for (const [param, child] of Object.entries(instantiatedContracts(program))) {
+        const childArgs: Record<string, ArkadeParamValue> = { server: keys.serverKey };
+        for (const [name, from] of Object.entries(child.args)) {
+            if (typeof from !== "string") {
+                childArgs[name] = from;
+                continue;
+            }
+            // Checked as the parent's param, so an error names the value the caller passed.
+            const value = Object.hasOwn(args, from) ? args[from] : undefined;
+            if (value === undefined) {
+                throw new Error(`program parameter '${from}' is declared but not bound in args`);
+            }
+            validateParamValue(program.params!.find((p) => p.name === from)!, value);
+            childArgs[name] = value;
+        }
+        if (child.program.params?.some((p) => p.name === "SERVER_EXIT_DELAY")) {
+            childArgs.SERVER_EXIT_DELAY = exitDelaySequence(exitDelay);
+        }
+        instantiate(child.program, childArgs, keys, exitDelay);
+        const key = new ArkadeProgramScript(child.program, childArgs, keys).tweakedPublicKey;
+        const passed = args[param];
+        if (passed !== undefined && !(passed instanceof Uint8Array && equalBytes(passed, key))) {
+            throw new Error(
+                `compiler artifact: '${param}' must be the ${child.program.name} witness program derived from its arguments`,
+            );
+        }
+        args[param] = key;
+    }
 }
 
 /**

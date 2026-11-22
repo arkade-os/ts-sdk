@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -1073,6 +1074,52 @@ describe("arkade.Arkade / ArkadeContract", () => {
             ],
         ])("refuses %s", (_, parent, contracts, error) => {
             expect(() => arkade.programFromArtifact(parent, { contracts })).toThrow(error);
+        });
+
+        it("refuses a list whose shared children expand past the cap", () => {
+            const hash = (artifact: object) =>
+                `sha256:${createHash("sha256").update(JSON.stringify(artifact)).digest("hex")}`;
+            // Eight levels of two contracts, each instantiating both of the next: 510 paths.
+            const all: arkade.ContractArtifact[] = [];
+            let level: arkade.ContractArtifact[] = [];
+            for (let depth = 8; depth >= 0; depth--) {
+                const next = level;
+                level = (depth ? [`A${depth}`, `B${depth}`] : ["Root"]).map((contractName) => ({
+                    contractName,
+                    constructorInputs: [{ name: "k", type: "pubkey" }],
+                    functions: [
+                        {
+                            name: "go",
+                            arkade: {
+                                inputs: [],
+                                asm: [
+                                    ...next.flatMap((n) => [
+                                        `<CONTRACT:${n.contractName}(<k>)>`,
+                                        "OP_DROP",
+                                    ]),
+                                    "OP_1",
+                                ],
+                            },
+                            leaves: [
+                                {
+                                    name: "go",
+                                    asm: [
+                                        "<SERVER_KEY>",
+                                        "OP_CHECKSIGVERIFY",
+                                        "<EMULATOR_KEY:go>",
+                                        "OP_CHECKSIG",
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                    contracts: Object.fromEntries(next.map((n) => [n.contractName, hash(n)])),
+                }));
+                all.push(...next);
+            }
+            expect(() => arkade.programFromArtifact(level[0], { contracts: all })).toThrow(
+                /more than 256 instantiated contracts/,
+            );
         });
 
         it("derives the key in new ArkadeContract too, and refuses a hand-passed mismatch", async () => {
