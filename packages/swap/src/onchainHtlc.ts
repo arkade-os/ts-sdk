@@ -264,6 +264,7 @@ const buildLeafSpend = async (input: {
     stackAboveSig: Uint8Array[];
     payoutPkScript: Uint8Array;
     feeRateSatVb: number;
+    payoutAmount?: bigint;
     sign: (sighash: Uint8Array) => Promise<Uint8Array>;
     lockTime?: number;
     sequence: number;
@@ -294,10 +295,16 @@ const buildLeafSpend = async (input: {
     const sizing = assemble(input.utxo.amount);
     sizing.updateInput(0, { finalScriptWitness: witness(new Uint8Array(64)) }, true);
     const fee = BigInt(Math.ceil(sizing.vsize * input.feeRateSatVb));
-    const payout = input.utxo.amount - fee;
+    const payout = input.payoutAmount ?? input.utxo.amount - fee;
     if (payout < ONCHAIN_DUST_SATS) {
         throw new Error(
             `fee ${fee} leaves ${payout} sats from a ${input.utxo.amount} sat HTLC — below the ${ONCHAIN_DUST_SATS} sat dust limit`,
+        );
+    }
+    if (input.utxo.amount - payout < fee) {
+        throw gateError(
+            "claim_fee_budget_exhausted",
+            "The Bitcoin payout cannot cover the required claim fee",
         );
     }
 
@@ -327,6 +334,8 @@ export const buildHtlcClaim = async (input: {
     preimage: Uint8Array;
     payoutPkScript: Uint8Array;
     feeRateSatVb: number;
+    /** Exact recipient amount. A fee budget shortfall stops before signing. */
+    payoutAmount?: bigint;
     sign: (sighash: Uint8Array) => Promise<Uint8Array>;
 }): Promise<SpendResult> => {
     if (paymentHashOf(input.preimage) !== input.htlc.paymentHash) {
@@ -340,6 +349,7 @@ export const buildHtlcClaim = async (input: {
         stackAboveSig: [input.preimage],
         payoutPkScript: input.payoutPkScript,
         feeRateSatVb: input.feeRateSatVb,
+        ...(input.payoutAmount === undefined ? {} : { payoutAmount: input.payoutAmount }),
         sign: input.sign,
         sequence: 0xfffffffd,
     });
@@ -486,6 +496,7 @@ export async function claimOnchainFill(
         preimage: Uint8Array;
         payoutPkScript: Uint8Array;
         feeRateSatVb: number;
+        payoutAmount?: bigint;
         sign: (sighash: Uint8Array) => Promise<Uint8Array>;
         /** Injected for tests; defaults to wall clock. */
         now?: number;

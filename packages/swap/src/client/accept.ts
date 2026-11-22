@@ -284,6 +284,13 @@ const corridorRecord = (
         // Unreachable from `quote()` (verification refuses it); keeps the fields below uncast.
         throw new Error(`corridor quote ${quote.id} carries no lock hash or refund locktime`);
     }
+    if (
+        preparation.route === "arkade->onchain" &&
+        preparation.exactPayoutAmount !== undefined &&
+        (quote.take.amount !== preparation.exactPayoutAmount ||
+            quote.onchainClaimFee !== preparation.expectedAmount - preparation.exactPayoutAmount)
+    )
+        throw new Error("the accepted Bitcoin payout does not match the verified quote");
     return {
         ...commonOf(quote, now),
         family: "rfq",
@@ -334,6 +341,14 @@ const profileOf = (
                     minConfirmations: preparation.minConfirmations,
                     expectedAmount: toSafeNumber(preparation.expectedAmount, "expectedAmount"),
                     payoutPkScript: preparation.payoutPkScript,
+                    ...(preparation.exactPayoutAmount === undefined
+                        ? {}
+                        : {
+                              exactPayoutAmount: toSafeNumber(
+                                  preparation.exactPayoutAmount,
+                                  "exactPayoutAmount",
+                              ),
+                          }),
                 }),
             };
         case "onchain->arkade":

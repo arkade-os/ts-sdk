@@ -571,6 +571,9 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                     preimage,
                     payoutPkScript: swap.payoutPkScript,
                     feeRateSatVb: rate,
+                    ...(swap.exactPayoutAmount === undefined
+                        ? {}
+                        : { payoutAmount: BigInt(swap.exactPayoutAmount) }),
                     sign: (sighash) => signer.signMessage(sighash, "schnorr"),
                     ...(swap.claimTxid ? { republish: true } : {}),
                 }),

@@ -121,6 +121,7 @@ export interface OnchainSendProfile extends Record<string, unknown> {
     /** `profile.min_confirmations`; gates when the fill is claimable. */
     minConfirmations: number;
     expectedAmount: number;
+    exactPayoutAmount?: number;
     /** Where the claim PAYS, hex. The spender's own choice, so nothing else
      * gives it back — and `buildHtlcClaim` needs it. */
     payoutPkScript: string;
@@ -147,6 +148,7 @@ export function onchainSendProfile(result: {
     l1Network: OnchainNetwork;
     minConfirmations: number;
     expectedAmount: number;
+    exactPayoutAmount?: number;
     payoutPkScript: Uint8Array;
 }): Omit<OnchainSendProfile, "signer" | "hashlock"> {
     return {
@@ -157,6 +159,9 @@ export function onchainSendProfile(result: {
         htlcAddress: result.htlc.address,
         minConfirmations: result.minConfirmations,
         expectedAmount: result.expectedAmount,
+        ...(result.exactPayoutAmount === undefined
+            ? {}
+            : { exactPayoutAmount: result.exactPayoutAmount }),
         payoutPkScript: hex.encode(result.payoutPkScript),
     };
 }
@@ -209,6 +214,13 @@ const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
                     `refusing to restore a swap that would claim an underfunded fill`,
             );
         }
+        if (
+            profile.exactPayoutAmount !== undefined &&
+            (!Number.isSafeInteger(profile.exactPayoutAmount) ||
+                profile.exactPayoutAmount <= 0 ||
+                profile.exactPayoutAmount >= profile.expectedAmount)
+        )
+            throw new Error("onchain_send record carries an invalid exact payout amount");
         const htlc = onchainHtlcScript(
             {
                 // From the profile, not the covenant: the lockup commits to `hash160(P)`, the
@@ -233,6 +245,9 @@ const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
             htlc,
             minConfirmations: profile.minConfirmations,
             expectedAmount: profile.expectedAmount,
+            ...(profile.exactPayoutAmount === undefined
+                ? {}
+                : { exactPayoutAmount: profile.exactPayoutAmount }),
             // Optional here, required at the write: throwing on an older
             // record would strand the refund it is still owed.
             ...(profile.payoutPkScript

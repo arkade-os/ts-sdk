@@ -854,6 +854,22 @@ describe("accept() — what the record carries", () => {
         });
     });
 
+    it("persists the exact Bitcoin payout with the gross fill amount before funding", async () => {
+        const h = await setup();
+        const quote = await h.client.quote({
+            to: BCRT1,
+            amount: 99_000n,
+            amountOn: "take",
+            onchainClaimFeeRateSatVb: 3,
+        });
+        expect(quote.onchainClaimFee).toBe(456n);
+        await h.client.accept(quote);
+
+        const stored = (await h.repository.getSwapRecord(quote.id)) as CorridorSwapRecord;
+        expect(stored.profile).toMatchObject({ exactPayoutAmount: 99_000, expectedAmount: 99_456 });
+        expect(h.wallet.sent).toHaveLength(1);
+    });
+
     it("writes at most one of the preimage and its salt", async () => {
         const h = await setup();
         const quote = await quoteFor(h, "lightningReceive");

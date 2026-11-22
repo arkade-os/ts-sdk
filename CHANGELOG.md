@@ -163,6 +163,12 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: select a solver for one quote.** Pass a `solverId` from
+  `client.candidates()` to `client.quote(input, { solverId })`. An unavailable
+  or paused solver is refused before negotiation, and a selected solver's
+  failure returns to the caller without contacting another solver. Automatic
+  routing preferences still apply to subsequent quotes.
+
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,
   completed usage (`completedSolverUsage`) or amount-aware advertised cost, after
