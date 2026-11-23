@@ -166,6 +166,15 @@ describe("RestExecutorProvider", () => {
         });
         expect(mockFetch).toHaveBeenCalledWith(
             "https://executor.test/v1/delegation?address=tark1x",
+            { signal: undefined },
+        );
+        // a caller's deadline reaches the request
+        const signal = new AbortController().signal;
+        respond({ delegation, coins: [] });
+        await provider.getDelegation("tark1x", { signal });
+        expect(mockFetch).toHaveBeenLastCalledWith(
+            "https://executor.test/v1/delegation?address=tark1x",
+            { signal },
         );
         for (const [body, error] of [
             [{ delegation: { ...delegation, status: "paused" } }, "unknown status paused"],
@@ -1130,6 +1139,40 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
 
             expect(provider.getDelegation).not.toHaveBeenCalled();
             expect(provider.registerDelegation).not.toHaveBeenCalled();
+        });
+
+        it("revives the latest other key's lapsed watch, and ends an older key's", async () => {
+            const { wallet: managed, manager, provider } = await managedWallet();
+            await holdBoardingWatch(managed, `tr(${heldKeys[0]})`);
+            await new Promise((r) => setTimeout(r, 5));
+            await holdBoardingWatch(managed, `tr(${heldKeys[1]})`);
+            answer(provider, { boarding: "expired" });
+
+            await new ExecutorManagerImpl(provider, managed).refreshWatches();
+
+            expect(provider.registerDelegation.mock.calls.map(([, v]) => v.owner)).toEqual([
+                `02${heldKeys[1]}`,
+            ]);
+            expect(await rowsOf(manager, "boarding")).toEqual(
+                [`${HELD[0]}/500/expired`, `${HELD[1]}/500/active`].sort(),
+            );
+        });
+
+        it("writes only through write, and stops between watches once stopped", async () => {
+            const { executor, provider, manager } = await renewingWallet();
+            answer(provider, { boarding: "expired", renewal: "expired" });
+            let stop = false;
+            const write = vi.fn((task: () => Promise<void>) => {
+                stop = true;
+                return task();
+            });
+
+            await executor.refreshWatches({ write, stopped: () => stop });
+
+            expect(write).toHaveBeenCalledOnce();
+            expect(provider.getDelegation).toHaveBeenCalledOnce();
+            expect(provider.registerDelegation).not.toHaveBeenCalled();
+            expect(await rowsOf(manager, "boarding")).toEqual([`${OWNER}/500/active`]);
         });
     });
 });

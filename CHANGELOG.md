@@ -202,11 +202,21 @@ style and have not been backfilled.
   while it runs. With `settlementConfig: false` a session that stays open
   refreshes only at its next start. A wallet with no live watch asks neither
   the Executor nor the operator, and a refresh the Executor could not answer is
-  retried on the next start. It registers an expired one again, which revives the same
-  address, and stops showing one it cannot revive, so it boards those deposits
-  itself. A revived watch keeps its registration time, so reviving an older
-  one does not move the boarding address back to its params. A wallet offline for longer than that after its last rotation can
-  still show an address nobody watches until it is back online. A subscription
+  retried on the next start. It registers an expired one again, which revives
+  the same address, and stops showing one it cannot revive, so it boards those
+  deposits itself. Only the keys still in use are revived: the displayed one,
+  and the most recently registered other key, whose renewal contract the
+  wallet's renewals pay into. An older rotated key's watch that lapses, never
+  having held a coin, ends instead, so the refresh does not grow with every
+  rotation; the wallet boards a late deposit there itself. A revived watch
+  keeps its registration time, so reviving an older one does not move the
+  boarding address back to its params. The refresh asks the Executor outside
+  the queue that orders boarding rotations, and under a Web Lock of its own
+  rather than the boarding poll's: `getNewBoardingAddress()` waits for one
+  write at most, not for the whole refresh, and other tabs' polls do not wait
+  for it. `dispose()` stops it between watches. A wallet offline for longer
+  than that after its last rotation can still show an address nobody watches
+  until it is back online. A subscription
   started before
   the registration watches the delegated address too:
   `ContractManagerConfig.onOnchainContractCreated` fires when a new
@@ -290,12 +300,14 @@ style and have not been backfilled.
   transaction lock for it; until the new watch is registered the old delegated
   address stays displayed, still watched, so a deposit there is still boarded.
   `getNewBoardingAddress()` waits for the registration, so it now depends on
-  the network. A `RestExecutorProvider` registration request stops after 30
-  seconds where the runtime has `AbortSignal`; a custom provider must honor the
-  `signal` it is passed (`ExecutorProvider.registerDelegation` takes it as an
+  the network. A `RestExecutorProvider` registration request, and a refresh's
+  status read, stop after 30 seconds where the runtime has `AbortSignal`; a
+  custom provider must honor the `signal` it is passed
+  (`ExecutorProvider.registerDelegation` and `getDelegation` take it as an
   optional argument). Repeating a registration is safe, as the service returns
-  the existing watch. A coin already there when the wallet starts, boarded while it was offline, raises
-  no event, and a lazy start writes it only during its background boot, so
+  the existing watch. A coin already there when the wallet starts, boarded
+  while it was offline, raises no event, and a lazy start writes it only
+  during its background boot, so
   once that boot has finished the wallet looks for one, spent or not, and
   rotates too. If a registration fails or times out, `getBoardingAddress()` and
   `getNewBoardingAddress()` show the new key's own address, which the wallet

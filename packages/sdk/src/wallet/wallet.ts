@@ -2872,6 +2872,13 @@ export class Wallet
     private _executorBootInstalled = false;
     private _executorBoardChain: Promise<void> = Promise.resolve();
     private _executorRefreshedAt = 0;
+    private _executorBoot?: Promise<void>;
+    private _executorRefreshing?: Promise<void>;
+    /**
+     * Set by dispose: a refresh stops between watches, and its queued writes do nothing. Rotations
+     * still drain.
+     */
+    private _executorStopping = false;
 
     /**
      * Descriptor-aware signer for inputs locked by rotated pubkeys (the rotator's instance).
@@ -3152,6 +3159,7 @@ export class Wallet
         // A static wallet keeps its contract manager lazy: the task below boots it.
         const eager = rotates ? await this.getContractManager() : undefined;
         this._executorBootInstalled = true;
+        this._executorStopping = false;
         if (eager) {
             this._executorBoardUnsub = eager.onContractEvent((event) => {
                 if (event.type !== "vtxo_received" || !isContractVtxoEvent(event)) return;
@@ -3160,8 +3168,9 @@ export class Wallet
                 this.queueExecutorBoardRotation(params.owner);
             });
         }
-        // Unawaited, so lazy init stays lazy; on the chain, so dispose drains it.
-        void this.onBoardChain(async () => {
+        // Unawaited, so lazy init stays lazy; dispose waits for it. Off the board chain: the
+        // refresh queues its own writes there.
+        this._executorBoot = (async () => {
             try {
                 const manager = eager ?? (await this.getContractManager());
                 await manager.whenBooted?.().catch(() => undefined);
@@ -3170,24 +3179,29 @@ export class Wallet
                 return;
             }
             // First: a rotation then extends from watches that are still held.
-            await this.refreshExecutorWatchesNow();
-            if (rotates) await this.rotateForExecutorCoinAtBoot();
-        });
+            await this.refreshExecutorWatches();
+            if (rotates) await this.onBoardChain(() => this.rotateForExecutorCoinAtBoot());
+        })();
     }
 
     /**
      * @internal Register again the Executor watches the service let lapse, see
      * {@link ExecutorManagerImpl.refreshWatches}; runs at startup for every wallet with an Executor
-     * and from the poll of the {@link VtxoManager} every cycle. At most once a day, reloads included, on the board chain so it never interleaves a
-     * rotation's registration. Best-effort: never throws.
+     * and from the poll of the {@link VtxoManager} every cycle. At most once a day, reloads
+     * included. Its writes go on the board chain, so they never interleave a rotation's
+     * registration, and a rotation waits for one write at most. Concurrent calls share one run.
+     * Best-effort: never throws. Never call it from a board chain task: it would wait on itself.
      */
     refreshExecutorWatches(): Promise<void> {
-        return this.onBoardChain(() => this.refreshExecutorWatchesNow());
+        this._executorRefreshing ??= this.refreshExecutorWatchesNow().finally(() => {
+            this._executorRefreshing = undefined;
+        });
+        return this._executorRefreshing;
     }
 
     private async refreshExecutorWatchesNow(): Promise<void> {
         const executor = this._executorManager;
-        if (!executor) return;
+        if (!executor || this._executorStopping) return;
         if (Date.now() - this._executorRefreshedAt < EXECUTOR_REFRESH_INTERVAL_MS) return;
         const stored = await this.walletRepository.getWalletState().then(
             (state) => state?.settings?.[EXECUTOR_REFRESHED_KEY],
@@ -3202,9 +3216,17 @@ export class Wallet
         const at = Date.now();
         this._executorRefreshedAt = at;
         try {
-            await executor.refreshWatches();
+            await executor.refreshWatches({
+                write: (task) => this.onBoardChain(task),
+                stopped: () => this._executorStopping,
+            });
         } catch (e) {
             console.warn("Failed to refresh the Executor watches", e);
+            return;
+        }
+        // Cut short: the next start refreshes again.
+        if (this._executorStopping) {
+            this._executorRefreshedAt = 0;
             return;
         }
         await updateWalletState(this.walletRepository, (state) => ({
@@ -4234,6 +4256,8 @@ export class Wallet
     }
 
     override async dispose(): Promise<void> {
+        // First: the VtxoManager's dispose below waits for a poll, which may be refreshing.
+        this._executorStopping = true;
         await Promise.allSettled([...this.reservationWrites]);
         // Drain an in-flight restore so it can't hit torn-down managers (deadlock-free:
         // _runRestore never calls dispose()).
@@ -4272,6 +4296,10 @@ export class Wallet
         } finally {
             this._vtxoManager = undefined;
             this._vtxoManagerInitializing = undefined;
+            // They queue on the chain until they end; never reject.
+            await this._executorBoot;
+            await this._executorRefreshing;
+            this._executorBoot = undefined;
             // A task can queue another while it runs: drain until the chain stops moving. Never
             // rejects, and before the contract manager goes, which a drained rotation writes to.
             let chain: Promise<void>;

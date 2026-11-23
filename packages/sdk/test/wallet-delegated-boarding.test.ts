@@ -21,7 +21,7 @@ import {
 import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
 import { saveVtxosForContract } from "../src/contracts/vtxoOwnership";
 import { collectVtxos } from "../src/repositories/walletRepository";
-import { REGISTRATION_TIMEOUT_MS } from "../src/wallet/executor";
+import { EXECUTOR_REQUEST_TIMEOUT_MS } from "../src/wallet/executor";
 import { DEFAULT_TEMPLATE_IDS } from "../src/script/executor/executorTemplate";
 import { getOwnBoardingAddress } from "../src/wallet/utils";
 import { createMockExtendedVtxo } from "./contracts/helpers";
@@ -350,8 +350,9 @@ const boardingCoin = {
     status: { confirmed: true },
 };
 
-/** The queued rotations, including any a running one queues. */
+/** The boot's refresh and the queued rotations, including any a running one queues. */
 async function boardChainIdle(wallet: Wallet) {
+    await (wallet as any)._executorBoot;
     let chain: Promise<void>;
     do {
         chain = (wallet as any)._executorBoardChain;
@@ -764,7 +765,9 @@ describe("delegated boarding address on an HD wallet", () => {
                 await hdWalletWithWatch();
 
             await boardChainIdle(wallet);
-            expect(getDelegation).toHaveBeenCalledWith(boardingAddress(boarding));
+            expect(getDelegation).toHaveBeenCalledWith(boardingAddress(boarding), {
+                signal: expect.any(AbortSignal),
+            });
             expect(registerDelegation).not.toHaveBeenCalled();
             await wallet.dispose();
         });
@@ -908,6 +911,62 @@ describe("delegated boarding address on an HD wallet", () => {
             await wallet.dispose();
         });
 
+        /** Make the Executor's answers wait until the returned function releases them. */
+        function holdAnswers(
+            getDelegation: Awaited<ReturnType<typeof hdWalletWithWatch>>["getDelegation"],
+            status: "active" | "expired",
+        ) {
+            let release!: () => void;
+            const released = new Promise<void>((resolve) => (release = resolve));
+            getDelegation.mockImplementation(async () => {
+                await released;
+                return { delegation: { status }, coins: [] };
+            });
+            return release;
+        }
+
+        it("rotates the boarding address while a refresh waits on the Executor", async () => {
+            vi.useFakeTimers({ toFake: ["Date"] });
+            const { wallet, boarding, getDelegation, registerDelegation } =
+                await hdWalletWithWatch();
+            await boardChainIdle(wallet);
+            const release = holdAnswers(getDelegation, "active");
+            vi.setSystemTime(Date.now() + DAY_MS);
+            const refreshing = wallet.refreshExecutorWatches();
+            await vi.waitFor(() => expect(getDelegation).toHaveBeenCalledTimes(2));
+
+            await wallet.getNewBoardingAddress();
+
+            expect(registerDelegation).toHaveBeenCalled();
+            expect(await wallet.getBoardingAddress()).not.toBe(boardingAddress(boarding));
+            release();
+            await refreshing;
+            await wallet.dispose();
+        });
+
+        it("stops a refresh once the wallet is disposed, and writes nothing more", async () => {
+            vi.useFakeTimers({ toFake: ["Date"] });
+            const { wallet, getDelegation, registerDelegation } = await hdWalletWithWatch({
+                renewalLive: true,
+            });
+            await boardChainIdle(wallet);
+            getDelegation.mockClear();
+            registerDelegation.mockClear();
+            const release = holdAnswers(getDelegation, "expired");
+            vi.setSystemTime(Date.now() + DAY_MS);
+            const refreshing = wallet.refreshExecutorWatches();
+            await vi.waitFor(() => expect(getDelegation).toHaveBeenCalledOnce());
+
+            const disposed = wallet.dispose();
+            release();
+            await disposed;
+            await refreshing;
+
+            // the lapsed watch is not registered again, and the other is not asked about
+            expect(getDelegation).toHaveBeenCalledOnce();
+            expect(registerDelegation).not.toHaveBeenCalled();
+        });
+
         it("does nothing without an Executor", async () => {
             mockFetch.mockImplementation(async () => jsonResponse(arkInfo));
             const { wallet } = await walletWith({ executor: false, rows: true });
@@ -925,7 +984,7 @@ describe("delegated boarding address on an HD wallet", () => {
 
         const next = wallet.getNewBoardingAddress();
         await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledOnce());
-        expect(timeout).toHaveBeenCalledWith(REGISTRATION_TIMEOUT_MS);
+        expect(timeout).toHaveBeenCalledWith(EXECUTOR_REQUEST_TIMEOUT_MS);
         deadline.abort(new Error("timed out"));
 
         expect(await next).toBe(wallet.ownBoardingAddress());

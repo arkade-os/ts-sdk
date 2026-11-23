@@ -161,6 +161,9 @@ class BoardingSignerChangedError extends Error {
  */
 const IMPORTED_RECOVERY_LOCK_NAME = "arkade-imported-recovery";
 
+/** Web Locks name for the Executor watch refresh: one context per origin asks the Executor. */
+const EXECUTOR_REFRESH_LOCK_NAME = "arkade-executor-refresh";
+
 /**
  * Run `fn` under an exclusive Web Lock when `navigator.locks` exists, else (Node, React Native)
  * uncoordinated. `ifAvailable`: if another context holds the lock, skip this cycle rather than
@@ -3059,15 +3062,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // never throws) so it neither stacks the poll backoff nor
                 // affects the wallet's own settle above.
                 await this.recoverImportedContracts();
-
-                // Self-contained and throttled by the wallet, so a lapsed Executor watch is
-                // registered again without stacking the poll backoff.
-                if (isExecutorRefreshCapable(this.wallet)) {
-                    await this.wallet.refreshExecutorWatches().catch((e) => {
-                        console.error("Error refreshing the Executor watches:", e);
-                    });
-                }
             });
+
+            // Self-contained and throttled by the wallet, so a lapsed Executor watch is registered
+            // again without stacking the poll backoff. Under its own lock: it takes no boarding
+            // input, so other tabs' polls need not wait for its network calls.
+            const wallet = this.wallet;
+            if (isExecutorRefreshCapable(wallet)) {
+                await runWithCrossInstanceLock(EXECUTOR_REFRESH_LOCK_NAME, () =>
+                    wallet.refreshExecutorWatches().catch((e) => {
+                        console.error("Error refreshing the Executor watches:", e);
+                    }),
+                );
+            }
         } catch (e) {
             hadError = true;
             console.error("Error fetching boarding UTXOs:", e);

@@ -70,7 +70,10 @@ export interface ExecutorProvider {
         variables: Record<string, string>,
         options?: { expiresAt?: number; signal?: AbortSignal },
     ): Promise<ExecutorDelegation>;
-    getDelegation(address: string): Promise<ExecutorDelegationDetails>;
+    getDelegation(
+        address: string,
+        options?: { signal?: AbortSignal },
+    ): Promise<ExecutorDelegationDetails>;
 }
 
 /** REST provider for the Executor, the service that renews and boards a wallet's coins. */
@@ -132,9 +135,14 @@ export class RestExecutorProvider implements ExecutorProvider {
         return parseDelegation(isObject(data) ? data.delegation : undefined);
     }
 
-    async getDelegation(address: string): Promise<ExecutorDelegationDetails> {
+    async getDelegation(
+        address: string,
+        options: { signal?: AbortSignal } = {},
+    ): Promise<ExecutorDelegationDetails> {
         const url = this.endpoint(`/v1/delegation?address=${encodeURIComponent(address)}`);
-        const response = await rateGate.runHttp(url, () => baseFetch(url));
+        const response = await rateGate.runHttp(url, () =>
+            baseFetch(url, { signal: options.signal }),
+        );
         if (!response.ok) {
             const body = await response.text();
             throw new ExecutorRequestError(

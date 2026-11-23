@@ -29,10 +29,10 @@ import { newestWalletReceiveContract } from "./walletReceiveRotator";
 import { toXOnlySignerHex } from "./signerRotation";
 
 /**
- * Bounds the registration request, a write with no `fetch` deadline of its own; the local setup
- * after the service answers is not covered.
+ * Bounds a registration or a refresh's status read, neither with a `fetch` deadline of its own;
+ * the local setup after the service answers is not covered.
  */
-export const REGISTRATION_TIMEOUT_MS = 30_000;
+export const EXECUTOR_REQUEST_TIMEOUT_MS = 30_000;
 
 /** Metadata key: the service's status of a delegated watch. */
 export const DELEGATION_STATUS_KEY = "delegationStatus";
@@ -511,8 +511,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 // Its coins sit in the contract its own params and keys derive.
                 const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
                 const keys = rowKeys(p);
-                // Never registrable, and boarding watches do not end: failing would repeat at every
-                // startup. The wallet renews the coins itself.
+                // Never registrable, and a held boarding watch ends only once it lapses: failing
+                // would repeat at every startup. The wallet renews the coins itself.
                 if (keys.emulatorPubkey !== first.keys.emulatorPubkey.toLowerCase()) {
                     console.warn(
                         `Skipping the held key ${watch.owner}: its watch uses another emulator key than the Executor's`,
@@ -588,11 +588,26 @@ export class ExecutorManagerImpl implements IExecutorManager {
      * registration moves the boarding address. One that cannot be revived stops being live, and
      * the wallet boards its deposits itself. A failing watch leaves the others to be tried.
      *
+     * Only a key the wallet still uses is revived: the displayed one, and the most recently
+     * registered other key with a live watch, whose renewal contract the wallet's renewals pay
+     * into. A lapsed watch of any older key ends instead: it never held a coin, and reviving it
+     * would repeat for every rotation, forever.
+     *
+     * The status reads run as called; only the writes go through `write`, so a caller that orders
+     * them with its rotations holds those back for one write, never for the whole refresh.
+     * `stopped` ends the refresh between watches, and turns a write still queued into a no-op.
+     *
      * Throws when a live watch is held and the Executor or the operator cannot be reached; a
      * wallet with none reaches neither.
      * @internal
      */
-    async refreshWatches(): Promise<void> {
+    async refreshWatches({
+        write = (task) => task(),
+        stopped = () => false,
+    }: {
+        write?: (task: () => Promise<void>) => Promise<void>;
+        stopped?: () => boolean;
+    } = {}): Promise<void> {
         const held = {
             boarding: (await this.heldWatches("boarding")).filter((w) => w.live),
             renewal: (await this.heldWatches("renewal")).filter((w) => w.live),
@@ -601,9 +616,14 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const context = await this.registrationContext();
         for (const template of ["boarding", "renewal"] as const) {
             for (const watch of held[template]) {
+                if (stopped()) return;
                 if (watch.signer !== context.server) continue;
                 try {
-                    await this.refreshWatch(context, template, watch);
+                    const status = await this.serviceStatus(context, template, watch);
+                    if (status === "active") continue;
+                    await write(async () => {
+                        if (!stopped()) await this.settleLapsed(context, template, watch, status);
+                    });
                 } catch (e) {
                     console.warn(
                         `Failed to refresh the Executor ${template} watch`,
@@ -615,24 +635,44 @@ export class ExecutorManagerImpl implements IExecutorManager {
         }
     }
 
-    private async refreshWatch(
+    /** What the Executor says of `watch`; an unknown watch is a lost one, so "expired". */
+    private async serviceStatus(
         context: RegistrationContext,
         template: ExecutorDefault,
         watch: DelegatedContractWatch,
-    ): Promise<void> {
+    ): Promise<string> {
         const address =
             template === "boarding"
                 ? watch.script.onchainAddress(context.network)
                 : watch.script.address(context.hrp, context.serverPubKey).encode();
-        let status: string;
         try {
-            status = (await this.executorProvider.getDelegation(address)).delegation.status;
+            const details = await this.executorProvider.getDelegation(address, {
+                signal: timeoutSignal(EXECUTOR_REQUEST_TIMEOUT_MS),
+            });
+            return details.delegation.status;
         } catch (e) {
-            // An unknown watch is a lost one; any other failure says nothing of it.
+            // Any other failure says nothing of the watch.
             if (!(e instanceof ExecutorRequestError) || e.status !== 404) throw e;
-            status = "expired";
+            return "expired";
         }
-        if (status === "active") return;
+    }
+
+    /** Revive a lapsed watch, or end it when its key is no longer in use. */
+    private async settleLapsed(
+        context: RegistrationContext,
+        template: ExecutorDefault,
+        lapsed: DelegatedContractWatch,
+        status: string,
+    ): Promise<void> {
+        // Re-read: a rotation may have run while the service was asked.
+        const watch = (await this.heldWatches(template)).find(
+            (w) => w.contract.script === lapsed.contract.script,
+        );
+        if (!watch?.live) return;
+        if (!(await this.keyInUse(watch.owner, context.server))) {
+            await this.endWatch(watch, status);
+            return;
+        }
         const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
         const expiresAt = watch.contract.metadata?.[DELEGATION_EXPIRES_KEY];
         try {
@@ -657,17 +697,40 @@ export class ExecutorManagerImpl implements IExecutorManager {
             );
         } catch (e) {
             // Whatever failed, the service said it no longer holds the watch: stop advertising it.
-            const manager = await this.wallet.getContractManager();
-            await manager.updateContract(watch.contract.script, {
-                metadata: statusMetadata(
-                    watch.contract.metadata ?? {},
-                    status,
-                    undefined,
-                    registeredAt(watch.contract),
-                ),
-            });
+            await this.endWatch(watch, status);
             throw e;
         }
+    }
+
+    /** Record the service's `status`, so the watch stops being live and is no longer shown. */
+    private async endWatch(watch: DelegatedContractWatch, status: string): Promise<void> {
+        const manager = await this.wallet.getContractManager();
+        await manager.updateContract(watch.contract.script, {
+            metadata: statusMetadata(
+                watch.contract.metadata ?? {},
+                status,
+                undefined,
+                registeredAt(watch.contract),
+            ),
+        });
+    }
+
+    /**
+     * The displayed key, and the most recently registered other key with a live watch: the
+     * wallet's renewals pay into its renewal contract, and a rotation copies its params when the
+     * displayed key has no watch.
+     */
+    private async keyInUse(owner: string, server: string): Promise<boolean> {
+        const displayed = await ownerKey(this.wallet.identity, await this.displayedDescriptor());
+        const displayedOwner = hex.encode(displayed.subarray(1));
+        if (owner === displayedOwner) return true;
+        const others = [
+            ...(await this.heldWatches("boarding")),
+            ...(await this.heldWatches("renewal")),
+        ]
+            .filter((w) => w.live && w.signer === server && w.owner !== displayedOwner)
+            .sort((a, b) => registeredAt(b.contract) - registeredAt(a.contract));
+        return others[0]?.owner === owner;
     }
 
     /**
@@ -844,7 +907,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // with its outcome unknown is safe to repeat.
         const delegation = await this.executorProvider.registerDelegation(templateId, variables, {
             expiresAt,
-            signal: timeoutSignal(REGISTRATION_TIMEOUT_MS),
+            signal: timeoutSignal(EXECUTOR_REQUEST_TIMEOUT_MS),
         });
         // The scripts derive from the owner, the params and the operator and emulator keys, not the
         // cosigner key: a matching address proves those and commits to the same tapscripts, and

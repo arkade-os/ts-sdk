@@ -2422,6 +2422,36 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             await manager.dispose();
         });
 
+        it("refreshes the Executor watches outside the boarding lock, under its own", async () => {
+            const held: string[] = [];
+            const request = vi.fn(
+                async (name: string, _opts: unknown, cb: (lock: unknown) => Promise<void>) => {
+                    held.push(name);
+                    try {
+                        return await cb({ name });
+                    } finally {
+                        held.splice(held.indexOf(name), 1);
+                    }
+                },
+            );
+            vi.stubGlobal("navigator", { locks: { request } });
+            try {
+                const wallet = createMockWalletWithBoarding([], { groups: [] });
+                let during: string[] = [];
+                wallet.refreshExecutorWatches = vi.fn(async () => {
+                    during = [...held];
+                });
+                const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+                await (manager as any).pollBoardingUtxos();
+
+                expect(during).toEqual(["arkade-executor-refresh"]);
+                await manager.dispose();
+            } finally {
+                vi.unstubAllGlobals();
+            }
+        });
+
         it("does not back off when the Executor refresh fails", async () => {
             const wallet = createMockWalletWithBoarding([], { groups: [] });
             wallet.refreshExecutorWatches = vi.fn().mockRejectedValue(new Error("offline"));
