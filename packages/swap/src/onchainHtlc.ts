@@ -518,6 +518,32 @@ export type OnchainHtlcPhase =
     | { phase: "claimed"; txid: string; preimage: Uint8Array }
     | { phase: "swept"; txid: string };
 
+export async function readOnchainHtlcSpend(
+    chain: ChainSource,
+    htlc: OnchainHtlc,
+    funding: { txid: string; vout: number; amount?: number },
+): Promise<
+    | (Extract<OnchainHtlcPhase, { phase: "claimed" }> & { feeRateSatVb?: number })
+    | Extract<OnchainHtlcPhase, { phase: "swept" }>
+    | null
+> {
+    const spend = await chain.getSpendingTx(funding.txid, funding.vout, htlc.pkScript);
+    if (!spend) return null;
+    const preimage = extractPreimage(spend.txHex, htlc.paymentHash);
+    const tx = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
+        allowUnknownInputs: true,
+        allowUnknownOutputs: true,
+    });
+    if (!preimage) return { phase: "swept", txid: tx.id };
+    // The stock claim has one input and one output. Its rate is recoverable from the spent value.
+    if (funding.amount !== undefined && tx.inputsLength === 1 && tx.outputsLength === 1) {
+        const fee = funding.amount - Number(tx.getOutput(0).amount);
+        if (fee > 0)
+            return { phase: "claimed", txid: tx.id, preimage, feeRateSatVb: fee / tx.vsize };
+    }
+    return { phase: "claimed", txid: tx.id, preimage };
+}
+
 /**
  * Classify an HTLC from chain state alone. `funding` (the known outpoint from
  * the stored record) is what distinguishes "never funded" from "funded and
@@ -536,6 +562,7 @@ export async function classifyOnchainHtlc(
         minConfirmations: number;
         funding?: { txid: string; vout: number };
         claimSubmitted?: boolean;
+        expectedAmount?: number;
     },
 ): Promise<OnchainHtlcPhase> {
     const utxos = await chain.getScriptUtxos(input.htlc.pkScript);
@@ -544,18 +571,17 @@ export async function classifyOnchainHtlc(
     const recorded =
         funding && utxos.find((u) => u.txid === funding.txid && u.vout === funding.vout);
     if (funding && !recorded) {
-        const spend = await chain.getSpendingTx(funding.txid, funding.vout, input.htlc.pkScript);
-        if (spend) {
-            const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
-            const txid = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
-                allowUnknownInputs: true,
-                allowUnknownOutputs: true,
-            }).id;
-            return preimage ? { phase: "claimed", txid, preimage } : { phase: "swept", txid };
-        }
+        const spend = await readOnchainHtlcSpend(chain, input.htlc, {
+            txid: funding.txid,
+            vout: funding.vout,
+        });
+        if (spend) return spend;
     }
     const best =
-        (input.claimSubmitted && recorded) ||
+        (input.claimSubmitted &&
+            recorded &&
+            (input.expectedAmount === undefined || recorded.amount >= input.expectedAmount) &&
+            recorded) ||
         utxos.sort((a, b) =>
             deep(a) !== deep(b) ? (deep(a) ? -1 : 1) : b.amount > a.amount ? 1 : -1,
         )[0];

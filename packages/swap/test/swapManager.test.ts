@@ -34,6 +34,7 @@ import {
     ONCHAIN_ORDER_MARGIN_SECONDS,
     buildHtlcClaim,
     buildHtlcRefund,
+    nextClaimFeeRate,
     onchainHtlcScript,
     paymentHashOf,
     type ChainSource,
@@ -41,9 +42,11 @@ import {
     type TxStatus,
 } from "../src/onchainHtlc";
 import { REFUND_MTP_LAG_SECONDS } from "@arkade-os/swap/protocol";
+import { InMemoryAssetSwapRepository } from "../src/repository";
 import { LockupNeedsRecoveryError, type LockupSpendIndexer, type LockupVtxo } from "../src/refund";
 import { SWAP_LOCKUP_CONTRACT_TYPE } from "../src/lockupContract";
 import { RefundNotLocallyPossibleError } from "../src/refundBlocked";
+import { onchainSendProfile } from "../src/rfqCorridors";
 import {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
@@ -1612,6 +1615,29 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
         if (claims) expect(s.claims[0].utxo).toMatchObject({ txid: replacement.txid });
     });
 
+    it.each([
+        { case: "a pin without an amount", funding: { txid: FILL.txid, vout: FILL.vout } },
+        { case: "no pin", funding: undefined },
+        {
+            case: "an underfunded pin",
+            funding: { txid: "55".repeat(32), vout: FILL.vout, amount: 50_000 },
+        },
+    ])("does not republish an underfunded claim when restored with $case", async ({ funding }) => {
+        const s = spies();
+        const short = { ...FILL, txid: "55".repeat(32), amount: 50_000n };
+        const state = { utxos: [short], status: {} };
+        const m = manager({ chain: fakeChain(state), now: SAFE_NOW, spies: s });
+        await m.addSwap(claimedSwap({ claimTxid: "ee".repeat(32), funding }));
+        await m.poll();
+
+        expect(s.claims).toHaveLength(0);
+
+        state.utxos.push(FILL);
+        await m.poll();
+
+        expect(s.claims.map(({ utxo }) => utxo)).toEqual([FILL]);
+    });
+
     it("claims the solver's fill, not dust paid to the HTLC before it", async () => {
         const s = spies();
         const dust = { txid: "44".repeat(32), vout: 0, amount: BigInt(400), confirmations: 3 };
@@ -1655,6 +1681,154 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
         expect(s.claims).toHaveLength(2);
         expect(s.claims[1].options).toEqual({ bump: true });
         expect(s.claims[1].utxo).toMatchObject({ txid: FILL.txid, vout: FILL.vout });
+    });
+
+    it("restores and fee-bumps an earlier fill after an acknowledged replacement vanishes", async () => {
+        const claim = await ourClaim();
+        let now = SAFE_NOW;
+        const old = { ...FILL, txid: "33".repeat(32), confirmations: 0 };
+        const state = {
+            utxos: [old],
+            mtp: SAFE_NOW,
+            status: { [claim.txid]: false },
+        };
+        const chain = fakeChain(state);
+        const repository = new InMemoryAssetSwapRepository();
+        const write = repository.saveRfqSwap.bind(repository);
+        let failWrite = false;
+        vi.spyOn(repository, "saveRfqSwap").mockImplementation(async (record) => {
+            if (failWrite) throw new Error("record store unavailable");
+            await write(record);
+        });
+        let recordAtBroadcast: RfqSwapRecord | undefined;
+        const newerClaimTxid = "ab".repeat(32);
+        const s = spies({
+            async claim() {
+                recordAtBroadcast = await repository.getRfqSwap(RFQ_ID);
+                state.utxos = [];
+                if (s.claims.length > 1) return { txid: newerClaimTxid };
+                throw new Error("broadcast response lost");
+            },
+        });
+        const swap = onchainSwap();
+        const m = manager({ chain, now: () => now, spies: s, repository });
+        await m.addSwap(swap, {
+            kind: "onchain_send",
+            lockupAddress: LOCKUP.address("tark", key(3)).encode(),
+            profile: {
+                signer: { signingDescriptor: `tr(${hex.encode(key(13))})` },
+                hashlock: { paymentHash: PAYMENT_HASH },
+                ...onchainSendProfile({
+                    htlc: swap.htlc,
+                    htlcParams: {
+                        paymentHash: PAYMENT_HASH,
+                        claimKey: key(1),
+                        refundKey: key(3),
+                        refundLocktime: HTLC_LOCKTIME,
+                    },
+                    l1Network: "regtest",
+                    minConfirmations: swap.minConfirmations,
+                    expectedAmount: swap.expectedAmount,
+                    payoutPkScript: PAYOUT,
+                }),
+            },
+        });
+        await m.poll();
+
+        state.utxos = [FILL];
+        failWrite = true;
+        await m.poll();
+        expect(s.claims).toHaveLength(0);
+
+        failWrite = false;
+        await m.poll();
+        expect(s.claims.map(({ utxo }) => utxo)).toEqual([FILL]);
+        expect(swap.claimTxid).toBeUndefined();
+        expect(recordAtBroadcast?.profile).toMatchObject({
+            funding: { txid: old.txid },
+            claimAttempts: [
+                {
+                    txid: FILL.txid,
+                    vout: FILL.vout,
+                    amount: Number(FILL.amount),
+                    broadcastAt: SAFE_NOW,
+                },
+            ],
+        });
+        expect(recordAtBroadcast?.profile.claimTxid).toBeUndefined();
+
+        const newer = { ...FILL, txid: "44".repeat(32) };
+        state.utxos = [newer];
+        await m.poll();
+        expect(s.claims.map(({ utxo }) => utxo)).toEqual([FILL, newer]);
+        expect(swap.claimTxid).toBe(newerClaimTxid);
+        expect(recordAtBroadcast?.profile.claimAttempts).toMatchObject([
+            { txid: newer.txid },
+            { txid: FILL.txid },
+        ]);
+
+        chain.getSpendingTx = async (txid, vout) => {
+            if (txid === newer.txid) throw new Error("newer outpoint lookup unavailable");
+            return txid === FILL.txid && vout === FILL.vout ? { txHex: claim.txHex } : null;
+        };
+        now += ONCHAIN_CLAIM_BUMP_SECONDS;
+        const resumedSpies = spies();
+        let bumped: Awaited<ReturnType<typeof buildHtlcClaim>> | undefined;
+        const resumed = manager({
+            chain,
+            now,
+            spies: resumedSpies,
+            repository,
+            install: {
+                ...resumedSpies.callbacks,
+                async claimOnchain(swap, utxo, options) {
+                    await resumedSpies.callbacks.claimOnchain(swap, utxo, options);
+                    const rate = nextClaimFeeRate({
+                        configuredSatVb: 1,
+                        utxoAmount: utxo.amount,
+                        lastSatVb: swap.claimFeeRateSatVb,
+                        bump: options?.bump,
+                    });
+                    bumped = await buildHtlcClaim({
+                        htlc: swap.htlc,
+                        utxo,
+                        preimage: PREIMAGE,
+                        payoutPkScript: PAYOUT,
+                        feeRateSatVb: rate,
+                        sign: async (sighash) => schnorr.sign(sighash, priv(1)),
+                    });
+                    expect(bumped.payoutAmount).toBeLessThan(claim.payoutAmount);
+                    return { txid: bumped.txid, feeRateSatVb: rate };
+                },
+            },
+        });
+        const result = await resumed.restoreFromRepository({
+            params: async () => VHTLCV2ContractHandler.serializeParams(LOCKUP.options),
+        });
+        expect(result.failed).toHaveLength(0);
+        await resumed.poll();
+
+        expect(resumedSpies.claims).toHaveLength(1);
+        expect(resumedSpies.claims[0]).toMatchObject({
+            utxo: { txid: FILL.txid, vout: FILL.vout },
+            options: { bump: true },
+        });
+        const stored = await repository.getRfqSwap(RFQ_ID);
+        expect(bumped?.txid).toEqual(expect.any(String));
+        expect(stored?.profile.claimTxid).toBe(bumped?.txid);
+        expect(stored?.profile.claimTxid).not.toBe(claim.txid);
+        expect(stored?.profile.claimAttempts).toMatchObject([
+            { txid: newer.txid },
+            { txid: FILL.txid },
+        ]);
+
+        if (!bumped) throw new Error("missing bumped claim");
+        const confirmed = bumped;
+        state.status[confirmed.txid] = true;
+        chain.getSpendingTx = async (txid, vout) =>
+            txid === FILL.txid && vout === FILL.vout ? { txHex: confirmed.txHex } : null;
+        await resumed.poll();
+        expect((await repository.getRfqSwap(RFQ_ID))?.profile.claimAttempts).toBeUndefined();
     });
 
     it("never bumps a confirmed claim", async () => {

@@ -124,6 +124,7 @@ export interface OnchainSendProfile extends Record<string, unknown> {
     funding?: { txid: string; vout: number; amount?: number };
     /** Our own L1 claim, so a restart does not re-broadcast it. */
     claimTxid?: string;
+    claimAttempts?: OnchainSendSwap["claimAttempts"];
     claimFeeRateSatVb?: number;
     claimBroadcastAt?: number;
 }
@@ -170,9 +171,8 @@ const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
             expectedAmount: send.expectedAmount,
             ...(send.funding ? { funding: send.funding } : {}),
             ...(send.claimTxid ? { claimTxid: send.claimTxid } : {}),
-            ...(send.claimFeeRateSatVb === undefined
-                ? {}
-                : { claimFeeRateSatVb: send.claimFeeRateSatVb }),
+            claimAttempts: send.claimAttempts,
+            claimFeeRateSatVb: send.claimFeeRateSatVb,
             ...(send.claimBroadcastAt === undefined
                 ? {}
                 : { claimBroadcastAt: send.claimBroadcastAt }),
@@ -234,6 +234,9 @@ const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
                 ? { payoutPkScript: hex.decode(profile.payoutPkScript) }
                 : {}),
             ...(profile.funding ? { funding: profile.funding } : {}),
+            ...(Array.isArray(profile.claimAttempts)
+                ? { claimAttempts: profile.claimAttempts }
+                : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
             ...(typeof profile.claimFeeRateSatVb === "number"
                 ? { claimFeeRateSatVb: profile.claimFeeRateSatVb }

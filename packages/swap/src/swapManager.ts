@@ -35,6 +35,7 @@ import {
     ONCHAIN_CLAIM_BUMP_SECONDS,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     classifyOnchainHtlc,
+    readOnchainHtlcSpend,
     type ChainSource,
     type ChainUtxo,
     type OnchainHtlc,
@@ -173,6 +174,8 @@ export interface OnchainSendSwap extends RfqSwapCommon {
     /** The fill's outpoint and value, learned on first sighting. Without it a SPENT HTLC
      * reads as never funded, and no replacement claim can be signed ({@link classifyOnchainHtlc}). */
     funding?: { txid: string; vout: number; amount?: number };
+    /** Claim outpoints to watch until a payout confirms, including claims a backend may have dropped. */
+    claimAttempts?: (NonNullable<OnchainSendSwap["funding"]> & { broadcastAt: number })[];
     /** Our L1 claim's txid, the sat/vB it went out at, and when (unix seconds). */
     claimTxid?: string;
     claimFeeRateSatVb?: number;
@@ -1534,6 +1537,10 @@ export class RfqSwapManager {
             swap.claimConfirmed = confirmed;
             this.touch(swap);
         }
+        if (confirmed && swap.claimAttempts) {
+            delete swap.claimAttempts;
+            this.touch(swap);
+        }
         return confirmed;
     }
 
@@ -1551,21 +1558,63 @@ export class RfqSwapManager {
             return "handled";
         }
 
-        let phase: OnchainHtlcPhase;
+        let phase: OnchainHtlcPhase | undefined;
+        let attemptLookupFailed = false;
         try {
-            phase = await classifyOnchainHtlc(this.deps.chain, {
+            const attempts = swap.claimAttempts ?? [];
+            const funding = swap.funding;
+            const pinned = swap.claimTxid
+                ? attempts.find(
+                      (attempt) => attempt.txid === funding?.txid && attempt.vout === funding.vout,
+                  )
+                : undefined;
+            for (const attempt of pinned
+                ? [pinned, ...attempts.filter((a) => a !== pinned)]
+                : attempts) {
+                const spend = await readOnchainHtlcSpend(this.deps.chain, swap.htlc, attempt).catch(
+                    () => {
+                        attemptLookupFailed = true;
+                        return null;
+                    },
+                );
+                if (spend?.phase !== "claimed") continue;
+                phase = spend;
+                if (
+                    swap.claimTxid === spend.txid &&
+                    swap.funding?.txid === attempt.txid &&
+                    swap.funding.vout === attempt.vout
+                ) {
+                    break;
+                }
+                swap.funding = { txid: attempt.txid, vout: attempt.vout, amount: attempt.amount };
+                swap.claimBroadcastAt = attempt.broadcastAt;
+                if (spend.feeRateSatVb === undefined) delete swap.claimFeeRateSatVb;
+                else swap.claimFeeRateSatVb = spend.feeRateSatVb;
+                delete swap.claimConfirmed;
+                this.touch(swap);
+                break;
+            }
+            phase ??= await classifyOnchainHtlc(this.deps.chain, {
                 htlc: swap.htlc,
                 minConfirmations: swap.minConfirmations,
                 funding: swap.funding,
                 claimSubmitted: swap.claimTxid !== undefined,
+                expectedAmount: swap.expectedAmount,
             });
         } catch {
             // Fall THROUGH: the refund gate depends on `refundLocktime` alone, so an
             // unreachable esplora must not strand the lockup.
             return "continue";
         }
+        if (attemptLookupFailed && phase.phase !== "claimed") return "continue";
 
-        if ("utxo" in phase && swap.funding?.amount === undefined) {
+        if (
+            "utxo" in phase &&
+            swap.funding?.amount === undefined &&
+            (swap.funding
+                ? swap.funding.txid === phase.utxo.txid && swap.funding.vout === phase.utxo.vout
+                : !swap.claimTxid)
+        ) {
             swap.funding = {
                 txid: phase.utxo.txid,
                 vout: phase.utxo.vout,
@@ -1581,11 +1630,6 @@ export class RfqSwapManager {
             const due =
                 this.reportsConfirmations &&
                 this.config.now() - (swap.claimBroadcastAt ?? 0) >= ONCHAIN_CLAIM_BUMP_SECONDS;
-            // Off the pinned fill only when it was replaced: a claim that never propagated
-            // leaves `P` private, so a smaller output there must not be the one to publish it.
-            const pinned = swap.funding;
-            const moved = pinned?.txid !== phase.utxo.txid || pinned?.vout !== phase.utxo.vout;
-            if (moved && !(Number(phase.utxo.amount) >= swap.expectedAmount)) return "continue";
             if (due || (await this.claimVanished(swap.claimTxid))) {
                 await this.pushOnchainClaim(swap, phase.utxo, due);
             }
@@ -1599,30 +1643,6 @@ export class RfqSwapManager {
         });
 
         if (action === "claim" && phase.phase === "claimable") {
-            // Before the label: the claim publishes `P`, which is not recallable.
-            if (!Number.isSafeInteger(swap.expectedAmount) || swap.expectedAmount <= 0) {
-                this.block(
-                    swap,
-                    `expectedAmount is not a positive number of sats (${String(swap.expectedAmount)}), so the funded value cannot be checked — refusing to publish the preimage`,
-                );
-                return "handled";
-            }
-            const filled = Number(phase.utxo.amount);
-            if (!Number.isFinite(filled) || filled < swap.expectedAmount) {
-                this.block(
-                    swap,
-                    `fill holds ${filled} sats, below the agreed ${swap.expectedAmount} — refusing to publish the preimage`,
-                );
-                return "handled";
-            }
-            // Half-wired: blocked, not failed (unlike a missing `ChainSource`), because a
-            // callback can still arrive via `setCallbacks`. Fully unwired keeps reporting
-            // `claimable`, the documented manual mode.
-            if (this.callbacks && !this.callbacks.claimOnchain) {
-                this.block(swap, RFQ_CONFIGURATION_REFUSAL.noClaimOnchainCallback);
-                return "handled";
-            }
-            this.setOnchainState(swap, "claimable");
             return this.pushOnchainClaim(swap, phase.utxo, false);
         }
 
@@ -1652,22 +1672,68 @@ export class RfqSwapManager {
         utxo: ChainUtxo,
         bump: boolean,
     ): Promise<"handled"> {
-        if (!this.config.enableAutoActions || !this.callbacks?.claimOnchain) return "handled";
+        if (!Number.isSafeInteger(swap.expectedAmount) || swap.expectedAmount <= 0) {
+            this.block(
+                swap,
+                `expectedAmount is not a positive number of sats (${String(swap.expectedAmount)}), so the funded value cannot be checked — refusing to publish the preimage`,
+            );
+            return "handled";
+        }
+        const amount = Number(utxo.amount);
+        if (!Number.isSafeInteger(amount) || amount < swap.expectedAmount) {
+            if (!swap.claimTxid) {
+                this.block(
+                    swap,
+                    `fill holds ${amount} sats, below the agreed ${swap.expectedAmount} — refusing to publish the preimage`,
+                );
+            }
+            return "handled";
+        }
+        const callbacks = this.callbacks;
+        if (!swap.claimTxid) {
+            if (callbacks && !callbacks.claimOnchain) {
+                this.block(swap, RFQ_CONFIGURATION_REFUSAL.noClaimOnchainCallback);
+                return "handled";
+            }
+            this.setOnchainState(swap, "claimable");
+        }
+        if (!this.config.enableAutoActions || !callbacks?.claimOnchain) return "handled";
+
+        const { txid: fundingTxid, vout } = utxo;
+        const attempts = swap.claimAttempts ?? [];
+        const funding = swap.funding;
+        const previous =
+            swap.claimTxid &&
+            funding &&
+            (funding.txid !== fundingTxid || funding.vout !== vout) &&
+            !attempts.some(
+                (attempt) => attempt.txid === funding.txid && attempt.vout === funding.vout,
+            )
+                ? [{ ...funding, broadcastAt: swap.claimBroadcastAt ?? 0 }]
+                : [];
+        if (!attempts.some((attempt) => attempt.txid === fundingTxid && attempt.vout === vout)) {
+            swap.claimAttempts = [
+                { txid: fundingTxid, vout, amount, broadcastAt: this.config.now() },
+                ...attempts,
+                ...previous,
+            ];
+            this.touch(swap);
+        } else if (previous.length) {
+            swap.claimAttempts = [...attempts, ...previous];
+            this.touch(swap);
+        }
+        if (this.dirty.has(swap.rfqId)) {
+            if (!(await this.save(swap))) return "handled";
+            this.dirty.delete(swap.rfqId);
+        }
+
         try {
-            const { txid, feeRateSatVb } = await this.callbacks.claimOnchain(
+            const { txid, feeRateSatVb } = await callbacks.claimOnchain(
                 swap,
                 utxo,
                 bump ? { bump } : undefined,
             );
-            // A claim names the fill it spends: after an RBF-replaced funding the recorded
-            // outpoint is gone, and its spend could never be read back as this claim.
-            if (
-                swap.funding?.txid !== utxo.txid ||
-                swap.funding.vout !== utxo.vout ||
-                swap.funding.amount === undefined
-            ) {
-                swap.funding = { txid: utxo.txid, vout: utxo.vout, amount: Number(utxo.amount) };
-            }
+            swap.funding = { txid: fundingTxid, vout, amount };
             swap.claimTxid = txid;
             swap.claimBroadcastAt = this.config.now();
             delete swap.claimConfirmed;
@@ -1676,7 +1742,6 @@ export class RfqSwapManager {
             this.setOnchainState(swap, "claimed");
             this.emitAction(swap, "claimOnchain");
         } catch (error) {
-            // Retried next pass; a failed build or broadcast published nothing.
             this.emitFailed(swap, error);
         }
         return "handled";
@@ -1687,7 +1752,8 @@ export class RfqSwapManager {
     private async bumpOnchainClaim(swap: OnchainSendSwap): Promise<void> {
         if ((await this.readClaimConfirmed(swap)) !== false) return;
         const funding = swap.funding;
-        if (funding?.amount === undefined) return;
+        if (!funding || funding.amount === undefined || !Number.isSafeInteger(funding.amount))
+            return;
         if (this.config.now() - (swap.claimBroadcastAt ?? 0) < ONCHAIN_CLAIM_BUMP_SECONDS) return;
         // Depth is meaningless for an output the replaced claim already spent.
         await this.pushOnchainClaim(
