@@ -1810,6 +1810,10 @@ style and have not been backfilled.
 
 ### Internal
 
+- **`@arkade-os/swap`: clarify open-RFQ recipient validation.** Auction setup
+  checks the live operator's network before validating the recipient address.
+  The winning directed quote reuses the privately stored address.
+
 - **Dev-tooling dependency overrides raised past every high and critical
   advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
   development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and

@@ -109,7 +109,7 @@ describe("native asset payment quote", () => {
         expect(quote.take.amount).toBe(1000n);
         expect(quote.fee.amount).toBe(100n);
     });
-    it("binds the recipient and honors a plain payment's thirty-second solver quote", async () => {
+    it("binds the recipient, keeps the buyer signing key, and honors the 30-second solver deadline", async () => {
         const validUntil = NOW + 30;
         const { client, transport, wallet, fixture } = await setup((payload) =>
             arkadeAssetAnswer(

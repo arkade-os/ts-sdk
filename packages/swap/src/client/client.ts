@@ -48,7 +48,7 @@ import {
 import type { CorridorId } from "./corridor";
 import type { SwapPolicy } from "./policy";
 import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
-import { captureAssetPayment } from "./assetPayment";
+import { type AssetPaymentInput, captureAssetPayment } from "./assetPayment";
 import { quoteViaRfq, solverFacingAmount } from "./quoteRfq";
 import { verifyQuoteTtl } from "./verify";
 import type { AuctionProvenance, Quote, QuoteId, QuoteInput, RouteResolution } from "./quote";
@@ -401,7 +401,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     const prepare = async (
         resolvedRoute: ResolvedRoute,
         market: MarketCandidate,
-        assetPayment?: ReturnType<typeof captureAssetPayment>,
+        assetPayment?: AssetPaymentInput,
         auction?: AuctionProvenance,
     ): Promise<Quote> => {
         const { base, corridors } = await resolved();
@@ -576,6 +576,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     throw new UnsupportedRoute(
                         "Arkade network changed during asset payment discovery",
                     );
+                // The matching network name gives both the auction and directed quote the same HRP.
                 resolveReceivePkScript(
                     receiveAddress,
                     new Uint8Array(),
@@ -810,6 +811,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 quote = await prepare(
                     routed,
                     candidate,
+                    // openRfq validated and stored this recipient privately for the winning quote.
                     session.receiveAddress === undefined
                         ? undefined
                         : { receiveAddress: session.receiveAddress },
