@@ -152,6 +152,22 @@ style and have not been backfilled.
   at the confirmation height minus one and at the tip, or seconds-locked
   coins never read as expired.
 
+- **`@arkade-os/swap` drops the `onchain -> arkade` corridor.** The solver no
+  longer quotes `onchain:BTC->arkade:BTC`; non-interactive boarding replaces
+  it. `client.receive({ via: "onchain" })` and `client.quote()` on that route
+  now throw `UnsupportedRoute` once market data loads (with `registryUrl: null`
+  and no snapshot they throw `DiscoverySnapshotUnavailable` first), as does
+  `quoteViaRfq` called with that route, and a stored `onchain_receive` record no
+  longer restores. `@arkade-os/swap/protocol` no longer exports `requestOnchainReceive`,
+  `deriveOnchainReceive`, `onchainReceiveRequest`, `ONCHAIN_RECEIVE_PAIR`,
+  `onchainReceiveProfile`, `OnchainReceiveProfile`, `OnchainReceiveSwap`,
+  `ReceiveLockupSwap` (use `LightningReceiveSwap`), `nextOnchainReceiveAction`,
+  `OnchainReceiveAction` or `OnchainReceiveNeedsChainSource`. The manager's
+  `refundOnchain` callback and action, the three L1-refund
+  `RFQ_CONFIGURATION_REFUSAL` reasons, and the `corridors.onchain.refund`
+  override are gone. `assertFundable`'s `onchain.direction` is removed: the
+  timelock-order gate always applies.
+
 - **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
   `scope`.** A custom `ContractRepository` must persist and round-trip
   `Contract.scope`, filter on it in `getContractsPage`, and read a row without
@@ -424,6 +440,19 @@ style and have not been backfilled.
   A body that fails to cancel no longer masks the error in `getFeeRate`.
 
 - **A malformed explorer history no longer leaves the address watch's baseline as an unhandled rejection.** The baseline guarded the history fetch but not the loop that keys its entries, so an entry without `status` threw `Cannot read properties of undefined (reading 'block_time')` out of a floating promise. Seeding now sits inside the same failure handling as the fetch, so a bad response takes the existing "first poll pass establishes the baseline" fallback.
+
+- **An onchain send keeps bumping its L1 claim past other outputs at the HTLC
+  address.** `classifyOnchainHtlc` judged the phase by the largest output at
+  the script, so an output paid there after the claim (even an unconfirmed
+  one) hid the spent fill: the claim was never fee-bumped or re-published, and
+  a claim stuck past `htlcLocktime` could be replaced by the solver's refund
+  after `P` was public. It now reads the recorded funding's spend first, and
+  `RfqSwapManager` pins `funding` to the outpoint its claim spent rather than
+  the first output it saw, which a replaced fill left stale. A claim re-published
+  after its fill vanished moves to another output only if that output pays the
+  agreed amount. An outspend lookup refused for a funding the backend no longer
+  knows reads as unspent; when the history check behind that also fails, the
+  outspend's own error is reported.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's
