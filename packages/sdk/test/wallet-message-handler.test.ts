@@ -2736,6 +2736,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(attempt).toHaveBeenCalledTimes(3);
 
         release(true);
+        await vi.waitFor(() => expect((updater as any).inFlightOperations.size).toBe(0));
         await updater.tick(4);
         expect(attempt).toHaveBeenCalledTimes(3);
     });

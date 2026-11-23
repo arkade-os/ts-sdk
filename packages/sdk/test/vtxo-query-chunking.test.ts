@@ -345,13 +345,18 @@ describe("Wallet script queries stay under the URL cap", () => {
         const getInfo = vi.spyOn(wallet.arkProvider, "getInfo");
         getInfo.mockRejectedValueOnce(new ProviderUnavailableError("operator offline"));
         const getPendingTxs = vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([]);
-        const getVtxos = vi.spyOn(wallet.indexerProvider, "getVtxos").mockResolvedValue({
-            vtxos: [vtxoFor(wallet.defaultContractScript, 1)],
+        const submitTx = vi.spyOn(wallet.arkProvider, "submitTx").mockResolvedValue({
+            arkTxid: "txid",
+            finalArkTx: "ark-transaction",
+            signedCheckpointTxs: [],
         });
-        vi.spyOn(wallet, "makeGetPendingTxIntentSignature").mockImplementation(async () => ({
-            message: { type: "get-pending-tx", expire_at: 0 },
-            proof: "proof",
-        }));
+        const finalizeTx = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
+        const broadcaster = await wallet.getArkadeBroadcaster();
+        const swept = { ...vtxoFor(wallet.defaultContractScript, 1), isSwept: true };
+        const getVtxos = vi.spyOn(wallet.indexerProvider, "getVtxos").mockResolvedValue({
+            vtxos: [swept],
+        });
+        const signOwnershipProof = vi.spyOn(wallet, "makeGetPendingTxIntentSignature");
 
         expect(await wallet.deferPendingTxRecovery()).toBe(true);
         await expect(wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
@@ -360,6 +365,11 @@ describe("Wallet script queries stay under the URL cap", () => {
         expect(await wallet.resumeDeferredPendingTxs(() => false)).toBe(true);
         expect(getVtxos).not.toHaveBeenCalled();
         expect(getPendingTxs).not.toHaveBeenCalled();
+
+        getVtxos.mockResolvedValueOnce({ vtxos: [] });
+        expect(await wallet.resumeDeferredPendingTxs(() => true)).toBe(false);
+        expect(getPendingTxs).not.toHaveBeenCalled();
+        expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
 
         let active = true;
         let finishLookup!: (pending: []) => void;
@@ -379,14 +389,25 @@ describe("Wallet script queries stay under the URL cap", () => {
         await expect(wallet.buildAndSubmitOffchainTx([], [])).rejects.toThrow(
             "recovery is required",
         );
+        await expect(broadcaster.submitTx("new-transaction", [])).rejects.toThrow(
+            "recovery is required",
+        );
+        expect(submitTx).not.toHaveBeenCalled();
+        await broadcaster.finalizeTx("existing-transaction", []);
+        expect(finalizeTx).toHaveBeenCalledWith("existing-transaction", []);
         expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
 
         reconnect(liveInfo);
         expect(await recovery).toBe(true);
         expect(getVtxos).toHaveBeenCalled();
         expect(getPendingTxs).toHaveBeenCalledTimes(2);
+        expect(signOwnershipProof).toHaveBeenLastCalledWith([
+            expect.objectContaining({ txid: swept.txid, vout: swept.vout, isSwept: true }),
+        ]);
         expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(false);
         expect(wallet.hasDeferredPendingTxRecovery).toBe(false);
+        await broadcaster.submitTx("new-transaction", []);
+        expect(submitTx).toHaveBeenCalledWith("new-transaction", []);
     });
 });
 

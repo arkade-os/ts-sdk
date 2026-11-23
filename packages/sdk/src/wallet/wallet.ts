@@ -3685,10 +3685,19 @@ export class Wallet
     async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
         const ark = this.arkProvider;
         return {
-            submitTx: (signedArkTx, checkpointTxs) => ark.submitTx(signedArkTx, checkpointTxs),
+            submitTx: async (signedArkTx, checkpointTxs) => {
+                this.assertNoDeferredPendingTxRecovery();
+                return ark.submitTx(signedArkTx, checkpointTxs);
+            },
             finalizeTx: (arkTxid, finalCheckpointTxs) =>
                 ark.finalizeTx(arkTxid, finalCheckpointTxs),
         };
+    }
+
+    private assertNoDeferredPendingTxRecovery(): void {
+        if (this.pendingTxRecoveryDeferred) {
+            throw new Error("Pending Arkade transaction recovery is required before sending");
+        }
     }
 
     protected constructor(
@@ -5370,7 +5379,8 @@ export class Wallet
                 const vtxoScript = scriptMap.get(vtxo.script);
                 if (!vtxoScript) continue;
 
-                if (!vtxo.isSpent && (vtxo.isSwept || (!recovery && !vtxo.isPreconfirmed))) {
+                // Ownership proofs can query historical outputs, including swept coins.
+                if (!recovery && !vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
                     continue;
                 }
 
@@ -5383,6 +5393,7 @@ export class Wallet
             }
 
             if (allExtended.length === 0) {
+                // Without a proof input, there is no operator response to clear the flag.
                 return { finalized: [], pending: [] };
             }
 
@@ -6770,9 +6781,7 @@ export class Wallet
         serverUnrollScript: CSVMultisigTapscript.Type,
         options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
-        if (this.pendingTxRecoveryDeferred) {
-            throw new Error("Pending Arkade transaction recovery is required before sending");
-        }
+        this.assertNoDeferredPendingTxRecovery();
         await assertNoIntentLockedInputs(inputs, this.intentRepository);
         assertNoPersistentReservation(inputs, this.persistentReservedOutpoints);
         const validUntil = captureSendDeadline(options?.validUntil);

@@ -359,8 +359,8 @@ style and have not been backfilled.
 
 - **Cached browser wallets open during an operator outage even after an interrupted send.**
   The service worker defers pending-transaction recovery to its background tick.
-  Once the operator responds, recovery checks current indexer state. New Arkade
-  sends wait for that recovery to complete.
+  Once the operator responds, recovery checks current indexer state and can use
+  swept outputs as proof inputs. New Arkade submissions wait for recovery.
 
 - **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
 
