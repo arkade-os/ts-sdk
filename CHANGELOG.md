@@ -183,6 +183,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and its funding deadline.
+
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
