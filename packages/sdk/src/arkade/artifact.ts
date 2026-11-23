@@ -340,7 +340,8 @@ function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegme
 /**
  * Reads `<OPERATOR_KEY:f>` as the `f`-tweaked emulator key, preceded by the server key arkd requires
  * in every non-CSV leaf unless the leaf already holds it.
- * ponytail: temporary until arkd and the emulator move to the single operator key; delete it then.
+ * ponytail: temporary until arkd and the emulator move to the single operator key. Deleting it
+ * changes the Program, and so the address, of every 0.1.0 artifact read through it.
  */
 function legacyOperatorLeaf(asm: string[]): string[] {
     const skipServer =
