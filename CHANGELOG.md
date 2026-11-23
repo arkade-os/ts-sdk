@@ -234,10 +234,11 @@ style and have not been backfilled.
   row records when it was last registered (`delegationRegisteredAt`), and the
   boarding address follows the most recent, so an app that rolls back a release
   gets its earlier address back. A boarding watch pays into the renewal contract
-  of its own params, so when the key already has a live renewal watch,
-  `registerBoarding` registers renewal under the new params too. That is
-  best-effort: a failure is logged and never undoes the boarding watch, and
-  `registerRenewal` retries it. `registerRenewal` registers the displayed boarding
+  of its own params, so while the wallet has any live renewal watch under the
+  current operator, `registerBoarding` registers renewal under the new params
+  too, as a rotation does for the new key. That is best-effort: a failure is
+  logged and never undoes the boarding watch, and `registerRenewal` retries it.
+  `registerRenewal` registers the displayed boarding
   key under the params it is given, first, and throws at once if that fails. It
   then registers each live boarding watch under the current operator, under
   that watch's own params, so the deposits an HD wallet boarded at earlier

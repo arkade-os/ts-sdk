@@ -4,6 +4,8 @@ import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
 import { DefaultVtxo } from "../../script/default";
 import {
     defaultContract,
+    type DelegationParams,
+    type ExecutorContractKeys,
     type ExecutorDefault,
     type ExecutorWatchTemplate,
 } from "../../script/executor/executorTemplate";
@@ -58,6 +60,43 @@ function integer(value: string | undefined, name: string): number {
     return n;
 }
 
+/** `xOnly` as a compressed key; the scripts take the x-only key, so the parity is arbitrary. */
+export function evenOwnerKey(xOnly: Uint8Array): Uint8Array {
+    const key = new Uint8Array(33);
+    key[0] = 2;
+    key.set(xOnly, 1);
+    return key;
+}
+
+/** The serialized params of `owner`'s `template` contract under the Executor's `keys`. */
+export function executorContractParams(
+    template: ExecutorDefault,
+    owner: Uint8Array,
+    keys: ExecutorContractKeys,
+    params: DelegationParams,
+): Record<string, string> {
+    return ExecutorContractHandler.serializeParams({
+        template,
+        owner,
+        exitDelay: params.exitDelay,
+        renewalWindow: params.renewalWindow,
+        maxFee: params.maxFee,
+        ...(template === "boarding" ? { boardingExitDelay: params.boardingExitDelay } : {}),
+        cosignerPubKey: hex.decode(keys.cosignerPubkey),
+        serverPubKey: hex.decode(keys.serverPubkey),
+        emulatorPubKey: hex.decode(keys.emulatorPubkey),
+    });
+}
+
+/** The Executor keys a contract's params were derived from. */
+export function executorKeysOf(p: ExecutorContractParams): ExecutorContractKeys {
+    return {
+        cosignerPubkey: hex.encode(p.cosignerPubKey),
+        serverPubkey: hex.encode(p.serverPubKey),
+        emulatorPubkey: hex.encode(p.emulatorPubKey),
+    };
+}
+
 /**
  * Handler for the coins a wallet delegated to the Executor under its default templates:
  * virtual outputs at the renewal contract, which the Executor renews in place, and onchain
@@ -79,16 +118,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
     /** The default script of the owner with the emulator-enforced leaf after forfeit and exit. */
     createScript(params: Record<string, string>): DefaultVtxo.Script {
         const p = this.deserializeParams(params);
-        const derived = defaultContract(
-            p.template,
-            {
-                cosignerPubkey: hex.encode(p.cosignerPubKey),
-                serverPubkey: hex.encode(p.serverPubKey),
-                emulatorPubkey: hex.encode(p.emulatorPubKey),
-            },
-            p.owner,
-            p,
-        );
+        const derived = defaultContract(p.template, executorKeysOf(p), p.owner, p);
         const script = new DefaultVtxo.Script(
             {
                 pubKey: p.owner.subarray(1),
@@ -221,21 +251,8 @@ function discovered(
     { keys, params }: ExecutorWatchTemplate,
     deps: DiscoveryDeps,
 ): { contract: DiscoveredContract; script: DefaultVtxo.Script } {
-    // scripts take the x-only key, so the parity is arbitrary
-    const owner = new Uint8Array(33);
-    owner[0] = 2;
-    owner.set(deriveDescriptorLeafPubKey(descriptor), 1);
-    const serialized = ExecutorContractHandler.serializeParams({
-        template,
-        owner,
-        exitDelay: params.exitDelay,
-        renewalWindow: params.renewalWindow,
-        maxFee: params.maxFee,
-        ...(template === "boarding" ? { boardingExitDelay: params.boardingExitDelay } : {}),
-        cosignerPubKey: hex.decode(keys.cosignerPubkey),
-        serverPubKey: hex.decode(keys.serverPubkey),
-        emulatorPubKey: hex.decode(keys.emulatorPubkey),
-    });
+    const owner = evenOwnerKey(deriveDescriptorLeafPubKey(descriptor));
+    const serialized = executorContractParams(template, owner, keys, params);
     const script = ExecutorContractHandler.createScript(serialized);
     return {
         script,

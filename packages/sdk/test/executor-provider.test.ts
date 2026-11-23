@@ -771,7 +771,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
             ]);
         });
 
-        it("registers no renewal for a key without a live renewal watch", async () => {
+        it("registers no renewal while the wallet has no live renewal watch", async () => {
             const { wallet: managed, manager, provider } = await managedWallet();
             const executor = new ExecutorManagerImpl(provider, managed);
             await executor.registerBoarding(params, trusted);
@@ -786,6 +786,25 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                 `${OWNER}/500/local`,
                 `${OWNER}/501/local`,
             ]);
+        });
+
+        it("pairs renewal with a key's boarding watch while another key's renewal is live", async () => {
+            const { wallet: managed, provider } = await managedWallet();
+            await watchExecutorContracts(
+                managed,
+                {
+                    cosignerPubkey: vectors.cosignerPubkey,
+                    serverPubkey: vectors.serverPubkey,
+                    emulatorPubkey: vectors.emulatorPubkey,
+                },
+                params,
+                { template: "renewal", status: "active", expiresAt: 0 },
+                `tr(${heldKeys[0]})`,
+            );
+
+            await new ExecutorManagerImpl(provider, managed).registerBoarding(params, trusted);
+
+            expect(renewalCalls(provider)).toEqual([`${OWNER}/${FEE}`]);
         });
 
         it("keeps the boarding watch when the renewal paired with it fails", async () => {

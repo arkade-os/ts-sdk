@@ -11,8 +11,10 @@ import {
 import type { Contract } from "../contracts/types";
 import type { ContractFilter } from "../repositories/contractRepository";
 import {
+    evenOwnerKey,
     ExecutorContractHandler,
-    type ExecutorContractParams,
+    executorContractParams,
+    executorKeysOf,
 } from "../contracts/handlers/executor";
 import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { networkFromOperatorInfo, resolveEmulatorPubkey } from "../networks";
@@ -208,7 +210,7 @@ export async function watchExecutorContracts(
         params.boardingExitDelay === undefined ? ["renewal"] : ["renewal", "boarding"];
     const contracts: Contract[] = [];
     for (const template of templates) {
-        const serialized = contractParams(template, owner, keys, params);
+        const serialized = executorContractParams(template, owner, keys, params);
         const script = ExecutorContractHandler.createScript(serialized);
         contracts.push(
             await manager.createContract({
@@ -253,11 +255,7 @@ export async function ownerKey(
 ): Promise<Uint8Array> {
     const xOnly = deriveDescriptorLeafPubKey(descriptor);
     const own = await identity.compressedPublicKey();
-    if (equalBytes(own.subarray(1), xOnly)) return own;
-    const key = new Uint8Array(33);
-    key[0] = 2;
-    key.set(xOnly, 1);
-    return key;
+    return equalBytes(own.subarray(1), xOnly) ? own : evenOwnerKey(xOnly);
 }
 
 /**
@@ -304,23 +302,29 @@ function statusMetadata(
     };
 }
 
-function contractParams(
-    template: ExecutorDefault,
-    owner: Uint8Array,
-    keys: ExecutorContractKeys,
-    params: DelegationParams,
-): Record<string, string> {
-    return ExecutorContractHandler.serializeParams({
-        template,
-        owner,
-        exitDelay: params.exitDelay,
-        renewalWindow: params.renewalWindow,
-        maxFee: params.maxFee,
-        ...(template === "boarding" ? { boardingExitDelay: params.boardingExitDelay } : {}),
-        cosignerPubKey: hex.decode(keys.cosignerPubkey),
-        serverPubKey: hex.decode(keys.serverPubkey),
-        emulatorPubKey: hex.decode(keys.emulatorPubkey),
-    });
+/**
+ * What registering `watch` again takes: its own params and expiry, and its own emulator key,
+ * checked against the pin or approved when first registered, so registering refuses an Executor
+ * that no longer holds it.
+ */
+export function reRegistrationOf(watch: DelegatedContractWatch): {
+    options: DelegationOptions;
+    registration: RegistrationOptions;
+} {
+    const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
+    const expiresAt = watch.contract.metadata?.[DELEGATION_EXPIRES_KEY];
+    return {
+        options: {
+            renewalWindow: p.renewalWindow,
+            maxFee: p.maxFee,
+            exitDelay: p.exitDelay,
+            boardingExitDelay: p.boardingExitDelay,
+        },
+        registration: {
+            expiresAt: typeof expiresAt === "number" && expiresAt > 0 ? expiresAt : undefined,
+            emulatorPubkey: hex.encode(p.emulatorPubKey),
+        },
+    };
 }
 
 /** The script of `owner`'s renewal contract under `keys` and `params`. */
@@ -330,18 +334,9 @@ function renewalScript(
     params: DelegationParams,
 ): string {
     const script = ExecutorContractHandler.createScript(
-        contractParams("renewal", owner, keys, params),
+        executorContractParams("renewal", owner, keys, params),
     );
     return hex.encode(script.pkScript);
-}
-
-/** The keys a row's contract was derived from. */
-function rowKeys(p: ExecutorContractParams): ExecutorContractKeys {
-    return {
-        cosignerPubkey: hex.encode(p.cosignerPubKey),
-        serverPubkey: hex.encode(p.serverPubKey),
-        emulatorPubkey: hex.encode(p.emulatorPubKey),
-    };
 }
 
 /**
@@ -403,9 +398,9 @@ export interface IExecutorManager {
      * stay live and keep boarding the deposits already sent to them. The boarding address follows
      * the most recently registered watch, so registering older params again moves it back.
      *
-     * A boarding watch pays into the renewal contract of its own params. When the key already has
-     * a live renewal watch, this also registers renewal under `params` and `options`, unless that
-     * contract already has one. That registration is best-effort: a failure is logged and never
+     * A boarding watch pays into the renewal contract of its own params. While renewal is on, that
+     * is, while the wallet has any live renewal watch under the current operator, this also
+     * registers renewal under `params` and `options`, unless that contract already has one. That registration is best-effort: a failure is logged and never
      * undoes the boarding watch. {@link registerRenewal} retries it.
      */
     registerBoarding(
@@ -510,7 +505,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             try {
                 // Its coins sit in the contract its own params and keys derive.
                 const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
-                const keys = rowKeys(p);
+                const keys = executorKeysOf(p);
                 // Never registrable, and a held boarding watch ends only once it lapses: failing
                 // would repeat at every startup. The wallet renews the coins itself.
                 if (keys.emulatorPubkey !== first.keys.emulatorPubkey.toLowerCase()) {
@@ -531,7 +526,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 await this.registerAt(
                     await context(),
                     await watchDescriptor(watch, this.wallet.identity),
-                    { renewalWindow: p.renewalWindow, maxFee: p.maxFee, exitDelay: p.exitDelay },
+                    reRegistrationOf(watch).options,
                     { expiresAt: registration.expiresAt, emulatorPubkey: keys.emulatorPubkey },
                     "renewal",
                 );
@@ -565,19 +560,6 @@ export class ExecutorManagerImpl implements IExecutorManager {
             console.warn("Failed to register the Executor renewal watch paired with boarding", e);
         }
         return boarding;
-    }
-
-    /** @internal Register the renewal watch for `descriptor`'s key. */
-    async registerRenewalAt(
-        descriptor: string | undefined,
-        options: DelegationOptions,
-        registration: RegistrationOptions = {},
-    ): Promise<ExecutorWatchRegistration> {
-        const key = descriptor ?? (await this.displayedDescriptor());
-        return (
-            (await this.storedWatch(key, options, registration, "renewal")) ??
-            this.registerAt(await this.registrationContext(), key, options, registration, "renewal")
-        );
     }
 
     /**
@@ -673,25 +655,13 @@ export class ExecutorManagerImpl implements IExecutorManager {
             await this.endWatch(watch, status);
             return;
         }
-        const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
-        const expiresAt = watch.contract.metadata?.[DELEGATION_EXPIRES_KEY];
+        const { options, registration } = reRegistrationOf(watch);
         try {
             await this.registerAt(
                 context,
                 await watchDescriptor(watch, this.wallet.identity),
-                {
-                    renewalWindow: p.renewalWindow,
-                    maxFee: p.maxFee,
-                    exitDelay: p.exitDelay,
-                    boardingExitDelay: p.boardingExitDelay,
-                },
-                {
-                    expiresAt:
-                        typeof expiresAt === "number" && expiresAt > 0 ? expiresAt : undefined,
-                    // The watch's own key, checked against the pin or approved when first
-                    // registered; registerAt refuses an Executor that no longer holds it.
-                    emulatorPubkey: hex.encode(p.emulatorPubKey),
-                },
+                options,
+                registration,
                 template,
                 true,
             );
@@ -734,8 +704,9 @@ export class ExecutorManagerImpl implements IExecutorManager {
     }
 
     /**
-     * A boarding watch pays into the renewal contract of its own params, so a key the Executor
-     * already renews needs a renewal watch there too, or its boarded coins fall back to the wallet.
+     * A boarding watch pays into the renewal contract of its own params, so while renewal is on,
+     * meaning any live renewal watch under the operator, that contract needs one too, or its
+     * boarded coins fall back to the wallet.
      */
     private async pairRenewal(
         context: () => Promise<RegistrationContext>,
@@ -744,7 +715,6 @@ export class ExecutorManagerImpl implements IExecutorManager {
         options: DelegationOptions,
         registration: RegistrationOptions,
     ): Promise<void> {
-        const owner = boarding.variables.owner.slice(2);
         const contract = renewalScript(
             hex.decode(boarding.variables.owner),
             boarding.keys,
@@ -752,7 +722,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         );
         const server = await this.operatorSigner();
         const renewals = (await this.heldWatches("renewal")).filter(
-            (w) => w.live && w.signer === server && w.owner === owner,
+            (w) => w.live && w.signer === server,
         );
         if (renewals.length === 0 || renewals.some((w) => w.contract.script === contract)) return;
         await this.registerAt(await context(), descriptor, options, registration, "renewal");
@@ -803,7 +773,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                     : watch.script.address(hrp, serverPubKey).encode(),
             templateId: DEFAULT_TEMPLATE_IDS[template],
             variables: defaultVariables(template, owner, params),
-            keys: rowKeys(p),
+            keys: executorKeysOf(p),
             params,
         };
     }
@@ -896,7 +866,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         };
         const variables = defaultVariables(template, owner, params);
         const watchScript = ExecutorContractHandler.createScript(
-            contractParams(template, owner, keys, params),
+            executorContractParams(template, owner, keys, params),
         );
         const watchAddress =
             template === "boarding"
