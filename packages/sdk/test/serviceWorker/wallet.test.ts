@@ -12,6 +12,7 @@ import {
     type ContractSyncState,
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
+import { ExecutorManagerImpl } from "../../src/wallet/executor";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { base64, hex } from "@scure/base";
 import { Transaction } from "../../src/utils/transaction";
@@ -895,6 +896,7 @@ const createSWWallet = (
     serviceWorker: ServiceWorker,
     messageTag: string = DEFAULT_MESSAGE_TAG,
     hasDelegate: boolean = false,
+    executorUrl?: string,
 ) =>
     bindTestWallet(
         new (ServiceWorkerWallet as any)(
@@ -904,6 +906,8 @@ const createSWWallet = (
             new InMemoryContractRepository(),
             messageTag,
             hasDelegate,
+            undefined,
+            executorUrl,
         ) as ServiceWorkerWallet,
         testWalletBinding(STUB_XONLY_PUBLIC_KEY),
     );
@@ -1042,6 +1046,23 @@ describe("ServiceWorkerWallet", () => {
                 }),
             ),
         );
+    });
+
+    it("getExecutorManager runs on the page, only with an Executor URL", async () => {
+        const { serviceWorker } = createServiceWorkerHarness(() => null);
+        await expect(
+            createSWWallet(serviceWorker as any, messageTag).getExecutorManager(),
+        ).resolves.toBeUndefined();
+        const manager = await createSWWallet(
+            serviceWorker as any,
+            messageTag,
+            false,
+            "https://executor.test",
+        ).getExecutorManager();
+        expect(manager).toBeInstanceOf(ExecutorManagerImpl);
+        expect((manager as ExecutorManagerImpl).executorProvider).toMatchObject({
+            url: "https://executor.test",
+        });
     });
 
     it("cosignOnchainTx sends a Transaction as base64 PSBT and sendOnchain forwards params", async () => {

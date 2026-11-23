@@ -1,4 +1,7 @@
+import { hex } from "@scure/base";
 import { NETWORK, TEST_NETWORK } from "@scure/btc-signer/utils.js";
+import { toXOnly } from "./utils/keys";
+import { toXOnlySignerHex } from "./wallet/signerRotation";
 
 export type NetworkName = "bitcoin" | "testnet" | "signet" | "mutinynet" | "regtest";
 
@@ -160,4 +163,55 @@ export function resolveEmulatorPubkey(network: Network, override?: string): stri
         );
     }
     return override;
+}
+
+/**
+ * Arkade's delegators, retired by the Executor, with the operator signers each co-signed under.
+ * Discovery still derives their `delegate` contracts so coins delegated before the switch are
+ * found on restore; never used to mint. No regtest entry: each local stack has its own keys.
+ */
+const RETIRED_DELEGATES: Partial<
+    Record<NetworkName, { operatorSigners: readonly string[]; delegatePubkeys: readonly string[] }>
+> = {
+    bitcoin: {
+        operatorSigners: [
+            "038202bebddeb1f7442803897a85eaf3ce9254d07df0172fc3725ab5f0d097779c",
+            "022b74c2011af089c849383ee527c72325de52df6a788428b68d49e9174053aaba",
+        ],
+        delegatePubkeys: ["026d7d45360014bce9a8ad30a10c28dd1571a22a2e90c9682268404d37b5b114a6"],
+    },
+    mutinynet: {
+        operatorSigners: [
+            "03301078808e4f7bc0dadfe29e34b1df8eaf0108ef06b1722274075ebc107a127a",
+            "03fa73c6e4876ffb2dfc961d763cca9abc73d4b88efcb8f5e7ff92dc55e9aa553d",
+        ],
+        delegatePubkeys: ["032903b15efe236d9609da10e536fb32cdf1d144778797bbf32a9b94e86601be6a"],
+    },
+};
+
+/**
+ * x-only keys of the retired delegators of the wallet's operator, or `[]` when it is not Arkade's.
+ *
+ * @param operatorSigners - hex, compressed or x-only: current ∪ deprecated. Malformed entries are
+ *   skipped, so the lookup never fails boot or restore.
+ */
+export function retiredDelegatePubKeys(
+    network: Network,
+    operatorSigners: Iterable<string>,
+): Uint8Array[] {
+    const pinned = network.name ? RETIRED_DELEGATES[network.name] : undefined;
+    if (!pinned) return [];
+    const pinnedSigners = new Set(pinned.operatorSigners.map(toXOnlySignerHex));
+    for (const signer of operatorSigners) {
+        let xOnly: string;
+        try {
+            xOnly = toXOnlySignerHex(signer);
+        } catch {
+            continue;
+        }
+        if (pinnedSigners.has(xOnly)) {
+            return pinned.delegatePubkeys.map((k) => toXOnly(hex.decode(k), "delegate key"));
+        }
+    }
+    return [];
 }

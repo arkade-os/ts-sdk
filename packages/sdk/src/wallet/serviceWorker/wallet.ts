@@ -204,6 +204,7 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState, ContractWatchState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
+import { ExecutorManagerImpl, type IExecutorManager } from "../executor";
 import type {
     IVtxoManager,
     MigrateDeprecatedSignerOptions,
@@ -214,6 +215,7 @@ import type {
 } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
+import { RestExecutorProvider } from "../../providers/executor";
 import { getRandomId } from "../utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../networks";
 import type { ArkadeBroadcaster, ArkadeReader, GetOperatorInfoOptions, VirtualCoin } from "..";
@@ -513,6 +515,12 @@ interface ServiceWorkerWalletOptions {
     /** Optional delegation service URL. */
     delegateUrl?: string;
     /**
+     * URL of the Executor, the service that boards the wallet's deposits while it is offline. Only
+     * a `ServiceWorkerWallet` registers watches; a readonly wallet reads them. Without one, the
+     * wallet behaves as it does without the Executor.
+     */
+    executorUrl?: string;
+    /**
      * Override the default tag used for messages sent to and received from the service worker.
      * @see DEFAULT_MESSAGE_TAG
      */
@@ -589,6 +597,7 @@ type MessageBusInitConfig = {
         publicKey?: string;
     };
     delegateUrl?: string;
+    executorUrl?: string;
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
     concurrentSpending?: boolean;
@@ -748,6 +757,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            executorUrl: options.executorUrl,
             lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
         });
@@ -1940,6 +1950,7 @@ export class ServiceWorkerWallet
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
+    private readonly executorServiceUrl?: string;
     private _restoreInFlight?: Promise<void>;
     private _concurrentSpending = false;
 
@@ -1956,6 +1967,7 @@ export class ServiceWorkerWallet
         messageTag: string,
         hasDelegate: boolean,
         public readonly oneShotSubmit?: boolean,
+        executorUrl?: string,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1966,6 +1978,7 @@ export class ServiceWorkerWallet
             messageTag,
         );
         this.hasDelegate = hasDelegate;
+        this.executorServiceUrl = executorUrl;
     }
 
     get assetManager(): IAssetManager {
@@ -2009,11 +2022,13 @@ export class ServiceWorkerWallet
             messageTag,
             !!options.delegateUrl,
             options.oneShotSubmit,
+            options.executorUrl,
         );
         wallet._concurrentSpending = options.concurrentSpending === true;
 
         return ServiceWorkerWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            executorUrl: options.executorUrl,
             settlementConfig: options.settlementConfig,
             concurrentSpending: options.concurrentSpending,
             walletMode: options.walletMode,
@@ -2463,6 +2478,12 @@ export class ServiceWorkerWallet
         };
 
         return manager;
+    }
+
+    /** Runs on the page: it talks to the service over REST and records watches through this wallet. */
+    async getExecutorManager(): Promise<IExecutorManager | undefined> {
+        if (!this.executorServiceUrl) return undefined;
+        return new ExecutorManagerImpl(new RestExecutorProvider(this.executorServiceUrl), this);
     }
 
     async getVtxoManager(): Promise<IVtxoManager> {

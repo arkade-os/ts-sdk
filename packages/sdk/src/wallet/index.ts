@@ -36,6 +36,7 @@ export {
     type ActivityResolver,
 } from "./activity";
 import { DelegateProvider } from "../providers/delegate";
+import type { ExecutorProvider } from "../providers/executor";
 import type { ArkadeService } from "../arkade/service";
 import type { VtxoReservation } from "./wallet";
 
@@ -137,6 +138,12 @@ export interface BaseWalletConfig {
     onchainProvider?: OnchainProvider | ((network: NetworkName) => OnchainProvider);
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
+    /**
+     * Optional Executor, the service that boards the wallet's deposits while it is offline. Only a
+     * `Wallet` registers watches, through `getExecutorManager()`; a readonly wallet reads them.
+     * Without one, the wallet behaves as it does without the Executor.
+     */
+    executorProvider?: ExecutorProvider;
 }
 
 /**
