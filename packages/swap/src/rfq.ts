@@ -1407,8 +1407,9 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
 };
 
 /** Falls back on absent AND zero: zero would fund an asset with no carrier. Throws a gate
- * error (`carrier_malformed`) on anything but a non-negative integer. */
-export const quoteCarrierSats = (quote: RfqQuote): bigint => {
+ * error (`carrier_malformed`) on anything but a non-negative integer up to the operator's
+ * `dust` (at least {@link ASSET_CARRIER_SATS}), the most an honest solver publishes. */
+export const quoteCarrierSats = (quote: RfqQuote, dust: bigint): bigint => {
     const raw = quote.carrier_sats;
     if (raw === undefined) return ASSET_CARRIER_SATS;
     const canonical =
@@ -1422,6 +1423,13 @@ export const quoteCarrierSats = (quote: RfqQuote): bigint => {
         );
     }
     const published = BigInt(raw);
+    const cap = dust > ASSET_CARRIER_SATS ? dust : ASSET_CARRIER_SATS;
+    if (published > cap) {
+        throw gateError(
+            "carrier_malformed",
+            `quote carrier_sats ${published} exceeds the ${cap}-sat dust carrier`,
+        );
+    }
     return published > 0n ? published : ASSET_CARRIER_SATS;
 };
 
@@ -1571,9 +1579,12 @@ export async function requestArkadeSwap(
             );
         }
     }
+    const offerInfo = info ?? (await wallet.getArkadeInfo({ requireLive: true }));
+    const carrierSats =
+        params.offerAsset === undefined ? 0n : quoteCarrierSats(quote, offerInfo.dust);
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
-        ...(info === undefined ? {} : { info }),
+        info: offerInfo,
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
@@ -1591,7 +1602,7 @@ export async function requestArkadeSwap(
         pair,
         address: offer.address,
         fundAmount,
-        carrierSats: params.offerAsset !== undefined ? quoteCarrierSats(quote) : 0n,
+        carrierSats,
         swapPkScript: offer.swapPkScript,
         offerHex: offer.offerHex,
         extension: offer.extension,

@@ -269,7 +269,7 @@ export interface SwapClient {
     /**
      * Swap one Arkade asset for another.
      *
-     * @throws {MaxFeeExceeded} as {@link pay} does.
+     * @throws {MaxFeeExceeded} as {@link pay} does; `Error` for any ceiling on a cross-asset swap.
      */
     exchange(options: ExchangeOptions): Promise<Swap>;
 

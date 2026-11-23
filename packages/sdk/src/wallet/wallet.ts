@@ -4600,6 +4600,7 @@ export class Wallet
                     // input found in the settlement tx, sign it
                     settlementPsbt.updateInput(i, {
                         tapLeafScript: [input.forfeitTapLeafScript],
+                        sighashType: SigHash.DEFAULT,
                     });
                     const script = settlementPsbt.getInput(i).witnessUtxo?.script;
                     if (!script) {
@@ -5683,6 +5684,7 @@ export class Wallet
                         ],
                         outputs: [{ script: myPkScript, amount: BigInt(vtxo.value) }],
                         serverUnrollScript,
+                        verifyServerSignatures: { serverPubkey: cash.serverPubKey },
                         oneShot: this.oneShotSubmit,
                     });
                     claims.push({ txid: registeredTxid, amount: vtxo.value });

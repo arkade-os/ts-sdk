@@ -41,13 +41,13 @@ describe("RestOperatorProvider.cosignOnchainTx", () => {
     });
 
     it.each([404, 501])(
-        "maps HTTP %i to OnchainCosignUnsupportedError and caches it",
+        "maps HTTP %i after the post to OnchainCosignAmbiguousError, then caches unsupported",
         async (status) => {
             const fetchMock = vi.fn().mockResolvedValue(new Response("Not Found", { status }));
             vi.stubGlobal("fetch", fetchMock);
             const p = new RestOperatorProvider("http://ark");
             await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(
-                OnchainCosignUnsupportedError,
+                OnchainCosignAmbiguousError,
             );
             await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(
                 OnchainCosignUnsupportedError,
@@ -66,13 +66,33 @@ describe("RestOperatorProvider.cosignOnchainTx", () => {
         vi.stubGlobal("fetch", fetchMock);
         const p = new RestOperatorProvider("http://ark");
         await p.getInfo();
-        await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
+        await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignAmbiguousError);
         await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
         digest = "b";
         await p.getInfo();
-        await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
+        await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignAmbiguousError);
         const cosignCalls = fetchMock.mock.calls.filter(([u]) => u.endsWith("/onchain/cosign"));
         expect(cosignCalls).toHaveLength(2);
+    });
+
+    it("never posts the signed tx to an arkd older than v0.9.22", async () => {
+        for (const [version, posts] of [
+            ["v0.9.21", 0],
+            ["0.8.11", 0],
+            ["v0.9.22", 1],
+            ["dev", 1],
+        ] as const) {
+            const fetchMock = vi.fn(async (url: string) =>
+                url.endsWith("/v1/info") ? okJson({ version, digest: "a" }) : okJson({ txid: "t" }),
+            );
+            vi.stubGlobal("fetch", fetchMock);
+            const p = new RestOperatorProvider("http://ark");
+            await p.getInfo();
+            const outcome = await p.cosignOnchainTx("x").catch((e) => e);
+            const cosignCalls = fetchMock.mock.calls.filter(([u]) => u.endsWith("/onchain/cosign"));
+            expect(cosignCalls, version).toHaveLength(posts);
+            if (!posts) expect(outcome, version).toBeInstanceOf(OnchainCosignUnsupportedError);
+        }
     });
 
     it("maps a structured arkd rejection to OnchainCosignRejectedError carrying its name", async () => {
