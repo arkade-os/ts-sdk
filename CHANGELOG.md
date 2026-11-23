@@ -262,7 +262,9 @@ style and have not been backfilled.
   alternates: one fallback renewal out, one ordinary renewal back in, so half
   its renewals are late where every one would have been. A wallet with no
   Executor watches pays one repository read for all this, in a send and in a
-  renewal pass, and makes no operator or identity-key lookup.
+  renewal pass, and makes no operator or identity-key lookup. A watch's script
+  is built once per process, so these reads stay cheap as an HD wallet keeps
+  rotating keys.
 
 - **Deposits waiting for the Executor are the wallet's boarding coins.** A
   deposit at a delegated boarding address shows in `getBoardingUtxos`,

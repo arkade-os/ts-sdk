@@ -105,6 +105,19 @@ export interface DelegatedContractWatch {
 /** A read of the wallet's contract rows: repositories, never the manager's indexer sync. */
 export type ContractReader = (filter?: ContractFilter) => Promise<Contract[]>;
 
+// Building a script takes milliseconds and every poll reads all watches, rotated-off keys included.
+const scriptCache = new Map<string, DelegatedContractWatch["script"]>();
+
+function cachedScript(params: Record<string, string>): DelegatedContractWatch["script"] {
+    const key = JSON.stringify(Object.entries(params).sort(([a], [b]) => (a < b ? -1 : 1)));
+    let script = scriptCache.get(key);
+    if (!script) {
+        script = ExecutorContractHandler.createScript(params);
+        scriptCache.set(key, script);
+    }
+    return script;
+}
+
 /** Rows that predate the registration time, or were restored, order by when they were created. */
 function registeredAt(contract: Contract): number {
     const at = contract.metadata?.[DELEGATION_REGISTERED_KEY];
@@ -138,7 +151,7 @@ export async function delegatedContracts(
                 (typeof descriptor === "string" &&
                     hex.encode(deriveDescriptorLeafPubKey(descriptor)) === owner);
             if (!held || owner === undefined) continue;
-            const script = ExecutorContractHandler.createScript(contract.params);
+            const script = cachedScript(contract.params);
             if (hex.encode(script.pkScript) !== contract.script) continue;
             const expiresAt = contract.metadata?.[DELEGATION_EXPIRES_KEY];
             watches.push({

@@ -119,6 +119,27 @@ describe("delegatedContracts", () => {
         ).resolves.toEqual([]);
         expect(xOnlyPublicKey).not.toHaveBeenCalled();
     });
+
+    it("builds a row's script once across reads, and still skips a row it does not match", async () => {
+        const xOnlyPublicKey = vi.fn().mockResolvedValue(hex.decode(IDENTITY_X_ONLY));
+        // a window no other test uses, so the cache starts cold for these params
+        const row = renewalRow(IDENTITY_X_ONLY, undefined, SIGNER_PUBKEY, 1234);
+        const tampered = { ...row, script: "51".repeat(17) };
+        const build = vi.spyOn(ExecutorContractHandler, "createScript");
+        try {
+            for (let i = 0; i < 3; i++) {
+                const watches = await delegatedContracts(
+                    { xOnlyPublicKey },
+                    async () => [row, tampered],
+                    "renewal",
+                );
+                expect(watches.map((w) => w.contract)).toEqual([row]);
+            }
+            expect(build).toHaveBeenCalledTimes(1);
+        } finally {
+            build.mockRestore();
+        }
+    });
 });
 
 describe("VtxoManager without Executor watches", () => {
