@@ -36,6 +36,7 @@ import type { CorridorId } from "./corridor";
 import type { SwapPolicy } from "./policy";
 import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
 import { captureAssetPayment } from "./assetPayment";
+import { isBtcAsset } from "./assetId";
 import { quoteViaRfq } from "./quoteRfq";
 import type { Quote, QuoteId, QuoteInput, RouteResolution } from "./quote";
 import { resolveRoute, type ResolvedRoute } from "./resolve";
@@ -181,9 +182,9 @@ export interface SwapClient {
      * Make the quote durable, then move the value: record and secrets are at rest before anything
      * irreversible. Idempotent by quote id — never a second invoice or a second funding. Returns
      * once durable: an invoice shown while its claim secret is only in memory buys an unclaimable
-     * lockup.
+     * lockup. An unstamped funding attempt stays pending until positive funding evidence is found.
      *
-     * @throws {QuoteExpired} past `quote.expiresAt`; the client never re-quotes.
+     * @throws {QuoteExpired} when creating a record past `quote.expiresAt`; the client never re-quotes.
      * @throws {InsufficientFunds} before the persist, on funding routes only.
      * @throws {AcceptConflict} when a record for this quote id contradicts it.
      * @throws {MissingCorridorDep} when the client was given no repository.
@@ -367,6 +368,9 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             if (market.backend === "feed") {
                 if (assetPayment !== undefined)
                     throw new Error("assetPayment needs a negotiated BTC-to-asset market");
+                const depositCarrierSats = isBtcAsset(resolvedRoute.give.asset)
+                    ? undefined
+                    : (await liveOperatorInfo(wallet)).dust;
                 const { quote, preparation } = await quoteFromFeed({
                     quoteId,
                     candidate: market,
@@ -374,6 +378,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     legs: resolvedRoute.legs,
                     endpoints: { give: resolvedRoute.give, take: resolvedRoute.take },
                     ...(resolvedRoute.amount === undefined ? {} : { amount: resolvedRoute.amount }),
+                    ...(depositCarrierSats === undefined ? {} : { depositCarrierSats }),
                     feed,
                     ...(config.policy === undefined ? {} : { policy: config.policy }),
                     now,

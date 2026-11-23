@@ -166,6 +166,8 @@ export interface Quote {
     readonly route: Route;
     /** What the trader gives, fee included. */
     readonly give: QuoteLeg;
+    /** Sats funded in addition to an asset give leg. Subtract from a BTC take to show net proceeds. */
+    readonly depositCarrierSats?: bigint;
     /** What the trader takes. */
     readonly take: QuoteLeg;
     /** Corridor routes: the hash both covenants commit to. */

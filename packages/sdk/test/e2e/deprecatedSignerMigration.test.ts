@@ -578,7 +578,14 @@ describe("deprecated-signer migration (real rotation)", () => {
             );
 
             // The output lands on the boarding address of the ACTIVE signer, with a fee taken.
-            const swept = await wallet.getBoardingUtxos();
+            const swept = await poll(
+                async () => {
+                    const utxos = await wallet.getBoardingUtxos();
+                    return utxos.some((coin) => coin.txid !== stale.txid) ? utxos : null;
+                },
+                30_000,
+                1000,
+            );
             expect(swept).toHaveLength(1);
             expect(swept[0].txid).not.toBe(stale.txid);
             expect(swept[0].value).toBeLessThan(stale.value);

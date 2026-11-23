@@ -8,7 +8,7 @@
  * means the `responder` check fails — fail closed, rather than "verifying" over an unauthenticated
  * wire.
  *
- * The default factory dynamically imports `./nostr`, keeping `nostr-tools` an optional peer.
+ * The default factory dynamically imports `./nostr`, loading it only when needed.
  */
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { RfqTransport } from "../rfq";

@@ -1,6 +1,6 @@
 import { collectAssetSwaps, collectRfqSwaps, collectSwapRecords } from "../src/repository";
 import "fake-indexeddb/auto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AssetSwap } from "../src/store";
 import type { RfqSwapRecord } from "../src/rfqRecord";
 import type { AtomicDecimal } from "../src/client/amount";
@@ -580,6 +580,21 @@ it("Realm RFQ pages use the same Unicode ordering for sorting and resuming", asy
  * case here asserts that rather than tolerating it.
  */
 describe.each(backends)("v2 swap records (%s)", (_, create) => {
+    it("atomically creates one complete record without replacing its winner", async () => {
+        await using repository = create();
+        const original = { ...swapRecord("q1"), profile: { nested: { secret: "original" } } };
+        const contender = { ...swapRecord("q1"), profile: { nested: { secret: "other" } } };
+        expect(
+            await Promise.all([
+                repository.createSwapRecordIfAbsent(original),
+                repository.createSwapRecordIfAbsent(contender),
+            ]),
+        ).toEqual([true, false]);
+        expect(await repository.getSwapRecord("q1")).toEqual(original);
+        expect(await repository.createSwapRecordIfAbsent(contender)).toBe(false);
+        expect(await repository.getSwapRecord("q1")).toEqual(original);
+    });
+
     it("upserts by quote id and reads one back", async () => {
         await using repository = create();
         await repository.saveSwapRecord(swapRecord("q1"));
@@ -687,6 +702,118 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         expect(await collectSwapRecords(repository)).toEqual([]);
         expect(await collectAssetSwaps(repository)).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
+    });
+});
+
+describe("atomic record creation across repository instances", () => {
+    it("chooses one winner across IndexedDB repository instances", async () => {
+        const dbName = `atomic-${Math.random()}`;
+        await using first = new IndexedDbAssetSwapRepository(dbName);
+        await using second = new IndexedDbAssetSwapRepository(dbName);
+        const original = swapRecord("q1");
+        const contender = { ...swapRecord("q1"), fundingTxid: "other" };
+        expect(
+            await Promise.all([
+                first.createSwapRecordIfAbsent(original),
+                second.createSwapRecordIfAbsent(contender),
+            ]),
+        ).toEqual([true, false]);
+        expect(await second.getSwapRecord("q1")).toEqual(original);
+    });
+
+    it("chooses one winner across SQLite repositories sharing the executor", async () => {
+        const log: string[] = [];
+        const db = recording(createNodeSQLExecutor(), log);
+        await using first = new SQLiteAssetSwapRepository(db);
+        await using second = new SQLiteAssetSwapRepository(db);
+        const original = swapRecord("q1");
+        const contender = { ...swapRecord("q1"), fundingTxid: "other" };
+        expect(
+            await Promise.all([
+                first.createSwapRecordIfAbsent(original),
+                second.createSwapRecordIfAbsent(contender),
+            ]),
+        ).toEqual([true, false]);
+        expect(await second.getSwapRecord("q1")).toEqual(original);
+        expect(log.filter((sql) => sql === "BEGIN IMMEDIATE").length).toBeGreaterThanOrEqual(4);
+        expect(log.filter((sql) => sql.startsWith("INSERT INTO arkade_swap_records"))).toHaveLength(
+            1,
+        );
+    });
+
+    it("does not acknowledge IndexedDB insertion before its transaction commits", async () => {
+        await using repository = new IndexedDbAssetSwapRepository(`abort-create-${Math.random()}`);
+        await repository.getSwapRecord("q1");
+        const add = IDBObjectStore.prototype.add;
+        const aborting = vi.spyOn(IDBObjectStore.prototype, "add").mockImplementation(function (
+            this: IDBObjectStore,
+            value,
+            key,
+        ) {
+            const request = add.call(this, value, key);
+            request.addEventListener("success", () => this.transaction.abort());
+            return request;
+        });
+        try {
+            await expect(
+                repository.createSwapRecordIfAbsent(swapRecord("q1")),
+            ).rejects.toBeDefined();
+        } finally {
+            aborting.mockRestore();
+        }
+        expect(await repository.getSwapRecord("q1")).toBeUndefined();
+        expect(await repository.createSwapRecordIfAbsent(swapRecord("q1"))).toBe(true);
+    });
+
+    it("rolls back and rejects a failed SQLite commit", async () => {
+        const db = createNodeSQLExecutor();
+        let failCommit = false;
+        const flaky: SQLExecutor = {
+            ...db,
+            run: async (sql, params) => {
+                if (failCommit && sql === "COMMIT") {
+                    failCommit = false;
+                    throw new Error("commit failed");
+                }
+                await db.run(sql, params);
+            },
+        };
+        await using repository = new SQLiteAssetSwapRepository(flaky);
+        await repository.getSwapRecord("q1");
+        failCommit = true;
+        await expect(repository.createSwapRecordIfAbsent(swapRecord("q1"))).rejects.toThrow(
+            "commit failed",
+        );
+        expect(await repository.getSwapRecord("q1")).toBeUndefined();
+        expect(await repository.createSwapRecordIfAbsent(swapRecord("q1"))).toBe(true);
+    });
+
+    it("rejects a Realm transaction that fails after its callback", async () => {
+        const realm = createMockRealm({ ArkadeSwapRecord: "id" });
+        const write = realm.write.bind(realm);
+        const create = realm.create.bind(realm);
+        let pending: Parameters<typeof create>[] = [];
+        let failCommit = true;
+        vi.spyOn(realm, "create").mockImplementation((...args) => {
+            pending.push(args);
+        });
+        vi.spyOn(realm, "write").mockImplementation((callback) => {
+            pending = [];
+            callback();
+            if (failCommit) {
+                pending = [];
+                throw new Error("commit failed");
+            }
+            write(() => pending.forEach((args) => create(...args)));
+        });
+        await using repository = new RealmAssetSwapRepository(realm);
+        await expect(repository.createSwapRecordIfAbsent(swapRecord("q1"))).rejects.toThrow(
+            "commit failed",
+        );
+        expect(await repository.getSwapRecord("q1")).toBeUndefined();
+        failCommit = false;
+        expect(await repository.createSwapRecordIfAbsent(swapRecord("q1"))).toBe(true);
+        expect(await repository.getSwapRecord("q1")).toEqual(swapRecord("q1"));
     });
 });
 
