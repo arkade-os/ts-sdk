@@ -333,6 +333,61 @@ describe("Wallet script queries stay under the URL cap", () => {
         expect(handle.indexer.getVtxosCalls.length).toBeGreaterThan(0);
         expect(widest(handle.indexer.getVtxosCalls)).toBeLessThanOrEqual(CAP);
     });
+
+    it("preserves pending recovery across offline boot and fences new offchain submits", async () => {
+        const { wallet, walletRepository } = await walletWithContracts(1);
+        await (await wallet.getContractManager()).whenBooted();
+        await updateWalletState(walletRepository, (state) => ({
+            ...state,
+            settings: { ...state.settings, hasPendingTx: true },
+        }));
+        const liveInfo = await wallet.arkProvider.getInfo();
+        const getInfo = vi.spyOn(wallet.arkProvider, "getInfo");
+        getInfo.mockRejectedValueOnce(new ProviderUnavailableError("operator offline"));
+        const getPendingTxs = vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([]);
+        const getVtxos = vi.spyOn(wallet.indexerProvider, "getVtxos").mockResolvedValue({
+            vtxos: [vtxoFor(wallet.defaultContractScript, 1)],
+        });
+        vi.spyOn(wallet, "makeGetPendingTxIntentSignature").mockImplementation(async () => ({
+            message: { type: "get-pending-tx", expire_at: 0 },
+            proof: "proof",
+        }));
+
+        expect(await wallet.deferPendingTxRecovery()).toBe(true);
+        await expect(wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "operator offline",
+        );
+        expect(await wallet.resumeDeferredPendingTxs(() => false)).toBe(true);
+        expect(getVtxos).not.toHaveBeenCalled();
+        expect(getPendingTxs).not.toHaveBeenCalled();
+
+        let active = true;
+        let finishLookup!: (pending: []) => void;
+        getPendingTxs.mockImplementationOnce(
+            () => new Promise((resolve) => (finishLookup = resolve)),
+        );
+        const staleRecovery = wallet.resumeDeferredPendingTxs(() => active);
+        await vi.waitFor(() => expect(getPendingTxs).toHaveBeenCalledOnce());
+        active = false;
+        finishLookup([]);
+        await staleRecovery;
+        expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
+
+        let reconnect!: (info: typeof liveInfo) => void;
+        getInfo.mockImplementationOnce(() => new Promise((resolve) => (reconnect = resolve)));
+        const recovery = wallet.resumeDeferredPendingTxs(() => true);
+        await expect(wallet.buildAndSubmitOffchainTx([], [])).rejects.toThrow(
+            "recovery is required",
+        );
+        expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
+
+        reconnect(liveInfo);
+        expect(await recovery).toBe(true);
+        expect(getVtxos).toHaveBeenCalled();
+        expect(getPendingTxs).toHaveBeenCalledTimes(2);
+        expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(false);
+        expect(wallet.hasDeferredPendingTxRecovery).toBe(false);
+    });
 });
 
 /**

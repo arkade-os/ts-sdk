@@ -357,6 +357,11 @@ style and have not been backfilled.
 
 - **`@arkade-os/swap`: a solver's asset carrier is capped at the operator's dust.** A quote whose `carrier_sats` exceeds the operator's dust (at least 330 sats) is refused before anything is registered or funded, and a carrier the payout does not return now counts as fee.
 
+- **Cached browser wallets open during an operator outage even after an interrupted send.**
+  The service worker defers pending-transaction recovery to its background tick.
+  Once the operator responds, recovery checks current indexer state. New Arkade
+  sends wait for that recovery to complete.
+
 - **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
 
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`

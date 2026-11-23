@@ -1,6 +1,12 @@
 import { hex } from "@scure/base";
 import { requiresWalletScope, walletOperation, type WalletRequestBinding } from "./wallet-request";
-import { OperatorInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
+import {
+    DigestMismatchError,
+    OperatorInfo,
+    OperatorProvider,
+    SettlementEvent,
+} from "../../providers/ark";
+import { isRetryableProviderError } from "../../providers/availability";
 import { GetVtxosOptions, IndexerProvider, PaginationOptions } from "../../providers/indexer";
 import { WalletRepository } from "../../repositories";
 import type {
@@ -1218,6 +1224,7 @@ export class WalletMessageHandler
     private incomingFundsSubscription: (() => void) | undefined;
     private incomingFundsRegistrations = new WeakMap<object, Promise<void>>();
     private contractEventsSubscription: (() => void) | undefined;
+    private retryPendingTxs?: () => Promise<void>;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
     private channel: { broadcast(response: WalletUpdaterResponse): void } | undefined;
 
@@ -1253,6 +1260,9 @@ export class WalletMessageHandler
         ...params: Parameters<MessageHandler<WalletUpdaterRequest, WalletUpdaterResponse>["start"]>
     ): Promise<void> {
         const [services, repositories, channel] = params;
+        if (services.wallet?.serverInfoSource === "cache") {
+            await services.wallet.deferPendingTxRecovery();
+        }
         this.readonlyWallet = services.readonlyWallet;
         this.wallet = services.wallet;
         this.walletRequestBinding = services.walletRequestBinding
@@ -1263,6 +1273,7 @@ export class WalletMessageHandler
         this.walletRepository = repositories.walletRepository;
         this.channel = channel;
         this.onNextTick = [];
+        this.retryPendingTxs = undefined;
     }
 
     async stop() {
@@ -1278,6 +1289,7 @@ export class WalletMessageHandler
         this.channel = undefined;
         this.walletRequestBinding = undefined;
         this.onNextTick = [];
+        this.retryPendingTxs = undefined;
 
         if (this.incomingFundsSubscription) {
             this.incomingFundsSubscription();
@@ -1306,6 +1318,10 @@ export class WalletMessageHandler
     }
 
     async tick(_now: number) {
+        const retryPendingTxs = this.retryPendingTxs;
+        this.retryPendingTxs = undefined;
+        void retryPendingTxs?.();
+
         // Drain atomically: assigning [] after the await would re-clear anything
         // a concurrent stop()/clear() queued, and resurrect what it dropped.
         const pending = this.onNextTick.splice(0);
@@ -1510,6 +1526,7 @@ export class WalletMessageHandler
                     this.contractEventsEpoch++;
                     this.boardingEpoch++;
                     this.onNextTick = [];
+                    this.retryPendingTxs = undefined;
                 }
                 const execution = pending
                     ? settledWithin(pending, this.drainBudgetMs).then((drained) => {
@@ -2443,6 +2460,7 @@ export class WalletMessageHandler
 
         // The last INIT to start wins: an older one returns at its next check.
         this.initEpoch++;
+        this.retryPendingTxs = undefined;
         const init = this.newGeneration("init");
 
         // Initialize contract manager FIRST — this populates the repository
@@ -2453,9 +2471,9 @@ export class WalletMessageHandler
         await this.refreshCachedData({ lazyBoarding }, context, init);
         if (init.stale) return;
 
-        // Recover pending transactions (init-only, not on reload).
-        // Pending txs only exist if a send was interrupted mid-finalization.
-        if (signingWallet) {
+        if (signingWallet?.hasDeferredPendingTxRecovery) {
+            this.schedulePendingTxRecovery(signingWallet, context, init);
+        } else if (signingWallet && signingWallet.serverInfoSource !== "cache") {
             try {
                 const vtxos = await this.getVtxosFromRepo(undefined, context);
                 if (init.stale) return;
@@ -2501,6 +2519,30 @@ export class WalletMessageHandler
                 console.error("Error starting VtxoManager:", error);
             }
         }
+    }
+
+    private schedulePendingTxRecovery(
+        wallet: Wallet,
+        context: WalletRequestContext,
+        init: Generation,
+    ) {
+        const retry = async () => {
+            if (init.stale) return;
+            try {
+                const complete = await this.runOwnedOperation(context, () =>
+                    wallet.resumeDeferredPendingTxs(() => !init.stale),
+                );
+                if (complete) return;
+            } catch (error) {
+                if (init.stale) return;
+                if (!isRetryableProviderError(error) && !(error instanceof DigestMismatchError)) {
+                    console.error("Error recovering pending transactions:", error);
+                    return;
+                }
+            }
+            if (!init.stale) this.retryPendingTxs = retry;
+        };
+        this.retryPendingTxs = retry;
     }
 
     private async registerIncomingFunds(

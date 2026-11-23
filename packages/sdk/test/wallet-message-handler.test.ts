@@ -9,6 +9,7 @@ import {
     deserializeMigrationReport,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { InMemoryWalletRepository, toXOnlySignerHex } from "../src";
+import { DigestMismatchError } from "../src/providers/ark";
 import { hex } from "@scure/base";
 import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
 import {
@@ -2696,6 +2697,47 @@ describe("WalletMessageHandler repo-backed reads", () => {
             "aa".repeat(32),
             "dd".repeat(32),
         ]);
+    });
+
+    it("initializes from cache before pending recovery and only retries once at a time", async () => {
+        setupHandler();
+        let release!: (complete: boolean) => void;
+        const attempt = vi.fn(() => new Promise<boolean>((resolve) => (release = resolve)));
+        const wallet = {
+            serverInfoSource: "cache",
+            hasDeferredPendingTxRecovery: true,
+            deferPendingTxRecovery: vi.fn().mockResolvedValue(undefined),
+            resumeDeferredPendingTxs: attempt,
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+        };
+        const { readonlyWallet, arkProvider } = fixtureContext(updater);
+        await updater.start(
+            { wallet, readonlyWallet, arkProvider, walletRequestBinding: TEST_BINDING } as any,
+            { walletRepository: walletRepo },
+            { broadcast: vi.fn() },
+        );
+        expect(wallet.deferPendingTxRecovery).toHaveBeenCalledOnce();
+
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
+        expect(wallet.finalizePendingTxs).not.toHaveBeenCalled();
+        expect(attempt).not.toHaveBeenCalled();
+
+        attempt.mockRejectedValueOnce(new DigestMismatchError("operator changed"));
+        await updater.tick(0);
+        await until(() => (updater as any).retryPendingTxs !== undefined);
+        await updater.tick(1);
+        await updater.tick(2);
+        expect(attempt).toHaveBeenCalledTimes(2);
+
+        release(false);
+        await until(() => (updater as any).retryPendingTxs !== undefined);
+        await updater.tick(3);
+        expect(attempt).toHaveBeenCalledTimes(3);
+
+        release(true);
+        await updater.tick(4);
+        expect(attempt).toHaveBeenCalledTimes(3);
     });
 
     it.each([false, true])(
