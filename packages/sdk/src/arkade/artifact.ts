@@ -453,6 +453,11 @@ function parseLeaf(
 /**
  * Adds `server`, and one param per child-output placeholder for the caller to bind to that output key.
  * With the build's `debug` file, each covenant segment also carries its `sourceMap`.
+ *
+ * `<OPERATOR_KEY>` reads as `server` and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`.
+ * `<OPERATOR_KEY:f>` reads as the server key followed by the emulator key tweaked by `f`'s Arkade
+ * Script, or the tweaked emulator key alone in a CSV leaf, until arkd and the emulator share one
+ * operator key.
  */
 export function programFromArtifact(
     artifact: ContractArtifact,
