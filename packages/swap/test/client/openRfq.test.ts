@@ -5,11 +5,13 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 import { ArkAddress } from "@arkade-os/sdk";
 import { createSwapClient } from "../../src/client/client";
+import { InMemoryAssetSwapRepository } from "../../src/repository";
 import { collectOpenRfqBids } from "../../src/openRfqTransport";
 import { btcOn } from "../../src/client/assetId";
 import { QuoteExpired, QuoteVerificationFailed } from "../../src/client/errors";
 import { ASSET_SWAP_DIRECTED_NONCE } from "../../src/protocol";
 import {
+    acceptWallet,
     assetCard,
     clockAt,
     EMULATOR_PUBKEY_HEX,
@@ -109,6 +111,7 @@ const setup = async (
     const wallet = await hdWallet();
     const client = createSwapClient({
         wallet,
+        repository: new InMemoryAssetSwapRepository(),
         discovery: { snapshot: over.snapshot ?? [] },
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         fetchImpl: feedServing().fetch,
@@ -244,10 +247,15 @@ describe("open RFQ selection", () => {
             ),
         );
         const { client, attempted, wallet } = await setup({ answer });
-        const send = vi.fn(async () => {
-            throw new Error("unexpected funding");
+        const funding = await acceptWallet();
+        Object.assign(wallet, {
+            getBalance: funding.wallet.getBalance,
+            getContractManager: funding.wallet.getContractManager,
+            getArkadeReader: funding.wallet.getArkadeReader,
+            getTransactionHistory: funding.wallet.getTransactionHistory,
+            send: funding.wallet.send,
         });
-        Object.assign(wallet, { send });
+        const send = funding.sent;
         vi.mocked(collectOpenRfqBids).mockImplementation(async (request) => [
             { ...bid(), openId: request.openId, amountSide: "to", validUntil: NOW + 24 },
         ]);
@@ -282,7 +290,12 @@ describe("open RFQ selection", () => {
         expect(quote.expiresAt).toBe(NOW + 24);
         expect(quote.take).toEqual({ asset: take, amount: paymentInput.amount });
         expect(quote.auction?.winner.bidder).toBe(pubkey);
-        expect(send).not.toHaveBeenCalled();
+        expect(send).toHaveLength(0);
+
+        // the clamped deadline must satisfy the stored-record bound, or funding is refused
+        await client.accept(quote);
+        expect(send).toHaveLength(1);
+        expect(send[0]).toMatchObject({ validUntil: NOW + 24 });
         await client[Symbol.asyncDispose]();
     });
     it.each([
