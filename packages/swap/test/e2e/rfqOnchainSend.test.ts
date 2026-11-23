@@ -114,8 +114,14 @@ const solverHealthy = async (): Promise<boolean> => {
     }
 };
 
-const restartSolver = async (): Promise<void> => {
-    sh(`docker restart ${SOLVER}`);
+/** `whileDown` runs with the solver stopped, so what it reads cannot race the solver. */
+const restartSolver = async (whileDown?: () => Promise<void>): Promise<void> => {
+    sh(`docker stop ${SOLVER}`);
+    try {
+        await whileDown?.();
+    } finally {
+        sh(`docker start ${SOLVER}`);
+    }
     await waitFor("the solver to come back", solverHealthy, {
         timeout: 120_000,
     });
@@ -298,8 +304,9 @@ describe("arkade -> onchain against the real solver (regtest)", () => {
 
     it("funds the HTLC once across solver restarts before and after funding", async () => {
         const s = await send(clientOn());
-        expect(await htlcOutputs(s.record)).toHaveLength(0);
-        await restartSolver();
+        await restartSolver(async () => {
+            expect(await htlcOutputs(s.record)).toHaveLength(0);
+        });
         await waitFor(
             "the solver's HTLC funding",
             async () => (await htlcOutputs(s.record)).length > 0,
