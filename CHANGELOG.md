@@ -321,6 +321,12 @@ style and have not been backfilled.
   other template ids, and `defaultTemplates()` refuses it. `DefaultVtxo.Script`
   takes extra leaves after forfeit and exit.
 
+- **`@arkade-os/swap`: select a solver for one quote.** Pass a `solverId` from
+  `client.candidates()` to `client.quote(input, { solverId })`. An unavailable
+  or paused solver is refused before negotiation, and a selected solver's
+  failure returns to the caller without contacting another solver. Automatic
+  routing preferences still apply to subsequent quotes.
+
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,
   completed usage (`completedSolverUsage`) or amount-aware advertised cost, after
@@ -472,6 +478,12 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
+  subscribed from the client's clock and dropped any bid stamped before the
+  open, so a client a second or two ahead of the solver received no bids at
+  all. Bid stamps are now trusted within 30 seconds either way; the bid's `e`
+  tag still binds it to this open.
 
 - **`@arkade-os/swap`: an offer swap record names its covenant.** `OfferSwapRecord`
   now requires `offerHex`, `binding`, or both (the new `OfferCovenant` type), so
@@ -1987,6 +1999,17 @@ style and have not been backfilled.
   `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
   audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
   high` and fails on any new high or critical advisory.
+
+## [0.1.13] - 2026-11-21
+
+### Bug Fixes
+
+- **`@arkade-os/swap`: repeat asset RFQs derive distinct deposits.** Clients
+  prefer `asset-swap-directed-nonce`, which binds a hash of the request ID to
+  the covenant through a dedicated compiler artifact in each payout direction.
+  Equal terms on separate requests can now settle independently.
+  The client still negotiates `asset-swap-directed` with older solvers and can
+  recover previously funded deposits.
 
 ## [0.4.77] - 2026-09-30
 

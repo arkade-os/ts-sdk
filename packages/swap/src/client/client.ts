@@ -229,8 +229,9 @@ export interface SwapClient {
     resolve(input: QuoteInput): Promise<RouteResolution>;
     /** Verified, binding terms; no swap is persisted, funded or watched. Advisory health may update.
      * Routing errors include SolverUnavailable, SolverResponseInvalid and SolverRoutesUnavailable;
-     * narrow them with instanceof, separately from the closed SwapError taxonomy. */
-    quote(input: QuoteInput): Promise<Quote>;
+     * narrow them with instanceof, separately from the closed SwapError taxonomy.
+     * An explicit `solverId` from `candidates()` must still be eligible and never fails over. */
+    quote(input: QuoteInput, options?: { readonly solverId?: string }): Promise<Quote>;
     /**
      * Make the quote durable, then move the value: record and secrets are at rest before anything
      * irreversible. Idempotent by quote id — never a second invoice or a second funding. Returns
@@ -830,8 +831,9 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             );
         },
 
-        quote: async (input) => {
+        quote: async (input, options) => {
             const assetPayment = captureAssetPayment(input.assetPayment);
+            const solverId = options?.solverId;
             ensureLive("quote");
             const { base, corridors, discovery } = await resolved();
             let resolvedRoute = await route(input, "quote");
@@ -840,7 +842,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             // carries unvalidated, so re-pin from the registry. If unreachable, the stale snapshot
             // comes back and the check refuses it (fail closed).
             if (
-                (config.policy?.solverRouting === undefined
+                (solverId === undefined && config.policy?.solverRouting === undefined
                     ? resolvedRoute.market?.backend === "rfq"
                     : resolvedRoute.candidates.some((candidate) => candidate.backend === "rfq")) &&
                 !resolvedRoute.snapshot.ref.live
@@ -849,7 +851,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 resolvedRoute = await route(input, "quote");
             }
 
-            const candidates = await orderedSolverCandidates(
+            const ordered = await orderedSolverCandidates(
                 resolvedRoute,
                 base.networkName,
                 config.policy,
@@ -857,12 +859,18 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 true,
                 health,
             );
+            const candidates =
+                solverId === undefined
+                    ? ordered
+                    : ordered.filter((candidate) => candidate.solverId === solverId);
             if (candidates.length === 0) {
                 throw new UnsupportedRoute(
-                    `no market serves ${resolvedRoute.legs.give.corridor}:` +
-                        `${resolvedRoute.legs.give.assetId} -> ` +
-                        `${resolvedRoute.legs.take.corridor}:${resolvedRoute.legs.take.assetId} ` +
-                        "on the active discovery snapshot",
+                    solverId === undefined
+                        ? `no market serves ${resolvedRoute.legs.give.corridor}:` +
+                              `${resolvedRoute.legs.give.assetId} -> ` +
+                              `${resolvedRoute.legs.take.corridor}:${resolvedRoute.legs.take.assetId} ` +
+                              "on the active discovery snapshot"
+                        : "the selected solver is unavailable for this route",
                     {
                         give: resolvedRoute.legs.give.corridor,
                         take: resolvedRoute.legs.take.corridor,
@@ -876,6 +884,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             corridors.get(resolvedRoute.legs.take.corridor);
 
             const failover =
+                solverId === undefined &&
                 config.policy?.solverRouting !== undefined &&
                 config.policy.solverRouting.failover !== false &&
                 config.policy.selectMarket === undefined;

@@ -40,6 +40,7 @@ import {
     ASSET_SWAP_V2,
     ASSET_SWAP_DIRECTED,
 } from "../src/program";
+import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../src/protocol";
 
 const operatorPubkey = hex.decode(
     "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
@@ -55,6 +56,7 @@ const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const EXIT: RelativeTimelock = { type: "blocks", value: BigInt(144) };
 const TAKER = schnorr.getPublicKey(new Uint8Array(32).fill(3));
 const OTHER_TAKER = schnorr.getPublicKey(new Uint8Array(32).fill(4));
+const RFQ_ID = "ab".repeat(32);
 
 type Terms = Omit<Offer, "swapPkScript"> & { exitDelay: RelativeTimelock };
 
@@ -175,9 +177,53 @@ describe("the directed contracts (asset-swap-directed)", () => {
         expect(() => ASSET_SWAP_CONTRACTS[ASSET_SWAP_V2].args(inputs)).toThrow(/binds no taker/);
     });
 
-    it("advertises the directed covenant alone, and derives it and v2", () => {
-        expect(ASSET_SWAP_DERIVABLE_VERSIONS).toEqual([ASSET_SWAP_DIRECTED, ASSET_SWAP_V2]);
-        expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([ASSET_SWAP_DIRECTED]);
+    it("advertises both directed covenants and still derives v2", () => {
+        expect(ASSET_SWAP_DERIVABLE_VERSIONS).toEqual([
+            ASSET_SWAP_DIRECTED_NONCE,
+            ASSET_SWAP_DIRECTED,
+            ASSET_SWAP_V2,
+        ]);
+        expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([
+            ASSET_SWAP_DIRECTED_NONCE,
+            ASSET_SWAP_DIRECTED,
+        ]);
+    });
+});
+
+describe("a directed deposit bound to an RFQ nonce", () => {
+    it("hashes the raw id under the protocol domain", () => {
+        expect(hex.encode(assetRfqNonce(RFQ_ID))).toBe(
+            "e52c616aee55c60633ca25bade9ac3018ed1f7104f79b0983b7b13e1d362e631",
+        );
+        expect(assetRfqNonce(RFQ_ID.toUpperCase())).toEqual(assetRfqNonce(RFQ_ID));
+        expect(() => assetRfqNonce("ab".repeat(31))).toThrow();
+    });
+
+    it.each(directions)("binds %s without changing the cancel or exit leaf", (_, terms) => {
+        const directed = { ...terms, taker: TAKER };
+        const old = offerContract(directed, operatorPubkey);
+        const offer = { ...directed, nonce: assetRfqNonce(RFQ_ID) };
+        const compiled = offerContract(offer, operatorPubkey, ASSET_SWAP_DIRECTED_NONCE);
+        expect(compiled.pkScript).not.toEqual(old.pkScript);
+        expect(compiled.functionByName("fulfill")?.signerKeys).toEqual(
+            old.functionByName("fulfill")?.signerKeys,
+        );
+        for (const path of ["cancel", "exit"]) {
+            expect(compiled.functionByName(path)?.leafScript).toEqual(
+                old.functionByName(path)?.leafScript,
+            );
+        }
+        const packet = encodeOffer({ ...offer, swapPkScript: compiled.pkScript });
+        const fromPacket = bindingFromOffer(decodeOffer(packet), operatorPubkey);
+        expect(fromPacket.version).toBe(ASSET_SWAP_DIRECTED_NONCE);
+        const stored = JSON.parse(JSON.stringify(recordOfferBinding(fromPacket)));
+        expect(offerBindingOf(stored)).toEqual(fromPacket);
+        expect(hex.encode(packet)).not.toContain(RFQ_ID);
+        expect(
+            offerContract(offerFromBinding(offerBindingOf(stored)), operatorPubkey).pkScript,
+        ).toEqual(compiled.pkScript);
+        expect(() => offerBindingOf({ ...stored, nonce: undefined })).toThrow();
+        expect(() => offerBindingOf({ ...stored, nonce: "00" })).toThrow();
     });
 });
 
@@ -431,9 +477,17 @@ describe("a cancel built from the binding", () => {
             }),
         }) as unknown as IWallet;
 
-    it.each(directions)("spends a %s deposit exactly as its offerHex does", async (_, terms) => {
-        const swapPkScript = offerContract({ ...terms, taker: TAKER }, operatorPubkey).pkScript;
-        const offer: Offer = { ...terms, taker: TAKER, swapPkScript };
+    it.each([
+        ...directions.map(([name, terms]) => [name, terms, ASSET_SWAP_DIRECTED] as const),
+        ["nonce-bound asset", directions[0][1], ASSET_SWAP_DIRECTED_NONCE] as const,
+    ])("spends a %s deposit exactly as its offerHex does", async (_, terms, version) => {
+        const directed = {
+            ...terms,
+            taker: TAKER,
+            ...(version === ASSET_SWAP_DIRECTED_NONCE && { nonce: assetRfqNonce(RFQ_ID) }),
+        };
+        const swapPkScript = offerContract(directed, operatorPubkey, version).pkScript;
+        const offer: Offer = { ...directed, swapPkScript };
         const submitted: string[] = [];
         const wallet = offlineWallet(submitted);
         const fromHex = await prepareOfferCancel(wallet, hex.encode(encodeOffer(offer)), {

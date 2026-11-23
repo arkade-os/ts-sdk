@@ -7,6 +7,7 @@ import { createSwapClient } from "../../src/client/client";
 import { collectOpenRfqBids } from "../../src/openRfqTransport";
 import { btcOn } from "../../src/client/assetId";
 import { QuoteExpired, QuoteVerificationFailed } from "../../src/client/errors";
+import { ASSET_SWAP_DIRECTED_NONCE } from "../../src/protocol";
 import {
     assetCard,
     clockAt,
@@ -330,7 +331,10 @@ describe("open RFQ selection", () => {
         await client[Symbol.asyncDispose]();
     });
     it("pins canonical asset identities even when a bidder swaps ticker labels", async () => {
-        const { client } = await setup({ snapshot: [assetCard] });
+        const { client } = await setup({
+            snapshot: [assetCard],
+            answer: (payload) => arkadeAssetAnswer(payload, clockAt(NOW), { supportsNonce: true }),
+        });
         const card = rawCard();
         card.markets![0].base_asset.ticker = "USD";
         card.markets![0].quote_asset.ticker = "BTC";
@@ -343,6 +347,9 @@ describe("open RFQ selection", () => {
         const quote = await client.quoteBid(auction, auction.bids[0]);
         expect(quote.give.asset).toBe(give);
         expect(quote.take.asset).toBe(take);
+        expect(client.preparationOf(quote.id)).toMatchObject({
+            offer: { offerBinding: { version: ASSET_SWAP_DIRECTED_NONCE } },
+        });
         await expect(
             client.accept({ ...quote, auction: undefined, expiresAt: NOW + 3600 }),
         ).rejects.toThrow("original issued quote");

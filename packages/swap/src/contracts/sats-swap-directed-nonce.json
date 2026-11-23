@@ -1,0 +1,123 @@
+{
+  "formatVersion": 1,
+  "contractName": "SatsSwapDirectedNonce",
+  "constructorInputs": [
+    {
+      "name": "receiver",
+      "type": "pubkey"
+    },
+    {
+      "name": "amount",
+      "type": "int"
+    },
+    {
+      "name": "user",
+      "type": "pubkey"
+    },
+    {
+      "name": "taker",
+      "type": "pubkey"
+    },
+    {
+      "name": "nonce",
+      "type": "bytes32"
+    }
+  ],
+  "functions": [
+    {
+      "name": "fulfill",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "<nonce>",
+          "OP_DROP",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_DUP",
+          "OP_INSPECTOUTPUTVALUE",
+          "<amount>",
+          "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "1",
+          "OP_NUMEQUALVERIFY",
+          "<receiver>",
+          "OP_EQUAL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "fulfill",
+          "witness": [
+            {
+              "name": "takerSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<taker>",
+            "OP_CHECKSIGVERIFY",
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:fulfill>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cancel",
+      "leaves": [
+        {
+          "name": "cancel",
+          "witness": [
+            {
+              "name": "userSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<user>",
+            "OP_CHECKSIGVERIFY",
+            "<SERVER_KEY>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "source": {
+    "entry": "sats-swap-directed-nonce.ark",
+    "files": {
+      "sats-swap-directed-nonce.ark": "pragma arkade ^0.1.0;\n\ncontract SatsSwapDirectedNonce(\n    pubkey receiver,\n    int amount,\n    pubkey user,\n    pubkey taker,\n    bytes32 nonce\n) {\n    function fulfill() {\n        @allow(self-comparison, \"commits the nonce without imposing a spend condition\")\n        require(nonce == nonce);\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].value >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function fulfill(signature takerSig, signature serverSig, signature emulatorSig) tapscript {\n        require(checkMultisig([taker, server, emulator], [takerSig, serverSig, emulatorSig], 3));\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0-rc.1",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-21T12:29:53.499634500+00:00",
+  "fingerprint": "sha256:833b559dc05031b170c4376f2a894f59986ae0f815bdc8a63e97de6feccec8cb"
+}
