@@ -12,7 +12,13 @@ import { base64, hex } from "@scure/base";
 import { claimPacketShape } from "../../src/claimPacket";
 import { createSwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
-import { AmountMismatch, QuoteExpired, QuoteVerificationFailed } from "../../src/client/errors";
+import {
+    AmountMismatch,
+    QuoteExpired,
+    QuoteVerificationFailed,
+    UnsupportedRoute,
+} from "../../src/client/errors";
+import { quoteViaRfq, type RfqQuoteInput } from "../../src/client/quoteRfq";
 import { AmountEncodingUnsupported } from "../../src/client/errors";
 import { MIN_HEADROOM_SECONDS, SwapRefusal } from "../../src/rfq";
 import { MissingCorridorDep } from "../../src/client/errors";
@@ -617,5 +623,16 @@ describe("the amount encoding, both ways", () => {
             client.quote({ ...sendInput(), amount: 5_000n, amountOn: "take" }),
         ).rejects.toThrow(AmountMismatch);
         expect(transport.sent).toHaveLength(0);
+    });
+});
+
+describe("quoteViaRfq", () => {
+    it("refuses a route it has no quoter for, rather than resolving to nothing", async () => {
+        const input = {
+            route: "onchain->arkade",
+            transport: { attestedResponder: SOLVER_DISCOVERY_KEY },
+            market: { discoveryPubkey: SOLVER_DISCOVERY_KEY, snapshot: { live: true } },
+        } as unknown as RfqQuoteInput;
+        await expect(quoteViaRfq(input)).rejects.toThrow(UnsupportedRoute);
     });
 });

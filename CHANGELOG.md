@@ -155,8 +155,10 @@ style and have not been backfilled.
 - **`@arkade-os/swap` drops the `onchain -> arkade` corridor.** The solver no
   longer quotes `onchain:BTC->arkade:BTC`; non-interactive boarding replaces
   it. `client.receive({ via: "onchain" })` and `client.quote()` on that route
-  now throw `UnsupportedRoute`, and a stored `onchain_receive` record no longer
-  restores. `@arkade-os/swap/protocol` no longer exports `requestOnchainReceive`,
+  now throw `UnsupportedRoute` once market data loads (with `registryUrl: null`
+  and no snapshot they throw `DiscoverySnapshotUnavailable` first), as does
+  `quoteViaRfq` called with that route, and a stored `onchain_receive` record no
+  longer restores. `@arkade-os/swap/protocol` no longer exports `requestOnchainReceive`,
   `deriveOnchainReceive`, `onchainReceiveRequest`, `ONCHAIN_RECEIVE_PAIR`,
   `onchainReceiveProfile`, `OnchainReceiveProfile`, `OnchainReceiveSwap`,
   `ReceiveLockupSwap` (use `LightningReceiveSwap`), `nextOnchainReceiveAction`,
@@ -444,7 +446,9 @@ style and have not been backfilled.
   `RfqSwapManager` pins `funding` to the outpoint its claim spent rather than
   the first output it saw, which a replaced fill left stale. A claim re-published
   after its fill vanished moves to another output only if that output pays the
-  agreed amount.
+  agreed amount. An outspend lookup refused for a funding the backend no longer
+  knows reads as unspent; when the history check behind that also fails, the
+  outspend's own error is reported.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's

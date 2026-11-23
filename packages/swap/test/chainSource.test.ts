@@ -353,6 +353,22 @@ describe("a funding the solver replaced by fee bump", () => {
             "Failed to get transaction outspends",
         );
     });
+
+    it("reports the outspend refusal when the history check fails too", async () => {
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspends: refused,
+                getTransactions: vi.fn(async () => {
+                    throw new Error("history unreachable");
+                }),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        await expect(chain.getSpendingTx("funding", 0, HTLC.pkScript)).rejects.toThrow(
+            "Failed to get transaction outspends",
+        );
+    });
 });
 
 describe("chainSourceFrom.broadcast", () => {

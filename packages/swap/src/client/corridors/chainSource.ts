@@ -14,6 +14,7 @@ import { hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";
 import { EsploraProvider, type OnchainProvider } from "@arkade-os/sdk";
 import type { ChainSource, ChainUtxo, TxStatus } from "../../onchainHtlc";
+import { readOutspend } from "../../chainSource";
 
 /** The chain tip, as the two reads that need it want it. */
 export interface L1Tip {
@@ -94,17 +95,9 @@ export const chainSourceOver = (
             vout: number,
             pkScript: Uint8Array,
         ): Promise<{ txHex: string } | null> {
-            const outspend = await (backend.provider.getTxOutspend
-                ? backend.provider.getTxOutspend(txid, vout)
-                : backend.provider.getTxOutspends(txid).then((all) => all[vout])
-            ).catch(async (error: unknown) => {
-                // A fee-bumped funding is gone, and backends refuse its outspends with an error.
-                const history = await backend.provider.getTransactions(
-                    addressOfScript(pkScript, network),
-                );
-                if (history.some((tx) => tx.txid === txid)) throw error;
-                return undefined;
-            });
+            const outspend = await readOutspend(backend.provider, txid, vout, () =>
+                addressOfScript(pkScript, network),
+            );
             if (!outspend?.spent) return null;
             // `||`, not `??`: the electrum provider uses `txid: ""` as its unspent sentinel.
             const spender = outspend.txid || (await spenderFromVins(txid, vout, pkScript));

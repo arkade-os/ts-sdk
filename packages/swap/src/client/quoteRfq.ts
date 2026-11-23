@@ -316,6 +316,11 @@ export const quoteViaRfq = async (
             return quoteLightningReceive(input);
         case "arkade->onchain":
             return quoteOnchainSend(input);
+        default:
+            // Reachable from untyped callers of `/advanced`, e.g. with the removed `onchain->arkade`.
+            throw new UnsupportedRoute(
+                `${String(input.route satisfies never)} is not an implemented route`,
+            );
     }
 };
 
