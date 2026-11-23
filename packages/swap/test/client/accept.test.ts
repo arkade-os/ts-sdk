@@ -935,6 +935,38 @@ describe("accept funding constraints", () => {
         );
         expect(h.wallet.contracts).toHaveLength(0);
     });
+
+    it("keeps a retry's earlier funding deadline across another interruption", async () => {
+        const h = await setup({ failSend: () => new Error("interrupted") });
+        const quote = await quoteFor(h, "lightningSend");
+        const selectedVtxos = [coinFor(quote.give.amount)];
+        const options = { selectedVtxos, maxChangeFee: 0 };
+
+        await expect(h.client.accept(quote, { ...options, validUntil: NOW + 30 })).rejects.toThrow(
+            "interrupted",
+        );
+        await expect(h.client.accept(quote, { ...options, validUntil: NOW + 10 })).rejects.toThrow(
+            "interrupted",
+        );
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingDeadline).toBe(NOW + 10);
+
+        const restarted = await setup({ repository: h.repository });
+        await restarted.client.accept(quote, { ...options, validUntil: NOW + 60 });
+        expect(restarted.wallet.sent[0]).toMatchObject({ validUntil: NOW + 10 });
+    });
+
+    it("refuses to fund a stored quote past its original expiry", async () => {
+        const h = await setup({ failSend: () => new Error("interrupted") });
+        const quote = await quoteFor(h, "lightningSend");
+        await expect(h.client.accept(quote)).rejects.toThrow("interrupted");
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+
+        const restarted = await setup({ repository: h.repository });
+        await expect(
+            restarted.client.accept({ ...quote, expiresAt: quote.expiresAt + 60 }),
+        ).rejects.toBeInstanceOf(QuoteExpired);
+        expect(restarted.wallet.sent).toHaveLength(0);
+    });
 });
 
 describe("accept funding deadline", () => {

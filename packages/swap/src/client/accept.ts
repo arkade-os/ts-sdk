@@ -419,21 +419,25 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
             return answer(await stampFunding(repository, stored, found, now));
         }
         // No funding evidence: retrying moves new value, so the deadline still applies.
-        if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
+        const expiresAt = Math.min(stored.expiresAt, quote.expiresAt);
+        if (now > expiresAt) throw new QuoteExpired(quote.id, expiresAt, now);
         if (
             stored.fundingConstraints !== undefined &&
             stableStringify(stored.fundingConstraints) !== stableStringify(fundingConstraints)
         ) {
             throw new AcceptConflict(quote.id, stored.id, ["fundingConstraints"]);
         }
-        if (fundingConstraints !== undefined && stored.fundingConstraints === undefined) {
+        const deadline =
+            fundingConstraints === undefined
+                ? stored.fundingDeadline
+                : Math.min(stored.fundingDeadline ?? expiresAt, fundingDeadline, expiresAt);
+        const addsConstraints =
+            fundingConstraints !== undefined && stored.fundingConstraints === undefined;
+        if (addsConstraints || deadline !== stored.fundingDeadline) {
             const constrained = {
                 ...stored,
-                fundingConstraints,
-                fundingDeadline: Math.min(
-                    stored.fundingDeadline ?? fundingDeadline,
-                    fundingDeadline,
-                ),
+                ...(addsConstraints ? { fundingConstraints } : {}),
+                fundingDeadline: deadline,
             };
             await repository.saveSwapRecord(constrained);
             return answer(await fundAndStamp(input, constrained, repository));
