@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { Address, OutScript } from "@scure/btc-signer";
+import { Address, OutScript, SigHash } from "@scure/btc-signer";
 
 import { ArkNote, Wallet } from "../src";
 import {
@@ -294,5 +294,20 @@ describe("Wallet.createBatchHandler onchain-only finalization", () => {
 
         expect(thisArg._signerRouter.sign).not.toHaveBeenCalled();
         expect(thisArg.arkProvider.submitSignedForfeitTxs).not.toHaveBeenCalled();
+    });
+
+    it("signs the boarding input under SIGHASH_DEFAULT whatever sighash the server declared", async () => {
+        const { handler, thisArg } = onchainOnlyHandler([]);
+        const event = finalizationEvent([{ address: OTHER_ONCHAIN_ADDRESS, amount: 1_000n }]);
+        const served = Transaction.fromPSBT(base64.decode(event.commitmentTx));
+        served.updateInput(0, { sighashType: SigHash.ALL_ANYONECANPAY });
+
+        await handler.onBatchFinalization({
+            ...event,
+            commitmentTx: base64.encode(served.toPSBT()),
+        });
+
+        const [signed] = thisArg._signerRouter.sign.mock.calls[0];
+        expect(signed.getInput(0).sighashType).toBe(SigHash.DEFAULT);
     });
 });

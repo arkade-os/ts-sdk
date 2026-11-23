@@ -497,9 +497,10 @@ interface ServiceWorkerWalletOptions {
     lazyInitialization?: boolean;
     /** Defer boarding and history loading; render boarding.loaded=false as unknown. */
     lazyBoarding?: boolean;
-    /** The operator's endpoint and optional public key. */
+    /** The operator's endpoint. */
     arkServer?: {
         url: string;
+        /** @deprecated Ignored, as `BaseWalletConfig.arkServerPublicKey`. */
         publicKey?: string;
     };
     /**

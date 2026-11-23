@@ -21,12 +21,7 @@ import {
     InMemoryAssetSwapRepository,
     type AssetSwapRepository,
 } from "../../src/repository";
-import {
-    MaxFeeExceeded,
-    QuoteExpired,
-    QuoteVerificationFailed,
-    UnsupportedRoute,
-} from "../../src/client/errors";
+import { QuoteExpired, QuoteVerificationFailed, UnsupportedRoute } from "../../src/client/errors";
 import {
     bindingFromOffer,
     decodeOffer,
@@ -42,6 +37,7 @@ import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
 import { quoteIdOfSwapId, type OfferSwapRecord } from "../../src/client/record";
 import {
+    ARK_INFO,
     ASSET_BUY_PAIR,
     ASSET_SELL_PAIR,
     EMULATOR_PUBKEY_HEX,
@@ -749,6 +745,7 @@ describe("accept() on a negotiated asset market", () => {
 
     it("funds the carrier the solver published, and keeps it on the record", async () => {
         const wallet = await acceptWallet();
+        Object.assign(wallet.wallet, { getArkadeInfo: async () => ({ ...ARK_INFO, dust: 546n }) });
         const base = solverFor(CLOCK);
         const { client, repository } = await setup({
             wallet,
@@ -760,6 +757,34 @@ describe("accept() on a negotiated asset market", () => {
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(stored.carrierSats).toBe("546");
         expect(wallet.sent[0]?.amount).toBe(546);
+    });
+
+    it("refuses a carrier above the operator's dust, having funded nothing", async () => {
+        const wallet = await acceptWallet();
+        const { client } = await setup({
+            wallet,
+            answer: (payload) =>
+                arkadeAssetAnswer(payload, CLOCK, {
+                    toAmount: 500n,
+                    quote: { carrier_sats: "10000000" },
+                }),
+        });
+
+        await expect(client.exchange(sell())).rejects.toMatchObject({ check: "pair" });
+        expect(wallet.sent).toHaveLength(0);
+    });
+
+    it("counts a carrier the payout does not return as fee", async () => {
+        const { client } = await setup({
+            answer: (payload) =>
+                arkadeAssetAnswer(payload, CLOCK, {
+                    toAmount: 100n,
+                    quote: { carrier_sats: "330" },
+                }),
+        });
+        const quote = await client.quote(sell());
+
+        expect(quote.fee).toEqual({ amount: 10_230n, asset: BTC });
     });
 
     it("attaches no carrier to a BTC deposit", async () => {
@@ -792,9 +817,6 @@ describe("accept() on a negotiated asset market", () => {
             take: "USD",
             amount: 10_000n,
             amountOn: "give",
-            // The ceiling is in the asset the fee is in, which on a cross-asset
-            // swap is the take leg: no rate converts a sats ceiling into it.
-            maxFee: { amount: 5n, asset: USD },
         });
 
         expect(transport.sent).toHaveLength(1);
@@ -805,8 +827,14 @@ describe("accept() on a negotiated asset market", () => {
         expect(await repository.getSwapRecord(quoteIdOfSwapId(swap.id))).toBeDefined();
     });
 
-    it("refuses a ceiling the negotiated spread is over, having funded nothing", async () => {
-        const { client, wallet } = await harness();
+    it("refuses a fee ceiling on an asset swap, having funded nothing", async () => {
+        // A feed agreeing with a 10-cent payout for 10_000 sats reads that payout as fee 0.
+        const wallet = await acceptWallet();
+        const { client } = await setup({
+            wallet,
+            fetchImpl: feedServing(1_000).fetch,
+            answer: (payload) => arkadeAssetAnswer(payload, CLOCK, { toAmount: 10n }),
+        });
 
         await expect(
             client.exchange({
@@ -814,9 +842,9 @@ describe("accept() on a negotiated asset market", () => {
                 take: "USD",
                 amount: 10_000n,
                 amountOn: "give",
-                maxFee: { amount: 2n, asset: USD },
+                maxFee: { amount: 1n, asset: USD },
             }),
-        ).rejects.toThrow(MaxFeeExceeded);
+        ).rejects.toThrow(/cannot gate a cross-asset swap/);
         expect(wallet.sent).toHaveLength(0);
         expect(wallet.contracts).toHaveLength(0);
     });

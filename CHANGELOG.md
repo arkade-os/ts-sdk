@@ -14,6 +14,10 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
+
+- **`@arkade-os/swap`: a fee ceiling on a cross-asset swap is refused.** The fee of a cross-asset swap is measured against the solver's own price feed, so `maxFee` or `policy.maxFee` cannot bound it. Setting either on such a swap now throws before anything is funded; same-asset ceilings are unchanged. `policy.maxFee` applies to every call, so a client that sets one for `pay` or `receive` can no longer `exchange` across assets.
+
 - **Inert open-RFQ placeholders are removed.** `SwapPolicy.selectBid`, `RfqAuctionPolicy.freshTransportKey` and `AuctionMarketRef` (a `MarketRef` member) were exported since 0.1.0 but never read or populated. Remove references to them; `openRfq()` and `quoteBid()` replace the auction they reserved, and an auction-closed quote keeps a card `MarketRef` with its `quote.auction` provenance.
 
 - **`@arkade-os/swap`: `asset-swap-v3` is removed.** It never saw use:
@@ -151,6 +155,22 @@ style and have not been backfilled.
   form must pass the median times, from `OnchainProvider.getMedianTimePast`
   at the confirmation height minus one and at the tip, or seconds-locked
   coins never read as expired.
+
+- **`@arkade-os/swap` drops the `onchain -> arkade` corridor.** The solver no
+  longer quotes `onchain:BTC->arkade:BTC`; non-interactive boarding replaces
+  it. `client.receive({ via: "onchain" })` and `client.quote()` on that route
+  now throw `UnsupportedRoute` once market data loads (with `registryUrl: null`
+  and no snapshot they throw `DiscoverySnapshotUnavailable` first), as does
+  `quoteViaRfq` called with that route, and a stored `onchain_receive` record no
+  longer restores. `@arkade-os/swap/protocol` no longer exports `requestOnchainReceive`,
+  `deriveOnchainReceive`, `onchainReceiveRequest`, `ONCHAIN_RECEIVE_PAIR`,
+  `onchainReceiveProfile`, `OnchainReceiveProfile`, `OnchainReceiveSwap`,
+  `ReceiveLockupSwap` (use `LightningReceiveSwap`), `nextOnchainReceiveAction`,
+  `OnchainReceiveAction` or `OnchainReceiveNeedsChainSource`. The manager's
+  `refundOnchain` callback and action, the three L1-refund
+  `RFQ_CONFIGURATION_REFUSAL` reasons, and the `corridors.onchain.refund`
+  override are gone. `assertFundable`'s `onchain.direction` is removed: the
+  timelock-order gate always applies.
 
 - **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
   `scope`.** A custom `ContractRepository` must persist and round-trip
@@ -339,6 +359,8 @@ style and have not been backfilled.
   other template ids, and `defaultTemplates()` refuses it. `DefaultVtxo.Script`
   takes extra leaves after forfeit and exit.
 
+- **`@arkade-os/swap`: Open offers for directed asset payments.** `openRfq()` supports receiver-exact BTC-to-asset payments. The public request carries the pair and amount. Only the selected bidder receives the recipient in the directed quote request.
+
 - **`@arkade-os/swap`: select a solver for one quote.** Pass a `solverId` from
   `client.candidates()` to `client.quote(input, { solverId })`. An unavailable
   or paused solver is refused before negotiation, and a selected solver's
@@ -497,6 +519,22 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
+
+- **Boarding inputs in a commitment transaction are signed with the default sighash**, whatever sighash type the operator's PSBT declares, as forfeits already were.
+
+- **`arkServerPublicKey` and `ServiceWorkerWallet`'s `arkServer.publicKey` are marked deprecated.** Neither has been read since the signer key moved to the operator's info, which may rotate it.
+
+- **A negative or non-integer relative timelock is rejected** instead of encoding a different or unspendable CSV. `Wallet.create` now fails against an operator that advertises one as its exit delay.
+
+- **`OnchainWallet.bumpP2A` funds the fee child from confirmed coins first**, falling back to unconfirmed ones only when confirmed coins cannot cover the fee, as a TRUC child relays only on confirmed fee inputs. Coin selection for both P2A bumps now prices the fee at the number of inputs it selects and keeps the change above dust, and refuses a child over TRUC's 1000 vB limit instead of building one that cannot relay. A child refused at that limit is not retried on unconfirmed coins.
+
+- **ArkadeCash claims check the operator's signatures.** `claimCash` verifies the operator's signatures on the sweep, as sends do, so a sweep the operator did not co-sign is reported as failed.
+
+- **`@arkade-os/swap`: a solver's asset carrier is capped at the operator's dust.** A quote whose `carrier_sats` exceeds the operator's dust (at least 330 sats) is refused before anything is registered or funded, and a carrier the payout does not return now counts as fee.
+
+- **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
+
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the
   open, so a client a second or two ahead of the solver received no bids at
@@ -520,6 +558,8 @@ style and have not been backfilled.
 - **Esplora address history includes older transactions.** `getTransactions` read only `/address/:address/txs`, which holds the newest page. It now follows `/txs/chain/:last_seen` for the rest, and keeps the first page when an explorer has no such route. `getRawTransaction` bytes must hash to the requested txid, and `getCoins` validates amounts and output indices.
 
 - **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do. `Arkade.connect` also checks the script's key against the forfeit key when the operator advertises one.
+
+- **Pending-transaction recovery co-signs a checkpoint only for a fully signed ark tx.** Before signing, `finalizePendingTxs` requires the operator's `finalArkTx` to hash to the pending txid, to spend exactly the locally rebuilt checkpoints, and to carry a valid signature from every key of each checkpoint's leaf. arkd only accepts fully signed ark txs, so honest pending entries pass; an entry that fails is skipped and retried on the next start.
 
 - **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.
 
@@ -596,6 +636,19 @@ style and have not been backfilled.
 - **Wallets restored without a delegator now find coins held at Arkade's retired delegator contracts.** A `delegate` contract commits to the delegator's key, and discovery derived those scripts only from a configured, reachable `delegateProvider`, so once the Executor replaced the delegator, a restore or a new device missed every coin still sitting at one. The SDK now pins Arkade's delegator keys per network (bitcoin, mutinynet) and adds them to the boot baseline, the `restore()` scan and the HD look-ahead band whenever the wallet's operator is Arkade's (its current or a deprecated signer matches) and the wallet has an Executor (`executorProvider` or `executorUrl`). Discovery only: no receive address is ever minted on a retired key, and wallets on any other operator, or without an Executor, see no change. The coins spend through their forfeit leaf, so no delegator is needed to send or renew them. Apps passing Arkade's `delegateUrl` only to keep these coins visible can drop it once they configure the Executor.
 
 - **A malformed explorer history no longer leaves the address watch's baseline as an unhandled rejection.** The baseline guarded the history fetch but not the loop that keys its entries, so an entry without `status` threw `Cannot read properties of undefined (reading 'block_time')` out of a floating promise. Seeding now sits inside the same failure handling as the fetch, so a bad response takes the existing "first poll pass establishes the baseline" fallback.
+
+- **An onchain send keeps bumping its L1 claim past other outputs at the HTLC
+  address.** `classifyOnchainHtlc` judged the phase by the largest output at
+  the script, so an output paid there after the claim (even an unconfirmed
+  one) hid the spent fill: the claim was never fee-bumped or re-published, and
+  a claim stuck past `htlcLocktime` could be replaced by the solver's refund
+  after `P` was public. It now reads the recorded funding's spend first, and
+  `RfqSwapManager` pins `funding` to the outpoint its claim spent rather than
+  the first output it saw, which a replaced fill left stale. A claim re-published
+  after its fill vanished moves to another output only if that output pays the
+  agreed amount. An outspend lookup refused for a funding the backend no longer
+  knows reads as unspent; when the history check behind that also fails, the
+  outspend's own error is reported.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's

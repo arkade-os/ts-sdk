@@ -291,19 +291,20 @@ describe("wallet.sendOnchain", () => {
 describe("cosign outcomes through Ramps.offboardExact", () => {
     afterEach(() => vi.unstubAllGlobals());
 
-    const arkdReplies = (arkProvider: any, status: number, name: string) => {
+    const arkdReplies = (arkProvider: any, status: number, name?: string) => {
         const details = [
             { "@type": "type.googleapis.com/ark.v1.ErrorDetails", code: 0, name, message: "m" },
         ];
-        const body = JSON.stringify({ code: 13, message: "m", details });
-        vi.stubGlobal(
-            "fetch",
-            vi.fn(async () => new Response(body, { status })),
-        );
+        const body = name
+            ? JSON.stringify({ code: 13, message: "m", details })
+            : "404 page not found";
+        const fetch = vi.fn(async () => new Response(body, { status }));
+        vi.stubGlobal("fetch", fetch);
         const rest = new RestOperatorProvider("http://ark");
         arkProvider.cosignOnchainTx.mockImplementation((psbt: string) =>
             rest.cosignOnchainTx(psbt),
         );
+        return fetch;
     };
 
     const offboard = (wallet: Wallet) => {
@@ -340,14 +341,45 @@ describe("cosign outcomes through Ramps.offboardExact", () => {
         expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
     });
 
-    it("an arkd INVALID_ARK_PSBT falls back to settle", async () => {
+    it("an arkd INVALID_ARK_PSBT rethrows and skips settle, leaving the coins free", async () => {
         const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
         arkdReplies(arkProvider, 400, "INVALID_ARK_PSBT");
         const { settle, result } = offboard(wallet);
-        expect(await result).toBe("txSETTLE");
-        expect(settle).toHaveBeenCalledTimes(1);
+        expect(await result).toBeInstanceOf(OnchainCosignRejectedError);
+        expect(settle).not.toHaveBeenCalled();
         const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
         expect(row.spentBy).toBeFalsy();
+    });
+
+    it("an arkd without the endpoint fails the first offboard; later ones settle unsent", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
+        const fetch = arkdReplies(arkProvider, 404);
+        const first = offboard(wallet);
+        expect(await first.result).toBeInstanceOf(OnchainCosignAmbiguousError);
+        expect(first.settle).not.toHaveBeenCalled();
+        const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
+        expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
+
+        const second = offboard(wallet);
+        expect(await second.result).toBe("txSETTLE");
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("an arkd older than v0.9.22 is never sent the signed tx, so offboardExact settles", async () => {
+        const { wallet, arkProvider } = await makeWallet();
+        const fetch = vi.fn(async (url: string) =>
+            Response.json(url.endsWith("/v1/info") ? { version: "v0.9.21" } : { txid: COSIGNED }),
+        );
+        vi.stubGlobal("fetch", fetch);
+        const rest = new RestOperatorProvider("http://ark");
+        await rest.getInfo();
+        arkProvider.cosignOnchainTx.mockImplementation((psbt: string) =>
+            rest.cosignOnchainTx(psbt),
+        );
+        const { settle, result } = offboard(wallet);
+        expect(await result).toBe("txSETTLE");
+        expect(settle).toHaveBeenCalledTimes(1);
+        expect(fetch.mock.calls.filter(([u]) => u.endsWith("/onchain/cosign"))).toHaveLength(0);
     });
 
     it("a fee-rate failure before submission falls back to settle", async () => {

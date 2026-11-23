@@ -96,8 +96,8 @@ export interface VerbDeps {
  * Enforce the effective ceiling: the **minimum** of the call's and the policy's, so
  * neither can raise the other. Both absent means no ceiling.
  *
- * @throws {Error} when a ceiling is in another asset than the fee (caller input, not a
- *   swap condition).
+ * @throws {Error} when a ceiling is in another asset than the fee, or set on a cross-asset
+ *   swap (caller input, not a swap condition).
  * @throws {MaxFeeExceeded} when `quote.fee` is over the effective ceiling —
  *   between `quote` and `accept`, so nothing was funded.
  */
@@ -119,6 +119,12 @@ export const enforceFeeCeiling = (
             );
         }
         ceiling = ceiling === undefined || limit.amount < ceiling ? limit.amount : ceiling;
+    }
+    if (ceiling !== undefined && !sameAsset(quote.give.asset, quote.take.asset)) {
+        throw new Error(
+            "a fee ceiling cannot gate a cross-asset swap: its fee is measured against " +
+                "the solver's own price feed",
+        );
     }
     if (ceiling !== undefined && quote.fee.amount > ceiling) {
         throw new MaxFeeExceeded(quote.id, quote.fee.asset, quote.fee.amount, ceiling);

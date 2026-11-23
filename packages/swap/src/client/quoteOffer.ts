@@ -171,7 +171,6 @@ export const quoteFromFeed = async (
  * that returns it charges nothing for it, and one that does not shows it as fee.
  */
 export const feedSpread = (plan: OfferPlan, take: bigint, carrierSats = 0n): bigint => {
-    const payout = take > carrierSats ? take - carrierSats : 0n;
     const fair = computeWantAmount({
         deposit: plan.deposit.atomic,
         give: plan.give,
@@ -179,7 +178,7 @@ export const feedSpread = (plan: OfferPlan, take: bigint, carrierSats = 0n): big
         feeBps: 0,
         safetyBps: 0,
     });
-    const spread = fair - payout;
+    const spread = fair + carrierSats - take;
     return spread > 0n ? spread : 0n;
 };
 

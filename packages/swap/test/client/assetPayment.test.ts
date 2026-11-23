@@ -109,15 +109,26 @@ describe("native asset payment quote", () => {
         expect(quote.take.amount).toBe(1000n);
         expect(quote.fee.amount).toBe(100n);
     });
-    it("binds the actual recipient without changing the buyer signing key", async () => {
-        const { client, transport, wallet } = await setup();
+    it("binds the recipient and honors a plain payment's thirty-second solver quote", async () => {
+        const validUntil = NOW + 30;
+        const { client, transport, wallet, fixture } = await setup((payload) =>
+            arkadeAssetAnswer(
+                { ...payload, amount: "10000" },
+                { ...CLOCK, validUntil },
+                { toAmount: BigInt(payload.amount as string) },
+            ),
+        );
         const own = hex.encode(await wallet.identity.xOnlyPublicKey());
         const quote = await client.quote({ ...buy(), assetPayment: { receiveAddress: external } });
         expect(quote.route.take.instrument).toEqual({ kind: "address", address: external });
+        expect(quote.assetPayment).toEqual({ receiveAddress: external, validUntil });
         expect((transport.sent[0].profile as Record<string, unknown>).maker_pk_script).toBe(
             hex.encode(ArkAddress.decode(external).pkScript),
         );
         expect((transport.sent[0].profile as Record<string, unknown>).maker_public_key).toBe(own);
+        vi.setSystemTime((validUntil + 1) * 1000);
+        await expect(client.accept(quote)).rejects.toThrow(/expired/i);
+        expect(fixture.sent).toHaveLength(0);
     });
     it("refuses a foreign server before disclosing a request", async () => {
         const { client, transport } = await setup();

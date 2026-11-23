@@ -6,8 +6,9 @@
  * built in a component body, and a missing dep for an unused corridor is not a construction error.
  */
 import { hex } from "@scure/base";
-import { captureSendDeadline, type IWallet } from "@arkade-os/sdk";
+import { captureSendDeadline, toXOnly, type IWallet } from "@arkade-os/sdk";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
+import { resolveReceivePkScript } from "../offer";
 import type { SwapOperator } from "../refund";
 import { walletOperator } from "../refund";
 import { corridorSet, type CorridorSet } from "./corridors/registry";
@@ -268,7 +269,7 @@ export interface SwapClient {
     /**
      * Swap one Arkade asset for another.
      *
-     * @throws {MaxFeeExceeded} as {@link pay} does.
+     * @throws {MaxFeeExceeded} as {@link pay} does; `Error` for any ceiling on a cross-asset swap.
      */
     exchange(options: ExchangeOptions): Promise<Swap>;
 
@@ -300,7 +301,12 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     const auctionQuotes = new Map<QuoteId, Quote>();
     const auctions = new Map<
         OpenRfqAuction,
-        { input: QuoteInput; route: ResolvedRoute; offers: Map<OpenRfqOffer, MarketCandidate> }
+        {
+            input: QuoteInput;
+            route: ResolvedRoute;
+            offers: Map<OpenRfqOffer, MarketCandidate>;
+            receiveAddress?: string;
+        }
     >();
     const health =
         config.policy?.solverRouting === undefined
@@ -398,7 +404,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         assetPayment?: ReturnType<typeof captureAssetPayment>,
         auction?: AuctionProvenance,
     ): Promise<Quote> => {
-        const { corridors } = await resolved();
+        const { base, corridors } = await resolved();
         corridors.get(resolvedRoute.legs.give.corridor);
         corridors.get(resolvedRoute.legs.take.corridor);
         ensureLive("quote");
@@ -443,6 +449,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         // live: a snapshot could bind the tree to a signer key the operator no longer co-signs
         // for; an unreachable operator is `OperatorUnreachable` here, before funding
         const info = await liveOperatorInfo(wallet, { requireLive: true });
+        if (assetPayment !== undefined && info.network !== base.networkName)
+            throw new UnsupportedRoute("Arkade network changed during asset payment preparation");
         const rendezvous = market.card.discovery_pubkey;
         if (rendezvous === undefined) {
             // unreachable: `eligibleMarkets` drops a corridor card with no rendezvous, and an asset card without one prices from its feed
@@ -483,6 +491,16 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             });
             ensureLive("quote");
             const issued = auction === undefined ? quote : { ...quote, auction };
+            if (
+                auction !== undefined &&
+                preparation.route === "arkade->arkade" &&
+                quote.assetPayment !== undefined &&
+                quote.assetPayment.validUntil > auction.winner.expiresAt
+            ) {
+                const terms = { ...quote.assetPayment, validUntil: auction.winner.expiresAt };
+                remember(quoteId, { ...preparation, assetPayment: terms });
+                return { ...issued, assetPayment: terms };
+            }
             remember(quoteId, preparation);
             return issued;
         } finally {
@@ -510,9 +528,19 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         openRfq: async (input, options) => {
             ensureLive("openRfq");
             options.signal?.throwIfAborted();
-            if (input.assetPayment !== undefined)
-                throw new UnsupportedRoute("open RFQ does not publish asset-payment terms");
-            const captured = Object.freeze({ ...input });
+            const { assetPayment, ...routeInput } = input;
+            const receiveAddress = assetPayment?.receiveAddress;
+            if (
+                assetPayment !== undefined &&
+                (typeof receiveAddress !== "string" ||
+                    !receiveAddress ||
+                    assetPayment.carrier !== undefined ||
+                    routeInput.to !== undefined)
+            )
+                throw new UnsupportedRoute(
+                    "open RFQ asset payments require assetPayment.receiveAddress without carrier options",
+                );
+            const captured = Object.freeze(routeInput);
             const { base, corridors, discovery } = await resolved();
             let snapshot: DiscoverySnapshot;
             try {
@@ -533,6 +561,28 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     give: routed.legs.give.corridor,
                     take: routed.legs.take.corridor,
                 });
+            if (receiveAddress !== undefined) {
+                if (
+                    routed.pair !== "arkade->arkade" ||
+                    !isBtcAsset(routed.give.asset) ||
+                    isBtcAsset(routed.take.asset) ||
+                    routed.amount?.on !== "take"
+                )
+                    throw new UnsupportedRoute(
+                        "open RFQ asset payments require an exact BTC-to-asset route",
+                    );
+                const info = await liveOperatorInfo(wallet, { requireLive: true });
+                if (info.network !== base.networkName)
+                    throw new UnsupportedRoute(
+                        "Arkade network changed during asset payment discovery",
+                    );
+                resolveReceivePkScript(
+                    receiveAddress,
+                    new Uint8Array(),
+                    base.network.hrp,
+                    toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+                );
+            }
             const canonicalInput = Object.freeze({
                 ...captured,
                 give: routed.give.asset,
@@ -645,6 +695,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 ensureLive("openRfq");
                 const { collectOpenRfqBids } = await import("../openRfqTransport");
                 ensureLive("openRfq");
+                controller.signal.throwIfAborted();
                 const bids = await collectOpenRfqBids(
                     { ...request, bidsUntil: Math.ceil((Date.now() + windowMs) / 1000) },
                     {
@@ -695,6 +746,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     input: canonicalInput,
                     route: routed,
                     offers: new Map(offers.map((offer) => [offer, owned.get(offer.id)!.candidate])),
+                    ...(receiveAddress === undefined ? {} : { receiveAddress }),
                 });
                 if (auctions.size > 16) auctions.delete(auctions.keys().next().value!);
                 return auction;
@@ -755,12 +807,19 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             checkExpiry();
             let quote: Quote | undefined;
             try {
-                quote = await prepare(routed, candidate, undefined, {
-                    marketKey: auction.pair,
-                    winner: ranked(bid),
-                    losers: auction.bids.filter((other) => other !== bid).map(ranked),
-                    closedAt: auction.closedAt,
-                });
+                quote = await prepare(
+                    routed,
+                    candidate,
+                    session.receiveAddress === undefined
+                        ? undefined
+                        : { receiveAddress: session.receiveAddress },
+                    {
+                        marketKey: auction.pair,
+                        winner: ranked(bid),
+                        losers: auction.bids.filter((other) => other !== bid).map(ranked),
+                        closedAt: auction.closedAt,
+                    },
+                );
                 ensureLive("quoteBid");
                 checkExpiry();
                 if (quote.give.amount > bid.fromAmount || quote.take.amount < bid.toAmount)
