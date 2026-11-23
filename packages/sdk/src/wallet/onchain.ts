@@ -240,7 +240,10 @@ export class OnchainWallet implements AnchorBumper {
             parent,
             feeRate,
             coins.filter((c) => c.status.confirmed),
-        ).catch(() => this.buildBumpPackage(parent, feeRate, coins));
+        ).catch((e) => {
+            if (!(e instanceof Error) || e.message !== "Insufficient funds") throw e;
+            return this.buildBumpPackage(parent, feeRate, coins);
+        });
 
         try {
             await this.provider.broadcastTransaction(parent.hex, child.hex);

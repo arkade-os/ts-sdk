@@ -171,4 +171,10 @@ describe("OnchainWallet.bumpP2A coin selection", () => {
         const coins = Array.from({ length: 20 }, (_, i) => coin((i + 16).toString(16), 600, true));
         await expect(feeInputs(coins, 8)).rejects.toThrow(/1000 vB TRUC limit/);
     });
+
+    it("refuses the TRUC limit rather than retrying on an unconfirmed coin", async () => {
+        const coins = Array.from({ length: 20 }, (_, i) => coin((i + 16).toString(16), 600, true));
+        coins.push(coin("ff", 1_000_000, false));
+        await expect(feeInputs(coins, 8)).rejects.toThrow(/1000 vB TRUC limit/);
+    });
 });
