@@ -1244,21 +1244,29 @@ describe("watchExecutorContracts", () => {
             emulatorPubkey: vectors.emulatorPubkey,
         };
 
-        const contracts = await watchExecutorContracts(restored, keys, params);
-        expect(contracts.map((c) => c.script)).toEqual([
-            vectors.renewal.pkScript,
-            vectors.boarding.pkScript,
-        ]);
-        expect(contracts[0].address).toBe(vectors.renewal.address);
-        // a restore cannot tell a companion from a registered watch: it claims neither
-        expect(contracts.map((c) => c.metadata?.delegationStatus)).toEqual([undefined, undefined]);
-        await expect(watchExecutorContracts(restored, keys, params)).resolves.toHaveLength(2);
-        const { boardingExitDelay: _, ...renewalOnly } = params;
-        await expect(watchExecutorContracts(restored, keys, renewalOnly)).resolves.toHaveLength(1);
+        try {
+            const contracts = await watchExecutorContracts(restored, keys, params);
+            expect(contracts.map((c) => c.script)).toEqual([
+                vectors.renewal.pkScript,
+                vectors.boarding.pkScript,
+            ]);
+            expect(contracts[0].address).toBe(vectors.renewal.address);
+            // a restore cannot tell a companion from a registered watch: it claims neither
+            expect(contracts.map((c) => c.metadata?.delegationStatus)).toEqual([
+                undefined,
+                undefined,
+            ]);
+            await expect(watchExecutorContracts(restored, keys, params)).resolves.toHaveLength(2);
+            const { boardingExitDelay: _, ...renewalOnly } = params;
+            await expect(watchExecutorContracts(restored, keys, renewalOnly)).resolves.toHaveLength(
+                1,
+            );
 
-        const held = await manager.getContractsWithVtxos({ script: vectors.renewal.pkScript });
-        expect(held[0].vtxos.map((v) => v.value)).toEqual([4321]);
-        manager.dispose();
+            const held = await manager.getContractsWithVtxos({ script: vectors.renewal.pkScript });
+            expect(held[0].vtxos.map((v) => v.value)).toEqual([4321]);
+        } finally {
+            await manager.dispose();
+        }
     });
 });
 
