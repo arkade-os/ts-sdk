@@ -463,11 +463,15 @@ const quoteArkadeAsset = async (
                 throw new Error("carrier echo differs from carrier_sats");
         }
         const validUntil =
-            Math.min(
-                parsed.validUntil,
-                carrier?.expiresAt ?? parsed.validUntil,
-                choice?.mode === "recycleReceiver" ? choice.quote.expiresAt : parsed.validUntil,
-            ) - 30;
+            carrier === undefined
+                ? parsed.validUntil
+                : Math.min(
+                      parsed.validUntil,
+                      carrier.expiresAt,
+                      choice?.mode === "recycleReceiver"
+                          ? choice.quote.expiresAt
+                          : parsed.validUntil,
+                  ) - 30;
         if (input.now >= validUntil) throw new Error("asset payment terms lapsed before funding");
         assetPayment = {
             receiveAddress:

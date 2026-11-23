@@ -163,6 +163,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: Open offers for directed asset payments.** `openRfq()` supports receiver-exact BTC-to-asset payments. The public request carries the pair and amount. Only the selected bidder receives the recipient in the directed quote request.
+
 - **`@arkade-os/swap`: select a solver for one quote.** Pass a `solverId` from
   `client.candidates()` to `client.quote(input, { solverId })`. An unavailable
   or paused solver is refused before negotiation, and a selected solver's
@@ -320,6 +322,8 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
 
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the
