@@ -5,12 +5,26 @@
 `fulfill`. Each declares a `fulfill` tapscript that replaces the leaf the compiler would otherwise
 synthesize for `fulfill`.
 
+`asset-swap-directed-nonce.ark` and `sats-swap-directed-nonce.ark` bind a 32-byte
+RFQ commitment into `fulfill`. With optimized `arkadec` 0.1.0-rc.1, its
+self-comparison compiles to a nonce push and drop. Distinct RFQs get distinct
+addresses even when they pay the same amount to the same receiver. Both
+variants follow the spend paths below.
+
+Regenerate the nonce artifacts from this directory with `arkadec` built from
+compiler commit `aff980779ffd179b0fe8e5f7b29ebbff61b45034`.
+
+```sh
+arkadec --deny warnings asset-swap-directed-nonce.ark -o asset-swap-directed-nonce.json
+arkadec --deny warnings sats-swap-directed-nonce.ark -o sats-swap-directed-nonce.json
+```
+
 ## 1. The coin the person sends
 
 ```mermaid
 flowchart LR
   user["user<br/>the maker"] --> fund["fund<br/>a send to the directed address"]
-  fund --> deposit["deposit<br/>carrier 330<br/>pot above it<br/>SatsSwap: plus the asset sold"]
+  fund --> deposit["deposit at the quoted address<br/>carrier 330<br/>pot above it<br/>SatsSwap: plus the asset sold"]
 ```
 
 The deposit is the coin the swap tracks. `fulfill` never inspects it.

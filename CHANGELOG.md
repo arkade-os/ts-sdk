@@ -167,6 +167,14 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: Open offers for directed asset payments.** `openRfq()` supports receiver-exact BTC-to-asset payments. The public request carries the pair and amount. Only the selected bidder receives the recipient in the directed quote request.
+
+- **`@arkade-os/swap`: select a solver for one quote.** Pass a `solverId` from
+  `client.candidates()` to `client.quote(input, { solverId })`. An unavailable
+  or paused solver is refused before negotiation, and a selected solver's
+  failure returns to the caller without contacting another solver. Automatic
+  routing preferences still apply to subsequent quotes.
+
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,
   completed usage (`completedSolverUsage`) or amount-aware advertised cost, after
@@ -333,6 +341,8 @@ style and have not been backfilled.
 
 - **`@arkade-os/swap`: a solver's asset carrier is capped at the operator's dust.** A quote whose `carrier_sats` exceeds the operator's dust (at least 330 sats) is refused before anything is registered or funded, and a carrier the payout does not return now counts as fee.
 
+- **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
+
 - **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
   subscribed from the client's clock and dropped any bid stamped before the
   open, so a client a second or two ahead of the solver received no bids at
@@ -356,6 +366,8 @@ style and have not been backfilled.
 - **Esplora address history includes older transactions.** `getTransactions` read only `/address/:address/txs`, which holds the newest page. It now follows `/txs/chain/:last_seen` for the rest, and keeps the first page when an explorer has no such route. `getRawTransaction` bytes must hash to the requested txid, and `getCoins` validates amounts and output indices.
 
 - **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do. `Arkade.connect` also checks the script's key against the forfeit key when the operator advertises one.
+
+- **Pending-transaction recovery co-signs a checkpoint only for a fully signed ark tx.** Before signing, `finalizePendingTxs` requires the operator's `finalArkTx` to hash to the pending txid, to spend exactly the locally rebuilt checkpoints, and to carry a valid signature from every key of each checkpoint's leaf. arkd only accepts fully signed ark txs, so honest pending entries pass; an entry that fails is skipped and retried on the next start.
 
 - **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.
 
@@ -1845,6 +1857,17 @@ style and have not been backfilled.
   `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
   audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
   high` and fails on any new high or critical advisory.
+
+## [0.1.13] - 2026-11-21
+
+### Bug Fixes
+
+- **`@arkade-os/swap`: repeat asset RFQs derive distinct deposits.** Clients
+  prefer `asset-swap-directed-nonce`, which binds a hash of the request ID to
+  the covenant through a dedicated compiler artifact in each payout direction.
+  Equal terms on separate requests can now settle independently.
+  The client still negotiates `asset-swap-directed` with older solvers and can
+  recover previously funded deposits.
 
 ## [0.4.77] - 2026-09-30
 

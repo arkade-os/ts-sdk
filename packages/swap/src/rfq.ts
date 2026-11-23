@@ -74,11 +74,13 @@ import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer
 import {
     ASSET_SWAP_CONTRACT_VERSIONS,
     type AssetSwapContractVersion,
+    assetRfqNonce,
     assetSwapContractVersion,
 } from "./program";
 import {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_DIRECTED,
+    ASSET_SWAP_DIRECTED_NONCE,
     RFQ_CONTRACT_VERSION_KEY,
     RFQ_CONTRACT_VERSION_UNSUPPORTED,
     RFQ_CONTRACT_VERSIONS_KEY,
@@ -1549,7 +1551,7 @@ export async function requestArkadeSwap(
     }
     // Imported here: client/verify.ts imports this module, and a static cycle breaks the CJS build.
     const taker =
-        contractVersion === ASSET_SWAP_DIRECTED
+        contractVersion === ASSET_SWAP_DIRECTED || contractVersion === ASSET_SWAP_DIRECTED_NONCE
             ? (await import("./client/verify")).verifyTaker({
                   attested: transport.attestedResponder,
                   solverPubkey: quote.solver_pubkey,
@@ -1597,6 +1599,7 @@ export async function requestArkadeSwap(
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
         contractVersion,
         ...(taker === undefined ? {} : { taker }),
+        ...(contractVersion === ASSET_SWAP_DIRECTED_NONCE ? { nonce: assetRfqNonce(rfqId) } : {}),
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);

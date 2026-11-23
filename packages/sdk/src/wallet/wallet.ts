@@ -101,6 +101,7 @@ import { assertValidServerUnrollScript } from "./checkpointExitDelay";
 import { READ_TIMEOUT_MS } from "../utils/fetch";
 import {
     assertAllowedSighashTypes,
+    assertArkTxSignedOverCheckpoints,
     assertCheckpointsMatchInputs,
     buildOffchainTx,
     classifyBoardingExpiry,
@@ -158,7 +159,12 @@ import {
     pruneExitBranches,
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
-import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
+import {
+    ArkError,
+    ProviderUnavailableError,
+    ServerResponseMismatchError,
+    type ProviderKind,
+} from "../providers/errors";
 import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkInfo,
@@ -5376,6 +5382,7 @@ export class Wallet
 
                     batchPending.push(pendingTx.arkTxid);
                     try {
+                        const context = `pending tx ${pendingTx.arkTxid}`;
                         const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) => {
                             const tx = Transaction.fromPSBT(base64.decode(c));
                             assertAllowedSighashTypes(tx);
@@ -5383,12 +5390,29 @@ export class Wallet
                         });
                         // Registered by an earlier process, so checkpoints are rebuilt, not
                         // recalled; a mismatch stays pending for the next init.
-                        assertCheckpointsMatchInputs(
+                        const localCheckpoints = assertCheckpointsMatchInputs(
                             checkpointTxs,
                             checkpointInputs,
                             unrollCandidates,
-                            `pending tx ${pendingTx.arkTxid}`,
+                            context,
                         );
+                        // Rebuilding proves the checkpoint is ours to co-sign, not that anybody
+                        // asked for it. An unbacked entry is stuck on the operator regardless,
+                        // so failing closed here costs nothing the other entries need.
+                        if (!pendingTx.finalArkTx) {
+                            throw new ServerResponseMismatchError(
+                                `${context}: no final ark tx to bind the checkpoints to`,
+                            );
+                        }
+                        const finalArkTx = Transaction.fromPSBT(
+                            base64.decode(pendingTx.finalArkTx),
+                        );
+                        if (finalArkTx.id !== pendingTx.arkTxid) {
+                            throw new ServerResponseMismatchError(
+                                `${context}: final ark tx is ${finalArkTx.id}`,
+                            );
+                        }
+                        assertArkTxSignedOverCheckpoints(finalArkTx, localCheckpoints, context);
                         const checkpointJobs = checkpointTxs.map((tx) =>
                             this.inputSigningJobsFromWitnessUtxos(tx),
                         );

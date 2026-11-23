@@ -30,6 +30,7 @@ export interface OpenRfqOffer {
 
 export interface OpenRfqAuction {
     readonly id: string;
+    /** Canonical route input. Recipient terms for an asset payment are held by the client. */
     readonly input: QuoteInput;
     readonly pair: string;
     readonly bids: readonly OpenRfqOffer[];
