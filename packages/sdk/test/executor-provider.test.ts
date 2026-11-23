@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { ScriptNum } from "@scure/btc-signer";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RestExecutorProvider } from "../src/providers/executor";
 import { ExecutorRequestError } from "../src/providers/executor";
 import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/executor/executorTemplate";
@@ -193,22 +193,22 @@ describe("RestExecutorProvider", () => {
         expect(delegation.inputs).toEqual([]);
     });
 
-    it("tells an unknown watch from an unrouted path, both 404", async () => {
+    it("reports any 404 as a missing watch, whatever the message", async () => {
         const provider = new RestExecutorProvider("https://executor.test");
 
-        respond({ code: 5, message: "delegation not found", details: [] }, 404);
-        await expect(provider.getDelegation("tark1x")).rejects.toMatchObject({ status: 404 });
-
-        for (const body of [{ code: 5, message: "Not Found", details: [] }, "<html>404</html>"]) {
+        for (const body of [
+            { code: 5, message: "delegation not found", details: [] },
+            { code: 5, message: "Not Found", details: [] },
+            "<html>404</html>",
+        ]) {
             respond(body, 404);
-            const error = await provider.getDelegation("tark1x").catch((e) => e);
-            expect(error).toBeInstanceOf(ExecutorRequestError);
-            expect(error.status).toBeUndefined();
+            await expect(provider.getDelegation("tark1x")).rejects.toMatchObject({ status: 404 });
         }
 
         respond("boom", 500);
         await expect(provider.getDelegation("tark1x")).rejects.toMatchObject({ status: 500 });
     });
+
     it("reports a rate-limited registration to the shared gate", async () => {
         const report = vi.spyOn(rateGate, "reportRateLimited");
         mockFetch.mockResolvedValueOnce({
@@ -557,6 +557,11 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         };
     }
 
+    const managers: ContractManager[] = [];
+    afterEach(async () => {
+        await Promise.all(managers.splice(0).map((m) => m.dispose()));
+    });
+
     /** A wallet whose contracts persist, so the registration writes are visible. */
     async function managedWallet(fail: string[] = []) {
         const manager = await ContractManager.create({
@@ -564,6 +569,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
             contractRepository: new InMemoryContractRepository(),
             walletRepository: new InMemoryWalletRepository(),
         });
+        managers.push(manager);
         return {
             wallet: {
                 identity,

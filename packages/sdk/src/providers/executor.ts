@@ -137,13 +137,9 @@ export class RestExecutorProvider implements ExecutorProvider {
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
             const body = await response.text();
-            // An unrouted path 404s with the same gRPC code as an unknown watch; only the
-            // message differs. Any other 404 is not the service saying the watch is over.
-            const status =
-                response.status === 404 && !isWatchNotFound(body) ? undefined : response.status;
             throw new ExecutorRequestError(
                 `Failed to get Executor delegation (${response.status}): ${body}`,
-                status,
+                response.status,
             );
         }
         const data: unknown = await response.json();
@@ -162,15 +158,6 @@ async function failure(response: Response, what: string): Promise<ExecutorReques
         `Failed to ${what} (${response.status}): ${await response.text()}`,
         response.status,
     );
-}
-
-function isWatchNotFound(body: string): boolean {
-    try {
-        const data: unknown = JSON.parse(body);
-        return isObject(data) && data.message === "delegation not found";
-    } catch {
-        return false;
-    }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

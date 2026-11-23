@@ -288,10 +288,11 @@ style and have not been backfilled.
   transaction lock for it; until the new watch is registered the old delegated
   address stays displayed, still watched, so a deposit there is still boarded.
   `getNewBoardingAddress()` waits for the registration, so it now depends on
-  the network. A registration request stops after 30 seconds
-  (`ExecutorProvider.registerDelegation` takes an optional `AbortSignal`);
-  repeating it is safe, as the service returns the existing watch. A coin
-  already there when the wallet starts, boarded while it was offline, raises
+  the network. A `RestExecutorProvider` registration request stops after 30
+  seconds where the runtime has `AbortSignal`; a custom provider must honor the
+  `signal` it is passed (`ExecutorProvider.registerDelegation` takes it as an
+  optional argument). Repeating a registration is safe, as the service returns
+  the existing watch. A coin already there when the wallet starts, boarded while it was offline, raises
   no event, and a lazy start writes it only during its background boot, so
   once that boot has finished the wallet looks for one, spent or not, and
   rotates too. If a registration fails or times out, `getBoardingAddress()` and
