@@ -145,9 +145,10 @@ export class RestExecutorProvider implements ExecutorProvider {
         );
         if (!response.ok) {
             const body = await response.text();
+            // Only the Executor's own NOT_FOUND says the watch is gone, not a proxy's 404 page.
             throw new ExecutorRequestError(
                 `Failed to get Executor delegation (${response.status}): ${body}`,
-                response.status,
+                response.status === 404 && !isGrpcNotFound(body) ? undefined : response.status,
             );
         }
         const data: unknown = await response.json();
@@ -166,6 +167,16 @@ async function failure(response: Response, what: string): Promise<ExecutorReques
         `Failed to ${what} (${response.status}): ${await response.text()}`,
         response.status,
     );
+}
+
+/** The gateway's gRPC status body for NOT_FOUND, whatever its message. */
+function isGrpcNotFound(body: string): boolean {
+    try {
+        const parsed: unknown = JSON.parse(body);
+        return isObject(parsed) && parsed.code === 5;
+    } catch {
+        return false;
+    }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

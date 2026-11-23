@@ -202,16 +202,26 @@ describe("RestExecutorProvider", () => {
         expect(delegation.inputs).toEqual([]);
     });
 
-    it("reports any 404 as a missing watch, whatever the message", async () => {
+    it("reports the Executor's NOT_FOUND as a missing watch, whatever the message", async () => {
         const provider = new RestExecutorProvider("https://executor.test");
 
         for (const body of [
             { code: 5, message: "delegation not found", details: [] },
             { code: 5, message: "Not Found", details: [] },
-            "<html>404</html>",
         ]) {
             respond(body, 404);
             await expect(provider.getDelegation("tark1x")).rejects.toMatchObject({ status: 404 });
+        }
+
+        // A proxy's 404 says nothing of the watch.
+        for (const body of [
+            "<html>404</html>",
+            { message: "no Route matched with those values" },
+        ]) {
+            respond(body, 404);
+            await expect(provider.getDelegation("tark1x")).rejects.toMatchObject({
+                status: undefined,
+            });
         }
 
         respond("boom", 500);

@@ -202,7 +202,9 @@ style and have not been backfilled.
   while it runs. With `settlementConfig: false` a session that stays open
   refreshes only at its next start. A wallet with no live watch asks neither
   the Executor nor the operator, and a refresh the Executor could not answer is
-  retried on the next start. It registers an expired one again, which revives
+  retried on the next start. A watch is lost when the Executor answers
+  NOT_FOUND, whatever its message; a 404 from a proxy in front of it fails the
+  refresh and leaves the watch live. It registers an expired one again, which revives
   the same address, and stops showing one it cannot revive, so it boards those
   deposits itself. Only the keys still in use are revived: the displayed one,
   and the most recently registered other key, whose renewal contract the
