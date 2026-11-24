@@ -527,6 +527,7 @@ const quoteArkadeAsset = async (
                 },
             ),
             give: { asset: input.endpoints.give.asset, amount: parsed.give },
+            ...(carrierSats === undefined ? {} : { depositCarrierSats: carrierSats }),
             take: { asset: input.endpoints.take.asset, amount: parsed.take },
             market: input.market,
             solver: parsed.solver,
