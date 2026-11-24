@@ -1,0 +1,486 @@
+{
+  "artifacts": {
+    "984c56c6538596a7180851de6ce09f880712c2fa16c103e38df8acd38e5c323a": {
+      "contractName": "VHTLC",
+      "constructorInputs": [
+        {
+          "name": "sender",
+          "type": "pubkey"
+        },
+        {
+          "name": "receiver",
+          "type": "pubkey"
+        },
+        {
+          "name": "preimageHash",
+          "type": "bytes20"
+        },
+        {
+          "name": "refundLocktime",
+          "type": "int"
+        },
+        {
+          "name": "unilateralClaimDelay",
+          "type": "int"
+        },
+        {
+          "name": "unilateralRefundDelay",
+          "type": "int"
+        },
+        {
+          "name": "unilateralRefundWithoutReceiverDelay",
+          "type": "int"
+        },
+        {
+          "name": "receiverProgram",
+          "type": "bytes32"
+        },
+        {
+          "name": "senderProgram",
+          "type": "bytes32"
+        }
+      ],
+      "structs": [],
+      "functions": [
+        {
+          "name": "claim",
+          "leaves": [
+            {
+              "name": "claim",
+              "asm": [
+                "OP_SIZE",
+                "32",
+                "OP_EQUALVERIFY",
+                "OP_HASH160",
+                "<preimageHash>",
+                "OP_EQUAL",
+                "OP_VERIFY",
+                "<receiver>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "preimage",
+                  "type": "bytes32",
+                  "encoding": "raw"
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "refund",
+          "leaves": [
+            {
+              "name": "refund",
+              "asm": [
+                "<sender>",
+                "OP_CHECKSIGVERIFY",
+                "<receiver>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "senderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "refundWithoutReceiver",
+          "leaves": [
+            {
+              "name": "refundWithoutReceiver",
+              "asm": [
+                "<refundLocktime>",
+                "OP_CHECKLOCKTIMEVERIFY",
+                "OP_DROP",
+                "<sender>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "senderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "unilateralClaim",
+          "leaves": [
+            {
+              "name": "unilateralClaim",
+              "asm": [
+                "OP_SIZE",
+                "32",
+                "OP_EQUALVERIFY",
+                "OP_HASH160",
+                "<preimageHash>",
+                "OP_EQUAL",
+                "OP_VERIFY",
+                "<unilateralClaimDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<receiver>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "preimage",
+                  "type": "bytes32",
+                  "encoding": "raw"
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "unilateralRefund",
+          "leaves": [
+            {
+              "name": "unilateralRefund",
+              "asm": [
+                "<unilateralRefundDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<sender>",
+                "OP_CHECKSIGVERIFY",
+                "<receiver>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "senderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "unilateralRefundWithoutReceiver",
+          "leaves": [
+            {
+              "name": "unilateralRefundWithoutReceiver",
+              "asm": [
+                "<unilateralRefundWithoutReceiverDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<sender>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "senderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "nonInteractiveClaim",
+          "arkade": {
+            "inputs": [],
+            "asm": [
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_DUP",
+              "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+              "1",
+              "OP_EQUALVERIFY",
+              "<receiverProgram>",
+              "OP_EQUALVERIFY",
+              "OP_INSPECTOUTPUTVALUE",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_INSPECTINPUTVALUE",
+              "OP_GREATERTHANOREQUAL"
+            ]
+          },
+          "leaves": [
+            {
+              "name": "nonInteractiveClaim",
+              "asm": [
+                "OP_SIZE",
+                "32",
+                "OP_EQUALVERIFY",
+                "OP_HASH160",
+                "<preimageHash>",
+                "OP_EQUAL",
+                "OP_VERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<EMULATOR_KEY:nonInteractiveClaim>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "preimage",
+                  "type": "bytes32",
+                  "encoding": "raw"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                },
+                {
+                  "name": "emulatorSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "nonInteractiveRefund",
+          "arkade": {
+            "inputs": [],
+            "asm": [
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_DUP",
+              "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+              "1",
+              "OP_EQUALVERIFY",
+              "<senderProgram>",
+              "OP_EQUALVERIFY",
+              "OP_INSPECTOUTPUTVALUE",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_INSPECTINPUTVALUE",
+              "OP_GREATERTHANOREQUAL"
+            ]
+          },
+          "leaves": [
+            {
+              "name": "nonInteractiveRefund",
+              "asm": [
+                "<SERVER_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<receiver>",
+                "OP_CHECKSIGVERIFY",
+                "<EMULATOR_KEY:nonInteractiveRefund>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "emulatorSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            },
+            {
+              "name": "nonInteractiveRefundWithoutReceiver",
+              "asm": [
+                "<refundLocktime>",
+                "OP_CHECKLOCKTIMEVERIFY",
+                "OP_DROP",
+                "<SERVER_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<EMULATOR_KEY:nonInteractiveRefund>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                },
+                {
+                  "name": "emulatorSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "bindings": {
+    "keys": {
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {
+      "receiver": "02e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+      "receiver_program": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+      "refund_locktime": "c07dc06a",
+      "sender": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "sender_program": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556",
+      "unilateral_claim_delay": "020040",
+      "unilateral_refund_delay": "030040",
+      "unilateral_refund_without_receiver_delay": "040040",
+      "preimage": "0707070707070707070707070707070707070707070707070707070707070707"
+    }
+  },
+  "expected": {
+    "canonical_hex": "7b2264656c65676174696f6e223a7b227365616c6564223a5b22707265696d616765225d7d2c22666f726d6174223a2274656d706c6174652f7631222c22696e70757473223a5b7b22636f6e7472616374223a7b22617267756d656e7473223a7b22707265696d61676548617368223a2224283c707265696d6167653e204f505f4841534831363029222c227265636569766572223a223c72656365697665723e222c22726563656976657250726f6772616d223a223c72656365697665725f70726f6772616d3e222c22726566756e644c6f636b74696d65223a223c726566756e645f6c6f636b74696d653e222c2273656e646572223a223c73656e6465723e222c2273656e64657250726f6772616d223a223c73656e6465725f70726f6772616d3e222c22756e696c61746572616c436c61696d44656c6179223a223c756e696c61746572616c5f636c61696d5f64656c61793e222c22756e696c61746572616c526566756e6444656c6179223a223c756e696c61746572616c5f726566756e645f64656c61793e222c22756e696c61746572616c526566756e64576974686f7574526563656976657244656c6179223a223c756e696c61746572616c5f726566756e645f776974686f75745f72656365697665725f64656c61793e227d2c22646566696e6974696f6e223a7b226172746966616374223a2239383463353663363533383539366137313830383531646536636530396638383037313263326661313663313033653338646638616364333865356333323361227d7d2c226e616d65223a2268746c63222c227370656e64223a7b2266756e6374696f6e223a226e6f6e496e746572616374697665436c61696d222c226c656166223a226e6f6e496e746572616374697665436c61696d222c227769746e657373223a7b22707265696d616765223a223c707265696d6167653e227d7d7d5d2c226f757470757473223a5b7b22696e646578223a302c226c6f636b696e67223a22353132303c72656365697665725f70726f6772616d3e222c226e616d65223a226f7574222c2276616c7565223a7b2266726f6d223a2268746c63227d7d5d2c227061636b657473223a7b226f75747075745f696e646578223a317d2c2274797065223a227669727475616c222c227661726961626c6573223a7b22707265696d616765223a2262797465733332222c227265636569766572223a227075626b6579222c2272656365697665725f70726f6772616d223a2262797465733332222c22726566756e645f6c6f636b74696d65223a22696e74222c2273656e646572223a227075626b6579222c2273656e6465725f70726f6772616d223a2262797465733332222c22756e696c61746572616c5f636c61696d5f64656c6179223a22696e74222c22756e696c61746572616c5f726566756e645f64656c6179223a22696e74222c22756e696c61746572616c5f726566756e645f776974686f75745f72656365697665725f64656c6179223a22696e74227d7d",
+    "extension": 1,
+    "fee": "0",
+    "psbt_hex": "70736274ff01009f0300000001db93a521a410c0719818b1578ebbd8a3ba3bcb1994e8f85c32e351d0a7b855320000000000ffffffff02a0860100000000002251202f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe40000000000000000386a3641524b01310100002bcd76d15188202f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe488cfcdc9a20100000000000001012ba0860100000000002251207e7e91260579cca8f3ff594c3838a1b5a8ae3c63efd3bbaed3ed3178b1e876eaa215c050929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac041de4dc204a7f959afccd3ca891c490b7bd41ca02c183e30ec38a28154f9694c712e11039edfbf0fb82ac45655bced1e8cde7c1e4370e34578a242eb043b7d9a4c730d76445675e0632f3472a2525d8198fdfa8f4b632e6640b5bc1502d0fb263a892966d78c9857038e75693c78e5266051ca9161b52cf69fafa67acebb94136182012088a914b566a3eecce809896361988823cd2f423fe800e787692079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad201d6688752e2c6a13508150e4927a13d9e32609bf181fc25dbb8e0d37ffd08a86acc008de74617074726565fdf30201c06082012088a914b566a3eecce809896361988823cd2f423fe800e7876920e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac02c06620c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad20e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac03c04b04c07dc06ab17520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac04c04482012088a914b566a3eecce809896361988823cd2f423fe800e7876903020040b27520e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ac05c04a03030040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad20e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ac06c02803040040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac07c06082012088a914b566a3eecce809896361988823cd2f423fe800e787692079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad201d6688752e2c6a13508150e4927a13d9e32609bf181fc25dbb8e0d37ffd08a86ac08c0662079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ad20b36bbd533f8567627d18d25405a612452cdd5870fb72a248e6dc4c88c41820b8ac08c04b04c07dc06ab1752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20b36bbd533f8567627d18d25405a612452cdd5870fb72a248e6dc4c88c41820b8ac0ade636f6e646974696f6e2201200707070707070707070707070707070707070707070707070707070707070707000000",
+    "spend_id": "989274f223775e8db3ab2edb2bb898df786a542c5834f33d19c7f3a36ffcc59a",
+    "template_id": "02eaf02c22283cb67dfeb49fe8cdc7b726d6ff24e80682940eca451309048486",
+    "unsigned_tx_hex": "0300000001db93a521a410c0719818b1578ebbd8a3ba3bcb1994e8f85c32e351d0a7b855320000000000ffffffff02a0860100000000002251202f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe40000000000000000386a3641524b01310100002bcd76d15188202f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe488cfcdc9a2010000000000"
+  },
+  "format": "template-test/v1",
+  "name": "example-vhtlc-non-interactive-claim",
+  "request": {
+    "decryption": {
+      "0707070707070707070707070707070707070707070707070707070707070707": "0707070707070707070707070707070707070707070707070707070707070707"
+    },
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "0001-01-01T00:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a0860100000000002251207e7e91260579cca8f3ff594c3838a1b5a8ae3c63efd3bbaed3ed3178b1e876ea00000000",
+        "txid": "3255b8a7d051e3325cf8e89419cb3bbaa3d8bb8e57b1189871c010a421a593db",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "virtual",
+    "variables": {
+      "sender": "pubkey",
+      "receiver": "pubkey",
+      "refund_locktime": "int",
+      "unilateral_claim_delay": "int",
+      "unilateral_refund_delay": "int",
+      "unilateral_refund_without_receiver_delay": "int",
+      "receiver_program": "bytes32",
+      "sender_program": "bytes32",
+      "preimage": "bytes32"
+    },
+    "inputs": [
+      {
+        "name": "htlc",
+        "contract": {
+          "definition": {
+            "artifact": "984c56c6538596a7180851de6ce09f880712c2fa16c103e38df8acd38e5c323a"
+          },
+          "arguments": {
+            "sender": "<sender>",
+            "receiver": "<receiver>",
+            "preimageHash": "$(<preimage> OP_HASH160)",
+            "refundLocktime": "<refund_locktime>",
+            "unilateralClaimDelay": "<unilateral_claim_delay>",
+            "unilateralRefundDelay": "<unilateral_refund_delay>",
+            "unilateralRefundWithoutReceiverDelay": "<unilateral_refund_without_receiver_delay>",
+            "receiverProgram": "<receiver_program>",
+            "senderProgram": "<sender_program>"
+          }
+        },
+        "spend": {
+          "function": "nonInteractiveClaim",
+          "leaf": "nonInteractiveClaim",
+          "witness": {
+            "preimage": "<preimage>"
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "index": 0,
+        "value": {
+          "from": "htlc"
+        },
+        "locking": "5120<receiver_program>"
+      }
+    ],
+    "packets": {
+      "output_index": 1
+    },
+    "delegation": {
+      "sealed": [
+        "preimage"
+      ]
+    }
+  },
+  "artifact_version": "artifact/v1"
+}

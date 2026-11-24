@@ -1,0 +1,477 @@
+{
+  "artifacts": {
+    "984c56c6538596a7180851de6ce09f880712c2fa16c103e38df8acd38e5c323a": {
+      "contractName": "VHTLC",
+      "constructorInputs": [
+        {
+          "name": "sender",
+          "type": "pubkey"
+        },
+        {
+          "name": "receiver",
+          "type": "pubkey"
+        },
+        {
+          "name": "preimageHash",
+          "type": "bytes20"
+        },
+        {
+          "name": "refundLocktime",
+          "type": "int"
+        },
+        {
+          "name": "unilateralClaimDelay",
+          "type": "int"
+        },
+        {
+          "name": "unilateralRefundDelay",
+          "type": "int"
+        },
+        {
+          "name": "unilateralRefundWithoutReceiverDelay",
+          "type": "int"
+        },
+        {
+          "name": "receiverProgram",
+          "type": "bytes32"
+        },
+        {
+          "name": "senderProgram",
+          "type": "bytes32"
+        }
+      ],
+      "structs": [],
+      "functions": [
+        {
+          "name": "claim",
+          "leaves": [
+            {
+              "name": "claim",
+              "asm": [
+                "OP_SIZE",
+                "32",
+                "OP_EQUALVERIFY",
+                "OP_HASH160",
+                "<preimageHash>",
+                "OP_EQUAL",
+                "OP_VERIFY",
+                "<receiver>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "preimage",
+                  "type": "bytes32",
+                  "encoding": "raw"
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "refund",
+          "leaves": [
+            {
+              "name": "refund",
+              "asm": [
+                "<sender>",
+                "OP_CHECKSIGVERIFY",
+                "<receiver>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "senderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "refundWithoutReceiver",
+          "leaves": [
+            {
+              "name": "refundWithoutReceiver",
+              "asm": [
+                "<refundLocktime>",
+                "OP_CHECKLOCKTIMEVERIFY",
+                "OP_DROP",
+                "<sender>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "senderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "unilateralClaim",
+          "leaves": [
+            {
+              "name": "unilateralClaim",
+              "asm": [
+                "OP_SIZE",
+                "32",
+                "OP_EQUALVERIFY",
+                "OP_HASH160",
+                "<preimageHash>",
+                "OP_EQUAL",
+                "OP_VERIFY",
+                "<unilateralClaimDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<receiver>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "preimage",
+                  "type": "bytes32",
+                  "encoding": "raw"
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "unilateralRefund",
+          "leaves": [
+            {
+              "name": "unilateralRefund",
+              "asm": [
+                "<unilateralRefundDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<sender>",
+                "OP_CHECKSIGVERIFY",
+                "<receiver>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "senderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "unilateralRefundWithoutReceiver",
+          "leaves": [
+            {
+              "name": "unilateralRefundWithoutReceiver",
+              "asm": [
+                "<unilateralRefundWithoutReceiverDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<sender>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "senderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "nonInteractiveClaim",
+          "arkade": {
+            "inputs": [],
+            "asm": [
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_DUP",
+              "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+              "1",
+              "OP_EQUALVERIFY",
+              "<receiverProgram>",
+              "OP_EQUALVERIFY",
+              "OP_INSPECTOUTPUTVALUE",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_INSPECTINPUTVALUE",
+              "OP_GREATERTHANOREQUAL"
+            ]
+          },
+          "leaves": [
+            {
+              "name": "nonInteractiveClaim",
+              "asm": [
+                "OP_SIZE",
+                "32",
+                "OP_EQUALVERIFY",
+                "OP_HASH160",
+                "<preimageHash>",
+                "OP_EQUAL",
+                "OP_VERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<EMULATOR_KEY:nonInteractiveClaim>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "preimage",
+                  "type": "bytes32",
+                  "encoding": "raw"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                },
+                {
+                  "name": "emulatorSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "nonInteractiveRefund",
+          "arkade": {
+            "inputs": [],
+            "asm": [
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_DUP",
+              "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+              "1",
+              "OP_EQUALVERIFY",
+              "<senderProgram>",
+              "OP_EQUALVERIFY",
+              "OP_INSPECTOUTPUTVALUE",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_INSPECTINPUTVALUE",
+              "OP_GREATERTHANOREQUAL"
+            ]
+          },
+          "leaves": [
+            {
+              "name": "nonInteractiveRefund",
+              "asm": [
+                "<SERVER_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<receiver>",
+                "OP_CHECKSIGVERIFY",
+                "<EMULATOR_KEY:nonInteractiveRefund>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                },
+                {
+                  "name": "receiverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "emulatorSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            },
+            {
+              "name": "nonInteractiveRefundWithoutReceiver",
+              "asm": [
+                "<refundLocktime>",
+                "OP_CHECKLOCKTIMEVERIFY",
+                "OP_DROP",
+                "<SERVER_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<EMULATOR_KEY:nonInteractiveRefund>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                },
+                {
+                  "name": "emulatorSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "bindings": {
+    "keys": {
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {
+      "receiver": "02e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+      "receiver_program": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+      "refund_locktime": "c07dc06a",
+      "sender": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "sender_program": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556",
+      "unilateral_claim_delay": "020040",
+      "unilateral_refund_delay": "030040",
+      "unilateral_refund_without_receiver_delay": "040040",
+      "preimage": "0707070707070707070707070707070707070707070707070707070707070707"
+    }
+  },
+  "expected": {
+    "error": {
+      "stage": "compile",
+      "code": "invalid_template"
+    }
+  },
+  "format": "template-test/v1",
+  "name": "reject-example-vhtlc-unilateral-refund-without-receiver",
+  "request": {
+    "decryption": {
+      "0707070707070707070707070707070707070707070707070707070707070707": "0707070707070707070707070707070707070707070707070707070707070707"
+    },
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "0001-01-01T00:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a0860100000000002251207e7e91260579cca8f3ff594c3838a1b5a8ae3c63efd3bbaed3ed3178b1e876ea00000000",
+        "txid": "3255b8a7d051e3325cf8e89419cb3bbaa3d8bb8e57b1189871c010a421a593db",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "onchain",
+    "variables": {
+      "max_fee": "int",
+      "sender": "pubkey",
+      "receiver": "pubkey",
+      "preimage_hash": "bytes20",
+      "refund_locktime": "int",
+      "unilateral_claim_delay": "int",
+      "unilateral_refund_delay": "int",
+      "unilateral_refund_without_receiver_delay": "int",
+      "receiver_program": "bytes32",
+      "sender_program": "bytes32"
+    },
+    "inputs": [
+      {
+        "name": "htlc",
+        "contract": {
+          "definition": {
+            "artifact": "984c56c6538596a7180851de6ce09f880712c2fa16c103e38df8acd38e5c323a"
+          },
+          "arguments": {
+            "sender": "<sender>",
+            "receiver": "<receiver>",
+            "preimageHash": "<preimage_hash>",
+            "refundLocktime": "<refund_locktime>",
+            "unilateralClaimDelay": "<unilateral_claim_delay>",
+            "unilateralRefundDelay": "<unilateral_refund_delay>",
+            "unilateralRefundWithoutReceiverDelay": "<unilateral_refund_without_receiver_delay>",
+            "receiverProgram": "<receiver_program>",
+            "senderProgram": "<sender_program>"
+          }
+        },
+        "spend": {
+          "function": "unilateralRefundWithoutReceiver",
+          "leaf": "unilateralRefundWithoutReceiver"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "index": 0,
+        "value": {
+          "from": "htlc"
+        },
+        "locking": "5120<sender_program>"
+      }
+    ],
+    "fees": {
+      "from": "htlc",
+      "max": "<max_fee>"
+    }
+  },
+  "artifact_version": "artifact/v1"
+}

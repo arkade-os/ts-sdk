@@ -1,0 +1,164 @@
+{
+  "artifacts": {},
+  "bindings": {
+    "keys": {
+      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {
+      "dest": "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+      "lock": "c800",
+      "owner": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+    }
+  },
+  "expected": {
+    "canonical_hex": "7b22666f726d6174223a2274656d706c6174652f7631222c22696e70757473223a5b7b22636f6e7472616374223a7b22617267756d656e7473223a7b226c6f636b223a223c6c6f636b3e222c226f776e6572223a223c6f776e65723e227d2c22646566696e6974696f6e223a7b22636f6e7374727563746f72496e70757473223a5b7b226e616d65223a226f776e6572222c2274797065223a227075626b6579227d2c7b226e616d65223a226c6f636b222c2274797065223a22696e74227d5d2c22636f6e74726163744e616d65223a2252656c65617365222c2266756e6374696f6e73223a5b7b226c6561766573223a5b7b2261736d223a5b2234313934333036222c224f505f434845434b53455155454e4345564552494659222c224f505f44524f50222c223c6f776e65723e222c224f505f434845434b534947225d2c226e616d65223a2265786974222c227769746e657373223a5b7b22656e636f64696e67223a227363686e6f72722d3634222c226e616d65223a226f776e6572536967222c2274797065223a227369676e6174757265227d5d7d5d2c226e616d65223a2265786974227d2c7b2261726b616465223a7b2261736d223a5b2231225d2c22696e70757473223a5b5d7d2c226c6561766573223a5b7b2261736d223a5b223c6c6f636b3e222c224f505f434845434b4c4f434b54494d45564552494659222c224f505f44524f50222c223c5345525645525f4b45593e222c224f505f434845434b534947564552494659222c223c454d554c41544f525f4b45593a72656c656173653e222c224f505f434845434b534947225d2c226e616d65223a2272656c65617365222c227769746e657373223a5b7b22656e636f64696e67223a227363686e6f72722d3634222c22696e6a6563746564223a747275652c226e616d65223a22736572766572536967222c2274797065223a227369676e6174757265227d2c7b22656e636f64696e67223a227363686e6f72722d3634222c22696e6a6563746564223a747275652c226e616d65223a22656d756c61746f72536967222c2274797065223a227369676e6174757265227d5d7d5d2c226e616d65223a2272656c65617365227d5d2c2273747275637473223a5b5d7d7d2c226e616d65223a22636f696e222c227370656e64223a7b2266756e6374696f6e223a2272656c65617365222c226c656166223a2272656c65617365227d7d5d2c226f757470757473223a5b7b22696e646578223a302c226c6f636b696e67223a22353132303c646573743e222c226e616d65223a2270616964222c2276616c7565223a7b2266726f6d223a22636f696e227d7d5d2c227061636b657473223a7b226f75747075745f696e646578223a317d2c2274797065223a227669727475616c222c227661726961626c6573223a7b2264657374223a2262797465733332222c226c6f636b223a22696e74222c226f776e6572223a227075626b6579227d7d",
+    "extension": 1,
+    "fee": "0",
+    "psbt_hex": "70736274ff0100750300000001706877d16ea8c23b3cc1f5e2731af178dfabb449e138af0c1421592a552901da0000000000feffffff02a086010000000000225120e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd1300000000000000000e6a0c41524b010701000001510100c80000000001012ba086010000000000225120505514acfd12c1692057b0d60f77ef159dbc2f704c43bf459f3b7613f4fbee154215c150929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac09cec190f54aa569fedf315f51920f9d818f3242eb912b9841e7a8c8713b4a3cc4a02c800b1752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20e4636f6fd7497a43cebf8626d677b2f3c91db947fa11c3d65442b7c06066cb74acc008de746170747265657701c02803020040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac01c04902c800b1752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20e4636f6fd7497a43cebf8626d677b2f3c91db947fa11c3d65442b7c06066cb74ac000000",
+    "spend_id": "8e7cfe29cdc90d080fd5d6131a871e3581be3dc20de52c848f8dbbd933a962e2",
+    "template_id": "8e7cfe29cdc90d080fd5d6131a871e3581be3dc20de52c848f8dbbd933a962e2",
+    "unsigned_tx_hex": "0300000001706877d16ea8c23b3cc1f5e2731af178dfabb449e138af0c1421592a552901da0000000000feffffff02a086010000000000225120e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd1300000000000000000e6a0c41524b010701000001510100c8000000"
+  },
+  "format": "template-test/v1",
+  "name": "locktime",
+  "request": {
+    "decryption": {},
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "0001-01-01T00:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a086010000000000225120505514acfd12c1692057b0d60f77ef159dbc2f704c43bf459f3b7613f4fbee1500000000",
+        "txid": "da0129552a5921140caf38e149b4abdf78f11a73e2f5c13c3bc2a86ed1776870",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "virtual",
+    "variables": {
+      "owner": "pubkey",
+      "lock": "int",
+      "dest": "bytes32"
+    },
+    "inputs": [
+      {
+        "name": "coin",
+        "contract": {
+          "definition": {
+            "contractName": "Release",
+            "constructorInputs": [
+              {
+                "name": "owner",
+                "type": "pubkey"
+              },
+              {
+                "name": "lock",
+                "type": "int"
+              }
+            ],
+            "structs": [],
+            "functions": [
+              {
+                "name": "exit",
+                "leaves": [
+                  {
+                    "name": "exit",
+                    "asm": [
+                      "4194306",
+                      "OP_CHECKSEQUENCEVERIFY",
+                      "OP_DROP",
+                      "<owner>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "ownerSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "release",
+                "arkade": {
+                  "inputs": [],
+                  "asm": [
+                    "1"
+                  ]
+                },
+                "leaves": [
+                  {
+                    "name": "release",
+                    "asm": [
+                      "<lock>",
+                      "OP_CHECKLOCKTIMEVERIFY",
+                      "OP_DROP",
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIGVERIFY",
+                      "<EMULATOR_KEY:release>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      },
+                      {
+                        "name": "emulatorSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "arguments": {
+            "owner": "<owner>",
+            "lock": "<lock>"
+          }
+        },
+        "spend": {
+          "function": "release",
+          "leaf": "release"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paid",
+        "index": 0,
+        "value": {
+          "from": "coin"
+        },
+        "locking": "5120<dest>"
+      }
+    ],
+    "packets": {
+      "output_index": 1
+    }
+  },
+  "artifact_version": "artifact/v1"
+}

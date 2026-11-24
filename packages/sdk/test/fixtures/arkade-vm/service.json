@@ -1,0 +1,1422 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "family": "service",
+    "worlds": {},
+    "cases": [
+        {
+            "name": "service/offchain/valid/single-vtxo",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "71d028e95153582c4eb0c8bfaa6bc44c7c562f3817bb35990865ef8fff42c538",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/offchain/valid/two-vtxos",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAKQCAAAAAjjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAcoSGJXJ95qmxAITeH5P+lhaI/r/cRK8ap9L8zdlNsWgAAAAAAAAAAAACwBIAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAAFGoSQVJLAQ0CAAABUQEAAQABUQEAAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGhAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAA==",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA",
+                "cHNidP8BAGsCAAAAAVObZJJLcqq/U3fjZCCnczsdLZxI5zmpSpwqej34NquEAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "52db305c9b32a43452da2677d27c994c7a3b503f36b0fa9a2e6495906aca627d",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "71d028e95153582c4eb0c8bfaa6bc44c7c562f3817bb35990865ef8fff42c538",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "52db305c9b32a43452da2677d27c994c7a3b503f36b0fa9a2e6495906aca627d",
+                        "input_index": 1,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "68b14dd9cdfcd2a71aaf44dcbffe881696fe931fde8400b1a9e67d7225868472",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/offchain/valid/push-expiry",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHsCAAAAAbcYTiK5ZO+Ve0ZA0vhfT2MdVGWpLzpj67TCugfjlVSiAAAAAAAAAAAAAsASAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkacAAAAAAAAAABRqEkFSSwENAQAAB9sEANJJa4cBAAAAAAAAAQEriBMAAAAAAAAiUSCY4Qhgzn5CqpshqwRSM6GYN2T3cWhiUV5FGh94dm+RpyIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDsr7fs/5gMvlPZjlsTUnw1jWZ/Bmgw9ytITnZwl8tYq60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSCY4Qhgzn5CqpshqwRSM6GYN2T3cWhiUV5FGh94dm+RpwAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAX0fMg0jyup/TMzU3cN3U9Px7fqUKP9yQ4tpJxhS5+EWAAAAAAAAAAAAAogTAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkacAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIJjhCGDOfkKqmyGrBFIzoZg3ZPdxaGJRXkUaH3h2b5GnIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIOyvt+z/mAy+U9mOWxNSfDWNZn8GaDD3K0hOdnCXy1irrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {
+                "16e1e7521827698b4372ff2894faedf1d35377c3ddd4cc4c7feaca230d321f7d:0": "1800000000"
+            },
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "d6465f2ea7a5225e0dae04f65d9b56f45381b77fd2b201d6d4fa49893e87a673",
+                        "input_index": 0,
+                        "script_hash": "4923ea96094eefc59e07c494bdc223a294962d016e9764e2f640cd724d2ca86e",
+                        "closure_pubkeys": [
+                            "ecafb7ecff980cbe53d98e5b13527c358d667f066830f72b484e767097cb58ab",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "a25495e307bac2b4eb633a2fa965541d634f5ff8d240467b95ef64b9224e18b7",
+                        "input_index": 0,
+                        "script_hash": "4923ea96094eefc59e07c494bdc223a294962d016e9764e2f640cd724d2ca86e",
+                        "closure_pubkeys": [
+                            "ecafb7ecff980cbe53d98e5b13527c358d667f066830f72b484e767097cb58ab",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/offchain/valid/no-emulator-packet",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAF4CAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAcASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAEBK4gTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYgTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": true,
+                "requests": []
+            }
+        },
+        {
+            "name": "service/offchain/valid/inspect-nonzero-vtxo-script-and-expiry-through-checkpoint",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAKECAAAAARfObWjY6+p81Ovoof3+EliBJDAmxFi+cdJqtfy1XxlpAAAAAAD/////AsASAAAAAAAAIlEgjvPMbaVIOsjmeP0A/xg+7dzX8KewwV7KA+VYbGOe3fUAAAAAAAAAADpqOEFSSwEzAQAADADKUYiI2wQA0klrhyIBII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31AAAAAAABASuIEwAAAAAAACJRINFGNxCZ+xq1qIvfDL8MaYQ4VgDT75WLay3PsEgj+9f4QhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBJsXDJjhdfcOB+jTNzT4otjzdjUpzipnrsqVIDiSUpnEUg90pGpuKabBn9ClQiA4ybn4A7ZqcbeGrz2gGbqglCy3KtIMYEf5RB7X1tMEVAbpXAfNhcd45LjO88p6usCblccJ7lrMAK3nByZXZhcmt0eIkCAAAAAdIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AogTAAAAAAAAIlEg+TCKAZJYwxBJNE+F+J1SKbUxyEWDb5mwhgHxE7zgNvmIEwAAAAAAACJRII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31AAAAAAAAAA==",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAQxwS4eCNb9L2kuFaOG8aqpqS7K5yglnUWwIz/kuKw8dAQAAAAD/////AogTAAAAAAAAIlEg0UY3EJn7GrWoi98MvwxphDhWANPvlYtrLc+wSCP71/gAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31IhXBUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIPdKRqbimmwZ/QpUIgOMm5+AO2anG3hq89oBm6oJQstyrSDGBH+UQe19bTBFQG6VwHzYXHeOS4zvPKerrAm5XHCe5azAAAAA"
+            ],
+            "vtxo_expiries": {
+                "1d0f2b2ef9cf086c516709cab9b24b6aaa6abce168854bda4bbf3582874b700c:1": "1800000000"
+            },
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "3db2c9ad8b3d315e11d0733fd363c7d2a4d2e6994738b47bd38798a43a4133c2",
+                        "input_index": 0,
+                        "script_hash": "549cf1518ead8a0cc1f7268ef95ed9d25bacce11d0edd1b45bcd5fc8d6c0867c",
+                        "closure_pubkeys": [
+                            "f74a46a6e29a6c19fd0a5422038c9b9f803b66a71b786af3da019baa0942cb72",
+                            "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+                        ]
+                    },
+                    {
+                        "txid": "69195fb5fcb56ad271be58c4263024815812fefda1e8ebd47ceaebd8686dce17",
+                        "input_index": 0,
+                        "script_hash": "549cf1518ead8a0cc1f7268ef95ed9d25bacce11d0edd1b45bcd5fc8d6c0867c",
+                        "closure_pubkeys": [
+                            "f74a46a6e29a6c19fd0a5422038c9b9f803b66a71b786af3da019baa0942cb72",
+                            "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/offchain/invalid/nil-ark-tx",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "",
+            "checkpoints_b64": [],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "missing transaction"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/missing-checkpoint",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "expected 1 checkpoints, got 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-not-found",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAVObZJJLcqq/U3fjZCCnczsdLZxI5zmpSpwqej34NquEAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "checkpoint not found for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/duplicate-checkpoint",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAKQCAAAAAjjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAcoSGJXJ95qmxAITeH5P+lhaI/r/cRK8ap9L8zdlNsWgAAAAAAAAAAAACwBIAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAAFGoSQVJLAQ0CAAABUQEAAQABUQEAAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGhAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAA==",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA",
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "duplicate checkpoint"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-shared-by-two-ark-inputs",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAKQCAAAAAjjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAOMVC/4/vZQiZNbsXOC9WfEzEa6q/yLBOLFhTUeko0HEAAAAAAAAAAAACwBIAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAAFGoSQVJLAQ0CAAABUQEAAQABUQEAAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGhAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAA==",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA",
+                "cHNidP8BAGsCAAAAAVObZJJLcqq/U3fjZCCnczsdLZxI5zmpSpwqej34NquEAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "associated with multiple ark inputs"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/missing-prevout-ark-tx",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswAAAAA==",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "missing prevout tx for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/malformed-prevout-ark-tx",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4AQEAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "failed to decode prevout tx for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/prevout-ark-tx-hash-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAAB/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx hash mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/ark-input-value-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErAQAAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "ark input: prevout tx value mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/ark-input-script-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSB7PpYoqxlFVtJBVWshVZLpsedRpmnWeR8llgHl6idw8SIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "ark input: prevout tx script mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-input-value-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASsBAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx value mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-input-script-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIHs+liirGUVW0kFVayFVkumx51GmadZ5HyWWAeXqJ3DxIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx script mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-missing-witness-utxo",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAAiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAAAAA="
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "witness utxo is nil for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-prevout-index-out-of-range",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAAQXz+6UMXuqadbZ6vJ2IjWiT9NjCWXps570i1CCOHGbAAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFBQAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx output index out of range for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-with-two-inputs",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAAUypS39HctTsA1hDRnuDkFLpX/MKw497PNpYUSeIDpEHAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAJQCAAAAAsVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAA/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAABFECTnMAAAAAAAEBK4gTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "checkpoint must have exactly one input for ark input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/unsupported-leaf-version",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswgrecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "failed to read arkade script"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-without-anchor",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAAfC3icGPfQDE4V1qC+8IbsEwuBLGz17fhq0fLPL5YB2vAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAF4CAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAYgTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAEBK4gTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAAAA=="
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "checkpoint must have one vtxo output and one anchor output"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/invalid-anchor",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAAWJL6xLez9TArshSGHk7VeEdyhT+fwmyNR0ccgWI6BdJAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqpKAQAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "checkpoint anchor output is invalid"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-output-value-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAAU4U2cYB+RuVH27AjpCQ9GqzAsTALn42K49hnkuPn8YKAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEroA8AAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAqAPAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "checkpoint vtxo output value does not match its input"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/ark-input-spends-anchor",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAQAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQENAAAAAAAAAAAEUQJOcyIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "ark input must spend checkpoint output 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-tapleaf-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsAjIFMf5gaBNFA9JyMTMifIZ6yPpsg8U36aRMPFvb3LH+M3rMAAAAA="
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "checkpoint tapleaf: tapleaf does not match ark input"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-missing-tapleaf",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "checkpoint tapleaf: missing taproot leaf script"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/control-block-leaf-version-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwlCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "control block leaf version does not match taproot leaf script"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/tapleaf-not-committed",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqkIVwVCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrA8YdhQFTJXxZlg5N7f1/Qft/cSzBCNGEmAJVK218t5bVFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAA==",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": "ErrTaprootMerkleProofInvalid",
+                "kind": null,
+                "stage": "service",
+                "error_contains": "tapleaf is not committed by witness utxo"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/two-tapleaves-on-ark-input",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswCIV/lCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2as/grecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "cannot request signature for input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/two-tapleaves-on-checkpoint-input",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAATjFQv+P72UImTW7FzgvVnxMxGuqv8iwTixYU1HpKNBxAAAAAAAAAAAAAsASAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQEriBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAIhX+UJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqz+AAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "cannot request signature for checkpoint input 0"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/script-fails",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAAWsobG8CQASnMV+XZu2o423B9FJ/CitAh/dnvkxBsYOnAAAAAAAAAAAAAsASAAAAAAAAIlEgqrsVNO4UAgMB233VkgvXAT8BqWBrpQWM9DYwt0rJLSwAAAAAAAAAAA5qDEFSSwEHAQAAAQABAAAAAAAAAQEriBMAAAAAAAAiUSCquxU07hQCAwHbfdWSC9cBPwGpYGulBYz0NjC3SsktLCIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBmJ7edXZywOo92s/Ud9666W3h/ECc8eGJyhleB3qZuN60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSCquxU07hQCAwHbfdWSC9cBPwGpYGulBYz0NjC3SsktLAAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAX1oh8wlbXBSTnrNDHjNJASTtJobMQPYEJ3AGAji3lXsAAAAAAAAAAAAAogTAAAAAAAAIlEgqrsVNO4UAgMB233VkgvXAT8BqWBrpQWM9DYwt0rJLSwAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIKq7FTTuFAIDAdt91ZIL1wE/Aalga6UFjPQ2MLdKyS0sIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIGYnt51dnLA6j3az9R33rrpbeH8QJzx4YnKGV4Hepm43rSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": "ErrEvalFalse",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_0",
+                "error_contains": "failed to execute arkade script"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/missing-expiry",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHsCAAAAAbcYTiK5ZO+Ve0ZA0vhfT2MdVGWpLzpj67TCugfjlVSiAAAAAAAAAAAAAsASAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkacAAAAAAAAAABRqEkFSSwENAQAAB9sEANJJa4cBAAAAAAAAAQEriBMAAAAAAAAiUSCY4Qhgzn5CqpshqwRSM6GYN2T3cWhiUV5FGh94dm+RpyIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDsr7fs/5gMvlPZjlsTUnw1jWZ/Bmgw9ytITnZwl8tYq60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSCY4Qhgzn5CqpshqwRSM6GYN2T3cWhiUV5FGh94dm+RpwAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAX0fMg0jyup/TMzU3cN3U9Px7fqUKP9yQ4tpJxhS5+EWAAAAAAAAAAAAAogTAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkacAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIJjhCGDOfkKqmyGrBFIzoZg3ZPdxaGJRXkUaH3h2b5GnIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIOyvt+z/mAy+U9mOWxNSfDWNZn8GaDD3K0hOdnCXy1irrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "not found"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/zero-expiry",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAHsCAAAAAbcYTiK5ZO+Ve0ZA0vhfT2MdVGWpLzpj67TCugfjlVSiAAAAAAAAAAAAAsASAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkacAAAAAAAAAABRqEkFSSwENAQAAB9sEANJJa4cBAAAAAAAAAQEriBMAAAAAAAAiUSCY4Qhgzn5CqpshqwRSM6GYN2T3cWhiUV5FGh94dm+RpyIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDsr7fs/5gMvlPZjlsTUnw1jWZ/Bmgw9ytITnZwl8tYq60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABiBMAAAAAAAAiUSCY4Qhgzn5CqpshqwRSM6GYN2T3cWhiUV5FGh94dm+RpwAAAAAAAAA=",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAX0fMg0jyup/TMzU3cN3U9Px7fqUKP9yQ4tpJxhS5+EWAAAAAAAAAAAAAogTAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkacAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIJjhCGDOfkKqmyGrBFIzoZg3ZPdxaGJRXkUaH3h2b5GnIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIOyvt+z/mAy+U9mOWxNSfDWNZn8GaDD3K0hOdnCXy1irrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
+            ],
+            "vtxo_expiries": {
+                "16e1e7521827698b4372ff2894faedf1d35377c3ddd4cc4c7feaca230d321f7d:0": "0"
+            },
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "has no expiry"
+            }
+        },
+        {
+            "name": "service/offchain/invalid/checkpoint-nonzero-prevout-with-output-zero-witness-script",
+            "mode": "service",
+            "op": null,
+            "variant": "offchain",
+            "psbt_b64": "cHNidP8BAKECAAAAARfObWjY6+p81Ovoof3+EliBJDAmxFi+cdJqtfy1XxlpAAAAAAD/////AsASAAAAAAAAIlEgjvPMbaVIOsjmeP0A/xg+7dzX8KewwV7KA+VYbGOe3fUAAAAAAAAAADpqOEFSSwEzAQAADADKUYiI2wQA0klrhyIBII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31AAAAAAABASuIEwAAAAAAACJRINFGNxCZ+xq1qIvfDL8MaYQ4VgDT75WLay3PsEgj+9f4QhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBJsXDJjhdfcOB+jTNzT4otjzdjUpzipnrsqVIDiSUpnEUg90pGpuKabBn9ClQiA4ybn4A7ZqcbeGrz2gGbqglCy3KtIMYEf5RB7X1tMEVAbpXAfNhcd45LjO88p6usCblccJ7lrMAK3nByZXZhcmt0eIkCAAAAAdIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AogTAAAAAAAAIlEg+TCKAZJYwxBJNE+F+J1SKbUxyEWDb5mwhgHxE7zgNvmIEwAAAAAAACJRII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31AAAAAAAAAA==",
+            "checkpoints_b64": [
+                "cHNidP8BAGsCAAAAAQxwS4eCNb9L2kuFaOG8aqpqS7K5yglnUWwIz/kuKw8dAQAAAAD/////AogTAAAAAAAAIlEg0UY3EJn7GrWoi98MvwxphDhWANPvlYtrLc+wSCP71/gAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIPkwigGSWMMQSTRPhfidUim1MchFg2+ZsIYB8RO84Db5IhXBUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIPdKRqbimmwZ/QpUIgOMm5+AO2anG3hq89oBm6oJQstyrSDGBH+UQe19bTBFQG6VwHzYXHeOS4zvPKerrAm5XHCe5azAAAAA"
+            ],
+            "vtxo_expiries": {
+                "1d0f2b2ef9cf086c516709cab9b24b6aaa6abce168854bda4bbf3582874b700c:1": "1800000000"
+            },
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx script mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/proof/valid/single-vtxo",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "c4fa7cb20ed4864b22ea72b99ca11c5684bd2c6f1b11e429ed0d776c692fcb38",
+                        "input_index": 1,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "c4fa7cb20ed4864b22ea72b99ca11c5684bd2c6f1b11e429ed0d776c692fcb38",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/proof/valid/two-vtxos",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAM0CAAAAAwEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAB4TGyTm0w4PzHYmwEgH6Ln8v6NXDUuCPC3O3ZzsWyatQAAAAAAAAAAAALoAwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAAAUahJBUksBDQIBAAFRAQACAAFRAQAAAAAAAAEBKwAAAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAAAQEr0AcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB0AcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAQEr0AcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABsQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB0AcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "4061fa239aab638947dc0b6ecd9a91aa7244f81b1cf831f5ba76caf373f87309",
+                        "input_index": 1,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "4061fa239aab638947dc0b6ecd9a91aa7244f81b1cf831f5ba76caf373f87309",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "4061fa239aab638947dc0b6ecd9a91aa7244f81b1cf831f5ba76caf373f87309",
+                        "input_index": 2,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/proof/valid/message-input-entry-is-skipped",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAKQCAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAAFGoSQVJLAQ0CAAABUQEAAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "c320a92a960a720252885d8edb8d118dc31ec68a06e0013d6d59d98f60ef1383",
+                        "input_index": 1,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "c320a92a960a720252885d8edb8d118dc31ec68a06e0013d6d59d98f60ef1383",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/proof/valid/push-expiry",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAKQCAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAN4vhPiVQmicDi9ypXxqLRsiD4UlUNfYw+jakRThwkkkAAAAAAAAAAAAC6AMAAAAAAAAiUSCY4Qhgzn5CqpshqwRSM6GYN2T3cWhiUV5FGh94dm+RpwAAAAAAAAAAFGoSQVJLAQ0BAQAH2wQA0klrhwEAAAAAAAABASsAAAAAAAAAACJRIJjhCGDOfkKqmyGrBFIzoZg3ZPdxaGJRXkUaH3h2b5GnIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIOyvt+z/mAy+U9mOWxNSfDWNZn8GaDD3K0hOdnCXy1irrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkaciFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg7K+37P+YDL5T2Y5bE1J8NY1mfwZoMPcrSE52cJfLWKutIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkacAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {
+                "4992703845a436fa30f6355449e183c8468b1a5fa9dc8b03279a50253ee18b37:0": "1800000000"
+            },
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "aaf7f5085468f5a6360731064318e80e3f9a5c65198aa759fbe869c05273d06f",
+                        "input_index": 1,
+                        "script_hash": "4923ea96094eefc59e07c494bdc223a294962d016e9764e2f640cd724d2ca86e",
+                        "closure_pubkeys": [
+                            "ecafb7ecff980cbe53d98e5b13527c358d667f066830f72b484e767097cb58ab",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "aaf7f5085468f5a6360731064318e80e3f9a5c65198aa759fbe869c05273d06f",
+                        "input_index": 0,
+                        "script_hash": "4923ea96094eefc59e07c494bdc223a294962d016e9764e2f640cd724d2ca86e",
+                        "closure_pubkeys": [
+                            "ecafb7ecff980cbe53d98e5b13527c358d667f066830f72b484e767097cb58ab",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/proof/valid/inspect-intent-message",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAK4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEddSdfSjjeY2AdcKQcOqUdbqX9WJQWT3NGdo3bzXBAYAAAAAAAAAAAAC6AMAAAAAAAAiUSBnVDkDe/YjYcMM3kzXxD0NnwruL108iJVC4mfpmWxDiAAAAAAAAAAAHmocQVJLARcBAQARBHR5cGX4aQhyZWdpc3RlcocBAAAAAAAAAQErAAAAAAAAAAAiUSBnVDkDe/YjYcMM3kzXxD0NnwruL108iJVC4mfpmWxDiCIVwVCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDMLsZnppAKvyPsoWep0yaRJe+5DFXd0V/6Rmj0ua8I/a0gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswAABASvQBwAAAAAAACJRIGdUOQN79iNhwwzeTNfEPQ2fCu4vXTyIlULiZ+mZbEOIIhXBUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIMwuxmemkAq/I+yhZ6nTJpEl77kMVd3RX/pGaPS5rwj9rSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQBwAAAAAAACJRIGdUOQN79iNhwwzeTNfEPQ2fCu4vXTyIlULiZ+mZbEOIAAAAAAAAAA==",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "40c8c25c848d0d7bece75875c21ef93d82b04f0f33f2dbab447e5053f84184dc",
+                        "input_index": 1,
+                        "script_hash": "bcdc2f19b5ce7345a3c93ccd7048e8657dfc0e910054b4e072e9b70c89872783",
+                        "closure_pubkeys": [
+                            "cc2ec667a6900abf23eca167a9d3269125efb90c55ddd15ffa4668f4b9af08fd",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "40c8c25c848d0d7bece75875c21ef93d82b04f0f33f2dbab447e5053f84184dc",
+                        "input_index": 0,
+                        "script_hash": "bcdc2f19b5ce7345a3c93ccd7048e8657dfc0e910054b4e072e9b70c89872783",
+                        "closure_pubkeys": [
+                            "cc2ec667a6900abf23eca167a9d3269125efb90c55ddd15ffa4668f4b9af08fd",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/proof/valid/no-emulator-packet",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAIcCAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAB6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAQErAAAAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswAABASvQBwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQBwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": true,
+                "requests": []
+            }
+        },
+        {
+            "name": "service/proof/invalid/only-message-input-entry",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAAABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "no input to execute"
+            }
+        },
+        {
+            "name": "service/proof/invalid/script-fails",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AaCv4OPYRji4RULE3lowrxp3Y47o4oMB2drcZZir48AAAAAAAAAAAAC6AMAAAAAAAAiUSCquxU07hQCAwHbfdWSC9cBPwGpYGulBYz0NjC3SsktLAAAAAAAAAAADmoMQVJLAQcBAQABAAEAAAAAAAABASsAAAAAAAAAACJRIKq7FTTuFAIDAdt91ZIL1wE/Aalga6UFjPQ2MLdKyS0sIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIGYnt51dnLA6j3az9R33rrpbeH8QJzx4YnKGV4Hepm43rSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgqrsVNO4UAgMB233VkgvXAT8BqWBrpQWM9DYwt0rJLSwiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUgZie3nV2csDqPdrP1Hfeuult4fxAnPHhicoZXgd6mbjetIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgqrsVNO4UAgMB233VkgvXAT8BqWBrpQWM9DYwt0rJLSwAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": "ErrEvalFalse",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_0",
+                "error_contains": "input 1: failed to execute arkade script"
+            }
+        },
+        {
+            "name": "service/proof/invalid/message-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAK4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEddSdfSjjeY2AdcKQcOqUdbqX9WJQWT3NGdo3bzXBAYAAAAAAAAAAAAC6AMAAAAAAAAiUSBnVDkDe/YjYcMM3kzXxD0NnwruL108iJVC4mfpmWxDiAAAAAAAAAAAHmocQVJLARcBAQARBHR5cGX4aQhyZWdpc3RlcocBAAAAAAAAAQErAAAAAAAAAAAiUSBnVDkDe/YjYcMM3kzXxD0NnwruL108iJVC4mfpmWxDiCIVwVCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDMLsZnppAKvyPsoWep0yaRJe+5DFXd0V/6Rmj0ua8I/a0gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswAABASvQBwAAAAAAACJRIGdUOQN79iNhwwzeTNfEPQ2fCu4vXTyIlULiZ+mZbEOIIhXBUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIMwuxmemkAq/I+yhZ6nTJpEl77kMVd3RX/pGaPS5rwj9rSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2YXJrdHheAgAAAAGwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQBwAAAAAAACJRIGdUOQN79iNhwwzeTNfEPQ2fCu4vXTyIlULiZ+mZbEOIAAAAAAAAAA==",
+            "message": "{\"type\":\"delete\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": "ErrEvalFalse",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_EQUAL",
+                "error_contains": "input 1: failed to execute arkade script"
+            }
+        },
+        {
+            "name": "service/proof/invalid/missing-expiry",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAKQCAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAN4vhPiVQmicDi9ypXxqLRsiD4UlUNfYw+jakRThwkkkAAAAAAAAAAAAC6AMAAAAAAAAiUSCY4Qhgzn5CqpshqwRSM6GYN2T3cWhiUV5FGh94dm+RpwAAAAAAAAAAFGoSQVJLAQ0BAQAH2wQA0klrhwEAAAAAAAABASsAAAAAAAAAACJRIJjhCGDOfkKqmyGrBFIzoZg3ZPdxaGJRXkUaH3h2b5GnIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIOyvt+z/mAy+U9mOWxNSfDWNZn8GaDD3K0hOdnCXy1irrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkaciFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg7K+37P+YDL5T2Y5bE1J8NY1mfwZoMPcrSE52cJfLWKutIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgmOEIYM5+QqqbIasEUjOhmDdk93FoYlFeRRofeHZvkacAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "not found"
+            }
+        },
+        {
+            "name": "service/proof/invalid/missing-witness-utxo",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldmFya3R4XgIAAAABsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB0AcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "witness utxo is nil"
+            }
+        },
+        {
+            "name": "service/proof/invalid/missing-prevout-ark-tx",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAAAAA=",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "missing prevout tx for input 1"
+            }
+        },
+        {
+            "name": "service/proof/invalid/prevout-ark-tx-hash-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAf8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx hash mismatch for input 1"
+            }
+        },
+        {
+            "name": "service/proof/invalid/inflated-value",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBKwDh9QUAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx value mismatch for input 1"
+            }
+        },
+        {
+            "name": "service/proof/invalid/forged-script",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIHs+liirGUVW0kFVayFVkumx51GmadZ5HyWWAeXqJ3DxIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgez6WKKsZRVbSQVVrIVWS6bHnUaZp1nkfJZYB5eoncPEiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx script mismatch for input 1"
+            }
+        },
+        {
+            "name": "service/proof/invalid/prevout-index-out-of-range",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wHAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx output index out of range for input 1"
+            }
+        },
+        {
+            "name": "service/proof/invalid/message-input-with-value",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsBAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "proof message input witness utxo is invalid"
+            }
+        },
+        {
+            "name": "service/proof/invalid/message-input-script-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIHs+liirGUVW0kFVayFVkumx51GmadZ5HyWWAeXqJ3DxIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "proof message input witness utxo is invalid"
+            }
+        },
+        {
+            "name": "service/proof/invalid/single-input",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAHUCAAAAAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAugDAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQEAAVEBAAAAAAAAAQErAAAAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswAAAAA==",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "vin 1 out of range"
+            }
+        },
+        {
+            "name": "service/proof/invalid/message-input-without-tapleaf",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "cannot request signature for message input"
+            }
+        },
+        {
+            "name": "service/proof/invalid/two-tapleaves",
+            "mode": "service",
+            "op": null,
+            "variant": "proof",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEtlHH7s8RqDwM4A+aktFUDqUNPRQzJsOM1fZx4Oe+6wAAAAAAAAAAAAC6AMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAQABUQEAAAAAAAABASsAAAAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAEBK9AHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAiFf5Qkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrP4K3nByZXZhcmt0eF4CAAAAAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAHAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAA",
+            "message": "{\"type\":\"register\"}",
+            "vtxo_expiries": {},
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "cannot request signature for input 1"
+            }
+        },
+        {
+            "name": "service/onchain/valid/single-input",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldm91dHR4XgIAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "bf49b103f1422439bb8e28122a74029cd09b15d32e91716790001409e1af6d01",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/onchain/valid/two-inputs",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAKQCAAAAAhRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAr13RVgx/SPSOyE+8NvlbXPllwS4WQHupeuZL5eMarLQAAAAAAAAAAAACKCMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAAFGoSQVJLAQ0CAAABUQEAAQABUQEAAAAAAAABASsQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2b3V0dHheAgAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAABASsQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2b3V0dHheAgAAAAHBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAA==",
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "731ebe016fa9a08a304c5c7f4789c95f6040df978c6869bc6892b1b11aa6cbc4",
+                        "input_index": 0,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    },
+                    {
+                        "txid": "731ebe016fa9a08a304c5c7f4789c95f6040df978c6869bc6892b1b11aa6cbc4",
+                        "input_index": 1,
+                        "script_hash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                        "closure_pubkeys": [
+                            "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/onchain/valid/no-emulator-packet",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAF4CAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAASgjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAEBKxAnAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoiFcBQkpt0waBJVLeLS2A16XpeB4paDyjsltVHv+6azoA6wEUg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2utIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrMAK3nByZXZvdXR0eF4CAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARAnAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAA=",
+            "expect": {
+                "ok": true,
+                "requests": []
+            }
+        },
+        {
+            "name": "service/onchain/valid/inspect-distinct-input-scripts-at-nonzero-prevouts",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAOoCAAAAAi97EdZ1GQjYET2+Jvbew7TGuRKkYM2pGvoofywmqVUdAQAAAAD/////JA6RU9krR3Vo8VMFjbh0SX04pWdbFYX0Oq3DIPexwisBAAAAAP////8COEoAAAAAAAAiUSAfryz+7I26Sn1QGARa5TvzXc0uvVORBL/edkFzkO23FgAAAAAAAAAAWmpMV0FSSwFSAQAACgDKUYiIUcpRiIdDAiDkk9vxwQ2A81geSQSTCxQEzGwTkA7gdYR0+pSr6MTNEyAfryz+7I26Sn1QGARa5TvzXc0uvVORBL/edkFzkO23FgAAAAAAAQErECcAAAAAAAAiUSAfryz+7I26Sn1QGARa5TvzXc0uvVORBL/edkFzkO23FiIVwVCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBMNVey4l4qTCclMHhlpc4qR4Nm1CZKJ7c1Y9nmBrxBw60gxgR/lEHtfW0wRUBulcB82Fx3jkuM7zynq6wJuVxwnuWswArecHJldm91dHR4iQIAAAAB0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////8CECcAAAAAAAAiUSD5MIoBkljDEEk0T4X4nVIptTHIRYNvmbCGAfETvOA2+RAnAAAAAAAAIlEgH68s/uyNukp9UBgEWuU7813NLr1TkQS/3nZBc5DttxYAAAAAAAEBKxAnAAAAAAAAIlEg5JPb8cENgPNYHkkEkwsUBMxsE5AO4HWEdPqUq+jEzRMK3nByZXZvdXR0eIkCAAAAAdEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AhAnAAAAAAAAIlEg+TCKAZJYwxBJNE+F+J1SKbUxyEWDb5mwhgHxE7zgNvkQJwAAAAAAACJRIOST2/HBDYDzWB5JBJMLFATMbBOQDuB1hHT6lKvoxM0TAAAAAAAAAA==",
+            "expect": {
+                "ok": true,
+                "requests": [
+                    {
+                        "txid": "c988f520b0890e225d5b48aa23683b8cdba36634d7d07290aba4e961fc0e6095",
+                        "input_index": 0,
+                        "script_hash": "89c7aa18c3ffbbd483a27d659d8f0aa3e8a6a95151230fb836ae143fd2357d98",
+                        "closure_pubkeys": [
+                            "4c3557b2e25e2a4c2725307865a5ce2a478366d4264a27b73563d9e606bc41c3",
+                            "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "service/onchain/invalid/script-fails",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAAWYsNtEYRAyEtpPwPmaXJo4V+HxbixsRmnBNj+keqJBbAAAAAAAAAAAAAigjAAAAAAAAIlEgqrsVNO4UAgMB233VkgvXAT8BqWBrpQWM9DYwt0rJLSwAAAAAAAAAAA5qDEFSSwEHAQAAAQABAAAAAAAAAQErECcAAAAAAAAiUSCquxU07hQCAwHbfdWSC9cBPwGpYGulBYz0NjC3SsktLCIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBmJ7edXZywOo92s/Ud9666W3h/ECc8eGJyhleB3qZuN60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldm91dHR4XgIAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABECcAAAAAAAAiUSCquxU07hQCAwHbfdWSC9cBPwGpYGulBYz0NjC3SsktLAAAAAAAAAA=",
+            "expect": {
+                "ok": false,
+                "code": "ErrEvalFalse",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_0",
+                "error_contains": "failed to execute arkade script"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/missing-prevout-tx",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswAAAAA==",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "missing prevout tx for input 0"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/missing-witness-utxo",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2b3V0dHheAgAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAA==",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "witness utxo is nil"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/prevout-tx-hash-mismatch",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldm91dHR4XgIAAAAB/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx hash mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/inflated-value",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErAOH1BQAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldm91dHR4XgIAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx value mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/forged-script",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErECcAAAAAAAAiUSB7PpYoqxlFVtJBVWshVZLpsedRpmnWeR8llgHl6idw8SIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldm91dHR4XgIAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx script mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/prevout-index-out-of-range",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4BwAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswArecHJldm91dHR4XgIAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx output index out of range for input 0"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/second-input-value-lie",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAKQCAAAAAhRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAr13RVgx/SPSOyE+8NvlbXPllwS4WQHupeuZL5eMarLQAAAAAAAAAAAACKCMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAAFGoSQVJLAQ0CAAABUQEAAQABUQEAAAAAAAABASsQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2b3V0dHheAgAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAABAStAVIkAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2b3V0dHheAgAAAAHBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAA==",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx value mismatch for input 1"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/two-tapleaves",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswCIV/lCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2as/grecHJldm91dHR4XgIAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAA=",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "cannot request signature for input 0"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/tapleaf-not-committed",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAHUCAAAAARRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAAigjAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAA5qDEFSSwEHAQAAAVEBAAAAAAAAAQErECcAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqkIVwVCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrA8YdhQFTJXxZlg5N7f1/Qft/cSzBCNGEmAJVK218t5bVFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2b3V0dHheAgAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAAAAA==",
+            "expect": {
+                "ok": false,
+                "code": "ErrTaprootMerkleProofInvalid",
+                "kind": null,
+                "stage": "service",
+                "error_contains": "not committed by the prevout script"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/nonzero-prevout-with-output-zero-witness-script",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAOoCAAAAAi97EdZ1GQjYET2+Jvbew7TGuRKkYM2pGvoofywmqVUdAQAAAAD/////JA6RU9krR3Vo8VMFjbh0SX04pWdbFYX0Oq3DIPexwisBAAAAAP////8COEoAAAAAAAAiUSAfryz+7I26Sn1QGARa5TvzXc0uvVORBL/edkFzkO23FgAAAAAAAAAAWmpMV0FSSwFSAQAACgDKUYiIUcpRiIdDAiDkk9vxwQ2A81geSQSTCxQEzGwTkA7gdYR0+pSr6MTNEyAfryz+7I26Sn1QGARa5TvzXc0uvVORBL/edkFzkO23FgAAAAAAAQErECcAAAAAAAAiUSD5MIoBkljDEEk0T4X4nVIptTHIRYNvmbCGAfETvOA2+SIVwVCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBMNVey4l4qTCclMHhlpc4qR4Nm1CZKJ7c1Y9nmBrxBw60gxgR/lEHtfW0wRUBulcB82Fx3jkuM7zynq6wJuVxwnuWswArecHJldm91dHR4iQIAAAAB0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////8CECcAAAAAAAAiUSD5MIoBkljDEEk0T4X4nVIptTHIRYNvmbCGAfETvOA2+RAnAAAAAAAAIlEgH68s/uyNukp9UBgEWuU7813NLr1TkQS/3nZBc5DttxYAAAAAAAEBKxAnAAAAAAAAIlEg5JPb8cENgPNYHkkEkwsUBMxsE5AO4HWEdPqUq+jEzRMK3nByZXZvdXR0eIkCAAAAAdEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AhAnAAAAAAAAIlEg+TCKAZJYwxBJNE+F+J1SKbUxyEWDb5mwhgHxE7zgNvkQJwAAAAAAACJRIOST2/HBDYDzWB5JBJMLFATMbBOQDuB1hHT6lKvoxM0TAAAAAAAAAA==",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "prevout tx script mismatch for input 0"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/input-zero-inspection-expects-input-one-script",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAOoCAAAAAi97EdZ1GQjYET2+Jvbew7TGuRKkYM2pGvoofywmqVUdAQAAAAD/////JA6RU9krR3Vo8VMFjbh0SX04pWdbFYX0Oq3DIPexwisBAAAAAP////8COEoAAAAAAAAiUSAfryz+7I26Sn1QGARa5TvzXc0uvVORBL/edkFzkO23FgAAAAAAAAAAWmpMV0FSSwFSAQAACgDKUYiIUcpRiIdDAiDkk9vxwQ2A81geSQSTCxQEzGwTkA7gdYR0+pSr6MTNEyDkk9vxwQ2A81geSQSTCxQEzGwTkA7gdYR0+pSr6MTNEwAAAAAAAQErECcAAAAAAAAiUSAfryz+7I26Sn1QGARa5TvzXc0uvVORBL/edkFzkO23FiIVwVCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBMNVey4l4qTCclMHhlpc4qR4Nm1CZKJ7c1Y9nmBrxBw60gxgR/lEHtfW0wRUBulcB82Fx3jkuM7zynq6wJuVxwnuWswArecHJldm91dHR4iQIAAAAB0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////8CECcAAAAAAAAiUSD5MIoBkljDEEk0T4X4nVIptTHIRYNvmbCGAfETvOA2+RAnAAAAAAAAIlEgH68s/uyNukp9UBgEWuU7813NLr1TkQS/3nZBc5DttxYAAAAAAAEBKxAnAAAAAAAAIlEg5JPb8cENgPNYHkkEkwsUBMxsE5AO4HWEdPqUq+jEzRMK3nByZXZvdXR0eIkCAAAAAdEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AhAnAAAAAAAAIlEg+TCKAZJYwxBJNE+F+J1SKbUxyEWDb5mwhgHxE7zgNvkQJwAAAAAAACJRIOST2/HBDYDzWB5JBJMLFATMbBOQDuB1hHT6lKvoxM0TAAAAAAAAAA==",
+            "expect": {
+                "ok": false,
+                "code": "ErrEqualVerify",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_EQUALVERIFY",
+                "error_contains": "opcode=OP_EQUALVERIFY position=4: OP_EQUALVERIFY failed"
+            }
+        },
+        {
+            "name": "service/onchain/invalid/missing-prevout-for-input-without-emulator-entry",
+            "mode": "service",
+            "op": null,
+            "variant": "onchain",
+            "psbt_b64": "cHNidP8BAJ4CAAAAAhRUZUmeZnT9sCY8rSmBSb/0ky10SgVgLARjPIbN2Pz4AAAAAAAAAAAAr13RVgx/SPSOyE+8NvlbXPllwS4WQHupeuZL5eMarLQAAAAAAAAAAAACKCMAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqgAAAAAAAAAADmoMQVJLAQcBAAABUQEAAAAAAAABASsQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzACt5wcmV2b3V0dHheAgAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqAAAAAAABASsQJwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA",
+            "expect": {
+                "ok": false,
+                "code": null,
+                "kind": null,
+                "stage": "service",
+                "error_contains": "missing prevout tx for input 1"
+            }
+        }
+    ]
+}

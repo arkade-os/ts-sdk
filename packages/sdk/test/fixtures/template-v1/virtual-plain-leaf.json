@@ -1,0 +1,166 @@
+{
+  "artifacts": {},
+  "bindings": {
+    "keys": {
+      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {}
+  },
+  "expected": {
+    "canonical_hex": "7b22666f726d6174223a2274656d706c6174652f7631222c22696e70757473223a5b7b22636f6e7472616374223a7b22617267756d656e7473223a7b226f776e6572223a22303263363034376639343431656437643664333034353430366539356330376364383563373738653462386365663363613761626163303962393563373039656535227d2c22646566696e6974696f6e223a7b22636f6e7374727563746f72496e70757473223a5b7b226e616d65223a226f776e6572222c2274797065223a227075626b6579227d5d2c22636f6e74726163744e616d65223a2244656c6567617465645674786f222c2266756e6374696f6e73223a5b7b226c6561766573223a5b7b2261736d223a5b223c5345525645525f4b45593e222c224f505f434845434b534947564552494659222c223c6f776e65723e222c224f505f434845434b534947225d2c226e616d65223a227370656e64222c227769746e657373223a5b7b22656e636f64696e67223a227363686e6f72722d3634222c22696e6a6563746564223a747275652c226e616d65223a22736572766572536967222c2274797065223a227369676e6174757265227d2c7b22656e636f64696e67223a227363686e6f72722d3634222c22696e6a6563746564223a747275652c226e616d65223a226f776e6572536967222c2274797065223a227369676e6174757265227d5d7d5d2c226e616d65223a227370656e64227d2c7b2261726b616465223a7b2261736d223a5b224f505f31225d2c22696e70757473223a5b5d7d2c226c6561766573223a5b7b2261736d223a5b223c5345525645525f4b45593e222c224f505f434845434b534947564552494659222c223c454d554c41544f525f4b45593a7061793e222c224f505f434845434b534947225d2c226e616d65223a22706179222c227769746e657373223a5b7b22656e636f64696e67223a227363686e6f72722d3634222c22696e6a6563746564223a747275652c226e616d65223a22736572766572536967222c2274797065223a227369676e6174757265227d2c7b22656e636f64696e67223a227363686e6f72722d3634222c22696e6a6563746564223a747275652c226e616d65223a22656d756c61746f72536967222c2274797065223a227369676e6174757265227d5d7d5d2c226e616d65223a22706179227d5d2c2273747275637473223a5b5d7d7d2c226e616d65223a2266756e6473222c227370656e64223a7b2266756e6374696f6e223a227370656e64222c226c656166223a227370656e64227d7d5d2c226f757470757473223a5b7b22617373657473223a5b7b2266726f6d223a2266756e6473227d5d2c22696e646578223a302c226c6f636b696e67223a7b2266726f6d223a2266756e6473227d2c226e616d65223a226368616e6765222c2276616c7565223a7b2266726f6d223a2266756e6473227d7d2c7b22696e646578223a312c226c6f636b696e67223a223531323066393330386130313932353863333130343933343466383566383964353232396235333163383435383336663939623038363031663131336263653033366639222c226e616d65223a227061796d656e74222c2276616c7565223a7b22616d6f756e74223a32353030302c2266726f6d223a2266756e6473227d7d5d2c2274797065223a227669727475616c227d",
+    "extension": -1,
+    "fee": "0",
+    "psbt_hex": "70736274ff010089030000000106eb8e09335a6bbc09435ba4c41f5aa155259f822121a2ff22278f83d308bada0000000000ffffffff02f824010000000000225120da4c60b7bac563f9b24285671e475e9bf3bf8f194d9c5858987c9e7b913b62bba861000000000000225120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9000000000001012ba086010000000000225120da4c60b7bac563f9b24285671e475e9bf3bf8f194d9c5858987c9e7b913b62bb4215c050929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0fe8ddd159a46d92b0fb5895e086305d0e04043fa91ca7ba098949fdf63661b8a452079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5acc008de746170747265658e01c0442079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac01c0442079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20e4636f6fd7497a43cebf8626d677b2f3c91db947fa11c3d65442b7c06066cb74ac000000",
+    "spend_id": "72280e1b8b3c3a9d7d3ea798955dc76f7b4170828ab7131837e198db671a8a43",
+    "template_id": "72280e1b8b3c3a9d7d3ea798955dc76f7b4170828ab7131837e198db671a8a43",
+    "unsigned_tx_hex": "030000000106eb8e09335a6bbc09435ba4c41f5aa155259f822121a2ff22278f83d308bada0000000000ffffffff02f824010000000000225120da4c60b7bac563f9b24285671e475e9bf3bf8f194d9c5858987c9e7b913b62bba861000000000000225120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f900000000"
+  },
+  "format": "template-test/v1",
+  "name": "virtual-plain-leaf",
+  "request": {
+    "decryption": {},
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "",
+        "offchain_output": "amount * 0.001",
+        "onchain_input": "",
+        "onchain_output": "1.0"
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "0001-01-01T00:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a086010000000000225120da4c60b7bac563f9b24285671e475e9bf3bf8f194d9c5858987c9e7b913b62bb00000000",
+        "txid": "daba08d3838f2722ffa22121829f2555a15a1fc4a45b4309bc6b5a33098eeb06",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "virtual",
+    "inputs": [
+      {
+        "name": "funds",
+        "contract": {
+          "definition": {
+            "contractName": "DelegatedVtxo",
+            "constructorInputs": [
+              {
+                "name": "owner",
+                "type": "pubkey"
+              }
+            ],
+            "structs": [],
+            "functions": [
+              {
+                "name": "spend",
+                "leaves": [
+                  {
+                    "name": "spend",
+                    "asm": [
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIGVERIFY",
+                      "<owner>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      },
+                      {
+                        "name": "ownerSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "pay",
+                "arkade": {
+                  "inputs": [],
+                  "asm": [
+                    "OP_1"
+                  ]
+                },
+                "leaves": [
+                  {
+                    "name": "pay",
+                    "asm": [
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIGVERIFY",
+                      "<EMULATOR_KEY:pay>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      },
+                      {
+                        "name": "emulatorSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "arguments": {
+            "owner": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+          }
+        },
+        "spend": {
+          "function": "spend",
+          "leaf": "spend"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "change",
+        "index": 0,
+        "value": {
+          "from": "funds"
+        },
+        "locking": {
+          "from": "funds"
+        },
+        "assets": [
+          {
+            "from": "funds"
+          }
+        ]
+      },
+      {
+        "name": "payment",
+        "index": 1,
+        "value": {
+          "from": "funds",
+          "amount": 25000
+        },
+        "locking": "5120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+      }
+    ]
+  },
+  "artifact_version": "artifact/v1"
+}

@@ -1,0 +1,252 @@
+{
+  "artifacts": {
+    "faa3249b8a28e999963994e4020e832285351eb7ce3b4821bcb3b4498f5b8ef3": {
+      "contractName": "DelegatedVtxo",
+      "constructorInputs": [
+        {
+          "name": "owner",
+          "type": "pubkey"
+        },
+        {
+          "name": "exitDelay",
+          "type": "int"
+        },
+        {
+          "name": "renewalWindow",
+          "type": "int"
+        },
+        {
+          "name": "maxFee",
+          "type": "int"
+        }
+      ],
+      "structs": [],
+      "functions": [
+        {
+          "name": "forfeit",
+          "leaves": [
+            {
+              "name": "forfeit",
+              "asm": [
+                "<owner>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "ownerSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "exit",
+          "leaves": [
+            {
+              "name": "exit",
+              "asm": [
+                "<exitDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<owner>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "ownerSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "renew",
+          "arkade": {
+            "inputs": [],
+            "asm": [
+              "OP_PUSHEXPIRY",
+              "<renewalWindow>",
+              "OP_SUB",
+              "OP_CHECKTIME",
+              "OP_VERIFY",
+              "0x74797065",
+              "OP_INSPECTINTENTMESSAGE",
+              "OP_VERIFY",
+              "0x7265676973746572",
+              "OP_EQUALVERIFY",
+              "0x6f6e636861696e5f6f75747075745f696e6465786573",
+              "OP_INSPECTINTENTMESSAGE",
+              "OP_VERIFY",
+              "0x5b5d",
+              "OP_EQUALVERIFY",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_1SUB",
+              "OP_INSPECTOUTPUTVALUE",
+              "<maxFee>",
+              "OP_ADD",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_INSPECTINPUTVALUE",
+              "OP_GREATERTHANOREQUAL",
+              "OP_VERIFY",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_1SUB",
+              "5",
+              "0",
+              "OP_TUNNEL"
+            ]
+          },
+          "leaves": [
+            {
+              "name": "renew",
+              "asm": [
+                "<SERVER_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<EMULATOR_KEY:renew>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                },
+                {
+                  "name": "emulatorSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "bindings": {
+    "keys": {
+      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {
+      "exit_delay": "010040",
+      "max_fee": "e803",
+      "owner": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "renewal_window": "0004"
+    }
+  },
+  "expected": {
+    "error": {
+      "stage": "decode",
+      "code": "invalid_template"
+    }
+  },
+  "format": "template-test/v1",
+  "name": "reject-schedule-input",
+  "request": {
+    "decryption": {},
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "200.0",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [
+          {
+            "amount": "21",
+            "id": "09090909090909090909090909090909090909090909090909090909090909090909"
+          }
+        ],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "2027-01-15T08:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a0860100000000002251201c4f81036bf14b7ced98d2bdfbcd1cee160d054da2d83d17c791f0082171765e00000000",
+        "txid": "cd522e134e354fd0a6dd564751b08390258a64be246182d253a532af62a88244",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "proof",
+    "variables": {
+      "owner": "pubkey",
+      "exit_delay": "int",
+      "renewal_window": "int",
+      "max_fee": "int"
+    },
+    "inputs": [
+      {
+        "name": "funds",
+        "contract": {
+          "definition": {
+            "artifact": "faa3249b8a28e999963994e4020e832285351eb7ce3b4821bcb3b4498f5b8ef3"
+          },
+          "arguments": {
+            "owner": "<owner>",
+            "exitDelay": "<exit_delay>",
+            "renewalWindow": "<renewal_window>",
+            "maxFee": "<max_fee>"
+          }
+        },
+        "spend": {
+          "function": "renew",
+          "leaf": "renew"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "renewed",
+        "index": 0,
+        "value": {
+          "from": "funds"
+        },
+        "locking": {
+          "from": "funds"
+        },
+        "assets": [
+          {
+            "from": "funds"
+          }
+        ]
+      }
+    ],
+    "fees": {
+      "from": "funds",
+      "max": "<max_fee>"
+    },
+    "packets": {
+      "output_index": 1
+    },
+    "delegation": {
+      "schedule": {
+        "nope": {
+          "immediate": true
+        }
+      }
+    }
+  },
+  "artifact_version": "artifact/v1"
+}

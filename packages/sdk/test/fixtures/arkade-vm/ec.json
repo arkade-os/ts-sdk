@@ -1,0 +1,1819 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "family": "ec",
+    "worlds": {
+        "default": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "emulator-0": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "5000",
+                    "script": "5120"
+                }
+            ]
+        }
+    },
+    "cases": [
+        {
+            "name": "ec/OP_ECADD/curve-0-double",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/curves",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "e59e705cb909acaba73cef8c4b8e775cd87cc0956e4045306d7ded41947f04c600",
+                    "2ae5cf50a9316423e1d066326532f6f7eeea6c461984c5a339c33da6fe68e11a"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-0-infinity-identity",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "9817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be79",
+                    "b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-0-p-plus-minus-p",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be79217727ef046f2fb863e6ab7a59b74be80257f7eef103045ba29a3b5cd98825c5b70000e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-0-off-curve",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b9d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-0-coordinate-at-p",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "212ffcfffffeffffffffffffffffffffffffffffffffffffffffffffffffffffff0020b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-0-by-3",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-bignum-encoding",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a485300e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "f936e0bc13f10186b0996f8345c831b529529df8854f344910c35892018a30f900",
+                    "72e6b88475fdb96c1b23c23499a9006556f3372ae637e30f14e82d630f7b8f38"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-0-by-0",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a480000e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-0-infinity",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00005500e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-0-scalar-at-order",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4821414136d08c5ed2bf3ba048afe6dcaebafeffffffffffffffffffffffffffffff0000e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-0-negative-scalar",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a484f00e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-1-double",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/curves",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f51e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "78996647fc480ba6351bf277e26989c0c31ab5040338528a7e4f038d187bf27c",
+                    "d17378229db7049e2982e93ce6ad7dbadb30749fc69a3d2940d08edb10557707"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-1-infinity-identity",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00002096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f51e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "96c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b",
+                    "f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-1-p-plus-minus-p",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b210aae40c897bf493431a1ce94a9cc31d4e961f083b51418716580e5011cbd1cb00051e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-1-off-curve",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f651bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f51e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-1-coordinate-at-p",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "21ffffffffffffffffffffffff00000000000000000000000001000000ffffffff0020f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f51e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-1-by-3",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-bignum-encoding",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f5351e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "6cfde7c61b6641fb85a9adef21b7c6e665f14b1d95eff7c8440a33a6d1e4cb5e",
+                    "32507da227b1799a3db84f3836b02ad8eca2641ace064b377eff98490c64348700"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-1-by-0",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f0051e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-1-infinity",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00005551e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-1-scalar-at-order",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f21512563fcc2cab9f3849e17a7adfae6bcffffffffffffffff00000000ffffffff0051e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-1-negative-scalar",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f4f51e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-2-double",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/curves",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5152515252e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "d3cf876dc108c2d3a81c8716a91678d9851518685b04859b021a132ee7440603",
+                    "c4a2185a7abf3effc78f53e349a4a6680a9caeb2965f84e7927c0a0e8c73ed15"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-2-infinity-identity",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000515252e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01", "02"]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-2-p-plus-minus-p",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5152512045fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e643052e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-2-off-curve",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5153515252e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-2-coordinate-at-p",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2047fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e643052515252e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-2-by-3",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-bignum-encoding",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51525352e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "f0ab15199655d3f279e6b81547d8159315bdb6b1bc3202f43fea6bc59abf6907",
+                    "6122fed93dfff1cd575b9c0bb4639e317564088d7cdb4f55299448e0be99b72a"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-2-by-0",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51520052e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-2-infinity",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/infinity",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00005552e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-2-scalar-at-order",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "515220010000f093f5e1439170b97948e833285d588181b64550b829a031e1724e643052e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "ec/OP_ECMUL/curve-2-negative-scalar",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "hazard": "3.7/coord-range",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51524f52e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/unknown-curve",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/curves",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4853e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-id-nine-bytes",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.1/usebig",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4809000000000000008000e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/curve-id-negative",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/curves",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a484fe0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "ec/OP_ECADD/pop-order",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "hazard": "3.7/pop-orders",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48000000e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "9817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be79",
+                    "b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48"
+                ]
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/single-pair-false",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "515220c212f3aeb785e49712e7a9353349aaf1255dfb31b7bf60723a480d9293938e1920edf692d95cbdde46ddda5ef7d422436779445c5e66006a42761e1f12efde0018205b9722d1dcdaac55f38eb37033314bbc95330c69ad999eec75f05f58d089060920aa7dfa6601cce64c7bd3430c69e7d1e38f40cb8d8071ab4aeb6d8cdba55ec8125152e2",
+            "expect": {
+                "ok": true,
+                "stack_hex": [""]
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/g1-infinity-true",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "000020c212f3aeb785e49712e7a9353349aaf1255dfb31b7bf60723a480d9293938e1920edf692d95cbdde46ddda5ef7d422436779445c5e66006a42761e1f12efde0018205b9722d1dcdaac55f38eb37033314bbc95330c69ad999eec75f05f58d089060920aa7dfa6601cce64c7bd3430c69e7d1e38f40cb8d8071ab4aeb6d8cdba55ec8125152e2",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/p-and-minus-p-true",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "515220c212f3aeb785e49712e7a9353349aaf1255dfb31b7bf60723a480d9293938e1920edf692d95cbdde46ddda5ef7d422436779445c5e66006a42761e1f12efde0018205b9722d1dcdaac55f38eb37033314bbc95330c69ad999eec75f05f58d089060920aa7dfa6601cce64c7bd3430c69e7d1e38f40cb8d8071ab4aeb6d8cdba55ec812512045fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e643020c212f3aeb785e49712e7a9353349aaf1255dfb31b7bf60723a480d9293938e1920edf692d95cbdde46ddda5ef7d422436779445c5e66006a42761e1f12efde0018205b9722d1dcdaac55f38eb37033314bbc95330c69ad999eec75f05f58d089060920aa7dfa6601cce64c7bd3430c69e7d1e38f40cb8d8071ab4aeb6d8cdba55ec8125252e2",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/zero-pairs",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0052e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/seventeen-pairs",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "011152e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/not-bn254",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "515220c212f3aeb785e49712e7a9353349aaf1255dfb31b7bf60723a480d9293938e1920edf692d95cbdde46ddda5ef7d422436779445c5e66006a42761e1f12efde0018205b9722d1dcdaac55f38eb37033314bbc95330c69ad999eec75f05f58d089060920aa7dfa6601cce64c7bd3430c69e7d1e38f40cb8d8071ab4aeb6d8cdba55ec8125100e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/c0-c1-swapped",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "515220edf692d95cbdde46ddda5ef7d422436779445c5e66006a42761e1f12efde001820c212f3aeb785e49712e7a9353349aaf1255dfb31b7bf60723a480d9293938e1920aa7dfa6601cce64c7bd3430c69e7d1e38f40cb8d8071ab4aeb6d8cdba55ec812205b9722d1dcdaac55f38eb37033314bbc95330c69ad999eec75f05f58d08906095152e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/too-few-items",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51525152e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "ec/OP_ECPAIRING/g2-not-in-subgroup",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "hazard": "3.7/pairing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51522092eebf7eeab95330e5b30dc1a9e3f044260394d099b68c12dcb193b6da5bad2020cf065d382cc39b2dcca7c7fb13d0c6540a12c413481bcfac0dd1f436cd76172f207f70c9f68c3c5e3a7625b106ae6bd01df1e451b0a71968b95089823f69a9ed2c20d90f0c28462f85fc064d385dbee3ac6735369f8708e11f85a8d99fec256e1b055152e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "ec/OP_ECMULSCALARVERIFY/valid",
+            "mode": "expression",
+            "op": "OP_ECMULSCALARVERIFY",
+            "hazard": "3.7/ecmulscalarverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "200000000000000000000000000000000000000000000000000000000000000002210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e351",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "ec/OP_ECMULSCALARVERIFY/wrong-q",
+            "mode": "expression",
+            "op": "OP_ECMULSCALARVERIFY",
+            "hazard": "3.7/ecmulscalarverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "200000000000000000000000000000000000000000000000000000000000000002210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798e351",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMULSCALARVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_ECMULSCALARVERIFY/k-zero-infinity",
+            "mode": "expression",
+            "op": "OP_ECMULSCALARVERIFY",
+            "hazard": "3.7/ecmulscalarverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "200000000000000000000000000000000000000000000000000000000000000000210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179821020000000000000000000000000000000000000000000000000000000000000000e351",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMULSCALARVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_ECMULSCALARVERIFY/k-31-bytes",
+            "mode": "expression",
+            "op": "OP_ECMULSCALARVERIFY",
+            "hazard": "3.7/ecmulscalarverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "1f00000000000000000000000000000000000000000000000000000000000002210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e351",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMULSCALARVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_ECMULSCALARVERIFY/k-at-order",
+            "mode": "expression",
+            "op": "OP_ECMULSCALARVERIFY",
+            "hazard": "3.7/ecmulscalarverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "20fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e351",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMULSCALARVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_ECMULSCALARVERIFY/p-uncompressed",
+            "mode": "expression",
+            "op": "OP_ECMULSCALARVERIFY",
+            "hazard": "3.7/ecmulscalarverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "200000000000000000000000000000000000000000000000000000000000000002410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b82102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e351",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMULSCALARVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_ECMULSCALARVERIFY/k-little-endian",
+            "mode": "expression",
+            "op": "OP_ECMULSCALARVERIFY",
+            "hazard": "3.7/ecmulscalarverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "200200000000000000000000000000000000000000000000000000000000000000210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e351",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMULSCALARVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_TWEAKVERIFY/valid",
+            "mode": "expression",
+            "op": "OP_TWEAKVERIFY",
+            "hazard": "3.7/tweakverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982000000000000000000000000000000000000000000000000000000000000000012102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e451",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "ec/OP_TWEAKVERIFY/cancels-to-infinity",
+            "mode": "expression",
+            "op": "OP_TWEAKVERIFY",
+            "hazard": "3.7/tweakverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179820fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036414021020000000000000000000000000000000000000000000000000000000000000000e451",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_TWEAKVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_TWEAKVERIFY/p-compressed-33",
+            "mode": "expression",
+            "op": "OP_TWEAKVERIFY",
+            "hazard": "3.7/tweakverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982000000000000000000000000000000000000000000000000000000000000000012102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e451",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_TWEAKVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_TWEAKVERIFY/p-not-on-curve",
+            "mode": "expression",
+            "op": "OP_TWEAKVERIFY",
+            "hazard": "3.7/tweakverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2000000000000000000000000000000000000000000000000000000000000000052000000000000000000000000000000000000000000000000000000000000000012102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e451",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_TWEAKVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_TWEAKVERIFY/wrong-q",
+            "mode": "expression",
+            "op": "OP_TWEAKVERIFY",
+            "hazard": "3.7/tweakverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798200000000000000000000000000000000000000000000000000000000000000001210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798e451",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_TWEAKVERIFY"
+            }
+        },
+        {
+            "name": "ec/OP_TWEAKVERIFY/k-at-order",
+            "mode": "expression",
+            "op": "OP_TWEAKVERIFY",
+            "hazard": "3.7/tweakverify",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179820fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd03641412102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5e451",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_TWEAKVERIFY"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/secp256k1_G_plus_G",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "e59e705cb909acaba73cef8c4b8e775cd87cc0956e4045306d7ded41947f04c600",
+                    "2ae5cf50a9316423e1d066326532f6f7eeea6c461984c5a339c33da6fe68e11a"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/secp256k1_G_plus_negG_is_infinity",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be79217727ef046f2fb863e6ab7a59b74be80257f7eef103045ba29a3b5cd98825c5b70000e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/secp256k1_infinity_plus_G_is_G",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "9817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be79",
+                    "b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/secp256k1_infinity_plus_infinity",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000000000e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/secp256r1_G_plus_G",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f51e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "78996647fc480ba6351bf277e26989c0c31ab5040338528a7e4f038d187bf27c",
+                    "d17378229db7049e2982e93ce6ad7dbadb30749fc69a3d2940d08edb10557707"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/secp256r1_G_plus_negG_is_infinity",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b210aae40c897bf493431a1ce94a9cc31d4e961f083b51418716580e5011cbd1cb00051e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/secp256r1_infinity_plus_infinity",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000000051e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/secp256r1_infinity_plus_G_is_G",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00002096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f51e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "96c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b",
+                    "f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/alt_bn128_G_plus_G",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5152515252e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "d3cf876dc108c2d3a81c8716a91678d9851518685b04859b021a132ee7440603",
+                    "c4a2185a7abf3effc78f53e349a4a6680a9caeb2965f84e7927c0a0e8c73ed15"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/valid/alt_bn128_G_plus_negG_is_infinity",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5152512045fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e643052e0",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/missing_curve_id",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00000000e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/unsupported_curve_id",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "000000000163e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/negative_curve_id",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "000000004fe0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/negative_coordinate",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a484f20b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/out_of_field_coordinate",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48212ffcfffffeffffffffffffffffffffffffffffffffffffffffffffffffffffff0020b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/off_curve_secp256k1",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48515100e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/off_curve_secp256r1",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f515151e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/off_curve_alt_bn128",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5152515152e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/non_minimal_coordinate",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4802050020b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4800e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrMinimalData",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/p256_out_of_field",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f21ffffffffffffffffffffffff00000000000000000000000001000000ffffffff0020f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f51e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECADD/invalid/bn254_out_of_field",
+            "mode": "expression",
+            "op": "OP_ECADD",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51522047fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e64305252e0",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECADD"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256k1_k_zero_is_infinity",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a480000e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256k1_k_one",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a485100e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "9817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be79",
+                    "b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a48"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256k1_k_two",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a485200e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "e59e705cb909acaba73cef8c4b8e775cd87cc0956e4045306d7ded41947f04c600",
+                    "2ae5cf50a9316423e1d066326532f6f7eeea6c461984c5a339c33da6fe68e11a"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256k1_infinity_times_anything",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000012a00e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256k1_k_eq_order_minus_one_is_negG",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4821404136d08c5ed2bf3ba048afe6dcaebafeffffffffffffffffffffffffffffff0000e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "9817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be79",
+                    "7727ef046f2fb863e6ab7a59b74be80257f7eef103045ba29a3b5cd98825c5b700"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256r1_k_one",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f5151e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "96c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b",
+                    "f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256r1_k_two",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f5251e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "78996647fc480ba6351bf277e26989c0c31ab5040338528a7e4f038d187bf27c",
+                    "d17378229db7049e2982e93ce6ad7dbadb30749fc69a3d2940d08edb10557707"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256r1_k_zero",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f0051e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256r1_infinity_times_anything",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000012a51e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/secp256r1_k_eq_order_minus_one_is_negG",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f21502563fcc2cab9f3849e17a7adfae6bcffffffffffffffff00000000ffffffff0051e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "96c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b",
+                    "0aae40c897bf493431a1ce94a9cc31d4e961f083b51418716580e5011cbd1cb000"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/alt_bn128_k_two",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51525252e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "d3cf876dc108c2d3a81c8716a91678d9851518685b04859b021a132ee7440603",
+                    "c4a2185a7abf3effc78f53e349a4a6680a9caeb2965f84e7927c0a0e8c73ed15"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/alt_bn128_k_zero",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51520052e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["", ""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/valid/alt_bn128_k_eq_order_minus_one_is_negG",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "515220000000f093f5e1439170b97948e833285d588181b64550b829a031e1724e643052e1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "01",
+                    "45fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e6430"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/unsupported_curve_id",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000000163e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/scalar_equal_to_group_order_secp256k1",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4821414136d08c5ed2bf3ba048afe6dcaebafeffffffffffffffffffffffffffffff0000e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/scalar_equal_to_group_order_secp256r1",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "2096c298d84539a1f4a033eb2d817d0377f240a463e5e6bcf847422ce1f2d1176b20f551bf376840b6cbce5e316b5733ce2b169e0f7c4aebe78e9b7f1afee242e34f21512563fcc2cab9f3849e17a7adfae6bcffffffffffffffff00000000ffffffff0051e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/scalar_equal_to_group_order_alt_bn128",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "515220010000f093f5e1439170b97948e833285d588181b64550b829a031e1724e643052e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/negative_scalar",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a484f00e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/off_curve_secp256k1",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51515100e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/out_of_field_coordinate",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "212ffcfffffeffffffffffffffffffffffffffffffffffffffffffffffffffffff0020b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a485100e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMUL/invalid/non_minimal_scalar",
+            "mode": "expression",
+            "op": "OP_ECMUL",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "209817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7920b8d410fb8fd0479c195485a648b417fda808110efcfba45d65c4a32677da3a4802050000e1",
+            "expect": {
+                "ok": false,
+                "code": "ErrMinimalData",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMUL"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/valid/single_pair_returns_false",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "515220c212f3aeb785e49712e7a9353349aaf1255dfb31b7bf60723a480d9293938e1920edf692d95cbdde46ddda5ef7d422436779445c5e66006a42761e1f12efde0018205b9722d1dcdaac55f38eb37033314bbc95330c69ad999eec75f05f58d089060920aa7dfa6601cce64c7bd3430c69e7d1e38f40cb8d8071ab4aeb6d8cdba55ec8125152e2",
+            "expect": {
+                "ok": true,
+                "stack_hex": [""]
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/zero_pair_count",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0052e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/unsupported_curve_id",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "000163e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/unsupported_pairing_curve_secp256k1",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/unsupported_pairing_curve_secp256r1",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0051e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/negative_pair_count",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4f52e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/pair_count_exceeds_max",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "011152e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/pair_count_underflow",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5152e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECPAIRING/invalid/non_minimal_pair_count",
+            "mode": "expression",
+            "op": "OP_ECPAIRING",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "02010052e2",
+            "expect": {
+                "ok": false,
+                "code": "ErrMinimalData",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECPAIRING"
+            }
+        },
+        {
+            "name": "emulator/OP_ECMULSCALARVERIFY/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_ECMULSCALARVERIFY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "e3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_ECMULSCALARVERIFY"
+            }
+        },
+        {
+            "name": "emulator/OP_TWEAKVERIFY/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_TWEAKVERIFY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "e4",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_TWEAKVERIFY"
+            }
+        }
+    ]
+}

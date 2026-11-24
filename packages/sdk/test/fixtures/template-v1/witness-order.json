@@ -1,0 +1,136 @@
+{
+  "artifacts": {},
+  "bindings": {
+    "keys": {
+      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {}
+  },
+  "expected": {
+    "canonical_hex": "7b22666f726d6174223a2274656d706c6174652f7631222c22696e70757473223a5b7b22636f6e7472616374223a7b22646566696e6974696f6e223a7b22636f6e7374727563746f72496e70757473223a5b5d2c22636f6e74726163744e616d65223a2254776f4974656d73222c2266756e6374696f6e73223a5b7b2261726b616465223a7b2261736d223a5b224f505f31225d2c22696e70757473223a5b5d7d2c226c6561766573223a5b7b2261736d223a5b224f505f32222c224f505f455155414c564552494659222c224f505f33222c224f505f455155414c222c224f505f564552494659222c223c5345525645525f4b45593e222c224f505f434845434b534947564552494659222c223c454d554c41544f525f4b45593a636c61696d3e222c224f505f434845434b534947225d2c226e616d65223a22636c61696d222c227769746e657373223a5b7b22656e636f64696e67223a22726177222c226e616d65223a2261222c2274797065223a22696e74227d2c7b22656e636f64696e67223a22726177222c226e616d65223a2262222c2274797065223a22696e74227d2c7b22656e636f64696e67223a227363686e6f72722d3634222c22696e6a6563746564223a747275652c226e616d65223a22736572766572536967222c2274797065223a227369676e6174757265227d2c7b22656e636f64696e67223a227363686e6f72722d3634222c22696e6a6563746564223a747275652c226e616d65223a22656d756c61746f72536967222c2274797065223a227369676e6174757265227d5d7d5d2c226e616d65223a22636c61696d227d5d2c2273747275637473223a5b5d7d7d2c226e616d65223a22636f696e222c227370656e64223a7b2266756e6374696f6e223a22636c61696d222c226c656166223a22636c61696d222c227769746e657373223a7b2261223a322c2262223a337d7d7d5d2c226f757470757473223a5b7b22696e646578223a302c226c6f636b696e67223a223531323066393330386130313932353863333130343933343466383566383964353232396235333163383435383336663939623038363031663131336263653033366639222c226e616d65223a227061796f7574222c2276616c7565223a7b2266726f6d223a22636f696e227d7d5d2c227061636b657473223a7b226f75747075745f696e646578223a317d2c2274797065223a227669727475616c227d",
+    "extension": 1,
+    "fee": "0",
+    "psbt_hex": "70736274ff0100750300000001efa946b17fde048f286cf14afd9a83af74663719ed5021995ae3bc6ff14265740000000000ffffffff02a086010000000000225120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f900000000000000000e6a0c41524b010701000001510100000000000001012ba08601000000000022512078e37ff2a026dabb0690b4fd17bde96dfa38d22e9297f57e1c708b1979d20d0e2215c150929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac04a52885387692079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20e4636f6fd7497a43cebf8626d677b2f3c91db947fa11c3d65442b7c06066cb74acc008de746170747265654c00c04952885387692079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20e4636f6fd7497a43cebf8626d677b2f3c91db947fa11c3d65442b7c06066cb74ac0ade636f6e646974696f6e050201030102000000",
+    "spend_id": "f8e9a55cb025b55ef80a07f866df5186174bc3a53aa7bc200e594e252c3e80f2",
+    "template_id": "f8e9a55cb025b55ef80a07f866df5186174bc3a53aa7bc200e594e252c3e80f2",
+    "unsigned_tx_hex": "0300000001efa946b17fde048f286cf14afd9a83af74663719ed5021995ae3bc6ff14265740000000000ffffffff02a086010000000000225120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f900000000000000000e6a0c41524b01070100000151010000000000"
+  },
+  "format": "template-test/v1",
+  "name": "witness-order",
+  "request": {
+    "decryption": {},
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "0001-01-01T00:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a08601000000000022512078e37ff2a026dabb0690b4fd17bde96dfa38d22e9297f57e1c708b1979d20d0e00000000",
+        "txid": "746542f16fbce35a992150ed19376674af839afd4af16c288f04de7fb146a9ef",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "virtual",
+    "inputs": [
+      {
+        "name": "coin",
+        "contract": {
+          "definition": {
+            "contractName": "TwoItems",
+            "constructorInputs": [],
+            "structs": [],
+            "functions": [
+              {
+                "name": "claim",
+                "arkade": {
+                  "inputs": [],
+                  "asm": [
+                    "OP_1"
+                  ]
+                },
+                "leaves": [
+                  {
+                    "name": "claim",
+                    "asm": [
+                      "OP_2",
+                      "OP_EQUALVERIFY",
+                      "OP_3",
+                      "OP_EQUAL",
+                      "OP_VERIFY",
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIGVERIFY",
+                      "<EMULATOR_KEY:claim>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "a",
+                        "type": "int",
+                        "encoding": "raw"
+                      },
+                      {
+                        "name": "b",
+                        "type": "int",
+                        "encoding": "raw"
+                      },
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      },
+                      {
+                        "name": "emulatorSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "spend": {
+          "function": "claim",
+          "leaf": "claim",
+          "witness": {
+            "a": 2,
+            "b": 3
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "payout",
+        "index": 0,
+        "value": {
+          "from": "coin"
+        },
+        "locking": "5120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+      }
+    ],
+    "packets": {
+      "output_index": 1
+    }
+  },
+  "artifact_version": "artifact/v1"
+}

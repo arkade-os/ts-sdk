@@ -297,12 +297,15 @@ import {
 } from "./providers/delegate";
 import {
     DelegatedOutput,
+    ExecutorArtifact,
     ExecutorDelegation,
     ExecutorDelegationDetails,
     ExecutorInfo,
     ExecutorProvider,
     ExecutorRequestError,
     ExecutorTemplate,
+    ExecutorTemplateDetails,
+    ExecutorTemplateParam,
     RestExecutorProvider,
 } from "./providers/executor";
 import {
@@ -1296,6 +1299,9 @@ export type {
     ExecutorDelegation,
     ExecutorDelegationDetails,
     ExecutorTemplate,
+    ExecutorTemplateDetails,
+    ExecutorTemplateParam,
+    ExecutorArtifact,
     DelegatedOutput,
     DelegatedWallet,
     DelegationOptions,

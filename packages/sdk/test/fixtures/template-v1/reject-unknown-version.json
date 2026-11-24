@@ -1,0 +1,102 @@
+{
+  "artifacts": {},
+  "bindings": {
+    "keys": {
+      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {}
+  },
+  "expected": {
+    "error": {
+      "stage": "decode",
+      "code": "unsupported_version"
+    }
+  },
+  "format": "template-test/v1",
+  "name": "reject-unknown-version",
+  "request": {
+    "decryption": {},
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      },
+      "onchain_sat_per_vbyte": "2"
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "0001-01-01T00:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a08601000000000022512089b13f1de2d5bc700695813283363c8c3464dd9597994c072ca5e4df022c394700000000",
+        "txid": "40364c9ea96228136157820fe9a78c196b930a529cb484a0e41a75348a7b38f6",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v2",
+    "type": "onchain",
+    "inputs": [
+      {
+        "name": "funds",
+        "contract": {
+          "definition": {
+            "contractName": "Release",
+            "constructorInputs": [],
+            "structs": [],
+            "functions": [
+              {
+                "name": "release",
+                "leaves": [
+                  {
+                    "name": "release",
+                    "asm": [
+                      "<COSIGNER_KEY>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "delegateSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "spend": {
+          "function": "release",
+          "leaf": "release"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "payment",
+        "index": 0,
+        "value": {
+          "from": "funds"
+        },
+        "locking": "5120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+      }
+    ],
+    "fees": {
+      "from": "funds",
+      "max": 1000
+    }
+  },
+  "artifact_version": "artifact/v1"
+}

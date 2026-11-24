@@ -1,0 +1,129 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "default": [
+        {
+            "opcode": 172,
+            "name": "OP_CHECKSIG",
+            "limit": 50
+        },
+        {
+            "opcode": 173,
+            "name": "OP_CHECKSIGVERIFY",
+            "limit": 50
+        },
+        {
+            "opcode": 186,
+            "name": "OP_CHECKSIGADD",
+            "limit": 50
+        },
+        {
+            "opcode": 204,
+            "name": "OP_CHECKSIGFROMSTACK",
+            "limit": 50
+        },
+        {
+            "opcode": 218,
+            "name": "OP_MODEXP",
+            "limit": 64
+        },
+        {
+            "opcode": 224,
+            "name": "OP_ECADD",
+            "limit": 1000
+        },
+        {
+            "opcode": 225,
+            "name": "OP_ECMUL",
+            "limit": 50
+        },
+        {
+            "opcode": 226,
+            "name": "OP_ECPAIRING",
+            "limit": 2
+        },
+        {
+            "opcode": 227,
+            "name": "OP_ECMULSCALARVERIFY",
+            "limit": 50
+        },
+        {
+            "opcode": 228,
+            "name": "OP_TWEAKVERIFY",
+            "limit": 50
+        },
+        {
+            "opcode": 248,
+            "name": "OP_INSPECTINTENTMESSAGE",
+            "limit": 16
+        }
+    ],
+    "aggregate": [
+        {
+            "opcode": 172,
+            "name": "OP_CHECKSIG",
+            "limit": 200
+        },
+        {
+            "opcode": 173,
+            "name": "OP_CHECKSIGVERIFY",
+            "limit": 200
+        },
+        {
+            "opcode": 186,
+            "name": "OP_CHECKSIGADD",
+            "limit": 200
+        },
+        {
+            "opcode": 204,
+            "name": "OP_CHECKSIGFROMSTACK",
+            "limit": 200
+        },
+        {
+            "opcode": 218,
+            "name": "OP_MODEXP",
+            "limit": 256
+        },
+        {
+            "opcode": 224,
+            "name": "OP_ECADD",
+            "limit": 4000
+        },
+        {
+            "opcode": 225,
+            "name": "OP_ECMUL",
+            "limit": 200
+        },
+        {
+            "opcode": 226,
+            "name": "OP_ECPAIRING",
+            "limit": 8
+        },
+        {
+            "opcode": 227,
+            "name": "OP_ECMULSCALARVERIFY",
+            "limit": 200
+        },
+        {
+            "opcode": 228,
+            "name": "OP_TWEAKVERIFY",
+            "limit": 200
+        },
+        {
+            "opcode": 248,
+            "name": "OP_INSPECTINTENTMESSAGE",
+            "limit": 64
+        }
+    ],
+    "request_input_budget": 4,
+    "engine": {
+        "max_script_element_size": 520,
+        "max_script_size": 10000,
+        "max_stack_size": 1000,
+        "max_combined_stack_byte_size": 131072
+    }
+}

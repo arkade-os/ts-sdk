@@ -1,0 +1,319 @@
+{
+  "artifacts": {
+    "00e4cf227fe63bcbc0466569aae63df4f20d4429a0d8d70b4a6f94fae0d01001": {
+      "contractName": "Burnable",
+      "constructorInputs": [
+        {
+          "name": "owner",
+          "type": "pubkey"
+        },
+        {
+          "name": "tokenProgram",
+          "type": "bytes32"
+        },
+        {
+          "name": "exitDelay",
+          "type": "int"
+        }
+      ],
+      "structs": [],
+      "functions": [
+        {
+          "name": "forfeit",
+          "leaves": [
+            {
+              "name": "forfeit",
+              "asm": [
+                "<owner>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "ownerSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "exit",
+          "leaves": [
+            {
+              "name": "exit",
+              "asm": [
+                "<exitDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<owner>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "ownerSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "burn",
+          "arkade": {
+            "inputs": [],
+            "asm": [
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_1ADD",
+              "OP_INSPECTINPUTSCRIPTPUBKEY",
+              "1",
+              "OP_EQUALVERIFY",
+              "<tokenProgram>",
+              "OP_EQUALVERIFY",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_DUP",
+              "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+              "1",
+              "OP_EQUALVERIFY",
+              "0x50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0",
+              "OP_EQUALVERIFY",
+              "OP_INSPECTOUTPUTVALUE",
+              "OP_PUSHCURRENTINPUTINDEX",
+              "OP_INSPECTINPUTVALUE",
+              "OP_EQUAL"
+            ]
+          },
+          "leaves": [
+            {
+              "name": "burn",
+              "asm": [
+                "<SERVER_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<EMULATOR_KEY:burn>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                },
+                {
+                  "name": "emulatorSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "e27a740bd8a78dd28ff18600afc0979ff2463dd3680c983e9bbaa89103e54724": {
+      "contractName": "AuthToken",
+      "constructorInputs": [
+        {
+          "name": "holder",
+          "type": "pubkey"
+        },
+        {
+          "name": "exitDelay",
+          "type": "int"
+        }
+      ],
+      "structs": [],
+      "functions": [
+        {
+          "name": "authorize",
+          "leaves": [
+            {
+              "name": "authorize",
+              "asm": [
+                "<holder>",
+                "OP_CHECKSIGVERIFY",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "holderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                },
+                {
+                  "name": "serverSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64",
+                  "injected": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "exit",
+          "leaves": [
+            {
+              "name": "exit",
+              "asm": [
+                "<exitDelay>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<holder>",
+                "OP_CHECKSIG"
+              ],
+              "witness": [
+                {
+                  "name": "holderSig",
+                  "type": "signature",
+                  "encoding": "schnorr-64"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "bindings": {
+    "keys": {
+      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {
+      "exit_delay": "010040",
+      "max_fee": "e803",
+      "owner": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "renewal_window": "0004"
+    }
+  },
+  "expected": {
+    "error": {
+      "stage": "compile",
+      "code": "invalid_template"
+    }
+  },
+  "format": "template-test/v1",
+  "name": "reject-example-burnable-burn",
+  "request": {
+    "decryption": {},
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "200.0",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [
+          {
+            "amount": "21",
+            "id": "09090909090909090909090909090909090909090909090909090909090909090909"
+          }
+        ],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "2027-01-15T08:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a0860100000000002251201c4f81036bf14b7ced98d2bdfbcd1cee160d054da2d83d17c791f0082171765e00000000",
+        "txid": "cd522e134e354fd0a6dd564751b08390258a64be246182d253a532af62a88244",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "virtual",
+    "variables": {
+      "owner": "pubkey",
+      "exit_delay": "int",
+      "holder": "pubkey",
+      "token_exit_delay": "int"
+    },
+    "inputs": [
+      {
+        "name": "funds",
+        "contract": {
+          "definition": {
+            "artifact": "00e4cf227fe63bcbc0466569aae63df4f20d4429a0d8d70b4a6f94fae0d01001"
+          },
+          "arguments": {
+            "owner": "<owner>",
+            "tokenProgram": {
+              "program": "token"
+            },
+            "exitDelay": "<exit_delay>"
+          }
+        },
+        "spend": {
+          "function": "burn",
+          "leaf": "burn"
+        }
+      },
+      {
+        "name": "token",
+        "contract": {
+          "definition": {
+            "artifact": "e27a740bd8a78dd28ff18600afc0979ff2463dd3680c983e9bbaa89103e54724"
+          },
+          "arguments": {
+            "holder": "<holder>",
+            "exitDelay": "<token_exit_delay>"
+          }
+        },
+        "spend": {
+          "function": "authorize",
+          "leaf": "authorize"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out0",
+        "index": 0,
+        "value": {
+          "from": "funds"
+        },
+        "locking": "512050929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+      },
+      {
+        "name": "token",
+        "index": 1,
+        "value": {
+          "from": "token"
+        },
+        "locking": {
+          "contract": {
+            "definition": {
+              "artifact": "e27a740bd8a78dd28ff18600afc0979ff2463dd3680c983e9bbaa89103e54724"
+            },
+            "arguments": {
+              "holder": "<holder>",
+              "exitDelay": "<token_exit_delay>"
+            }
+          }
+        }
+      }
+    ],
+    "packets": {
+      "output_index": 2
+    }
+  },
+  "artifact_version": "artifact/v1"
+}
