@@ -64,7 +64,7 @@ export interface DiscoveryConfig {
     readonly registryUrl?: string | null;
     /** Locally pinned solver cards, merged with the registry's. */
     readonly localCards?: readonly LocalCardInput[];
-    /** Reads listed solvers' own cards. Absent means Nostr (optional `nostr-tools` peer); `null` none. */
+    /** Reads listed solvers' own cards. Absent means Nostr; `null` none. */
     readonly transportCards?: TransportCardFetcher | null;
     /**
      * Markets to resolve against without touching the network. Trusted like config: an
