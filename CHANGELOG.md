@@ -541,6 +541,8 @@ style and have not been backfilled.
 
 - **`@arkade-os/swap`: a feed-priced quote on a CAIP-19 card can be accepted.** `accept()` built the covenant from the card's raw asset ids, which a current registry spells in CAIP-19, and failed with `invalid asset id format, must be hex` before recording anything. It now uses the quote's own legs.
 
+- **`@arkade-os/swap`: `validatePlan` checks dust on a BTC side spelled in CAIP-19.** It recognised BTC only as `btc`, so a plan from a current card, which spells BTC `arkade:bitcoin/slip44:0` or `arkade:mutinynet/slip44:1`, skipped the dust check and passed a BTC side below dust, on the cross-asset payment rail as well.
+
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
 - **Boarding inputs in a commitment transaction are signed with the default sighash**, whatever sighash type the operator's PSBT declares, as forfeits already were.
