@@ -706,7 +706,11 @@ function cleanup({ target }) {
             // so a plain `checkout --` would restore the bumped version over itself.
             run("git", ["checkout", "HEAD", "--", pkg.pkgJson]);
             console.log(`Restored ${pkg.name} manifest to ${head}`);
-            for (const file of pkg.extraFiles ?? []) {
+        }
+        // Not tied to package.json: a cleanup that stopped between the two left these behind.
+        for (const file of pkg.extraFiles ?? []) {
+            const diff = spawnSync("git", ["diff", "--quiet", "HEAD", "--", file], { cwd: ROOT_DIR });
+            if (diff.status !== 0) {
                 run("git", ["checkout", "HEAD", "--", file]);
                 console.log(`Restored ${path.relative(ROOT_DIR, file)} to HEAD`);
             }
