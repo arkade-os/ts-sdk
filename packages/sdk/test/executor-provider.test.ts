@@ -244,6 +244,26 @@ describe("RestExecutorProvider", () => {
         rateGate.reset();
     });
 
+    it("reports rate-limited artifact and template uploads to the shared gate", async () => {
+        const report = vi.spyOn(rateGate, "reportRateLimited");
+        const provider = new RestExecutorProvider("https://executor.test");
+        for (const [call, path] of [
+            [() => provider.registerArtifact("{}"), "/v1/artifact"],
+            [() => provider.registerTemplate("{}"), "/v1/template"],
+        ] as const) {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 429,
+                headers: { get: () => "3" },
+                text: () => Promise.resolve("slow down"),
+            });
+            await expect(call()).rejects.toMatchObject({ status: 429 });
+            expect(report).toHaveBeenLastCalledWith(`https://executor.test${path}`, "3");
+        }
+        report.mockRestore();
+        rateGate.reset();
+    });
+
     it("reads the encryption key when the Executor has one, refusing one not compressed", async () => {
         const provider = new RestExecutorProvider("https://executor.test");
         const encryptionPubkey = hex.encode(compressedKey);
