@@ -417,16 +417,17 @@ describe("buildContract", () => {
         expect(c.proofs.get("a/b")?.get("c")?.[1]).not.toEqual(c.proofs.get("a")?.get("b/c")?.[1]);
     });
 
+    const leaf = (script: string) => ({
+        depth: 1,
+        version: 0xc0,
+        script: hex.decode(script) as Uint8Array<ArrayBuffer>,
+    });
+    const tree = (...s: string[]) => TapTreeCoder.encode(s.map(leaf));
+    const declared = `20${hex.encode(pub(1).subarray(1))}ac`;
+
     it("takes a given tree's leaves only when it holds every declared leaf", () => {
         const k = def([fn("a", ["<SERVER_KEY>", "OP_CHECKSIG"])]);
-        const leaf = (script: string) => ({
-            depth: 1,
-            version: 0xc0,
-            script: hex.decode(script) as Uint8Array<ArrayBuffer>,
-        });
         const other = `20${hex.encode(pub(5).subarray(1))}ac`;
-        const declared = `20${hex.encode(pub(1).subarray(1))}ac`;
-        const tree = (...s: string[]) => TapTreeCoder.encode(s.map(leaf));
         const c = buildContract(k, {}, keys, tree(other, declared));
         expect(c.script.scripts.map((s) => hex.encode(s))).toEqual([other, declared]);
         expect(kinds(() => buildContract(k, {}, keys, tree(other)))).toEqual(["ineligible"]);
@@ -434,6 +435,39 @@ describe("buildContract", () => {
             kinds(() => buildContract(k, {}, keys, tree(`517e69${declared}`, declared))),
         ).toEqual(["ineligible"]);
         expect(kinds(() => buildContract(k, {}, keys, new Uint8Array()))).toEqual(["ineligible"]);
+    });
+
+    it("takes a tree's other leaves only when DecodeClosure accepts them, as Go does", () => {
+        const k = def([fn("a", ["<SERVER_KEY>", "OP_CHECKSIG"])]);
+        const [g, g2] = [pub(1), pub(2)].map((p) => hex.encode(p.subarray(1)));
+        const [ff, h] = ["ff".repeat(32), "07".repeat(32)];
+        // the Go executor's verdicts at af8d9eb
+        const refused = [
+            `20${ff}ac`,
+            `20${"00".repeat(31)}05ac`,
+            `20${g}ad20${ff}ac`,
+            `20${g}ac20${ff}ba529c`,
+            `02bc02b17520${ff}ac`,
+            `0105b17520${g2}ac`,
+            `4c01aa7520${h}75516920${g2}ac`,
+            `050000008000b27520${g2}ac`,
+            "51",
+        ];
+        const accepted = [
+            `20${g2}ac`,
+            `20${g}ad20${g2}ac`,
+            `20${g}ac20${g2}ba529c`,
+            `02bc02b17520${g2}ac`,
+            `029000b27520${g2}ac`,
+            `a820${h}876920${g2}ac`,
+            `a820${h}8769029000b27520${g2}ac`,
+        ];
+        const verdict = (s: string) => [
+            s,
+            kinds(() => buildContract(k, {}, keys, tree(declared, s))),
+        ];
+        expect(refused.map(verdict)).toEqual(refused.map((s) => [s, ["ineligible"]]));
+        expect(accepted.map(verdict)).toEqual(accepted.map((s) => [s, []]));
     });
 });
 

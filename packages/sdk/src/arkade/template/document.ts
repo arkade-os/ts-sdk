@@ -47,20 +47,21 @@ function documentOf(raw: Uint8Array): Document {
     }
     const t = decodeValue(value);
     normalize(t);
-    const artifactIds: string[] = [];
+    const artifactIds = new Set<string>();
     const contracts = [
         ...t.inputs.map((i) => i.contract),
         ...t.outputs.flatMap((o) => ("contract" in o.locking ? [o.locking.contract] : [])),
     ];
-    for (const { definition: d } of contracts) {
-        if ("artifact" in d && !artifactIds.includes(d.artifact)) artifactIds.push(d.artifact);
-    }
+    for (const { definition: d } of contracts) if ("artifact" in d) artifactIds.add(d.artifact);
+    return { ...identify(t), artifactIds: [...artifactIds], template: t };
+}
+
+/** The canonical form of `t`, and the ids of `t` with and without its delegation. */
+export function identify(t: Template): Pick<Document, "id" | "spendId" | "canonical"> {
     const bytes = canonical(marshal(t));
     return {
         id: hex.encode(sha256(bytes)),
         spendId: hex.encode(sha256(canonical(marshal({ ...t, delegation: undefined })))),
         canonical: bytes,
-        artifactIds,
-        template: t,
     };
 }

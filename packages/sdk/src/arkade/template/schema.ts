@@ -521,16 +521,17 @@ function allOrNone(what: string, slots: { index?: number }[]): void {
 
 // Runs before normalization drops immediate schedules, so their keys are checked too.
 function checkDelegation(d: Delegation, inputs: Input[]): void {
+    const names = new Set(inputs.map((i) => i.name));
     for (const n of [...sortedKeys(d.schedule), ...sortedKeys(d.trigger)]) {
-        if (!inputs.some((i) => i.name === n)) throw bad(`delegation names no input ${q(n)}`);
+        if (!names.has(n)) throw bad(`delegation names no input ${q(n)}`);
     }
     for (const n of sortedKeys(d.schedule)) checkSchedule(d.schedule?.get(n) as Schedule);
-    const sealed = d.sealed ?? [];
-    sealed.forEach((x, i) => {
+    const sealed = new Set<string>();
+    for (const x of d.sealed ?? []) {
         if (!NAME.test(x.name)) throw bad(`bad sealed name ${q(x.name)}`);
-        if (sealed.slice(0, i).some((o) => o.name === x.name))
-            throw bad(`${q(x.name)} is sealed twice`);
-    });
+        if (sealed.has(x.name)) throw bad(`${q(x.name)} is sealed twice`);
+        sealed.add(x.name);
+    }
     const triggers = d.trigger ?? new Map<string, Trigger>();
     for (const n of sortedKeys(triggers)) {
         const tr = triggers.get(n) as Trigger;

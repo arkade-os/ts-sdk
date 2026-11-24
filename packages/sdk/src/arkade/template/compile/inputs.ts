@@ -1,4 +1,4 @@
-import { type Definition, flatten } from "../abi";
+import { copyDefinition, type Definition, flatten } from "../abi";
 import { fail } from "../errors";
 import { compareGo } from "../jcs";
 import type * as schema from "../schema";
@@ -17,15 +17,17 @@ import type { ByteTemplate, Construction, LockSpec, Schedule } from "./model";
 export const isCLTV = (tok: string) => tok === "OP_CHECKLOCKTIMEVERIFY" || tok === "OP_NOP2";
 
 export function input(c: Compiler, s: schema.Input): void {
-    if (c.t.inputs.some((o) => o.name === s.name)) throw bad(`duplicate input ${q(s.name)}`);
+    if (c.inputSlots.has(s.name)) throw bad(`duplicate input ${q(s.name)}`);
     const onchain = slotType(c, s.type);
     const contract = construction(c, s.contract);
+    const rest = spend(c, contract, s.spend);
+    c.inputSlots.set(s.name, c.t.inputs.length);
     c.t.inputs.push({
         name: s.name,
         onchain,
         schedule: { beforeExpirySeconds: 0, minConfirmations: 0 },
         contract,
-        ...spend(c, contract, s.spend),
+        ...rest,
     });
 }
 
@@ -77,17 +79,19 @@ function requireKeys(c: Compiler, def: Definition): void {
 }
 
 // The artifact/v1 profile check of Go's definition() is omitted: a decoded artifact has no other.
+// Copies, so a caller's later edit of an artifact or document cannot reach the compiled template.
 function definition(c: Compiler, ref: schema.DefinitionRef): Definition {
-    if ("def" in ref) return ref.def;
+    if ("def" in ref) return copyDefinition(ref.def);
     const id = ref.artifact;
     const known = c.definitions.get(id);
     if (known) return known;
     const a = c.artifacts.get(id);
     if (!a) throw bad(`artifact ${id} not provided`);
     if (a.id !== id) throw bad(`artifact ${id} resolves to a document with id ${a.id}`);
-    c.definitions.set(id, a.definition);
+    const def = copyDefinition(a.definition);
+    c.definitions.set(id, def);
     c.t.artifacts.push(id);
-    return a.definition;
+    return def;
 }
 
 function spend(c: Compiler, ct: Construction, s: schema.Spend) {

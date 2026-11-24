@@ -116,18 +116,40 @@ export function parseDefinition(v: JsonValue): Definition {
     if (!Array.isArray(list) || list.length === 0) {
         throw invalid("functions must be a non-empty array");
     }
+    const fns = new Set<string>();
     for (const e of list) {
         const f = parseFunction(e);
-        if (def.functions.some((o) => o.name === f.name)) {
-            throw invalid(`duplicate function "${f.name}"`);
-        }
+        if (fns.has(f.name)) throw invalid(`duplicate function "${f.name}"`);
+        fns.add(f.name);
         def.functions.push(f);
     }
+    const covenants = new Set(def.functions.filter((f) => f.arkade).map((f) => f.name));
     for (const f of def.functions) {
-        if (f.arkade) checkAsm(def, f.arkade.asm, names);
-        for (const l of f.leaves) checkAsm(def, l.asm, names);
+        if (f.arkade) checkAsm(covenants, f.arkade.asm, names);
+        for (const l of f.leaves) checkAsm(covenants, l.asm, names);
     }
     return def;
+}
+
+/** A deep copy, as Go's Artifact.Definition returns. */
+export function copyDefinition(d: Definition): Definition {
+    const fields = (fs: readonly Field[]) => fs.map((f) => ({ ...f }));
+    return {
+        contractName: d.contractName,
+        constructorInputs: fields(d.constructorInputs),
+        structs: d.structs.map((s) => ({ name: s.name, fields: fields(s.fields) })),
+        functions: d.functions.map((f) => ({
+            name: f.name,
+            ...(f.arkade && {
+                arkade: { inputs: fields(f.arkade.inputs), asm: [...f.arkade.asm] },
+            }),
+            leaves: f.leaves.map((l) => ({
+                name: l.name,
+                asm: [...l.asm],
+                witness: l.witness.map((w) => ({ ...w })),
+            })),
+        })),
+    };
 }
 
 /** The form the id commits to: structs always present, arkade and injected only when set. */
@@ -217,8 +239,12 @@ export function flatten(def: Definition, fields: readonly Field[]): Field[] {
 }
 
 // Covenant inputs reach the VM on the stack, so they are never placeholders.
-function checkAsm(def: Definition, tokens: string[], names: Map<string, string>): void {
-    const covenant = (fn: string) => def.functions.some((f) => f.name === fn && f.arkade);
+function checkAsm(
+    covenants: ReadonlySet<string>,
+    tokens: string[],
+    names: Map<string, string>,
+): void {
+    const covenant = (fn: string) => covenants.has(fn);
     const check = (parse: () => number) => {
         try {
             parse();
@@ -286,9 +312,11 @@ function parseFunction(v: JsonValue): ArtifactFunction {
     const list = m.get("leaves");
     if (!Array.isArray(list) || list.length === 0)
         throw invalid(`function "${f.name}" needs leaves`);
+    const leaves = new Set<string>();
     for (const e of list) {
         const l = parseLeaf(e);
-        if (f.leaves.some((o) => o.name === l.name)) throw invalid(`duplicate leaf "${l.name}"`);
+        if (leaves.has(l.name)) throw invalid(`duplicate leaf "${l.name}"`);
+        leaves.add(l.name);
         f.leaves.push(l);
     }
     return f;
@@ -303,6 +331,7 @@ function parseLeaf(v: JsonValue): Leaf {
     };
     const ws = m.get("witness");
     if (!Array.isArray(ws)) throw invalid("witness is not an array");
+    const items = new Set<string>();
     for (const w of ws) {
         const wm = object(w, "witness item", ["name", "type", "encoding"], ["injected"]);
         const itemName = name(wm.get("name"), "witness name");
@@ -316,9 +345,8 @@ function parseLeaf(v: JsonValue): Leaf {
             throw invalid(`unsupported witness encoding ${JSON.stringify(encoding)}`);
         }
         if (typeof injected !== "boolean") throw invalid("injected is not a boolean");
-        if (l.witness.some((o) => o.name === itemName)) {
-            throw invalid(`duplicate witness item "${itemName}"`);
-        }
+        if (items.has(itemName)) throw invalid(`duplicate witness item "${itemName}"`);
+        items.add(itemName);
         l.witness.push({ name: itemName, type, encoding, injected });
     }
     return l;
@@ -362,13 +390,15 @@ function strs(v: JsonValue | undefined, what: string): string[] {
 function parseFields(v: JsonValue | undefined, what: string): Field[] {
     if (!Array.isArray(v)) throw invalid(`${what}s is not an array`);
     const out: Field[] = [];
+    const seen = new Set<string>();
     for (const e of v) {
         const m = object(e, what, ["name", "type"]);
         const f = {
             name: name(m.get("name"), `${what} name`),
             type: name(m.get("type"), `${what} type`),
         };
-        if (out.some((o) => o.name === f.name)) throw invalid(`duplicate ${what} "${f.name}"`);
+        if (seen.has(f.name)) throw invalid(`duplicate ${what} "${f.name}"`);
+        seen.add(f.name);
         out.push(f);
     }
     return out;

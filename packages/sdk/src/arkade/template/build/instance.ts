@@ -92,12 +92,7 @@ export function bind(t: Template, b: Bindings): BoundTemplate {
         checkKeys(t, b.keys);
         const vars = variablesOf(b.variables);
         validateVariables(t, vars, true);
-        const keys = {
-            server: b.keys.server?.slice(),
-            emulator: b.keys.emulator?.slice(),
-            cosigner: b.keys.cosigner?.slice(),
-        };
-        return new BoundTemplate(t, keys, vars);
+        return new BoundTemplate(t, copyKeys(b.keys), vars);
     } catch (e) {
         throw wrap("bind", e);
     }
@@ -156,6 +151,22 @@ export class Instance {
 
     tapscripts(slot: number): string[] {
         return this.contracts[this.firstCoin(slot)].script.scripts.map((s) => hex.encode(s));
+    }
+
+    /** The input's flattened constructor fields, resolved from the variables alone. */
+    contractArguments(slot: number): { name: string; type: string; value: Uint8Array }[] {
+        try {
+            const c = this.tmpl.inputs[slot].contract;
+            const d = newDraft(this.tmpl.type, this.tmpl.inputs.map(placeholder));
+            d.contextFree = true;
+            return flatten(c.def, c.def.constructorInputs).map(({ name, type }) => ({
+                name,
+                type,
+                value: this.resolve(c.args.get(name) as ByteTemplate, d, d.index(slot)),
+            }));
+        } catch (e) {
+            throw wrap("instantiate", e);
+        }
     }
 
     build(sources: readonly Source[], fee: Fee): Action {
@@ -319,7 +330,7 @@ function instantiateWith(t: Template, c: Given): Instance {
     const d = newDraft(t.type, sources as readonly Src[]);
     d.contextFree = watch;
     const copies = new Map([...vars].map(([n, v]) => [n, v.slice()]));
-    const i = new Instance(t, watch, x, c.keys, copies);
+    const i = new Instance(t, watch, x, copyKeys(c.keys), copies);
     const csvs: (number | undefined)[] = [];
     x.inputs.forEach((input, slot) => {
         const ct = within(`input ${q(input.name)}`, () =>
@@ -351,7 +362,21 @@ function checkKeys(t: Template, keys: ContractKeys): void {
     if (r.server && !keys.server) throw fail("unsupported", "missing server key");
     if (r.emulator && !keys.emulator) throw fail("unsupported", "missing emulator key");
     if (r.cosigner && !keys.cosigner) throw fail("unsupported", "missing cosigner key");
+    for (const role of ["server", "emulator", "cosigner"] as const) {
+        const key = keys[role];
+        try {
+            if (key) canonicalBytes("pubkey", key);
+        } catch {
+            throw fail("unsupported", `${role} key is not a 33-byte compressed key`);
+        }
+    }
 }
+
+const copyKeys = (k: ContractKeys): ContractKeys => ({
+    server: k.server?.slice(),
+    emulator: k.emulator?.slice(),
+    cosigner: k.cosigner?.slice(),
+});
 
 /** Without decrypt, sealed values are plaintexts already. */
 function open(

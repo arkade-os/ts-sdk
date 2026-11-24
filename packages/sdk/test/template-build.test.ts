@@ -7,6 +7,7 @@ import {
     build,
     compile,
     decode,
+    decodeArtifact,
     type Fee,
     instantiate,
     type Source,
@@ -212,6 +213,95 @@ it("puts the first declared covenant input on top of the stack", () => {
     expect(hex.encode(witness)).toBe(
         hex.encode(serializeWitness([hex.decode("abcd"), Uint8Array.of(5)])),
     );
+});
+
+// Go's types rule these out: uint64 fees, time.Time stamps and parsed *btcec.PublicKey keys.
+describe("caller inputs Go cannot express", () => {
+    const t = edited("onchain", () => {});
+    const sources = funded(t, {}, [[100_000]]);
+    const fee: Fee = { dust: 330n, onchain: () => 600n };
+    const run = (s: Source[], f: Fee) => () =>
+        build(bind(t, { keys, variables: {} }), { sources: s, fee: f });
+
+    it("refuses an on-chain fee that is negative or not a bigint", () => {
+        expect(thrown(run(sources, fee))).toBeUndefined();
+        for (const paid of [-600n, 600, undefined]) {
+            const f = { ...fee, onchain: () => paid as bigint };
+            expect(thrown(run(sources, f))).toBe("build/ineligible");
+        }
+    });
+
+    it("refuses an expiry or creation time that is not whole non-negative seconds", () => {
+        expect(thrown(run([{ ...sources[0], expiry: 1_800_000_000, createdAt: 0 }], fee))).toBe(
+            undefined,
+        );
+        for (const bad of [1.5, -1, 2 ** 53, Number.NaN]) {
+            expect(thrown(run([{ ...sources[0], expiry: bad }], fee))).toBe("build/ineligible");
+            expect(thrown(run([{ ...sources[0], createdAt: bad }], fee))).toBe("build/ineligible");
+        }
+    });
+
+    it("refuses at bind a key that is not a compressed point, as it does a missing one", () => {
+        const bound = (k: object) => () => bind(t, { keys: { ...keys, ...k }, variables: {} });
+        expect(thrown(bound({ cosigner: undefined }))).toBe("bind/unsupported");
+        for (const bad of [new Uint8Array(33), keys.server.subarray(1), new Uint8Array(65)]) {
+            for (const role of ["server", "emulator", "cosigner"]) {
+                expect(thrown(bound({ [role]: bad }))).toBe("bind/unsupported");
+            }
+        }
+    });
+});
+
+describe("what a compiled template or instance shares with its caller", () => {
+    const utf8 = new TextEncoder();
+
+    it("reports a bad artifact as compile/invalid_artifact", () => {
+        expect(thrown(() => decodeArtifact(utf8.encode("{}")))).toBe("compile/invalid_artifact");
+        expect(thrown(() => decodeArtifact(utf8.encode("[")))).toBe("compile/invalid_artifact");
+    });
+
+    it("takes its id from the template it compiles, not the document's word", () => {
+        const json = vector("onchain").template;
+        const onchain = decode(utf8.encode(JSON.stringify(json)));
+        const other = decode(
+            utf8.encode(JSON.stringify({ ...json, fees: { ...json.fees, max: 9 } })),
+        );
+        expect(other.id).not.toBe(onchain.id);
+        const forged = compile({ ...onchain, template: other.template });
+        expect([forged.id, forged.spendId]).toEqual([other.id, other.spendId]);
+    });
+
+    it("copies the artifact and inline definitions it compiles", () => {
+        const v = vector("boarding");
+        const artifacts = new Map(
+            Object.entries<object>(v.artifacts).map(([id, a]) => [
+                id,
+                decodeArtifact(utf8.encode(JSON.stringify(a))),
+            ]),
+        );
+        const doc = decode(utf8.encode(JSON.stringify(v.template)));
+        const t = compile(doc, artifacts);
+        const inline = decode(utf8.encode(JSON.stringify(vector("onchain").template)));
+        const u = compile(inline);
+        const before = [snapshot(t), snapshot(u)];
+        for (const { definition } of artifacts.values()) {
+            definition.functions[0].leaves[0].asm.push("OP_DROP");
+            definition.constructorInputs.pop();
+        }
+        const def = (inline.template.inputs[0].contract.definition as { def: any }).def;
+        def.functions[0].leaves[0].asm.push("OP_DROP");
+        expect([snapshot(t), snapshot(u)]).toEqual(before);
+    });
+
+    it("copies the keys it is instantiated with", () => {
+        const k = { ...keys, cosigner: keys.cosigner.slice() };
+        const i = instantiate(
+            edited("onchain", () => {}),
+            { keys: k, variables: {} },
+        );
+        k.cosigner[1] ^= 1;
+        expect(i.keys.cosigner).toEqual(keys.cosigner);
+    });
 });
 
 it("spends offline only through service and emulator signers (locks.go OfflineSpend)", () => {

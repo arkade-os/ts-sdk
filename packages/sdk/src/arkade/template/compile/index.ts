@@ -1,4 +1,4 @@
-import type { Document } from "../document";
+import { type Document, identify } from "../document";
 import { fail, wrap } from "../errors";
 import type * as schema from "../schema";
 import { type Artifacts, bad, type Compiler, q } from "./compiler";
@@ -28,14 +28,18 @@ export function compileDocument(doc: Document, artifacts: Artifacts = new Map())
 
 function compile(doc: Document, artifacts: Artifacts): Template {
     const s = doc.template;
+    // from the template itself, so a hand-built Document cannot lend it another id
+    const { id, spendId } = identify(s);
     const c: Compiler = {
         artifacts,
         definitions: new Map(),
         doc: s,
         named: new Set(),
+        inputSlots: new Map(),
+        outputSlots: new Map(),
         t: {
-            id: doc.id,
-            spendId: doc.spendId,
+            id,
+            spendId,
             type: s.type as TemplateType,
             requiredKeys: { server: false, emulator: false, cosigner: false },
             variables: new Map(s.variables),

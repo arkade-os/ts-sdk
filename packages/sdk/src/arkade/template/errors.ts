@@ -1,13 +1,5 @@
 /** The API entry point an error surfaced through, not where it originated. */
-export type Stage =
-    | "decode"
-    | "compile"
-    | "bind"
-    | "build"
-    | "instantiate"
-    | "derive"
-    | "spend"
-    | "match";
+export type Stage = "decode" | "compile" | "bind" | "build" | "instantiate" | "spend";
 
 /** Sentinel categories an error chain can carry; several may be present at once. */
 export type Kind =
@@ -18,14 +10,13 @@ export type Kind =
     | "unsupported"
     | "unaffordable"
     | "ineligible"
-    | "no_match"
-    | "unsupported_artifact_version";
+    | "no_match";
 
-export type Code = Exclude<Kind, "unsupported_artifact_version"> | "internal";
+export type Code = Kind | "internal";
 
 // Fixed order, not the deepest cause: a chain wrapping both unaffordable and ineligible reports
-// unaffordable. unsupported_artifact_version is absent on purpose and falls through to internal.
-const PRECEDENCE: readonly Exclude<Code, "internal">[] = [
+// unaffordable.
+const PRECEDENCE: readonly Kind[] = [
     "unsupported_version",
     "invalid_artifact",
     "invalid_template",

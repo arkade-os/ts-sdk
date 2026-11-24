@@ -2,14 +2,7 @@ import { hex } from "@scure/base";
 
 import type * as schema from "../schema";
 import { bad, bind, type Compiler, inputIndex, q } from "./compiler";
-import {
-    type Advert,
-    arkade,
-    outputIndex,
-    type PacketSpec,
-    type Rule,
-    type Template,
-} from "./model";
+import { type Advert, arkade, type PacketSpec, type Rule, type Template } from "./model";
 
 const MAX_ADVERTISEMENT = 520;
 
@@ -36,27 +29,28 @@ export function packets(c: Compiler): void {
         if (s.outputIndex > 0xffff) throw bad("output_index out of range");
         ps.index = s.outputIndex;
     }
+    // Go compares each rule with every earlier one of its type. An accepted type never holds an emit
+    // beside a copy, nor copies from two inputs, so these sets give the same verdict and message.
+    const types = new Map<number, { emit: boolean; copies: Set<number>; drops: Set<number> }>();
     for (const sr of s.rules ?? []) {
         const x = rule(c, sr);
-        for (const o of ps.rules) {
-            if (o.type !== x.type) continue;
-            if (o.action === "emit" && x.action === "emit") {
-                throw bad(`two emit rules for packet type ${x.type}`);
-            }
-            // the extension holds one packet per type: a copy goes only with the same copy or a drop
-            const [cp, other] = x.action === "copy" ? [x, o] : [o, x];
-            if (
-                cp.action === "copy" &&
-                (other.action === "emit" ||
-                    (other.action === "copy" && other.from !== cp.from) ||
-                    (other.action === "drop" && other.from === cp.from))
-            ) {
-                throw bad(`copy conflicts with another rule for packet type ${x.type}`);
-            }
-        }
+        const o = types.get(x.type) ?? { emit: false, copies: new Set(), drops: new Set() };
+        types.set(x.type, o);
+        if (o.emit && x.action === "emit") throw bad(`two emit rules for packet type ${x.type}`);
+        // the extension holds one packet per type: a copy goes only with the same copy or a drop
+        const conflict =
+            x.action === "emit"
+                ? o.copies.size > 0
+                : x.action === "copy"
+                  ? o.emit || (o.copies.size > 0 && !o.copies.has(x.from)) || o.drops.has(x.from)
+                  : o.copies.has(x.from);
+        if (conflict) throw bad(`copy conflicts with another rule for packet type ${x.type}`);
+        if (x.action === "emit") o.emit = true;
+        else (x.action === "copy" ? o.copies : o.drops).add(x.from);
         ps.rules.push(x);
     }
-    for (const sa of s.advertise ?? []) ps.adverts.push(advert(c, sa, ps.adverts));
+    const advertised = new Set<number>();
+    for (const sa of s.advertise ?? []) ps.adverts.push(advert(c, sa, advertised));
     if (ps.adverts.length > 0) {
         try {
             encodeAdvertisement(records(c.t, ps, new Uint8Array(32)));
@@ -77,7 +71,7 @@ function rule(c: Compiler, s: schema.Rule): Rule {
     return r;
 }
 
-function advert(c: Compiler, s: schema.Advert, prev: Advert[]): Advert {
+function advert(c: Compiler, s: schema.Advert, advertised: Set<number>): Advert {
     const { t } = c;
     const self = s.template === "self";
     const ad: Advert = {
@@ -86,14 +80,13 @@ function advert(c: Compiler, s: schema.Advert, prev: Advert[]): Advert {
         outputs: [],
     };
     for (const name of s.outputs) {
-        const i = outputIndex(t, name);
+        const i = c.outputSlots.get(name) ?? -1;
         if (i < 0) throw bad(`advertisement names no output: ${q(name)}`);
-        if (ad.outputs.includes(i) || prev.some((a) => a.outputs.includes(i))) {
-            throw bad(`output ${q(name)} is advertised twice`);
-        }
+        if (advertised.has(i)) throw bad(`output ${q(name)} is advertised twice`);
         if (t.type === "proof" && t.outputs[i].onchain) {
             throw bad("an intent advertises only offchain outputs");
         }
+        advertised.add(i);
         ad.outputs.push(i);
     }
     if (self && ad.outputs.length !== t.inputs.length) {

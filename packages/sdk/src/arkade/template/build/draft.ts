@@ -57,6 +57,8 @@ export const messageOf = (e: unknown): string => (e instanceof Error ? e.message
 
 const UINT64 = (1n << 64n) - 1n;
 const isUint64 = (n: unknown) => typeof n === "bigint" && n >= 0n && n <= UINT64;
+const isSeconds = (n: unknown) =>
+    n === undefined || (Number.isSafeInteger(n) && (n as number) >= 0);
 
 /** A missing source or transaction stays undefined for checkSources to report, as Go does. */
 export function toSrc(s: Source | undefined, i: number): Src | undefined {
@@ -70,6 +72,9 @@ export function toSrc(s: Source | undefined, i: number): Src | undefined {
         const assets = (s.assets ?? []).map((a) => ({ id: a.id.slice(), amount: a.amount }));
         if (![s.amount, ...assets.map((a) => a.amount)].every(isUint64)) {
             throw new Error("amounts must be uint64");
+        }
+        if (!isSeconds(s.expiry) || !isSeconds(s.createdAt)) {
+            throw new Error("expiry and createdAt must be whole non-negative seconds");
         }
         const tx = parseTx(s.tx);
         if (serializeTx(tx).length !== s.tx.length)
@@ -111,16 +116,15 @@ function isBound(s: Src): boolean {
 
 export function checkSources(sources: readonly (Src | undefined)[], n: number): void {
     if (sources.length !== n) throw fail("ineligible", `${sources.length} sources for ${n} inputs`);
+    const spent = new Set<string>();
     sources.forEach((s, i) => {
         if (!s?.tx) throw fail("ineligible", `source ${i} or its transaction missing`);
         if (!isBound(s)) {
             throw fail("ineligible", `source ${i} is not the output of its transaction`);
         }
-        const same = (o: Src | undefined) =>
-            o?.outpoint.index === s.outpoint.index && equalBytes(o.outpoint.txid, s.outpoint.txid);
-        if (sources.slice(0, i).some(same)) {
-            throw fail("ineligible", `source ${i} repeats an outpoint`);
-        }
+        const key = `${hex.encode(s.outpoint.txid)}:${s.outpoint.index}`;
+        if (spent.has(key)) throw fail("ineligible", `source ${i} repeats an outpoint`);
+        spent.add(key);
     });
 }
 

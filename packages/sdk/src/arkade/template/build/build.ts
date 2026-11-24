@@ -121,7 +121,11 @@ export function buildCoins(
     let paid = charged;
     if (t.type === "onchain") {
         if (!fee.onchain) throw fail("ineligible", "no on-chain fee estimate");
-        paid = fee.onchain(vsize(tx, spends));
+        const estimate: unknown = fee.onchain(vsize(tx, spends));
+        if (typeof estimate !== "bigint" || estimate < 0n) {
+            throw fail("ineligible", `on-chain fee ${String(estimate)} out of range`);
+        }
+        paid = estimate;
         a = allocate(i, d, sources, paid, fee.dust);
         pos.forEach((p, k) => (placed[p] = { ...placed[p], value: BigInt.asIntN(64, a.sats[k]) }));
     }

@@ -186,15 +186,12 @@ export interface Sink {
 export const tokenName = (tok: string) => tok.slice(1, -1).replace(/^!/, "");
 
 export function names(b: ByteTemplate): string[] {
-    const out: string[] = [];
-    const add = (n: string) => {
-        if (!out.includes(n)) out.push(n);
-    };
+    const out = new Set<string>();
     for (const p of b) {
-        if ("name" in p) add(p.name);
-        if ("expr" in p) for (const tok of p.expr) if (tok.startsWith("<")) add(tokenName(tok));
+        if ("name" in p) out.add(p.name);
+        if ("expr" in p) for (const tok of p.expr) if (tok.startsWith("<")) out.add(tokenName(tok));
     }
-    return out;
+    return [...out];
 }
 
 export function literal(b: ByteTemplate): Uint8Array | undefined {

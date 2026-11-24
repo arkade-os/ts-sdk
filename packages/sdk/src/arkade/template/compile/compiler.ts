@@ -33,6 +33,9 @@ export interface Compiler {
     t: Template;
     /** Variables some binding uses. */
     named: Set<string>;
+    /** The slots of the inputs and outputs compiled so far, by name. */
+    inputSlots: Map<string, number>;
+    outputSlots: Map<string, number>;
 }
 
 const HASH_OPS = ["OP_HASH160", "OP_SHA256", "OP_HASH256", "OP_RIPEMD160"];
@@ -53,8 +56,8 @@ export function within<T>(prefix: string, f: () => T): T {
 }
 
 export function inputIndex(c: Compiler, name: string, what: string): number {
-    const i = c.t.inputs.findIndex((x) => x.name === name);
-    if (i < 0) throw bad(`${what} names no input: ${q(name)}`);
+    const i = c.inputSlots.get(name);
+    if (i === undefined) throw bad(`${what} names no input: ${q(name)}`);
     return i;
 }
 

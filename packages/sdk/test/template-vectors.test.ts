@@ -17,6 +17,7 @@ import {
     encodeAdvertisement,
     type PacketSpec,
     records,
+    type Template,
 } from "../src/arkade/template/compile";
 import { decodeDocument } from "../src/arkade/template/document";
 import { Failure, fail, TemplateError, wrap } from "../src/arkade/template/errors";
@@ -207,7 +208,6 @@ describe("decode", () => {
             "invalid_artifact",
         );
         expect(code(new Failure(["ineligible", "unaffordable"], "fee"))).toBe("unaffordable");
-        expect(code(fail("unsupported_artifact_version", "v"))).toBe("internal");
         expect(code(new Error("no sentinel"))).toBe("internal");
         expect(wrap("compile", wrap("build", fail("ineligible", "z"))).stage).toBe("compile");
     });
@@ -827,6 +827,137 @@ describe("compile", () => {
             [1, 60, ["tlv:0"]],
         ]);
         expect(t.triggers[0].require[1]).toEqual({ source: "tlv:2", variable: "a" });
+    });
+
+    it("judges every sequence of up to three packet rules as Go's pairwise loop does", () => {
+        type R = [number, string, string];
+        // packets.go:72-90
+        const go = (rules: R[]): string => {
+            for (let k = 0; k < rules.length; k++) {
+                const x = rules[k];
+                for (const o of rules.slice(0, k).filter((r) => r[0] === x[0])) {
+                    if (o[1] === "emit" && x[1] === "emit")
+                        return `two emit rules for packet type ${x[0]}`;
+                    const [cp, other] = x[1] === "copy" ? [x, o] : [o, x];
+                    const clash =
+                        other[1] === "emit" ||
+                        (other[1] === "copy" && other[2] !== cp[2]) ||
+                        (other[1] === "drop" && other[2] === cp[2]);
+                    if (cp[1] === "copy" && clash) {
+                        return `copy conflicts with another rule for packet type ${x[0]}`;
+                    }
+                }
+            }
+            return "ok";
+        };
+        const one = ["copy", "drop", "emit"].flatMap((a) =>
+            ["counter", "reserve"].map((f): R => [3, a, f]),
+        );
+        const all: R[][] = [];
+        for (let seqs: R[][] = [[]], n = 0; n < 3; n++) {
+            seqs = seqs.flatMap((s) => one.map((r) => [...s, r]));
+            all.push(...seqs);
+        }
+        all.push(
+            [
+                [3, "emit", "counter"],
+                [4, "emit", "counter"],
+            ],
+            [
+                [3, "copy", "counter"],
+                [4, "copy", "reserve"],
+            ],
+        );
+        for (const seq of all) {
+            let got = "ok";
+            try {
+                compiledEdit("counter", (d) => {
+                    d.packets.rules = seq.map(([t, a, f]) =>
+                        rule(t, a, f, a === "emit" ? "01" : undefined),
+                    );
+                });
+            } catch (e) {
+                got = (e as Error).message.replace(/^compile: /, "");
+            }
+            expect([seq, got]).toEqual([seq, go(seq)]);
+        }
+    });
+
+    // A duplicate check that scans every earlier entry, as Go's do, takes seconds to minutes here.
+    describe("finishes a document of up to 1 MiB quickly", () => {
+        const LIMIT = 1 << 20;
+        const nm = (i: number) =>
+            String.fromCharCode(97 + Math.floor(i / 46656)) +
+            (i % 46656).toString(36).padStart(3, "0");
+        const names = (n: number) => Array.from({ length: n }, (_, i) => nm(i));
+        // the most fixed-width distinct names that keep the edited vector under the cap
+        const sized = (name: string, edit: (d: any, names: string[]) => void) => {
+            const doc = (n: number) => edited(name, (d) => edit(d, names(n)));
+            const at1000 = doc(1000).length;
+            const per = (doc(2000).length - at1000) / 1000;
+            const n = 1000 + Math.floor((LIMIT - at1000) / per);
+            const raw = doc(n);
+            expect([raw.length <= LIMIT, raw.length > LIMIT - per]).toEqual([true, true]);
+            return { raw, n };
+        };
+        // ms: over 10x each case's time here, under the scans' 157 s, 102 s, 12 s, 7.4 s and 5.3 s
+        const timed = (bound: number, f: () => unknown) => {
+            const start = performance.now();
+            let outcome: unknown;
+            try {
+                outcome = f();
+            } catch (e) {
+                outcome = e instanceof TemplateError ? `${e.stage}/${e.code}: ${e.message}` : e;
+            }
+            expect(performance.now() - start).toBeLessThan(bound);
+            return outcome;
+        };
+        const def = (d: any) => d.inputs[0].contract.definition;
+
+        it("of sealed names", () => {
+            const { raw, n } = sized("vhtlc-claim", (d, names) => (d.delegation.sealed = names));
+            const d = timed(10_000, () => decodeDocument(raw)) as ReturnType<typeof decodeDocument>;
+            expect(d.template.delegation?.sealed).toHaveLength(n);
+        }, 60_000);
+
+        it("of placeholders", () => {
+            const { raw } = sized("onchain", (d, names) => {
+                d.outputs[0].locking = names.map((x) => `<${x}>`).join("");
+            });
+            const d = decodeDocument(raw);
+            expect(timed(10_000, () => compileDocument(d))).toBe(
+                'compile/invalid_template: compile: undeclared name "a000"',
+            );
+        }, 60_000);
+
+        it("of packet rules", () => {
+            const { raw, n } = sized("counter", (d, names) => {
+                d.packets.rules = names.map(() => rule(3, "drop", "counter"));
+            });
+            const t = timed(6_000, () => compiled(raw, artifactsOf("counter"))) as Template;
+            expect(t.packets?.rules).toHaveLength(n);
+        }, 60_000);
+
+        it("of constructor fields", () => {
+            const { raw } = sized("onchain", (d, names) => {
+                def(d).constructorInputs = names.map((name) => ({ name, type: "int" }));
+            });
+            expect(timed(3_000, () => decodeDocument(raw))).toBe(
+                "decode/invalid_artifact: decode: constructor flattens to more than 1024 fields",
+            );
+        }, 60_000);
+
+        it("of leaves", () => {
+            const { raw, n } = sized("onchain", (d, names) => {
+                def(d).functions[0].leaves = names.map((name) => ({
+                    name,
+                    asm: ["OP_1"],
+                    witness: [],
+                }));
+            });
+            const d = timed(3_000, () => decodeDocument(raw)) as ReturnType<typeof decodeDocument>;
+            expect(def(d.template).def.functions[0].leaves).toHaveLength(n);
+        }, 60_000);
     });
 });
 

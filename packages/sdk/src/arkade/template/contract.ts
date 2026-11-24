@@ -2,9 +2,8 @@ import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 
 import { TapTreeCoder, VtxoScript, type TapLeafScript } from "../../script/base";
-import { decodeTapscript } from "../../script/tapscript";
-import { ARKADE_OPS, ArkadeScript } from "../script";
 import { computeArkadeScriptPublicKey } from "../tweak";
+import { decodeClosure } from "../vm/closures";
 import { type Definition, flatten } from "./abi";
 import { assemble, type Lookup, type Value } from "./asm";
 import { fail } from "./errors";
@@ -27,7 +26,6 @@ export interface Contract {
 
 const MAX_TAPTREE_BYTES = 8 << 10;
 const MAX_LEAVES = 400;
-const MAX_SCRIPT_SIZE = 10_000;
 const utf8 = new TextEncoder();
 const bytes32 = (raw: Uint8Array): Value => ({ type: "bytes32", raw });
 
@@ -148,35 +146,11 @@ function decodeTaptree(raw: Uint8Array): Uint8Array[] {
     if (scripts.length === 0) throw badTree("no leaf");
     if (scripts.length > MAX_LEAVES) throw badTree(`more than ${MAX_LEAVES} leaves`);
     for (const s of scripts) {
-        if (s.length > MAX_SCRIPT_SIZE) throw badTree(`script of ${s.length} bytes`);
-        if (hasOpSuccess(s)) throw badTree("script contains forbidden OP_SUCCESS opcode");
         try {
-            decodeTapscript(s);
+            decodeClosure(s);
         } catch (e) {
             throw badTree((e as Error).message);
         }
     }
     return scripts;
-}
-
-// BIP-342's OP_SUCCESSx; scure decodes several of them (OP_CAT, OP_RESERVED) as ordinary opcodes.
-function hasOpSuccess(script: Uint8Array): boolean {
-    const success = (op: number) =>
-        op === 80 ||
-        op === 98 ||
-        (op >= 126 && op <= 129) ||
-        (op >= 131 && op <= 134) ||
-        op === 137 ||
-        op === 138 ||
-        op === 141 ||
-        op === 142 ||
-        (op >= 149 && op <= 153) ||
-        (op >= 187 && op <= 254);
-    try {
-        return ArkadeScript.decode(script).some(
-            (op) => typeof op === "string" && success(ARKADE_OPS[op as keyof typeof ARKADE_OPS]),
-        );
-    } catch {
-        return true;
-    }
 }

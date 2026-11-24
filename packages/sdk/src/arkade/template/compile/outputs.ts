@@ -14,8 +14,7 @@ import {
 } from "./model";
 
 // Assets compare as written; two spellings of one id are caught when routed.
-const sameAsset = (r: AssetRoute, x: AssetRoute) =>
-    r.from === x.from && r.issue === x.issue && r.spec === x.spec;
+const assetKey = (r: AssetRoute) => JSON.stringify([r.from, r.issue, r.spec]);
 
 export function issues(c: Compiler): void {
     const given = c.doc.issues ?? [];
@@ -67,7 +66,7 @@ export function route(c: Compiler, s: schema.AssetRoute): AssetRoute {
 }
 
 export function output(c: Compiler, s: schema.Output): void {
-    if (c.t.outputs.some((x) => x.name === s.name)) throw bad(`duplicate output ${q(s.name)}`);
+    if (c.outputSlots.has(s.name)) throw bad(`duplicate output ${q(s.name)}`);
     let index = c.t.outputs.length;
     if (s.index !== undefined) {
         if (s.index > 0xffff) throw bad(`output ${q(s.name)} index out of range`);
@@ -75,11 +74,11 @@ export function output(c: Compiler, s: schema.Output): void {
     }
     const onchain = slotType(c, s.type);
     const draws: Draw[] = [];
+    const drawn = new Set<number>();
     for (const sd of s.value.draws) {
         const from = inputIndex(c, sd.from, "value");
-        if (draws.some((x) => x.from === from)) {
-            throw bad(`output ${q(s.name)} draws from input ${q(sd.from)} twice`);
-        }
+        if (drawn.has(from)) throw bad(`output ${q(s.name)} draws from input ${q(sd.from)} twice`);
+        drawn.add(from);
         draws.push(sd.amount === undefined ? { from } : { from, amount: amount(c, sd.amount) });
     }
     const o: Output = {
@@ -95,11 +94,13 @@ export function output(c: Compiler, s: schema.Output): void {
     };
     if ((s.assets?.length ?? 0) > 0 && onchain)
         throw bad(`output ${q(o.name)} cannot carry assets`);
+    const routed = new Set<string>();
     for (const sr of s.assets ?? []) {
         const r = route(c, sr);
-        if (o.assets.some((x) => sameAsset(r, x))) {
+        if (routed.has(assetKey(r))) {
             throw bad(`output ${q(o.name)} routes an asset of an input twice`);
         }
+        routed.add(assetKey(r));
         o.assets.push(r);
     }
     if (s.each !== undefined) {
@@ -110,6 +111,7 @@ export function output(c: Compiler, s: schema.Output): void {
             );
         }
     }
+    c.outputSlots.set(o.name, c.t.outputs.length);
     c.t.outputs.push(o);
 }
 
@@ -143,24 +145,25 @@ export function checkPrograms({ t }: Compiler): void {
 }
 
 export function checkBalances({ t }: Compiler): void {
+    const counts = t.inputs.map(() => 0);
+    for (const o of t.outputs)
+        for (const d of o.draws) if (d.amount === undefined) counts[d.from]++;
     t.inputs.forEach((input, i) => {
-        const n = t.outputs
-            .flatMap((o) => o.draws)
-            .filter((d) => d.from === i && d.amount === undefined).length;
+        const n = counts[i];
         if (n !== 1) throw bad(`input ${q(input.name)} needs exactly one remainder draw, has ${n}`);
     });
-    const remainders: AssetRoute[] = [];
+    const remainders = new Set<string>();
     const routed = t.issues.map(() => false);
     for (const s of sinks(t)) {
         for (const r of s.routes) {
             if (r.issue >= 0) routed[r.issue] = true;
             if (r.amount !== undefined) continue;
-            if (remainders.some((x) => sameAsset(r, x))) {
+            if (remainders.has(assetKey(r))) {
                 throw bad(
                     `input ${q(t.inputs[r.from].name)} has two remainder routes for one asset`,
                 );
             }
-            remainders.push(r);
+            remainders.add(assetKey(r));
         }
     }
     const k = routed.indexOf(false);
