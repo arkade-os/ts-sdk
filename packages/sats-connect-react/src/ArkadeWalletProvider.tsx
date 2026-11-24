@@ -89,14 +89,24 @@ const outcomeIn = (client: SwapClient, swapId: string, ends: readonly Outcome[])
         if (done) off();
     });
 
+/** `work`'s result, or `undefined` once `closed` settles first; a later rejection is dropped. */
+const untilClosed = <T,>(work: Promise<T>, closed: Promise<void>): Promise<T | undefined> => {
+    work.catch(() => {});
+    return Promise.race([work, closed.then(() => undefined)]);
+};
+
 /** The swap's first outcome in `ends`, or `undefined` once `closed` settles first. */
 export const outcomeUntil = (
     client: SwapClient,
     swapId: string,
     ends: readonly Outcome[],
     closed: Promise<void>,
-): Promise<Outcome | undefined> =>
-    Promise.race([outcomeIn(client, swapId, ends), closed.then(() => undefined)]);
+): Promise<Outcome | undefined> => untilClosed(outcomeIn(client, swapId, ends), closed);
+
+const stoppedFollowing = () =>
+    new Error(
+        "Stopped following this Lightning payment: the wallet disconnected. Reconnect to see how it ended.",
+    );
 
 /** Reports how a receive ends, unless the session that issued it has closed since. */
 export const followReceive = (
@@ -142,11 +152,15 @@ export function ArkadeWalletProvider<TNetwork extends string>({
     const [error, setError] = useState<string | null>(null);
     const [currentNetwork, setCurrentNetwork] = useState<TNetwork>(defaultNetwork);
     const lightningRef = useRef<LightningSession | null>(null);
+    // The published wrapper, which a teardown resets even before React has re-rendered.
+    const arkWalletRef = useRef<ArkadeWallet | null>(null);
     // A connect publishes only while it is the newest; disconnect and network switch bump it too.
     const connectAttempt = useRef(0);
     // Only the newest balance read publishes; a disconnect drops any read still in flight.
     const balanceRead = useRef(0);
     const autoConnectTried = useRef(false);
+    // A flag rather than an attempt bump: StrictMode's rehearsal unmount must not cancel a connect.
+    const mounted = useRef(false);
 
     const closeLightning = useCallback(() => {
         const session = lightningRef.current;
@@ -155,7 +169,13 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         void session?.client[Symbol.asyncDispose]();
     }, []);
 
-    useEffect(() => closeLightning, [closeLightning]);
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+            closeLightning();
+        };
+    }, [closeLightning]);
 
     const currentNetworkConfig = useMemo(
         () => networks[currentNetwork],
@@ -177,7 +197,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         async (options?: { silent?: boolean }) => {
             const silent = options?.silent ?? false;
             const attempt = ++connectAttempt.current;
-            const current = () => attempt === connectAttempt.current;
+            const current = () => mounted.current && attempt === connectAttempt.current;
             setIsConnecting(true);
             if (!silent) {
                 setError(null);
@@ -224,6 +244,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                     });
                 }
 
+                arkWalletRef.current = arkWalletInstance;
                 setArkWallet(arkWalletInstance);
                 setWallet(walletInstance);
                 setWalletInfo({
@@ -250,6 +271,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                     setError(err.message || "Failed to connect wallet");
                 }
                 closeLightning();
+                arkWalletRef.current = null;
                 setArkWallet(null);
                 setWallet(null);
                 setWalletInfo(null);
@@ -265,7 +287,8 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         connectAttempt.current++;
         balanceRead.current++;
         closeLightning();
-        arkWallet?.reset();
+        arkWalletRef.current?.reset();
+        arkWalletRef.current = null;
         setArkWallet(null);
         setWallet(null);
         setWalletInfo(null);
@@ -276,7 +299,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         if (typeof window !== "undefined") {
             window.localStorage.removeItem(autoConnectKey);
         }
-    }, [arkWallet, autoConnectKey, closeLightning]);
+    }, [autoConnectKey, closeLightning]);
 
     useEffect(() => {
         if (typeof window === "undefined") {
@@ -349,14 +372,17 @@ export function ArkadeWalletProvider<TNetwork extends string>({
             throw new Error("Wallet not connected");
         }
 
+        const attempt = connectAttempt.current;
         setIsLoading(true);
         setError(null);
 
         try {
             const history = await wallet.getTransactionHistory();
-            setTransactions(history.map(toTransaction));
+            if (attempt === connectAttempt.current) setTransactions(history.map(toTransaction));
         } catch (err: any) {
-            setError(err.message || "Failed to fetch transaction history");
+            if (attempt === connectAttempt.current) {
+                setError(err.message || "Failed to fetch transaction history");
+            }
             throw err;
         } finally {
             setIsLoading(false);
@@ -385,20 +411,21 @@ export function ArkadeWalletProvider<TNetwork extends string>({
             setError(null);
 
             try {
-                const result = await client.pay(invoice);
+                const result = await untilClosed(client.pay(invoice), closed);
+                if (result === undefined) throw stoppedFollowing();
                 if (result.kind !== "swap") {
                     throw new Error("Not a Lightning invoice");
                 }
                 const outcome = await outcomeUntil(client, result.swap.id, PAY_ENDS, closed);
-                if (outcome === undefined) {
-                    throw new Error(
-                        "Stopped following this Lightning payment: the wallet disconnected. Reconnect to see how it ended.",
-                    );
-                }
+                if (outcome === undefined) throw stoppedFollowing();
                 if (outcome !== "paid") {
                     throw new Error(`Lightning payment ${outcome}`);
                 }
-                const record = await repository.getSwapRecord(quoteIdOfSwapId(result.swap.id));
+                // Paid: an unreadable record must not read as a failure the caller retries, so the
+                // preimage is "" then, as when the record holds none.
+                const record = await repository
+                    .getSwapRecord(quoteIdOfSwapId(result.swap.id))
+                    .catch(() => undefined);
 
                 if (arkWallet) {
                     await refreshAfter(() => fetchBalance(arkWallet), setError);
@@ -406,8 +433,10 @@ export function ArkadeWalletProvider<TNetwork extends string>({
 
                 return record?.family === "rfq" ? (record.settlementPreimageHex ?? "") : "";
             } catch (err: any) {
-                setError(err.message || "Failed to pay Lightning invoice");
-                throw err;
+                // A disposal racing the close can surface as the client's own error.
+                const error = lightningRef.current?.client === client ? err : stoppedFollowing();
+                setError(error.message || "Failed to pay Lightning invoice");
+                throw error;
             } finally {
                 setIsLoading(false);
             }
@@ -475,12 +504,10 @@ export function ArkadeWalletProvider<TNetwork extends string>({
     const switchNetwork = useCallback(
         async (network: TNetwork) => {
             setCurrentNetwork(network);
-
-            if (wallet || isConnecting) {
-                disconnectWallet();
-            }
+            // Unconditionally: `wallet` and `isConnecting` may predate a connect started this tick.
+            disconnectWallet();
         },
-        [wallet, isConnecting, disconnectWallet],
+        [disconnectWallet],
     );
 
     const value = useMemo<ArkadeWalletContextType<TNetwork>>(

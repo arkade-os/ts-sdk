@@ -231,9 +231,13 @@ style and have not been backfilled.
   `settled`, `preconfirmed` and `recoverable` keep the SDK's meaning. History shows
   outgoing transactions as sends, keeps the SDK's millisecond timestamps and puts
   boarding and exit rows onchain. A send, a paid invoice or an onboarding resolves with
-  its result even if the balance refresh after it fails. A disconnect or network switch
-  cancels a connect still in progress and ends a pending payment wait without calling it
-  failed. A declined auto-connect is not retried until the provider mounts again.
+  its result even if the balance refresh after it fails. A paid invoice resolves with an
+  empty preimage when the swap record cannot be read back. A disconnect, a network switch
+  or an unmount cancels a connect still in progress, even one started in the same tick,
+  and ends a pending payment, including one still being funded, as "stopped following"
+  rather than failed; the swap stays stored. History read for a connection that has since
+  been replaced is dropped. A declined auto-connect is not retried until the provider
+  mounts again.
 
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
