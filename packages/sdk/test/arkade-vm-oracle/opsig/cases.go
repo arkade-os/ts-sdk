@@ -699,7 +699,7 @@ func sigCases() {
 	cov("checksig/schnorr-key-ecdsa-sig", "d", 0, sc(pkS(), CS), ecdsaK1(kS, dg(0, 0, nil), false))
 	cov("checksig/input-1", "d", 1, sc(pkS(), CS), schnorrSig(kS, dg(1, 0, nil)))
 	cov("checksig/input-1-with-input-0-sig", "d", 1, sc(pkS(), CS), def)
-	cov("checksig/single-at-last-output", "d", 2, sc(pkS(), CS), append(schnorrSig(kS, dg(2, 3, nil)), 3))
+	cov("checksig/single-at-last-output", "few", 0, sc(pkS(), CS), append(schnorrSig(kS, mustSighash(worlds["few"], 0, defaultLeaf, 3, nil)), 3))
 	fewDefault := schnorrSig(kS, mustSighash(worlds["few"], 2, defaultLeaf, 0, nil))
 	cov("checksig/single-without-output-nullfail", "few", 2, sc(pkS(), CS), append(append([]byte{}, fewDefault...), 3))
 	cov("checksig/few-default", "few", 2, sc(pkS(), CS), fewDefault)
@@ -730,10 +730,11 @@ func sigCases() {
 	sep := byte(txscript.OP_CODESEPARATOR)
 	cov("codesep/first-opcode", "d", 0, sc(sep, cpos(0), pkS(), CS))
 	cov("codesep/after-one-push", "d", 0, sc(cpos(1), sep, pkS(), CS))
-	cov("codesep/after-pushes-position-2", "d", 0, sc([]byte{0xaa, 0xbb}, []byte{0xcc, 0xdd}, sep, cpos(2), pkS(), CS))
-	cov("codesep/byte-offset-is-wrong", "d", 0, sc([]byte{0xaa, 0xbb}, []byte{0xcc, 0xdd}, sep, cpos(6), pkS(), CS))
+	drop2, drop := byte(txscript.OP_2DROP), byte(txscript.OP_DROP)
+	cov("codesep/after-pushes-position-2", "d", 0, sc([]byte{0xaa, 0xbb}, []byte{0xcc, 0xdd}, sep, drop2, cpos(2), pkS(), CS))
+	cov("codesep/byte-offset-is-wrong", "d", 0, sc([]byte{0xaa, 0xbb}, []byte{0xcc, 0xdd}, sep, drop2, cpos(6), pkS(), CS))
 	cov("codesep/blank-is-wrong", "d", 0, sc([]byte{0xaa, 0xbb}, sep, schnorrSig(kS, dg(0, 0, nil)), pkS(), CS))
-	cov("codesep/last-one-wins", "d", 0, sc(sep, []byte{0xaa, 0xbb}, sep, cpos(2), pkS(), CS))
+	cov("codesep/last-one-wins", "d", 0, sc(sep, []byte{0xaa, 0xbb}, sep, drop, cpos(2), pkS(), CS))
 	cov("codesep/sighash-after-separator", "d", 0, sc(sep, 1, byte(A.OP_SIGHASH)))
 
 	// OP_SIGHASH pushes the digest CHECKSIG verifies

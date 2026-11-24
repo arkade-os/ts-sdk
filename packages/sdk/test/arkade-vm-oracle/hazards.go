@@ -95,14 +95,14 @@ var hazards = map[string]string{
 	"3.12/extension":                  "zero-packet and duplicate-type extensions rejected, first extension output only",
 	"3.12/inspectinputpacket":         "index popped first, missing previous tx is an error",
 	"3.12/inspectpacket":              "re-serialised content and a flag, malformed extension is an error",
-	"3.12/intent":                     "gjson queries: path grammar, number rules, verbatim objects, miss vs null",
+	"3.12/intent":                     "gjson queries: path grammar, number rules, verbatim objects, explicit null reads as a miss",
 	"3.12/tunnel":                     "pop order, depth guard, flag subset, assets compared exactly",
 	"3.13/discouraged-nops":           "NOP1, NOP5-10 fail; only OP_NOP succeeds",
 	"3.13/no-op-success":              "unknown opcodes fail, there is no OP_SUCCESS",
 	"3.13/nop4-is-merkle":             "0xb3 is OP_MERKLEBRANCHROOT",
 	"3.13/reenabled":                  "CAT and the other disabled-in-Bitcoin opcodes are live",
 	"3.13/reserved-codes":             "reserved and invalid slots fail with ErrReservedOpcode when executed",
-	"3.13/return-fails":               "OP_RETURN always fails",
+	"3.13/return-fails":               "OP_RETURN fails when executed; a dead branch skips it",
 	"3.13/verif-dead-branch":          "VERIF/VERNOTIF fail even in a dead branch",
 }
 

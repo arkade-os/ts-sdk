@@ -90,6 +90,13 @@ func coverageCases(b *book, fam string) {
 		if s.length > 1 {
 			token = append([]byte{byte(op)}, rep(0x5a, s.length-1)...)
 		}
+		// the shortest minimal push of each, so the count limit and not ErrMinimalData decides
+		switch op {
+		case txscript.OP_PUSHDATA1:
+			token = append([]byte{byte(op), 76}, rep(0x5a, 76)...)
+		case txscript.OP_PUSHDATA2:
+			token = append([]byte{byte(op), 0, 1}, rep(0x5a, 256)...)
+		}
 		if op == txscript.OP_PUSHDATA4 {
 			b.ex("coverage/OP_PUSHDATA4/dead-branch", op, "2.9/order",
 				sc(byte(txscript.OP_0), byte(txscript.OP_IF), raw{txscript.OP_PUSHDATA4, 1, 0, 0, 0, 7},

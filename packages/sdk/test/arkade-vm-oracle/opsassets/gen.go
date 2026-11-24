@@ -268,6 +268,26 @@ func maskCheck(w *world, m *wire.TxOut, idx int) string {
 		}
 		return "fail-open-raw"
 	}
+	// digest(sub) masks m again, so it only proves m once m is itself witness-free
+	ext, err := extension.NewExtensionFromBytes(m.PkScript)
+	if err != nil {
+		panic(w.name + ": replica mask does not parse: " + err.Error())
+	}
+	for _, p := range ext {
+		u, ok := p.(extension.UnknownPacket)
+		if !ok || p.Type() != arkade.PacketType {
+			continue
+		}
+		ip, err := arkade.DeserializeEmulatorPacket(u.Data)
+		if err != nil {
+			panic(w.name + ": replica emulator packet does not parse: " + err.Error())
+		}
+		for _, e := range ip {
+			if len(e.Witness) > 0 {
+				panic(w.name + ": replica kept a witness")
+			}
+		}
+	}
 	sub := w.tx.Copy()
 	sub.TxOut[idx] = m
 	if !bytes.Equal(d0, digest(sub, f)) || !bytes.Equal(d0, dj) {
@@ -317,8 +337,8 @@ func Generate(w io.Writer) {
 			co["packets"] = c.inject.name
 		}
 		if c.message != nil {
-			if len(c.template) > 2000 {
-				co["message_nesting"] = strings.Count(c.template, "[")
+			if n := strings.Count(c.template, "["); n > 0 && c.template == strings.Repeat("[", n)+strings.Repeat("]", n) {
+				co["message_nesting"] = n
 			} else {
 				co["message"] = c.template
 			}

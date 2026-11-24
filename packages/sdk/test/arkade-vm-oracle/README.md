@@ -28,7 +28,7 @@ Two runs are byte-identical. The run reads the emulator module from the Go modul
 copying the package to a temporary directory and running `go test` there. Inputs kept here:
 `testdata/ops-core-cases.txt` (a token DSL, documented in its first line) and
 `testdata/executor-v1-af8d9eb.json`, refreshed from the executor's template vectors with
-`GOTOOLCHAIN=go1.27.3 go run . -extract-executor ../fixtures/template-v1`.
+`GOTOOLCHAIN=go1.27.3 go run . -extract-executor <executor>/pkg/template/testdata/vectors/v1`.
 
 ## CI
 

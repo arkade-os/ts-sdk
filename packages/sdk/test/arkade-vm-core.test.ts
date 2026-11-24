@@ -1,7 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { concatBytes } from "@noble/hashes/utils.js";
 import { hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
 import { tapLeafHash as scureTapLeafHash } from "@scure/btc-signer/payment.js";
 import { describe, expect, it } from "vitest";
 import { getOpcodeName, OPCODE_VALUES } from "../src/arkade/opcodes";
@@ -61,6 +60,7 @@ import {
     tapLeafHash,
     vmTxFromTransaction,
 } from "../src/arkade/vm/tx";
+import { Transaction } from "../src/utils/transaction";
 import limitsDump from "./fixtures/arkade-vm/compute_limits.json";
 import opcodesDump from "./fixtures/arkade-vm/opcodes.json";
 
@@ -775,7 +775,7 @@ describe("tx", () => {
         expect(spending.inputs[0].txid).toEqual(txid(parseTx(h(ONCHAIN_SOURCE.tx))));
     });
 
-    it("adapts a scure Transaction through its unsigned tx", () => {
+    it("adapts a Transaction through its unsigned tx", () => {
         const psbt = Transaction.fromPSBT(h(ONCHAIN_PSBT));
         expect(vmTxFromTransaction(psbt)).toEqual(parseTx(h(ONCHAIN_UNSIGNED)));
     });
@@ -866,5 +866,48 @@ describe("tx", () => {
         expect(f.fetchVtxoPrevOutPkScript(PREV2)).toBeUndefined();
         expect(f.fetchPrevOutArkTx(PREV2)).toBe(arkTx);
         expect(f.fetchPrevOutput(PREV)).toBeUndefined();
+    });
+});
+
+describe("Node Buffer inputs", () => {
+    // Buffer.slice is a view, so an op that copies with slice() and mutates would change its source
+    // (pushes from a Buffer script are such views; setStack copies its input, so it cannot seed one)
+    const run = (script: string) => {
+        const vm = engineFor(Buffer.from(script, "hex"));
+        for (let done = false; !done; ) done = vm.step();
+        return vm.getStack().map((e) => hex.encode(e));
+    };
+
+    it("OP_BIN2NUM leaves its Buffer operand untouched", () => {
+        expect(run("02808076d887")).toEqual(["01"]);
+    });
+
+    it("OP_REVERSEBYTES leaves its Buffer operand untouched", () => {
+        expect(run("02010276d987")).toEqual([""]);
+    });
+
+    it("stacks go in and out as copies, never as views of a caller's Buffer", () => {
+        for (const [set, get] of [
+            ["setStack", "getStack"],
+            ["setAltStack", "getAltStack"],
+        ] as const) {
+            const seed = Buffer.from([1, 2]);
+            const vm = engineFor(h("51"));
+            vm[set]([seed]);
+            seed[0] = 9;
+            expect(hex.encode(vm[get]()[0])).toBe("0102");
+        }
+        const txid = Buffer.from(PREV.txid);
+        const tx: VmTx = { ...TX, inputs: [{ ...TX.inputs[0], txid }] };
+        const opts = { tx, inputIndex: 0, inputAmount: 0n, fetcher: FETCHER, now: 0n };
+        const out = evalExpression({ ...opts, script: h("00c775") });
+        out[0] ^= 0xff;
+        expect(txid).toEqual(Buffer.from(PREV.txid));
+    });
+
+    it("parseTx reads a pooled Buffer, whose view starts past its ArrayBuffer's start", () => {
+        const raw = Buffer.from(COUNTER_SOURCE.tx, "hex");
+        expect(raw.byteOffset).toBeGreaterThan(0);
+        expect(parseTx(raw)).toEqual(parseTx(h(COUNTER_SOURCE.tx)));
     });
 });

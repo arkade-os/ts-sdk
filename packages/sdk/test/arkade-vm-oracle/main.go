@@ -2,7 +2,7 @@
 // port of the emulator's script VM.
 //
 //	cd packages/sdk/test/arkade-vm-oracle && GOTOOLCHAIN=go1.27.3 go run . -out ../fixtures/arkade-vm/
-//	GOTOOLCHAIN=go1.27.3 go run . -extract-executor ../fixtures/template-v1  # refreshes testdata/
+//	GOTOOLCHAIN=go1.27.3 go run . -extract-executor <executor>/pkg/template/testdata/vectors/v1  # refreshes testdata/
 package main
 
 import (

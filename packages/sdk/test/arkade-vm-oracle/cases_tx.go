@@ -372,6 +372,11 @@ func ecHand() []*Case {
 	pr("p-and-minus-p-true", "3.7/pairing", append(append(pair(&bx, &by), pair(&bx, negY)...), 2, 2)...)
 	pr("zero-pairs", "3.7/pairing", 0, 2)
 	pr("seventeen-pairs", "3.7/pairing", 17, 2)
+	var seventeen []any
+	for range 17 {
+		seventeen = append(seventeen, pair(&bx, &by)...)
+	}
+	pr("seventeen-complete-pairs", "3.7/pairing", append(seventeen, 17, 2)...)
 	pr("not-bn254", "3.7/pairing", append(pair(&bx, &by), 1, 0)...)
 	pr("c0-c1-swapped", "3.7/pairing", &bx, &by, &x0, &x1, &y0, &y1, 1, 2)
 	pr("too-few-items", "3.7/pairing", &bx, &by, 1, 2)

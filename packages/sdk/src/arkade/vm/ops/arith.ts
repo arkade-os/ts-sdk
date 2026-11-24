@@ -98,7 +98,7 @@ export const arithHandlers: FamilyHandlers<"arith"> = {
         vm.dstack.pushByteArray(minimallyEncode(b));
     },
     OP_REVERSEBYTES: (_op, _data, vm) =>
-        vm.dstack.pushByteArray(vm.dstack.popByteArray().slice().reverse()),
+        vm.dstack.pushByteArray(Uint8Array.from(vm.dstack.popByteArray()).reverse()),
     // the byte cap is checked before BigNum.modexp's sign checks, so it wins over them
     OP_MODEXP: (_op, _data, vm) => {
         const modulus = vm.dstack.popBigNum();

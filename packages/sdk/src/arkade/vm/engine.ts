@@ -301,20 +301,20 @@ export class Engine {
     }
 
     getStack(): Uint8Array[] {
-        return this.dstack.stk.map((item) => item.slice());
+        return this.dstack.stk.map((item) => Uint8Array.from(item));
     }
 
     /** No element-size check, as in Go: witness items over 520 bytes enter the stack. */
     setStack(data: readonly Uint8Array[]): void {
-        this.dstack.stk = data.map((item) => item.slice());
+        this.dstack.stk = data.map((item) => Uint8Array.from(item));
     }
 
     getAltStack(): Uint8Array[] {
-        return this.astack.stk.map((item) => item.slice());
+        return this.astack.stk.map((item) => Uint8Array.from(item));
     }
 
     setAltStack(data: readonly Uint8Array[]): void {
-        this.astack.stk = data.map((item) => item.slice());
+        this.astack.stk = data.map((item) => Uint8Array.from(item));
     }
 
     txID(): Uint8Array {

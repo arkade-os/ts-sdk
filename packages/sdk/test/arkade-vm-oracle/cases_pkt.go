@@ -85,6 +85,13 @@ func assetHand() []*Case {
 			ex("group-"+ks+"-source-"+itoa(src), OP_INSPECTASSETGROUPSUM, "3.11/sum-bigint", k, src)
 		}
 	}
+	over := assetWorld("assets-sum-over-uint64", assetPacket(asset.AssetGroup{
+		AssetId: assetID("asset-d", 1),
+		Inputs:  []asset.AssetInput{local(0, math.MaxUint64), local(1, 1)},
+		Outputs: []asset.AssetOutput{out(0, 1)},
+	}))
+	b.ex("asset/OP_INSPECTASSETGROUPSUM/sum-over-uint64", OP_INSPECTASSETGROUPSUM, "3.11/sum-bigint",
+		sc(0, 0, o(OP_INSPECTASSETGROUPSUM)), inW(over), pk())
 	for _, j := range []int{0, 1, 2} {
 		for src := 0; src <= 2; src++ {
 			ex("group-1-item-"+itoa(j)+"-source-"+itoa(src), OP_INSPECTASSETGROUP, "3.11/variable-pushes", 1, j, src)
@@ -114,11 +121,18 @@ func assetHand() []*Case {
 	ex("hit", OP_INSPECTINASSETLOOKUP, "3.11/lookup-flag", 0, a[:], 3)
 	ex("intent-input-counts-by-vin", OP_INSPECTINASSETLOOKUP, "3.11/lookup-flag", 0, idBytes("asset-b"), 0)
 	ex("bad-gidx", OP_INSPECTINASSETLOOKUP, "3.11/pop-orders", 0, a[:], -1)
+	// the lookups get their hit's operands: read as an empty packet, a missing one would then miss, not fail
+	lookups := map[int][]any{OP_FINDASSETGROUPBYASSETID: {a[:], 3}, OP_INSPECTOUTASSETLOOKUP: {1, a[:], 3},
+		OP_INSPECTINASSETLOOKUP: {0, a[:], 3}}
 	for _, op := range []int{OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_FINDASSETGROUPBYASSETID,
 		OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPSUM,
 		OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTINASSETCOUNT,
 		OP_INSPECTINASSETAT, OP_INSPECTINASSETLOOKUP} {
-		b.ex("asset/"+slots[op].name+"/no-packet", op, "3.11/no-packet", sc(1, 1, 1, o(op)))
+		parts, ok := lookups[op]
+		if !ok {
+			parts = []any{1, 1, 1}
+		}
+		b.ex("asset/"+slots[op].name+"/no-packet", op, "3.11/no-packet", sc(append(parts, o(op))...))
 	}
 	b.cov("asset/covenant/reads-packet-from-tx", OP_INSPECTNUMASSETGROUPS, "3.11/resolve-asset-id", sc(o(OP_INSPECTNUMASSETGROUPS), 5, o(OP_NUMEQUAL)), nil, inW(w))
 	return b.cases
@@ -198,7 +212,8 @@ func packetHand() []*Case {
 	emu("trailing-bytes", append(append([]byte{1}, entry(0, []byte{OP_1}, nil)...), 0))
 	emu("count-1001", []byte{0xfd, 0xe9, 0x03})
 	emu("witness-not-a-stack", append([]byte{1}, entry(0, []byte{OP_1}, []byte{5, 1})...))
-	emu("script-length-10001", append([]byte{1, 0, 0, 0xfd, 0x11, 0x27}, rep(OP_NOP, 10001)...))
+	// the trailing zero witness length makes the entry complete, so only the length cap can refuse it
+	emu("script-length-10001", append(append([]byte{1, 0, 0, 0xfd, 0x11, 0x27}, rep(OP_NOP, 10001)...), 0))
 	b.cov("packet/extension/malformed-refused-by-execute", "", "3.8/output-masking", sc(o(OP_1)), nil, inW(malformed))
 	return b.cases
 }
@@ -265,6 +280,7 @@ func intentHand() []*Case {
 	q("top-level-array", "3.12/intent", `[10,20]`, "1")
 	q("duplicate-key-first-wins", "3.12/intent", `{"a":1,"a":2}`, "a")
 	q("duplicate-key-nested", "3.12/intent", `{"o":{"b":1,"b":2}}`, "o.b")
+	q("duplicate-key-after-huge-number", "3.12/intent", `{"large":1e1300,"a":1,"a":2}`, "a")
 	q("malformed-json-tolerated", "3.12/intent", `{"a":1,`, "a")
 	q("trailing-garbage", "3.12/intent", `{"a":1}x`, "a")
 	q("escaped-key", "3.12/intent", `{"\u0061":5}`, "a")
@@ -319,6 +335,8 @@ func simplePath(path string) bool {
 
 func hasDuplicateKey(message string) bool {
 	dec := json.NewDecoder(strings.NewReader(message))
+	// a number float64 cannot hold (1e1300) would otherwise end the scan before a later duplicate
+	dec.UseNumber()
 	type frame struct {
 		object  bool
 		keys    map[string]bool

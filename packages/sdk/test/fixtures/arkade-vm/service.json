@@ -662,7 +662,7 @@
                 "ok": false,
                 "code": "ErrEvalFalse",
                 "kind": null,
-                "stage": "step",
+                "stage": "final",
                 "failed_op": "OP_0",
                 "error_contains": "failed to execute arkade script"
             }
@@ -682,7 +682,7 @@
                 "code": null,
                 "kind": null,
                 "stage": "service",
-                "error_contains": "not found"
+                "error_contains": "vtxo 16e1e7521827698b4372ff2894faedf1d35377c3ddd4cc4c7feaca230d321f7d:0 not found"
             }
         },
         {
@@ -937,7 +937,7 @@
                 "ok": false,
                 "code": "ErrEvalFalse",
                 "kind": null,
-                "stage": "step",
+                "stage": "final",
                 "failed_op": "OP_0",
                 "error_contains": "input 1: failed to execute arkade script"
             }
@@ -954,7 +954,7 @@
                 "ok": false,
                 "code": "ErrEvalFalse",
                 "kind": null,
-                "stage": "step",
+                "stage": "final",
                 "failed_op": "OP_EQUAL",
                 "error_contains": "input 1: failed to execute arkade script"
             }
@@ -972,7 +972,7 @@
                 "code": null,
                 "kind": null,
                 "stage": "service",
-                "error_contains": "not found"
+                "error_contains": "vtxo 4992703845a436fa30f6355449e183c8468b1a5fa9dc8b03279a50253ee18b37:0 not found"
             }
         },
         {
@@ -1244,7 +1244,7 @@
                 "ok": false,
                 "code": "ErrEvalFalse",
                 "kind": null,
-                "stage": "step",
+                "stage": "final",
                 "failed_op": "OP_0",
                 "error_contains": "failed to execute arkade script"
             }
