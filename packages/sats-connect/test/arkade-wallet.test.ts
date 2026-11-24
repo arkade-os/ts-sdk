@@ -112,6 +112,22 @@ describe("ArkadeWallet", () => {
         expect(second.dispose).not.toHaveBeenCalled();
     });
 
+    it("keeps the connected wallet when a second connect fails", async () => {
+        const request = vi
+            .fn(async (_method: string): Promise<unknown> => APPROVED)
+            .mockResolvedValueOnce(APPROVED)
+            .mockResolvedValueOnce({ status: "error", error: { message: "User declined" } });
+        const arkWallet = new ArkadeWallet(configWith(request));
+        await arkWallet.connect();
+        const first = arkWallet.getWallet() as unknown as ReturnType<typeof fakeWallet>;
+
+        await expect(arkWallet.connect()).rejects.toThrow("User declined");
+
+        expect(arkWallet.getWallet()).toBe(first);
+        expect(first.dispose).not.toHaveBeenCalled();
+        await expect(arkWallet.sendBitcoin(ARK_ADDRESS, 1000)).resolves.toBe("txid");
+    });
+
     it("refuses fractional and unsafe amounts, and sends a whole one unchanged", async () => {
         const arkWallet = new ArkadeWallet(configWith(vi.fn(async () => APPROVED)));
         await arkWallet.connect();

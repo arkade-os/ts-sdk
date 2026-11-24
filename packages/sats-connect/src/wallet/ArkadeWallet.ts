@@ -164,7 +164,8 @@ export class ArkadeWallet {
             };
         } catch (error) {
             if (wallet !== this.wallet) disposeQuietly(wallet);
-            if (attempt === this.attempt) this.reset();
+            // A failed reconnect leaves a working connection as it was.
+            if (attempt === this.attempt && !this.connected) this.reset();
             throw error;
         }
     }
