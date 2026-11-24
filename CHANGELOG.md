@@ -805,8 +805,7 @@ style and have not been backfilled.
   template only when the Executor lacks them; when it refuses uploads (v0.0.5
   accepts them on its admin port only by default), the error names the template
   its operator must install.
-  RestExecutorProvider adds artifact and template registration and lookup, and
-  reports the Executor's `encryptionPubkey`.
+
 - **Native execution can await persistence before emulator dispatch.** The
   optional beforeEmulatorSubmit callback receives immutable exact proposal bytes;
   rejection prevents submission. It does not establish server acceptance or retry
