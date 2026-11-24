@@ -29,10 +29,11 @@ async function snapIdentity(): Promise<SingleKey> {
     return SingleKey.fromHex(entropy.slice(2));
 }
 
+/** Best effort: it only lets a sign prompt mark change, so a failed write fails nothing. */
 async function rememberPubkey(xOnly: Uint8Array): Promise<void> {
     const pubkey = hex.encode(xOnly);
     if ((await readState()).pubkey !== pubkey) {
-        await updateState((state) => ({ ...state, pubkey }));
+        await updateState((state) => ({ ...state, pubkey })).catch(() => {});
     }
 }
 
@@ -96,24 +97,30 @@ const same = (a: Uint8Array, b: Uint8Array) => hex.encode(a) === hex.encode(b);
 
 /**
  * One line per output, and what leaves the wallet: everything but change and checkpoints. A
- * checkpoint pays a script built from the input's own leaf and the operator's unroll script, so it
- * is the user's coin moving into the send rather than a payment.
+ * checkpoint pays a script built from an input's own leaf and the operator's unroll script, so it
+ * is the user's coin moving into the send rather than a payment, but only for an input the snap's
+ * own script holds: from anyone else's leaf it is a payment like any other.
  */
-function describeOutputs(tx: Transaction, operator: Operator, ownScript?: Uint8Array) {
+function describeOutputs(tx: Transaction, operator: Operator, own?: DefaultVtxo.Script) {
     const network = getNetwork(operator.network);
     const arkAddress = (script: Uint8Array) =>
         new ArkAddress(operator.signer, script.slice(2), network.hrp).encode();
     const unroll = operator.checkpointTapscript
         ? CSVMultisigTapscript.decode(hex.decode(operator.checkpointTapscript))
         : undefined;
+    const ownLeaves = own
+        ? [own.forfeit(), own.exit()].map((leaf) => hex.encode(scriptFromTapLeafScript(leaf)))
+        : [];
     const checkpoints: Uint8Array[] = [];
-    for (let i = 0; unroll && i < tx.inputsLength; i++) {
-        const leaf = tx.getInput(i).tapLeafScript?.[0];
-        if (leaf) {
-            const tree = new VtxoScript([unroll.script, scriptFromTapLeafScript(leaf)]);
-            checkpoints.push(tree.pkScript);
-        }
+    for (let i = 0; own && unroll && i < tx.inputsLength; i++) {
+        const input = tx.getInput(i);
+        const leaf = input.tapLeafScript?.[0];
+        if (!leaf || !input.witnessUtxo || !same(input.witnessUtxo.script, own.pkScript)) continue;
+        const leafScript = scriptFromTapLeafScript(leaf);
+        if (!ownLeaves.includes(hex.encode(leafScript))) continue;
+        checkpoints.push(new VtxoScript([unroll.script, leafScript]).pkScript);
     }
+    const ownScript = own?.pkScript;
     const outputs = Array.from({ length: tx.outputsLength }, (_, i) => tx.getOutput(i));
     // An offchain tx carries the anchor; without one, a taproot output is an onchain address.
     const offchain = outputs.some((o) => o.script && same(o.script, P2A.script));
@@ -184,8 +191,8 @@ export async function signPsbt(params: unknown, origin: string): Promise<{ psbt:
 
     const tx = Transaction.fromPSBT(psbtBytes);
     const { pubkey } = await readState();
-    const ownScript = pubkey ? defaultScript(hex.decode(pubkey), operator).pkScript : undefined;
-    const { lines, leaving } = describeOutputs(tx, operator, ownScript);
+    const own = pubkey ? defaultScript(hex.decode(pubkey), operator) : undefined;
+    const { lines, leaving } = describeOutputs(tx, operator, own);
 
     // Ask the user before touching key material.
     //
@@ -209,7 +216,7 @@ export async function signPsbt(params: unknown, origin: string): Promise<{ psbt:
                 ...lines,
                 divider(),
                 text(`Leaving your wallet: **${sats(leaving)}**`),
-                ...(ownScript
+                ...(own
                     ? []
                     : [
                           text(

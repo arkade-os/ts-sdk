@@ -23,7 +23,10 @@ style and have not been backfilled.
   default; any other operator must use https (or loopback http), and the user approves it once
   per site and operator key. `arkade_signPsbt` needs the same `network`/`operatorUrl`, and its
   prompt now shows each output's amount and destination, marks change, checkpoints, the fee
-  anchor and OP_RETURN data, and totals what leaves the wallet. Release as `snap minor` (0.2.0).
+  anchor and OP_RETURN data, and totals what leaves the wallet. Only a checkpoint built from an
+  input at the snap's own address counts as staying in the wallet; one built from any other
+  input counts as leaving. The snap uses its cached operator info only when the operator
+  cannot be reached. Release as `snap minor` (0.2.0).
 
 - **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
 

@@ -162,10 +162,9 @@ const identity = new MetaMaskSnapIdentity(
 );
 
 // Create Arkade wallet
-const wallet = new Wallet({
+const wallet = await Wallet.create({
   identity,
-  esploraUrl: 'https://blockstream.info/api',
-  arkServerUrl: 'https://ark.arkadeos.com'
+  service: { network: 'bitcoin' }
 });
 
 // Use wallet methods
@@ -196,22 +195,23 @@ This snap requires the following MetaMask permissions:
 ### Build from Source
 
 ```bash
-git clone https://github.com/arkade-os/packages.git
-cd arkade-snap/packages/snap
+git clone https://github.com/arkade-os/ts-sdk.git
+cd ts-sdk
 pnpm install
-pnpm build
+pnpm -C packages/sdk build    # the snap bundles the SDK's dist
+pnpm -C packages/snap build
 ```
 
 ### Run Tests
 
 ```bash
-pnpm test
+pnpm -C packages/snap test
 ```
 
 ### Local Development
 
 ```bash
-pnpm start
+pnpm -C packages/snap start
 # Snap serves at http://localhost:8080
 ```
 

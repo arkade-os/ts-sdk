@@ -706,6 +706,10 @@ function cleanup({ target }) {
             // so a plain `checkout --` would restore the bumped version over itself.
             run("git", ["checkout", "HEAD", "--", pkg.pkgJson]);
             console.log(`Restored ${pkg.name} manifest to ${head}`);
+            for (const file of pkg.extraFiles ?? []) {
+                run("git", ["checkout", "HEAD", "--", file]);
+                console.log(`Restored ${path.relative(ROOT_DIR, file)} to HEAD`);
+            }
         }
         const candidates = new Set();
         if (state?.tags?.[key]) candidates.add(state.tags[key]);

@@ -18,6 +18,7 @@ type Params = { operation?: string; newState?: Record<string, unknown> } & Recor
 /** A `snap` global whose dialogs answer with `dialog` and whose state lives in memory. */
 export function installSnap(dialog: (params: unknown) => unknown = () => true) {
     let state: Record<string, unknown> | null = null;
+    const control = { failWrites: false };
     const dialogs: unknown[] = [];
     const methods: string[] = [];
     const request = vi.fn(async ({ method, params }: { method: string; params?: Params }) => {
@@ -29,13 +30,14 @@ export function installSnap(dialog: (params: unknown) => unknown = () => true) {
         }
         if (method === "snap_manageState" && params?.operation === "get") return state;
         if (method === "snap_manageState" && params?.operation === "update") {
+            if (control.failWrites) throw new Error("state write failed");
             state = params.newState ?? null;
             return null;
         }
         throw new Error(`unexpected method ${method}`);
     });
     (globalThis as Record<string, unknown>).snap = { request };
-    return { dialogs, methods };
+    return { dialogs, methods, control, state: () => state };
 }
 
 /** `fetch` answering `<url>/v1/info` for each operator URL given; anything else fails. */

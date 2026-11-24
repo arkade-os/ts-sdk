@@ -2,6 +2,7 @@ import { SingleKey } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { readState, updateState } from "../src/operator";
 import { getAddress } from "../src/wallet";
 import { installSnap, MAINNET_ADDRESS, MAINNET_INFO, stubOperators } from "./harness";
 
@@ -138,5 +139,40 @@ describe("arkade_getAddress resolves the operator itself", () => {
         await expect(getAddress({ network: "bitcoin" }, "https://dapp.example")).rejects.toThrow(
             "signer key",
         );
+    });
+
+    it("uses fresh info even when caching it fails", async () => {
+        const fetchMock = stubOperators({ "https://arkade.computer": MAINNET_INFO });
+        const { control } = installSnap();
+        await getAddress({ network: "bitcoin" }, "https://dapp.example");
+
+        fetchMock.mockImplementation(
+            async () =>
+                new Response(JSON.stringify({ ...MAINNET_INFO, signerPubkey: ROTATED_KEY }), {
+                    status: 200,
+                }),
+        );
+        control.failWrites = true;
+        const { address } = await getAddress({ network: "bitcoin" }, "https://dapp.example");
+
+        expect(address).toMatch(/^ark1/);
+        expect(address).not.toBe(MAINNET_ADDRESS);
+    });
+});
+
+describe("snap state", () => {
+    afterEach(() => {
+        delete (globalThis as Record<string, unknown>).snap;
+    });
+
+    it("keeps both of two overlapping writes", async () => {
+        installSnap();
+        await Promise.all([
+            updateState((state) => ({ ...state, pubkey: "aa" })),
+            updateState((state) => ({ ...state, pins: { "https://a.example": {} } })),
+        ]);
+        const state = await readState();
+        expect(state.pubkey).toBe("aa");
+        expect(state.pins).toEqual({ "https://a.example": {} });
     });
 });

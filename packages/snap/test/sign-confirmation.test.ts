@@ -3,9 +3,12 @@ import {
     buildOffchainTx,
     CSVMultisigTapscript,
     DefaultVtxo,
+    P2A,
+    scriptFromTapLeafScript,
     SingleKey,
     toXOnly,
     Transaction,
+    VtxoScript,
 } from "@arkade-os/sdk";
 import { base64, hex } from "@scure/base";
 import { p2tr, Script } from "@scure/btc-signer";
@@ -169,5 +172,33 @@ describe("signPsbt user confirmation", () => {
         const shown = await signDialogFor(psbtOf(tx));
 
         expect(shown).toContain("1,000 sats to script 000102");
+    });
+
+    it("counts a checkpoint built from someone else's input as leaving", async () => {
+        const unroll = CSVMultisigTapscript.decode(hex.decode(MAINNET_INFO.checkpointTapscript));
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({
+            txid: "bb".repeat(32),
+            index: 0,
+            witnessUtxo: { script: own.pkScript, amount: 3_000n },
+            tapLeafScript: [own.forfeit()],
+        });
+        tx.addInput({
+            txid: "cc".repeat(32),
+            index: 0,
+            witnessUtxo: { script: recipient.pkScript, amount: 5_000n },
+            tapLeafScript: [recipient.forfeit()],
+        });
+        const foreign = new VtxoScript([
+            unroll.script,
+            scriptFromTapLeafScript(recipient.forfeit()),
+        ]);
+        tx.addOutput({ script: foreign.pkScript, amount: 8_000n });
+        tx.addOutput({ ...P2A, amount: 0n });
+
+        const shown = await signDialogFor(psbtOf(tx));
+
+        expect(shown).not.toContain("checkpoint of your spend");
+        expect(shown).toContain("Leaving your wallet: **8,000 sats**");
     });
 });

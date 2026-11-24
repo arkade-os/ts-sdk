@@ -44,36 +44,47 @@ export async function readState(): Promise<SnapState> {
     return (state ?? {}) as SnapState;
 }
 
-/** `snap_manageState` replaces the whole blob, so every write merges into what is stored. */
-export async function updateState(change: (state: SnapState) => SnapState): Promise<void> {
-    const newState = change(await readState()) as unknown as Record<string, Json>;
-    await snap.request({
-        method: "snap_manageState",
-        params: { operation: ManageStateOperation.UpdateState, newState },
+let writes: Promise<void> = Promise.resolve();
+
+/**
+ * `snap_manageState` replaces the whole blob, so every write merges into what is stored, one at a
+ * time: RPC handlers run concurrently, and two read-then-write pairs would drop one change.
+ */
+export function updateState(change: (state: SnapState) => SnapState): Promise<void> {
+    const write = writes.then(async () => {
+        const newState = change(await readState()) as unknown as Record<string, Json>;
+        await snap.request({
+            method: "snap_manageState",
+            params: { operation: ManageStateOperation.UpdateState, newState },
+        });
     });
+    writes = write.catch(() => {});
+    return write;
 }
 
 /** Fresh info when the operator answers, else the last info it gave: a stale cache would keep
  * deriving addresses for a signer the operator has rotated away from. */
 async function infoOf(url: string): Promise<CachedInfo> {
+    let fresh: CachedInfo;
     try {
         const info = await new RestOperatorProvider(url).getInfo();
-        const fresh: CachedInfo = {
+        fresh = {
             network: info.network,
             signerPubkey: info.signerPubkey,
             unilateralExitDelay: info.unilateralExitDelay.toString(),
             checkpointTapscript: info.checkpointTapscript,
         };
-        await updateState((state) => ({
-            ...state,
-            operators: { ...state.operators, [url]: fresh },
-        }));
-        return fresh;
     } catch (error) {
         const cached = (await readState()).operators?.[url];
         if (!cached) throw error;
         return cached;
     }
+    // The cache only serves an unreachable operator; failing to refresh it must not cost this answer.
+    await updateState((state) => ({
+        ...state,
+        operators: { ...state.operators, [url]: fresh },
+    })).catch(() => {});
+    return fresh;
 }
 
 async function approveOperator(origin: string, operator: Operator): Promise<void> {

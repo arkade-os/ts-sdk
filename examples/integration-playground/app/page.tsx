@@ -9,9 +9,10 @@ export default function Page() {
                 <h1 style={{ marginBottom: 4 }}>Arkade integration playground</h1>
                 <p style={{ marginTop: 0, color: "#555" }}>
                     One panel per ported package. This exists mainly so CI can typecheck and bundle
-                    all of them together — that is what catches broken export maps and ESM/CJS
-                    resolution. The wallet flows below need the matching browser extension and
-                    cannot be automated.
+                    them together — that is what catches broken export maps and ESM/CJS resolution.
+                    The snap is the exception: MetaMask loads the published snap at runtime, so this
+                    build does not cover it. The wallet flows below need the matching browser
+                    extension and cannot be automated.
                 </p>
             </header>
             <WalletProvidersPanel />
