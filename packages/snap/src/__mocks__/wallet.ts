@@ -1,13 +1,7 @@
 import { vi } from "vitest";
 
 import type { ArkadeAddress, PubKeyHex, XOnlyPubKeyHex } from "../types";
-import {
-    validateInputIndexes,
-    validateNetwork,
-    validatePsbt,
-    validateSignerPubkey,
-    validateUnilateralExitDelay,
-} from "../utils";
+import { validateInputIndexes, validateNetwork, validateOperatorUrl, validatePsbt } from "../utils";
 
 /**
  * Mock wallet functions for testing RPC contract.
@@ -28,29 +22,26 @@ export const getPublicKey = vi.fn(
     },
 );
 
-export const getAddress = vi.fn(async (params: unknown): Promise<{ address: ArkadeAddress }> => {
-    // Validate params structure (same as real implementation)
-    if (!params || typeof params !== "object") {
-        throw new Error("Invalid params: expected object");
-    }
+export const getAddress = vi.fn(
+    async (params: unknown, _origin: string): Promise<{ address: ArkadeAddress }> => {
+        // Validate params structure (same as real implementation)
+        if (!params || typeof params !== "object") {
+            throw new Error("Invalid params: expected object");
+        }
 
-    const { network, signerPubkey, unilateralExitDelay } = params as {
-        network: unknown;
-        signerPubkey: unknown;
-        unilateralExitDelay: unknown;
-    };
+        const { network, operatorUrl } = params as { network: unknown; operatorUrl: unknown };
 
-    // Validate individual parameters using real validation
-    const validatedNetwork = validateNetwork(network);
-    validateSignerPubkey(signerPubkey);
-    validateUnilateralExitDelay(unilateralExitDelay);
+        // Validate individual parameters using real validation
+        const validatedNetwork = validateNetwork(network);
+        if (operatorUrl !== undefined) validateOperatorUrl(operatorUrl);
 
-    // Return mock address with appropriate prefix
-    const prefix = validatedNetwork === "bitcoin" ? "ark" : "tark";
-    return {
-        address: `${prefix}1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5zz8tt`,
-    };
-});
+        // Return mock address with appropriate prefix
+        const prefix = validatedNetwork === "bitcoin" ? "ark" : "tark";
+        return {
+            address: `${prefix}1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5zz8tt`,
+        };
+    },
+);
 
 export const signPsbt = vi.fn(async (params: unknown): Promise<{ psbt: string }> => {
     // Validate params structure (same as real implementation)
@@ -58,11 +49,16 @@ export const signPsbt = vi.fn(async (params: unknown): Promise<{ psbt: string }>
         throw new Error("Invalid params: expected object");
     }
 
-    const { psbt, inputIndexes } = params as { psbt: unknown; inputIndexes: unknown };
+    const { psbt, inputIndexes, network } = params as {
+        psbt: unknown;
+        inputIndexes: unknown;
+        network: unknown;
+    };
 
     // Validate individual parameters using real validation
     const validatedPsbt = validatePsbt(psbt);
     validateInputIndexes(inputIndexes);
+    validateNetwork(network);
 
     // Return mock signed PSBT
     return {

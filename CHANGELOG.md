@@ -14,6 +14,17 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`@arkade-os/snap`: the snap reads the operator itself, and its sign prompt lists every
+  output.** `arkade_getAddress` used the `signerPubkey` and `unilateralExitDelay` that the
+  calling page passed, so a hostile page could get an address bound to a server key of its
+  choosing. The snap ignores both now. It takes `{ network, operatorUrl? }` and reads the key
+  and delay from the operator's `/v1/info`, refusing an operator that reports another network.
+  `bitcoin` uses `https://arkade.computer` and `mutinynet` `https://mutinynet.arkade.sh` by
+  default; any other operator must use https (or loopback http), and the user approves it once
+  per site and operator key. `arkade_signPsbt` needs the same `network`/`operatorUrl`, and its
+  prompt now shows each output's amount and destination, marks change, checkpoints, the fee
+  anchor and OP_RETURN data, and totals what leaves the wallet. Release as `snap minor` (0.2.0).
+
 - **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
 
 - **`@arkade-os/swap`: a fee ceiling on a cross-asset swap is refused.** The fee of a cross-asset swap is measured against the solver's own price feed, so `maxFee` or `policy.maxFee` cannot bound it. Setting either on such a swap now throws before anything is funded; same-asset ceilings are unchanged. `policy.maxFee` applies to every call, so a client that sets one for `pay` or `receive` can no longer `exchange` across assets.

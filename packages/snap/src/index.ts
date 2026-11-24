@@ -10,15 +10,16 @@ import { getAddress, getPublicKey, signPsbt } from "./wallet";
  * No params required
  * Returns: { compressedPublicKey: string, xOnlyPublicKey: string }
  * - arkade_getAddress: Get the Bitcoin Arkade address
- * Params: { network: NetworkName, signerPubkey: string, unilateralExitDelay: string }
+ * Params: { network: NetworkName, operatorUrl?: string }
  * - network: 'bitcoin' | 'testnet' | 'signet' | 'mutinynet' | 'regtest'
- * - signerPubkey: Server's x-only public key (64 hex chars)
- * - unilateralExitDelay: CSV timelock value from server (string representation of bigint)
+ * - operatorUrl: required where no operator is built in (bitcoin and mutinynet have one); the
+ *   user approves an operator that is not built in, once per origin and operator key
  * Returns: { address: string }
  * - arkade_signPsbt: Sign a PSBT with the snap's key
- * Params: { psbt: string, inputIndexes: number[] }
+ * Params: { psbt: string, inputIndexes: number[], network: NetworkName, operatorUrl?: string }
  * - psbt: Base64-encoded PSBT
  * - inputIndexes: Array of input indexes to sign (non-negative integers)
+ * - network, operatorUrl: as for arkade_getAddress; the prompt names every output with them
  * Returns: { psbt: string }
  *
  * All wallet logic (balance, transactions, Lightning) runs in the dapp using Arkade SDK.
@@ -35,8 +36,8 @@ export const onRpcRequest: OnRpcRequestHandler = async ({ origin, request }) => 
             return await getPublicKey();
 
         case "arkade_getAddress":
-            // Params validated inside getAddress
-            return await getAddress(request.params);
+            // Params validated inside getAddress, which asks the user about an unknown operator.
+            return await getAddress(request.params, origin);
 
         case "arkade_signPsbt":
             // Params validated inside signPsbt, which also prompts the user for

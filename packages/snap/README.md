@@ -25,7 +25,7 @@ A MetaMask Snap that brings Bitcoin Layer 2 functionality to your browser via th
 await ethereum.request({
   method: 'wallet_requestSnaps',
   params: {
-    'npm:@arkade-os/packages': {}
+    'npm:@arkade-os/snap': {}
   }
 });
 ```
@@ -40,7 +40,7 @@ The Arkade Wallet Snap provides a minimal signing interface with 3 focused RPC m
 const response = await ethereum.request({
   method: 'wallet_invokeSnap',
   params: {
-    snapId: 'npm:@arkade-os/packages',
+    snapId: 'npm:@arkade-os/snap',
     request: {
       method: 'arkade_getPublicKey'
     }
@@ -60,13 +60,12 @@ const response = await ethereum.request({
 const response = await ethereum.request({
   method: 'wallet_invokeSnap',
   params: {
-    snapId: 'npm:@arkade-os/packages',
+    snapId: 'npm:@arkade-os/snap',
     request: {
       method: 'arkade_getAddress',
       params: {
         network: 'bitcoin',              // 'bitcoin' | 'testnet' | 'signet' | 'mutinynet' | 'regtest'
-        signerPubkey: '...',             // Server's x-only public key (64 hex chars)
-        unilateralExitDelay: '512'       // CSV timelock value from server
+        operatorUrl: undefined           // optional on bitcoin and mutinynet, required elsewhere
       }
     }
   }
@@ -78,18 +77,26 @@ const response = await ethereum.request({
 // }
 ```
 
+The snap reads the operator's signer key and exit delay from the operator itself (`/v1/info`)
+and refuses one that reports another network. `bitcoin` uses `https://arkade.computer` and
+`mutinynet` uses `https://mutinynet.arkade.sh` unless you pass `operatorUrl`. Any other operator
+must use https (plain http only on loopback), and the user approves it once per site. The
+approval names the operator's key, and the snap asks again if that key changes.
+
 ### Sign PSBT
 
 ```javascript
 const response = await ethereum.request({
   method: 'wallet_invokeSnap',
   params: {
-    snapId: 'npm:@arkade-os/packages',
+    snapId: 'npm:@arkade-os/snap',
     request: {
       method: 'arkade_signPsbt',
       params: {
         psbt: 'cHNidP8B...',       // Base64-encoded PSBT
-        inputIndexes: [0, 1]        // Indexes of inputs to sign
+        inputIndexes: [0, 1],       // Indexes of inputs to sign
+        network: 'bitcoin',         // same operator rules as arkade_getAddress
+        operatorUrl: undefined
       }
     }
   }
@@ -100,6 +107,12 @@ const response = await ethereum.request({
 //   psbt: 'cHNidP8B...'  // Base64-encoded signed PSBT
 // }
 ```
+
+Before signing, the user sees every output with its amount and destination. A destination is
+an Ark address on an offchain transaction, or an onchain address otherwise. The prompt marks
+outputs back to the snap's own address, checkpoints, the fee anchor and OP_RETURN data, and
+totals what leaves the wallet. Change is marked once the snap knows its own address: call
+`arkade_getPublicKey` or `arkade_getAddress` first.
 
 ## Architecture
 
@@ -144,7 +157,7 @@ import { MetaMaskSnapIdentity } from './MetaMaskSnapIdentity';
 
 // Create identity provider
 const identity = new MetaMaskSnapIdentity(
-  'npm:@arkade-os/packages',
+  'npm:@arkade-os/snap',
   ethereum
 );
 

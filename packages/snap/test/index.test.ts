@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { onRpcRequest } from "../src";
+import { getAddress } from "../src/wallet";
 
 // Mock the wallet module. Both paths are relative to this test file, which now
 // lives in test/ rather than alongside the source.
@@ -55,11 +56,7 @@ describe("RPC Handler", () => {
     });
 
     describe("arkade_getAddress", () => {
-        const validParams = {
-            network: "bitcoin",
-            signerPubkey: "a".repeat(64), // 64 hex chars
-            unilateralExitDelay: "512",
-        };
+        const validParams = { network: "bitcoin" };
 
         it("returns address object with correct structure", async () => {
             const result = await onRpcRequest(createRequest("arkade_getAddress", validParams));
@@ -85,14 +82,9 @@ describe("RPC Handler", () => {
         });
 
         it("throws on missing network parameter", async () => {
-            await expect(
-                onRpcRequest(
-                    createRequest("arkade_getAddress", {
-                        signerPubkey: validParams.signerPubkey,
-                        unilateralExitDelay: validParams.unilateralExitDelay,
-                    }),
-                ),
-            ).rejects.toThrow("Invalid network type");
+            await expect(onRpcRequest(createRequest("arkade_getAddress", {}))).rejects.toThrow(
+                "Invalid network type",
+            );
         });
 
         it("throws on invalid network name", async () => {
@@ -103,67 +95,17 @@ describe("RPC Handler", () => {
             ).rejects.toThrow("Invalid network");
         });
 
-        it("throws on missing signerPubkey parameter", async () => {
+        it("throws on a non-string operatorUrl", async () => {
             await expect(
                 onRpcRequest(
-                    createRequest("arkade_getAddress", {
-                        network: validParams.network,
-                        unilateralExitDelay: validParams.unilateralExitDelay,
-                    }),
+                    createRequest("arkade_getAddress", { ...validParams, operatorUrl: 7 }),
                 ),
-            ).rejects.toThrow("Invalid signerPubkey type");
+            ).rejects.toThrow("Invalid operatorUrl type");
         });
 
-        it("throws on invalid signerPubkey format", async () => {
-            await expect(
-                onRpcRequest(
-                    createRequest("arkade_getAddress", { ...validParams, signerPubkey: "not-hex" }),
-                ),
-            ).rejects.toThrow("must be a valid hex string");
-        });
-
-        it("throws on incorrect signerPubkey length", async () => {
-            await expect(
-                onRpcRequest(
-                    createRequest("arkade_getAddress", {
-                        ...validParams,
-                        signerPubkey: "a".repeat(32),
-                    }),
-                ),
-            ).rejects.toThrow("expected 64 hex characters");
-        });
-
-        it("throws on missing unilateralExitDelay parameter", async () => {
-            await expect(
-                onRpcRequest(
-                    createRequest("arkade_getAddress", {
-                        network: validParams.network,
-                        signerPubkey: validParams.signerPubkey,
-                    }),
-                ),
-            ).rejects.toThrow("Invalid unilateralExitDelay type");
-        });
-
-        it("accepts numeric string for unilateralExitDelay", async () => {
-            await expect(
-                onRpcRequest(
-                    createRequest("arkade_getAddress", {
-                        ...validParams,
-                        unilateralExitDelay: "1024",
-                    }),
-                ),
-            ).resolves.toBeDefined();
-        });
-
-        it("accepts number for unilateralExitDelay", async () => {
-            await expect(
-                onRpcRequest(
-                    createRequest("arkade_getAddress", {
-                        ...validParams,
-                        unilateralExitDelay: 1024,
-                    }),
-                ),
-            ).resolves.toBeDefined();
+        it("passes the requesting origin on, for operator approval", async () => {
+            await onRpcRequest(createRequest("arkade_getAddress", validParams));
+            expect(vi.mocked(getAddress).mock.calls[0][1]).toBe("http://localhost:8000");
         });
     });
 
@@ -173,6 +115,7 @@ describe("RPC Handler", () => {
         const validParams = {
             psbt: validPsbt,
             inputIndexes: [0],
+            network: "bitcoin",
         };
 
         it("returns signed PSBT with correct structure", async () => {
@@ -217,6 +160,17 @@ describe("RPC Handler", () => {
             await expect(
                 onRpcRequest(createRequest("arkade_signPsbt", { psbt: validParams.psbt })),
             ).rejects.toThrow("Invalid inputIndexes type");
+        });
+
+        it("throws on missing network parameter", async () => {
+            await expect(
+                onRpcRequest(
+                    createRequest("arkade_signPsbt", {
+                        psbt: validParams.psbt,
+                        inputIndexes: validParams.inputIndexes,
+                    }),
+                ),
+            ).rejects.toThrow("Invalid network type");
         });
 
         it("throws on empty inputIndexes array", async () => {

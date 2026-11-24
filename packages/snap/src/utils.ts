@@ -1,11 +1,11 @@
 import type { NetworkName } from "@arkade-os/sdk";
 
-import type { XOnlyPubKeyHex } from "./types";
-
 /**
  * Validation utilities
  */
 const VALID_NETWORKS: NetworkName[] = ["bitcoin", "testnet", "signet", "mutinynet", "regtest"];
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
  * Check if a value is a valid network name.
@@ -14,15 +14,6 @@ const VALID_NETWORKS: NetworkName[] = ["bitcoin", "testnet", "signet", "mutinyne
  */
 function isValidNetwork(network: unknown): network is NetworkName {
     return typeof network === "string" && VALID_NETWORKS.includes(network as NetworkName);
-}
-
-/**
- * Check if a string is a valid hexadecimal string.
- * @param value - The string to check.
- * @returns True if the string contains only hex characters.
- */
-function isValidHex(value: string): boolean {
-    return /^[0-9a-fA-F]+$/u.test(value);
 }
 
 /**
@@ -44,28 +35,25 @@ function validateNetwork(network: unknown): NetworkName {
 }
 
 /**
- * Validate and return a signer public key.
- * @param signerPubkey - The signer public key to validate.
- * @returns The validated x-only public key hex string.
- * @throws If the signer public key is invalid.
+ * Validate an operator URL and return it without a trailing slash.
+ * @param operatorUrl - The operator URL to validate.
+ * @returns The normalized URL.
+ * @throws If it is not a URL, or not https outside loopback.
  */
-function validateSignerPubkey(signerPubkey: unknown): XOnlyPubKeyHex {
-    if (typeof signerPubkey !== "string") {
-        throw new Error(`Invalid signerPubkey type: expected string, got ${typeof signerPubkey}`);
+function validateOperatorUrl(operatorUrl: unknown): string {
+    if (typeof operatorUrl !== "string") {
+        throw new Error(`Invalid operatorUrl type: expected string, got ${typeof operatorUrl}`);
     }
-    if (signerPubkey.length === 0) {
-        throw new Error("signerPubkey cannot be empty");
+    let url: URL;
+    try {
+        url = new URL(operatorUrl);
+    } catch {
+        throw new Error(`Invalid operatorUrl: ${operatorUrl}`);
     }
-    if (!isValidHex(signerPubkey)) {
-        throw new Error(`Invalid signerPubkey: must be a valid hex string`);
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && LOOPBACK.has(url.hostname))) {
+        throw new Error("operatorUrl must use https (plain http only on loopback)");
     }
-    // Must be x-only pubkey (32 bytes = 64 hex chars)
-    if (signerPubkey.length !== 64) {
-        throw new Error(
-            `Invalid signerPubkey length: expected 64 hex characters (x-only public key), got ${signerPubkey.length}`,
-        );
-    }
-    return signerPubkey;
+    return url.href.replace(/\/+$/u, "");
 }
 
 /**
@@ -116,39 +104,4 @@ function validateInputIndexes(inputIndexes: unknown): number[] {
     return inputIndexes;
 }
 
-/**
- * Validate and return unilateral exit delay as bigint.
- * @param delay - The delay value to validate.
- * @returns The validated delay as a bigint.
- * @throws If the delay is invalid.
- */
-function validateUnilateralExitDelay(delay: unknown): bigint {
-    if (typeof delay !== "string" && typeof delay !== "number" && typeof delay !== "bigint") {
-        throw new Error(
-            `Invalid unilateralExitDelay type: expected string, number, or bigint, got ${typeof delay}`,
-        );
-    }
-
-    let delayBigInt: bigint;
-    try {
-        delayBigInt = BigInt(delay);
-    } catch {
-        throw new Error(`Invalid unilateralExitDelay: ${delay} is not a valid number`);
-    }
-
-    if (delayBigInt < 0n) {
-        throw new Error(`Invalid unilateralExitDelay: must be non-negative, got ${delayBigInt}`);
-    }
-
-    return delayBigInt;
-}
-
-export {
-    validateInputIndexes,
-    validateNetwork,
-    validatePsbt,
-    validateSignerPubkey,
-    validateUnilateralExitDelay,
-    isValidHex,
-    isValidNetwork,
-};
+export { validateInputIndexes, validateNetwork, validateOperatorUrl, validatePsbt, isValidNetwork };

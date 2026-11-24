@@ -1,15 +1,52 @@
-import { Transaction, SingleKey, ArkAddress, DefaultVtxo } from "@arkade-os/sdk";
+import {
+    ArkAddress,
+    CSVMultisigTapscript,
+    DefaultVtxo,
+    getNetwork,
+    P2A,
+    scriptFromTapLeafScript,
+    SingleKey,
+    Transaction,
+    VtxoScript,
+} from "@arkade-os/sdk";
 import { divider, heading, panel, text } from "@metamask/snaps-sdk";
 import { base64, hex } from "@scure/base";
+import { Address, OutScript } from "@scure/btc-signer";
 
+import { type Operator, readState, resolveOperator, updateState } from "./operator";
 import type { ArkadeAddress, PubKeyHex, XOnlyPubKeyHex } from "./types";
-import {
-    validateInputIndexes,
-    validateNetwork,
-    validatePsbt,
-    validateSignerPubkey,
-    validateUnilateralExitDelay,
-} from "./utils";
+import { validateInputIndexes, validatePsbt } from "./utils";
+
+/** The snap's key, derived from MetaMask's entropy, so it is the same for the same account. */
+async function snapIdentity(): Promise<SingleKey> {
+    const entropy = await snap.request({
+        method: "snap_getEntropy",
+        params: {
+            version: 1,
+            salt: "bitcoin-arkade-snap",
+        },
+    });
+    return SingleKey.fromHex(entropy.slice(2));
+}
+
+async function rememberPubkey(xOnly: Uint8Array): Promise<void> {
+    const pubkey = hex.encode(xOnly);
+    if ((await readState()).pubkey !== pubkey) {
+        await updateState((state) => ({ ...state, pubkey }));
+    }
+}
+
+/** The default VTXO script the SDK wallet derives for this key and operator. */
+function defaultScript(pubKey: Uint8Array, operator: Operator): DefaultVtxo.Script {
+    return new DefaultVtxo.Script({
+        pubKey,
+        serverPubKey: operator.signer,
+        csvTimelock: {
+            value: operator.exitDelay,
+            type: operator.exitDelay < 512n ? "blocks" : "seconds",
+        },
+    });
+}
 
 /**
  * Get public keys from snap's deterministic key derivation.
@@ -20,25 +57,12 @@ export async function getPublicKey(): Promise<{
     compressedPublicKey: PubKeyHex;
     xOnlyPublicKey: XOnlyPubKeyHex;
 }> {
-    const entropy = await snap.request({
-        method: "snap_getEntropy",
-        params: {
-            version: 1,
-            salt: "bitcoin-arkade-snap",
-        },
-    });
-
-    // Derive the private key from entropy (remove 0x prefix)
-    const privateKeyHex = entropy.slice(2);
-
-    // Create identity from private key
-    const identity = SingleKey.fromHex(privateKeyHex);
-
-    // Get public keys from identity
+    const identity = await snapIdentity();
     const [compressedPublicKeyBytes, xOnlyPublicKeyBytes] = await Promise.all([
         identity.compressedPublicKey(),
         identity.xOnlyPublicKey(),
     ]);
+    await rememberPubkey(xOnlyPublicKeyBytes);
 
     return {
         compressedPublicKey: hex.encode(compressedPublicKeyBytes),
@@ -47,79 +71,91 @@ export async function getPublicKey(): Promise<{
 }
 
 /**
- * Get Arkade address and public keys from snap's deterministic key derivation.
- * This ensures the same wallet address is always generated for the same MetaMask account.
- *
- * Note: We fetch server info to get the server info, then build the Arkade address
- * without creating a full wallet instance.
- * @param params - The parameters object containing network, signerPubkey, and unilateralExitDelay.
+ * The snap's Arkade address on the operator the request names. The operator's key and exit delay
+ * come from the operator itself; see {@link resolveOperator}.
+ * @param params - `{ network, operatorUrl? }`.
+ * @param origin - The requesting dapp, which must have approved any operator that is not built in.
  * @returns An object containing the Arkade address.
  */
-export async function getAddress(params: unknown): Promise<{ address: ArkadeAddress }> {
-    // Validate params structure
-    if (!params || typeof params !== "object") {
-        throw new Error("Invalid params: expected object");
+export async function getAddress(
+    params: unknown,
+    origin: string,
+): Promise<{ address: ArkadeAddress }> {
+    const operator = await resolveOperator(params, origin);
+    const pubKey = await (await snapIdentity()).xOnlyPublicKey();
+    await rememberPubkey(pubKey);
+
+    const script = defaultScript(pubKey, operator);
+    const hrp = getNetwork(operator.network).hrp;
+    return { address: new ArkAddress(operator.signer, script.tweakedPublicKey, hrp).encode() };
+}
+
+const sats = (amount: bigint) => `${amount.toString().replace(/\B(?=(\d{3})+(?!\d))/gu, ",")} sats`;
+
+const same = (a: Uint8Array, b: Uint8Array) => hex.encode(a) === hex.encode(b);
+
+/**
+ * One line per output, and what leaves the wallet: everything but change and checkpoints. A
+ * checkpoint pays a script built from the input's own leaf and the operator's unroll script, so it
+ * is the user's coin moving into the send rather than a payment.
+ */
+function describeOutputs(tx: Transaction, operator: Operator, ownScript?: Uint8Array) {
+    const network = getNetwork(operator.network);
+    const arkAddress = (script: Uint8Array) =>
+        new ArkAddress(operator.signer, script.slice(2), network.hrp).encode();
+    const unroll = operator.checkpointTapscript
+        ? CSVMultisigTapscript.decode(hex.decode(operator.checkpointTapscript))
+        : undefined;
+    const checkpoints: Uint8Array[] = [];
+    for (let i = 0; unroll && i < tx.inputsLength; i++) {
+        const leaf = tx.getInput(i).tapLeafScript?.[0];
+        if (leaf) {
+            const tree = new VtxoScript([unroll.script, scriptFromTapLeafScript(leaf)]);
+            checkpoints.push(tree.pkScript);
+        }
     }
+    const outputs = Array.from({ length: tx.outputsLength }, (_, i) => tx.getOutput(i));
+    // An offchain tx carries the anchor; without one, a taproot output is an onchain address.
+    const offchain = outputs.some((o) => o.script && same(o.script, P2A.script));
 
-    const { network, signerPubkey, unilateralExitDelay } = params as {
-        network: unknown;
-        signerPubkey: unknown;
-        unilateralExitDelay: unknown;
-    };
-
-    // Validate individual parameters
-    const validatedNetwork = validateNetwork(network);
-    const validatedSignerPubkey = validateSignerPubkey(signerPubkey);
-    const validatedExitDelay = validateUnilateralExitDelay(unilateralExitDelay);
-
-    const serverPubKeyBytes = hex.decode(validatedSignerPubkey);
-    const prefix = validatedNetwork === "bitcoin" ? "ark" : "tark";
-
-    const entropy = await snap.request({
-        method: "snap_getEntropy",
-        params: {
-            version: 1,
-            salt: "bitcoin-arkade-snap",
-        },
+    let leaving = 0n;
+    const lines = outputs.map((output, i) => {
+        const script = output.script ?? new Uint8Array();
+        const amount = output.amount ?? 0n;
+        let destination: string;
+        let stays = false;
+        if (same(script, P2A.script)) {
+            destination = "to the fee anchor";
+        } else if (script[0] === 0x6a) {
+            destination = "to data (OP_RETURN)";
+        } else if (ownScript && same(script, ownScript)) {
+            stays = true;
+            destination = `back to your address ${arkAddress(script)}`;
+        } else if (checkpoints.some((checkpoint) => same(checkpoint, script))) {
+            stays = true;
+            destination = "to the checkpoint of your spend";
+        } else if (offchain && script.length === 34 && script[0] === 0x51 && script[1] === 0x20) {
+            destination = `to ${arkAddress(script)}`;
+        } else {
+            try {
+                destination = `to ${Address(network).encode(OutScript.decode(script))}`;
+            } catch {
+                destination = `to script ${hex.encode(script)}`;
+            }
+        }
+        if (!stays) leaving += amount;
+        return text(`#${i}: ${sats(amount)} ${destination}`);
     });
-
-    // Derive the private key from entropy (remove 0x prefix)
-    const privateKeyHex = entropy.slice(2);
-
-    // Create identity from private key
-    const identity = SingleKey.fromHex(privateKeyHex);
-    const xOnlyPublicKeyBytes = await identity.xOnlyPublicKey();
-
-    // Create the default vtxo script to get the taproot output key
-    // The vtxo script contains forfeit (user + server) and exit (user after timelock) paths
-    // Use the server's unilateral exit delay to match the official wallet
-    const csvTimelock = {
-        value: validatedExitDelay,
-        type: validatedExitDelay < 512n ? "blocks" : "seconds",
-    } as const;
-
-    const vtxoScript = new DefaultVtxo.Script({
-        pubKey: xOnlyPublicKeyBytes,
-        serverPubKey: serverPubKeyBytes,
-        csvTimelock,
-    });
-
-    // Get the tweaked public key (taproot output key) from the vtxo script
-    const taprootOutputKey = vtxoScript.tweakedPublicKey;
-
-    // Build Arkade address using server pubkey and taproot output key
-    const arkadeAddress = new ArkAddress(serverPubKeyBytes, taprootOutputKey, prefix);
-
-    return { address: arkadeAddress.encode() };
+    return { lines, leaving };
 }
 
 /**
  * Sign a PSBT with the snap's Bitcoin key.
  *
- * Prompts the user for confirmation before signing, showing the requesting
- * origin. Any dapp with RPC access can call this, so the prompt is the only
- * thing standing between a hostile page and a signature over the user's VTXOs.
- * @param params - The parameters object containing psbt and inputIndexes.
+ * Prompts the user for confirmation before signing, showing the requesting origin and every
+ * output. Any dapp with RPC access can call this, so the prompt is the only thing standing between
+ * a hostile page and a signature over the user's VTXOs.
+ * @param params - `{ psbt, inputIndexes, network, operatorUrl? }`.
  * @param origin - The origin of the requesting dapp, shown in the prompt.
  * @returns An object containing the signed PSBT in base64 format.
  */
@@ -134,6 +170,7 @@ export async function signPsbt(params: unknown, origin: string): Promise<{ psbt:
     // Validate individual parameters
     const validatedPsbt = validatePsbt(psbt);
     const validatedInputIndexes = validateInputIndexes(inputIndexes);
+    const operator = await resolveOperator(params, origin);
 
     // Decode PSBT
     let psbtBytes: Uint8Array;
@@ -146,6 +183,9 @@ export async function signPsbt(params: unknown, origin: string): Promise<{ psbt:
     }
 
     const tx = Transaction.fromPSBT(psbtBytes);
+    const { pubkey } = await readState();
+    const ownScript = pubkey ? defaultScript(hex.decode(pubkey), operator).pkScript : undefined;
+    const { lines, leaving } = describeOutputs(tx, operator, ownScript);
 
     // Ask the user before touching key material.
     //
@@ -163,10 +203,19 @@ export async function signPsbt(params: unknown, origin: string): Promise<{ psbt:
                 heading("Sign Arkade transaction?"),
                 text(`**${origin}** is requesting a signature.`),
                 divider(),
-                text(`Inputs to sign: **${validatedInputIndexes.join(", ")}**`),
-                text(`Transaction inputs: **${tx.inputsLength}**`),
-                text(`Transaction outputs: **${tx.outputsLength}**`),
+                text(
+                    `Signing input ${validatedInputIndexes.join(", ")} of ${tx.inputsLength} on ${operator.network}.`,
+                ),
+                ...lines,
                 divider(),
+                text(`Leaving your wallet: **${sats(leaving)}**`),
+                ...(ownScript
+                    ? []
+                    : [
+                          text(
+                              "The snap does not know your address yet, so nothing is marked as change.",
+                          ),
+                      ]),
                 text("Only approve this if you recognise the site and expect this transaction."),
             ]),
         },
@@ -176,18 +225,7 @@ export async function signPsbt(params: unknown, origin: string): Promise<{ psbt:
         throw new Error("User rejected the signature request");
     }
 
-    // Get the private key and create identity (consistent with getAddress())
-    const entropy = await snap.request({
-        method: "snap_getEntropy",
-        params: {
-            version: 1,
-            salt: "bitcoin-arkade-snap",
-        },
-    });
-    const privateKeyHex = entropy.slice(2);
-
-    // Create identity from private key
-    const identity = SingleKey.fromHex(privateKeyHex);
+    const identity = await snapIdentity();
 
     // Sign the transaction using SingleKey's sign method
     const signedTx = await identity.sign(tx, validatedInputIndexes);
