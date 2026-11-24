@@ -1337,7 +1337,9 @@ export function isFetchTimeoutError(err: any): boolean {
         );
     };
 
-    return checkError(err) || checkError((err as any).cause);
+    // Optional: callers classify inside a catch, and a `Promise.reject()` carries no
+    // value — reading `.cause` off it would replace their failure with a TypeError.
+    return checkError(err) || checkError(err?.cause);
 }
 
 function mapTxNotification(data: ProtoTypes.TxNotificationData): TxNotification {

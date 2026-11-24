@@ -5432,7 +5432,7 @@ export class Wallet
         // Track seen arkTxids so parallel batches don't finalize the same tx twice
         const seen = new Set<string>();
 
-        const results = await Promise.all(
+        const results = await Promise.allSettled(
             batches.map(async (batch) => {
                 const batchFinalized: string[] = [];
                 const batchPending: string[] = [];
@@ -5540,9 +5540,12 @@ export class Wallet
 
         const finalized: string[] = [];
         const pending: string[] = [];
+        // Settled, not raced: failing out while a sibling batch is still signing would
+        // release the tx lock, and the next pass could finalize that tx a second time.
         for (const result of results) {
-            finalized.push(...result.finalized);
-            pending.push(...result.pending);
+            if (result.status === "rejected") throw result.reason;
+            finalized.push(...result.value.finalized);
+            pending.push(...result.value.pending);
         }
 
         // Only clear the flag if every discovered pending tx was finalized;

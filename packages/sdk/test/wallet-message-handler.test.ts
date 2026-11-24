@@ -2773,6 +2773,20 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(logged).toHaveBeenCalledTimes(1);
     });
 
+    it("re-arms when recovery rejects with no error value at all", async () => {
+        setupHandler();
+        const attempt = vi.fn<() => Promise<void>>();
+        await startCachedBoot(cachedBootWallet(attempt));
+        vi.spyOn(console, "error").mockImplementation(() => {});
+
+        // Classifying the rejection must not throw, or the catch dies and nothing re-arms.
+        attempt.mockRejectedValueOnce(undefined);
+        await updater.tick(0);
+        await until(() => (updater as any).retryPendingTxs !== undefined);
+
+        expect((updater as any).retryPendingTxs).toBeDefined();
+    });
+
     it("stops retrying once the wallet has unfenced sends", async () => {
         setupHandler();
         const attempt = vi.fn<() => Promise<void>>();

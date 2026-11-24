@@ -12,6 +12,7 @@ import { OUTPOINT_QUERY_CHUNK_SIZE, SCRIPT_QUERY_CHUNK_SIZE } from "../src/contr
 import { ProviderUnavailableError } from "../src/providers/errors";
 import { updateWalletState } from "../src/utils/syncCursors";
 import { fetchVtxoCreatedAtByTxid, getAllNormalizedVtxos } from "../src/wallet/vtxo";
+import { MAX_INPUTS_PER_PROOF } from "../src/wallet/vtxo-manager";
 import { createDefaultContractParams, createMockIndexerProvider } from "./contracts/helpers";
 import {
     installRestoreHarness,
@@ -513,6 +514,42 @@ describe("Wallet script queries stay under the URL cap", () => {
             expect.objectContaining({ txid: swept.txid, isSwept: true }),
             expect.objectContaining({ txid: spent.txid, isSpent: true }),
         ]);
+    });
+
+    it("holds the recovery pass open until every proof batch has settled", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({
+            vtxos: Array.from({ length: MAX_INPUTS_PER_PROOF + 1 }, (_, i) =>
+                h.own(i + 1, { isSwept: true }),
+            ),
+        });
+        let release!: (txs: never[]) => void;
+        const inFlight = new Promise<never[]>((resolve) => (release = resolve));
+        let call = 0;
+        h.getPendingTxs.mockImplementation(() => {
+            call += 1;
+            return call === 1
+                ? Promise.reject(new ProviderUnavailableError("operator offline"))
+                : inFlight;
+        });
+
+        let settled = false;
+        const recovery = h.wallet
+            .resumeDeferredPendingTxs(() => true)
+            .catch(() => {
+                settled = true;
+            });
+
+        // Failing fast would drop the tx lock with a sibling batch still signing, letting
+        // the next tick finalize the same pending tx a second time.
+        await vi.waitFor(() => expect(h.getPendingTxs.mock.calls.length).toBeGreaterThan(1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(settled).toBe(false);
+
+        release([]);
+        await recovery;
+        expect(settled).toBe(true);
+        expect(h.wallet.hasDeferredPendingTxRecovery).toBe(true);
     });
 
     it("leaves the fence in place when its init generation went stale", async () => {
