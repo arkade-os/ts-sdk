@@ -207,10 +207,12 @@ style and have not been backfilled.
   number of sats. `sendBitcoinAdvanced` is gone: it built and submitted the transaction
   by hand, outside the SDK's coin holds, pending-transaction record and recipient
   operator check. Use `sendBitcoin`, or the SDK's `send({ recipients })` for several
-  outputs. `reset()` disposes the SDK wallet, and a `reset()` or
-  `updateConfig()` during the connect prompt makes that `connect()` reject instead of
-  publishing a wallet. With a custom `satsConnectRequest` or a `providerId`, batch
-  signing signs each transaction through that transport. `@arkade-os/checkout` stays
+  outputs. `reset()` disposes the SDK wallet, and so does a second `connect()` for the
+  wallet it replaces. A `reset()` or `updateConfig()` during the connect prompt makes that
+  `connect()` reject instead of publishing a wallet. `SatsConnectIdentity` signs a batch
+  one transaction at a time through its `satsConnectRequest` unless constructed with
+  `batchSigning`; `ArkadeWallet` sets that only for the default transport with no
+  `providerId`. `@arkade-os/checkout` stays
   in `arkade-os/packages`: its server needs durable swap storage, and no mainnet
   solver serves Lightning yet.
 

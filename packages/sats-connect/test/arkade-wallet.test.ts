@@ -99,6 +99,19 @@ describe("ArkadeWallet", () => {
         expect(sdkWallet.dispose).toHaveBeenCalledOnce();
     });
 
+    it("disposes the SDK wallet a second connect replaces", async () => {
+        const arkWallet = new ArkadeWallet(configWith(vi.fn(async () => APPROVED)));
+        await arkWallet.connect();
+        const first = arkWallet.getWallet() as unknown as ReturnType<typeof fakeWallet>;
+
+        await arkWallet.connect();
+        const second = arkWallet.getWallet() as unknown as ReturnType<typeof fakeWallet>;
+
+        expect(second).not.toBe(first);
+        expect(first.dispose).toHaveBeenCalledOnce();
+        expect(second.dispose).not.toHaveBeenCalled();
+    });
+
     it("refuses fractional and unsafe amounts, and sends a whole one unchanged", async () => {
         const arkWallet = new ArkadeWallet(configWith(vi.fn(async () => APPROVED)));
         await arkWallet.connect();

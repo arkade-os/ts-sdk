@@ -29,9 +29,9 @@ function toBitcoinNetworkType(network?: SatsConnectNetwork): BitcoinNetworkType 
  * External wallet identity implementation using sats-connect signPsbt.
  * Delegates signing to the connected Sats Connect wallet.
  *
- * Supports batch signing via `signMultiple()` using the sats-connect
+ * Can batch signing via `signMultiple()` with the sats-connect
  * `signMultipleTransactions` API, reducing N+1 wallet popups to 1
- * during Arkade send transactions with checkpoints.
+ * during Arkade send transactions with checkpoints, when opted in.
  */
 export class SatsConnectIdentity implements Identity {
     private publicKey: Uint8Array;
@@ -43,14 +43,15 @@ export class SatsConnectIdentity implements Identity {
     /**
      * @param batchSigning - Whether `signMultiple` may use sats-connect's standalone
      *   `signMultipleTransactions`, which reaches the default wallet rather than
-     *   `satsConnectRequest`. Off, it signs each transaction through `satsConnectRequest`.
+     *   `satsConnectRequest`: opt in only when `satsConnectRequest` is that default
+     *   transport. Off (the default), it signs each transaction through `satsConnectRequest`.
      */
     constructor(
         publicKey: Uint8Array,
         address: string,
         satsConnectRequest: SatsConnectRequest,
         network?: SatsConnectNetwork,
-        batchSigning = true,
+        batchSigning = false,
     ) {
         if (publicKey.length !== 33 && publicKey.length !== 32) {
             throw new Error(

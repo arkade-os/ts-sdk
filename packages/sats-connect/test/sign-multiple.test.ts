@@ -19,8 +19,15 @@ const PUBKEY = new Uint8Array([0x02, ...new Array(32).fill(0x01)]);
 /** A satsConnectRequest that always reports a live connection. */
 const connectedRequest = vi.fn(async () => ({ status: "success", result: { addresses: [] } }));
 
+/** Opted in to the standalone batch API, as `ArkadeWallet` does for the default transport. */
 function makeIdentity() {
-    return new SatsConnectIdentity(PUBKEY, "bc1qexampleaddress", connectedRequest as never);
+    return new SatsConnectIdentity(
+        PUBKEY,
+        "bc1qexampleaddress",
+        connectedRequest as never,
+        undefined,
+        true,
+    );
 }
 
 /** Minimal stand-in for an SDK Transaction: only what signMultiple touches. */
@@ -73,13 +80,11 @@ describe("SatsConnectIdentity.signMultiple response validation", () => {
 describe("SatsConnectIdentity.signMultiple on a configured transport", () => {
     beforeEach(() => vi.clearAllMocks());
 
-    it("signs one by one through the transport instead of the standalone batch API", async () => {
+    it("signs one by one through the transport unless batch signing is opted in", async () => {
         const identity = new SatsConnectIdentity(
             PUBKEY,
             "bc1qexampleaddress",
             connectedRequest as never,
-            undefined,
-            false,
         );
         const [first, second] = [fakeTx(), fakeTx()];
         const sign = vi.spyOn(identity, "sign").mockImplementation(async (tx) => tx as never);

@@ -145,6 +145,7 @@ export class ArkadeWallet {
             const boardingAddress = await wallet.getBoardingAddress();
             stillCurrent();
 
+            const replaced = this.wallet;
             this.userPubKey = userPubKey;
             this.ordinalAddress = ordinalAddress;
             this.paymentAddress = paymentAddress;
@@ -152,6 +153,7 @@ export class ArkadeWallet {
             this.wallet = wallet;
             this.arkAddress = arkAddress;
             this.connected = true;
+            disposeQuietly(replaced);
 
             return {
                 ordinalAddress,
