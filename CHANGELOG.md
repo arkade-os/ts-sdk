@@ -360,7 +360,13 @@ style and have not been backfilled.
 - **Cached browser wallets open during an operator outage even after an interrupted send.**
   The service worker defers pending-transaction recovery to its background tick.
   Once the operator responds, recovery checks current indexer state and can use
-  swept outputs as proof inputs. New Arkade submissions wait for recovery.
+  spent or swept outputs as proof inputs; subdust and exited outputs are left out,
+  as neither can carry an ownership proof. New Arkade submissions are refused only
+  until one recovery pass has reached the operator — not until every pending
+  transaction finalizes, and not when no output could be found to prove ownership
+  with. Whatever a pass leaves unfinalized stays flagged for the next startup to
+  retry, and recovery keeps retrying on its own only while the operator is
+  unreachable.
 
 - **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
 

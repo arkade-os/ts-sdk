@@ -1,12 +1,7 @@
 import { hex } from "@scure/base";
 import { requiresWalletScope, walletOperation, type WalletRequestBinding } from "./wallet-request";
-import {
-    DigestMismatchError,
-    OperatorInfo,
-    OperatorProvider,
-    SettlementEvent,
-} from "../../providers/ark";
-import { isRetryableProviderError } from "../../providers/availability";
+import { OperatorInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
+import { isTransientOperatorError } from "../../providers/availability";
 import { GetVtxosOptions, IndexerProvider, PaginationOptions } from "../../providers/indexer";
 import { WalletRepository } from "../../repositories";
 import type {
@@ -2526,21 +2521,31 @@ export class WalletMessageHandler
         context: WalletRequestContext,
         init: Generation,
     ) {
+        const reported = new Set<string>();
         const retry = async () => {
             if (init.stale) return;
             try {
-                const complete = await this.runOwnedOperation(context, () =>
+                await this.runOwnedOperation(context, () =>
                     wallet.resumeDeferredPendingTxs(() => !init.stale),
                 );
-                if (complete) return;
             } catch (error) {
                 if (init.stale) return;
-                if (!isRetryableProviderError(error) && !(error instanceof DigestMismatchError)) {
+                // The wallet unfences sends as soon as a pass reached the operator, so a
+                // wallet still refusing them is exactly what a later tick can still fix.
+                if (!wallet.hasDeferredPendingTxRecovery) {
                     console.error("Error recovering pending transactions:", error);
                     return;
                 }
+                if (!isTransientOperatorError(error)) {
+                    // A misconfigured operator fails the same way every tick.
+                    const reason = String(error);
+                    if (!reported.has(reason)) {
+                        reported.add(reason);
+                        console.error("Retrying pending transaction recovery:", error);
+                    }
+                }
+                this.retryPendingTxs = retry;
             }
-            if (!init.stale) this.retryPendingTxs = retry;
         };
         this.retryPendingTxs = retry;
     }

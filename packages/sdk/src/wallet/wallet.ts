@@ -165,7 +165,7 @@ import {
     ServerResponseMismatchError,
     type ProviderKind,
 } from "../providers/errors";
-import { isRetryableProviderError } from "../providers/availability";
+import { isRetryableProviderError, isTransientOperatorError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -5341,18 +5341,28 @@ export class Wallet
     }
 
     /** @internal */
-    async resumeDeferredPendingTxs(isCurrent: () => boolean): Promise<boolean> {
+    async resumeDeferredPendingTxs(isCurrent: () => boolean): Promise<void> {
+        // Outside the lock: a failure here never reached the operator, so it must not
+        // reach the unfencing below either.
         const info = await this.getOperatorInfo({ requireLive: true });
         if (info.network !== this.network.name) {
             throw new Error("Operator network changed while recovering pending transactions");
         }
-        return this._withTxLock(async () => {
-            if (!isCurrent()) return true;
-            // A stale local candidate list can miss the inputs of the interrupted send.
-            await this.finalizePendingTxsImpl(undefined, { info, isCurrent });
-            if (!isCurrent()) return true;
-            this.pendingTxRecoveryDeferred = await this.hasPendingTxFlag();
-            return !this.pendingTxRecoveryDeferred;
+        await this._withTxLock(async () => {
+            if (!isCurrent()) return;
+            try {
+                // A stale local candidate list can miss the inputs of the interrupted send.
+                await this.finalizePendingTxsImpl(undefined, { info, isCurrent });
+            } catch (error) {
+                // One pass against a reachable operator is enough; `hasPendingTx` keeps
+                // what it left for the next startup, as a live boot would. Only a
+                // transient failure is worth another tick, so only it keeps the fence.
+                if (!isTransientOperatorError(error) && isCurrent()) {
+                    this.pendingTxRecoveryDeferred = false;
+                }
+                throw error;
+            }
+            if (isCurrent()) this.pendingTxRecoveryDeferred = false;
         });
     }
 
@@ -5379,8 +5389,11 @@ export class Wallet
                 const vtxoScript = scriptMap.get(vtxo.script);
                 if (!vtxoScript) continue;
 
-                // Ownership proofs can query historical outputs, including swept coins.
-                if (!recovery && !vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
+                // Recovery proves ownership of historical outputs, swept included, but
+                // subdust and exited outputs sink the whole proof — as in claimCash.
+                if (recovery) {
+                    if (isSubdust(vtxo, this.dustAmount) || vtxo.isUnrolled) continue;
+                } else if (!vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
                     continue;
                 }
 

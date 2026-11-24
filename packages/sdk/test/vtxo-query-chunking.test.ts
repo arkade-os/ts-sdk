@@ -334,7 +334,8 @@ describe("Wallet script queries stay under the URL cap", () => {
         expect(widest(handle.indexer.getVtxosCalls)).toBeLessThanOrEqual(CAP);
     });
 
-    it("preserves pending recovery across offline boot and fences new offchain submits", async () => {
+    /** A fenced-off interrupted send, as a boot from cached operator info leaves it. */
+    const deferredRecovery = async () => {
         const { wallet, walletRepository } = await walletWithContracts(1);
         await (await wallet.getContractManager()).whenBooted();
         await updateWalletState(walletRepository, (state) => ({
@@ -343,7 +344,6 @@ describe("Wallet script queries stay under the URL cap", () => {
         }));
         const liveInfo = await wallet.arkProvider.getInfo();
         const getInfo = vi.spyOn(wallet.arkProvider, "getInfo");
-        getInfo.mockRejectedValueOnce(new ProviderUnavailableError("operator offline"));
         const getPendingTxs = vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([]);
         const submitTx = vi.spyOn(wallet.arkProvider, "submitTx").mockResolvedValue({
             arkTxid: "txid",
@@ -351,63 +351,187 @@ describe("Wallet script queries stay under the URL cap", () => {
             signedCheckpointTxs: [],
         });
         const finalizeTx = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
+        const getVtxos = vi
+            .spyOn(wallet.indexerProvider, "getVtxos")
+            .mockResolvedValue({ vtxos: [] });
         const broadcaster = await wallet.getArkadeBroadcaster();
-        const swept = { ...vtxoFor(wallet.defaultContractScript, 1), isSwept: true };
-        const getVtxos = vi.spyOn(wallet.indexerProvider, "getVtxos").mockResolvedValue({
-            vtxos: [swept],
-        });
-        const signOwnershipProof = vi.spyOn(wallet, "makeGetPendingTxIntentSignature");
 
         expect(await wallet.deferPendingTxRecovery()).toBe(true);
-        await expect(wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+
+        return {
+            wallet,
+            broadcaster,
+            liveInfo,
+            getInfo,
+            getPendingTxs,
+            submitTx,
+            finalizeTx,
+            getVtxos,
+            own: (n: number, extra: Partial<VirtualCoin> = {}) => ({
+                ...vtxoFor(wallet.defaultContractScript, n),
+                ...extra,
+            }),
+            hasPendingTx: async () =>
+                (await walletRepository.getWalletState())?.settings?.hasPendingTx,
+        };
+    };
+
+    type DeferredRecovery = Awaited<ReturnType<typeof deferredRecovery>>;
+
+    /** Both paths a new send can take to the operator. */
+    const expectSendsRefused = async (h: DeferredRecovery) => {
+        expect(h.wallet.hasDeferredPendingTxRecovery).toBe(true);
+        await expect(h.broadcaster.submitTx("new-transaction", [])).rejects.toThrow(
+            "recovery is required",
+        );
+        await expect(h.wallet.buildAndSubmitOffchainTx([], [])).rejects.toThrow(
+            "recovery is required",
+        );
+        expect(h.submitTx).not.toHaveBeenCalled();
+    };
+
+    const expectSendsAllowed = async (h: DeferredRecovery) => {
+        expect(h.wallet.hasDeferredPendingTxRecovery).toBe(false);
+        await h.broadcaster.submitTx("new-transaction", []);
+        expect(h.submitTx).toHaveBeenCalledWith("new-transaction", []);
+    };
+
+    it("unfences sends after a pass that found no proof input", async () => {
+        const h = await deferredRecovery();
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+
+        expect(h.getPendingTxs).not.toHaveBeenCalled();
+        expect(await h.hasPendingTx()).toBe(true);
+        await expectSendsAllowed(h);
+    });
+
+    it("unfences sends after a pass that could not finalize a discovered tx", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSwept: true })] });
+        h.getPendingTxs.mockResolvedValue([
+            { arkTxid: "a".repeat(64), finalArkTx: "", signedCheckpointTxs: [] },
+        ]);
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+
+        expect(logged).toHaveBeenCalledWith(
+            expect.stringContaining("Failed to finalize transaction"),
+            expect.anything(),
+        );
+        expect(await h.hasPendingTx()).toBe(true);
+        await expectSendsAllowed(h);
+    });
+
+    it("keeps sends fenced while the operator is unreachable, then unfences", async () => {
+        const h = await deferredRecovery();
+        h.getInfo.mockRejectedValueOnce(new ProviderUnavailableError("operator offline"));
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
             "operator offline",
         );
-        expect(await wallet.resumeDeferredPendingTxs(() => false)).toBe(true);
-        expect(getVtxos).not.toHaveBeenCalled();
-        expect(getPendingTxs).not.toHaveBeenCalled();
 
-        getVtxos.mockResolvedValueOnce({ vtxos: [] });
-        expect(await wallet.resumeDeferredPendingTxs(() => true)).toBe(false);
-        expect(getPendingTxs).not.toHaveBeenCalled();
-        expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
+        expect(h.getVtxos).not.toHaveBeenCalled();
+        await expectSendsRefused(h);
+        // Recovery completes by finalizing, so that leg is never fenced.
+        await h.broadcaster.finalizeTx("existing-transaction", []);
+        expect(h.finalizeTx).toHaveBeenCalledWith("existing-transaction", []);
 
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+        await expectSendsAllowed(h);
+    });
+
+    it("keeps sends fenced when the pass hits a retryable failure mid-flight", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSwept: true })] });
+        h.getPendingTxs.mockRejectedValueOnce(new ProviderUnavailableError("operator offline"));
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "operator offline",
+        );
+
+        expect(await h.hasPendingTx()).toBe(true);
+        await expectSendsRefused(h);
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+        await expectSendsAllowed(h);
+    });
+
+    it("unfences sends when the pass fails for a non-retryable reason", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSwept: true })] });
+        h.getPendingTxs.mockRejectedValue(new Error("pending lookup rejected"));
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "pending lookup rejected",
+        );
+
+        expect(await h.hasPendingTx()).toBe(true);
+        await expectSendsAllowed(h);
+    });
+
+    it("keeps sends fenced when the operator reports another network", async () => {
+        const h = await deferredRecovery();
+        h.getInfo.mockResolvedValue({ ...h.liveInfo, network: "regtest" });
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "Operator network changed",
+        );
+
+        expect(h.getVtxos).not.toHaveBeenCalled();
+        await expectSendsRefused(h);
+    });
+
+    it("keeps sends fenced when the operator's info is unusable, then unfences", async () => {
+        const h = await deferredRecovery();
+        h.getInfo.mockRejectedValueOnce(new Error("malformed operator info"));
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "malformed operator info",
+        );
+
+        expect(h.getVtxos).not.toHaveBeenCalled();
+        await expectSendsRefused(h);
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+        await expectSendsAllowed(h);
+    });
+
+    it("proves ownership with spent and swept outputs, never subdust or exited ones", async () => {
+        const h = await deferredRecovery();
+        const swept = h.own(1, { isSwept: true });
+        const spent = h.own(2, { isSpent: true });
+        const subdust = h.own(3, { value: Number(h.wallet.dustAmount) - 1 });
+        const exited = h.own(4, { isUnrolled: true });
+        h.getVtxos.mockResolvedValue({ vtxos: [swept, subdust, spent, exited] });
+        const signOwnershipProof = vi.spyOn(h.wallet, "makeGetPendingTxIntentSignature");
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+
+        expect(signOwnershipProof).toHaveBeenCalledWith([
+            expect.objectContaining({ txid: swept.txid, isSwept: true }),
+            expect.objectContaining({ txid: spent.txid, isSpent: true }),
+        ]);
+    });
+
+    it("leaves the fence in place when its init generation went stale", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSwept: true })] });
         let active = true;
         let finishLookup!: (pending: []) => void;
-        getPendingTxs.mockImplementationOnce(
+        h.getPendingTxs.mockImplementationOnce(
             () => new Promise((resolve) => (finishLookup = resolve)),
         );
-        const staleRecovery = wallet.resumeDeferredPendingTxs(() => active);
-        await vi.waitFor(() => expect(getPendingTxs).toHaveBeenCalledOnce());
+
+        const staleRecovery = h.wallet.resumeDeferredPendingTxs(() => active);
+        await vi.waitFor(() => expect(h.getPendingTxs).toHaveBeenCalledOnce());
         active = false;
         finishLookup([]);
         await staleRecovery;
-        expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
 
-        let reconnect!: (info: typeof liveInfo) => void;
-        getInfo.mockImplementationOnce(() => new Promise((resolve) => (reconnect = resolve)));
-        const recovery = wallet.resumeDeferredPendingTxs(() => true);
-        await expect(wallet.buildAndSubmitOffchainTx([], [])).rejects.toThrow(
-            "recovery is required",
-        );
-        await expect(broadcaster.submitTx("new-transaction", [])).rejects.toThrow(
-            "recovery is required",
-        );
-        expect(submitTx).not.toHaveBeenCalled();
-        await broadcaster.finalizeTx("existing-transaction", []);
-        expect(finalizeTx).toHaveBeenCalledWith("existing-transaction", []);
-        expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
-
-        reconnect(liveInfo);
-        expect(await recovery).toBe(true);
-        expect(getVtxos).toHaveBeenCalled();
-        expect(getPendingTxs).toHaveBeenCalledTimes(2);
-        expect(signOwnershipProof).toHaveBeenLastCalledWith([
-            expect.objectContaining({ txid: swept.txid, vout: swept.vout, isSwept: true }),
-        ]);
-        expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(false);
-        expect(wallet.hasDeferredPendingTxRecovery).toBe(false);
-        await broadcaster.submitTx("new-transaction", []);
-        expect(submitTx).toHaveBeenCalledWith("new-transaction", []);
+        expect(await h.hasPendingTx()).toBe(true);
+        expect(h.wallet.hasDeferredPendingTxRecovery).toBe(true);
     });
 });
 
