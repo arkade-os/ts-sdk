@@ -160,6 +160,20 @@ describe("wallet request scope", () => {
         expect(reinitialize).not.toHaveBeenCalled();
     });
 
+    it("refuses a deduplicated read once disposal begins but answers the admitted one", async () => {
+        const original = await setup();
+        const address = deferred<string>();
+        vi.mocked(original.wallet.getAddress).mockImplementation(() => address.promise);
+        const admitted = original.proxy.getAddress();
+        await vi.waitFor(() => expect(original.wallet.getAddress).toHaveBeenCalledOnce());
+        const disposing = original.proxy.dispose();
+        const refused = expect(original.proxy.getAddress()).rejects.toThrow(/disposed/i);
+        address.resolve("admitted-address");
+        await expect(admitted).resolves.toBe("admitted-address");
+        await refused;
+        await disposing;
+    });
+
     it("fails closed without destructive fallback when an older worker rejects disposal", async () => {
         const original = await setup();
         original.sendMessageDirect.mockRejectedValue(new Error("unsupported request"));

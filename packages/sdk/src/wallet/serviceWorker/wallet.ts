@@ -967,6 +967,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     protected async sendMessage(request: WalletUpdaterRequest): Promise<WalletUpdaterResponse> {
+        this.assertNotDisposed();
         if (!DEDUPABLE_REQUEST_TYPES.has(request.type)) {
             return this.sendMessageWithRetry(request);
         }
