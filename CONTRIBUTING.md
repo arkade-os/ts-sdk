@@ -4,13 +4,20 @@
 
 Integration tests live in `test/e2e/` within each package and require the Docker regtest stack.
 
-`test:integration` runs each package's full cycle (reset + up + setup + test) via
-`scripts/regtest.sh <pkg> cycle`, using `packages/<pkg>/.env.regtest`.
+`test:integration` uses `packages/<pkg>/.env.regtest`. Every package but `sdk` runs one full
+cycle (reset + up + setup + test) via `scripts/regtest.sh <pkg> cycle`; `sdk` runs
+`scripts/regtest.sh sdk groups`, which walks the CI groups with a **fresh stack per group**.
+
+That difference is deliberate: the sdk e2e files are not safe to run in one process against one
+long-lived arkd. Server state a test mutates outlives it — the rotation suites change arkd's signer
+set (and with it the `/v1/info` digest every client caches), so a whole-suite run fails other files
+with `DIGEST_MISMATCH`. `scripts/regtest.sh sdk cycle` still does the single-stack pass when you
+want a quick one.
 
 ```bash
 pnpm run test:integration              # Every package, end-to-end
-pnpm run test:integration:ts-sdk       # ts-sdk only
-pnpm run test:integration:boltz-swap   # boltz-swap only
+pnpm run test:integration:sdk          # sdk only
+pnpm run test:integration:sdk-executor  # sdk executor e2e, on its own stack
 pnpm run test:integration:swap         # swap only
 pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
 ```
@@ -24,27 +31,46 @@ matrix jobs.
 
 ### Per-package stack control
 
-Replace `:ts-sdk` with `:boltz-swap`, `:swap`, or `:swap-rfq` for the other packages.
+Replace `:sdk` with `:swap` or `:swap-rfq` for the other packages.
 
 ```bash
-pnpm run regtest:up:ts-sdk
-pnpm run regtest:setup:ts-sdk
-pnpm run regtest:test:ts-sdk                          # whole e2e suite
-pnpm run regtest:test:ts-sdk test/e2e/asset.test.ts   # or selected files only
-pnpm run regtest:down:ts-sdk
-pnpm run regtest:reset:ts-sdk
+pnpm run regtest:up:sdk
+pnpm run regtest:setup:sdk
+pnpm run regtest:test:sdk                          # whole e2e suite
+pnpm run regtest:test:sdk test/e2e/asset.test.ts   # or selected files only
+pnpm run regtest:down:sdk
+pnpm run regtest:reset:sdk
 ```
 
-CI fans the ts-sdk e2e suite out across parallel groups by passing each group's file list to
-`regtest:test` (see the `integration` matrix in `.github/workflows/ci.yml`).
+CI fans the sdk e2e suite out across parallel groups by passing each group's file list to
+`regtest:test` (see the `integration` matrix in `.github/workflows/ci.yml`). That matrix is the only
+definition of the groups: `scripts/e2e-groups.mjs` reads it so the local `groups` run matches CI, and
+`--check` (wired into `pnpm lint`) fails when an e2e file belongs to no group or to two.
+
+### Executor e2e
+
+`packages/sdk/test/e2e/executor.test.ts` runs on its own stack, `sdk-executor`: arkade-regtest's
+`executor` profile (the executor daemon on :7280) with seconds-typed arkd timelocks, set in
+`packages/sdk/.env.regtest.executor`. It skips with a message when no executor answers.
+
+```bash
+pnpm run regtest:up:sdk-executor
+pnpm run regtest:test:sdk-executor test/e2e/executor.test.ts
+```
+
+`EXECUTOR_URL` (default `http://localhost:7280`) and `ESPLORA_URL` adjust it.
 
 ### The stack itself
 
 `regtest/` is a git submodule pointing to
 [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest). It manages a Docker Compose stack
-(Bitcoin Core, Fulcrum, mempool, NBXplorer, arkd, boltz, LND, fulmine, and supporting services)
-driven by the in-house Node CLI `regtest.mjs`. Use `node regtest/regtest.mjs start` / `stop` /
-`clean`, or the `scripts/regtest.sh` controller.
+(Bitcoin Core, Fulcrum, mempool, NBXplorer, arkd, and supporting services) driven by the in-house
+Node CLI `regtest.mjs`. Use `node regtest/regtest.mjs start` / `stop` / `clean`, or the
+`scripts/regtest.sh` controller.
+
+The submodule ships more tiers than this repo needs — including a Boltz/LND/Fulmine stack no suite
+here touches. A package's `.env.regtest` narrows them with `REGTEST_PROFILES`; starting every tier
+is contention that widens timing windows on a 2-core CI runner.
 
 Run `git submodule update --init` after cloning.
 
@@ -52,13 +78,12 @@ Run `git submodule update --init` after cloning.
 
 Package-scoped release orchestrator. Target is any package key, or `all`:
 
-`sdk` · `boltz-swap` · `swap` · `wallet-providers` · `sats-connect` · `sats-connect-react` ·
-`checkout` · `snap` · `all`
+`sdk` · `swap` · `wallet-providers` · `sats-connect` · `sats-connect-react` · `checkout` · `snap` ·
+`all`
 
 ```bash
-pnpm run release -- boltz-swap patch          # Boltz bugfix only
 pnpm run release -- swap patch                # Swap bugfix only
-pnpm run release -- sdk patch                 # SDK + dependent boltz-swap/swap patch
+pnpm run release -- sdk patch                 # SDK + dependent swap patch
 pnpm run release -- sdk prepatch --preid beta # Mirrors prerelease into the dependents
 pnpm run release -- wallet-providers patch    # Web package on its own cadence
 pnpm run release -- all patch                 # Bump every package
@@ -75,9 +100,9 @@ under a matching npm dist-tag — never `latest`.
 ### Only the workspace:* dependents fan out from the SDK
 
 Releasing SDK implies a dependent release of every package that depends on it via `workspace:*`
-(`boltz-swap` and `swap`), because pnpm rewrites `workspace:*` to an exact version on publish, so a
-dependent left unreleased stays pinned to the previous SDK. Override an individual dependent's bump
-with `--boltz-bump` / `--swap-bump <bump-or-version>`.
+(`swap`), because pnpm rewrites `workspace:*` to an exact version on publish, so a dependent left
+unreleased stays pinned to the previous SDK. Override an individual dependent's bump with
+`--swap-bump <bump-or-version>`.
 
 The five web packages are deliberately **not** fan-out dependents. They depend on the SDK through
 peer ranges or `workspace:^`, both of which publish as caret ranges and stay satisfied across an SDK

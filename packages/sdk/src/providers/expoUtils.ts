@@ -1,0 +1,98 @@
+import { baseFetch, fetch } from "../utils/fetch";
+import { HttpResponseError } from "./errors";
+import { readSseFrames } from "./sseFrames";
+import { streamFailureError } from "./utils";
+
+/**
+ * Dynamically imports expo/fetch, falling back to {@link baseFetch}.
+ *
+ * Adds no headers of its own: both Expo providers share this function but reach
+ * different origins, so each passes its own per request.
+ *
+ * @returns A fetch function suitable for SSE streaming
+ */
+export async function getExpoFetch(options?: { requireExpo?: boolean }): Promise<typeof fetch> {
+    const requireExpo = options?.requireExpo ?? false;
+
+    try {
+        const expoFetchModule = await import("expo/fetch");
+        console.debug("Using expo/fetch for streaming");
+        return expoFetchModule.fetch as unknown as typeof fetch;
+    } catch (error) {
+        if (requireExpo) {
+            throw new Error(
+                "expo/fetch is unavailable in this environment. " +
+                    "Please ensure expo/fetch is installed and properly configured.",
+            );
+        }
+
+        console.warn(
+            "Using standard fetch instead of expo/fetch. " +
+                "Streaming may not be fully supported in some environments.",
+            error,
+        );
+        return baseFetch;
+    }
+}
+
+/**
+ * Generic SSE stream processor using fetch API with ReadableStream.
+ * Handles SSE format parsing, buffer management, and abort signals.
+ *
+ * @param url - The SSE endpoint URL
+ * @param abortSignal - Signal to abort the stream
+ * @param fetchFn - Fetch function to use (defaults to standard fetch)
+ * @param headers - Additional headers to send
+ * @param parseData - Function to parse and yield data from SSE events
+ */
+export async function* sseStreamIterator<T>(
+    url: string,
+    abortSignal: AbortSignal,
+    fetchFn: typeof fetch,
+    headers: Record<string, string>,
+    parseData: (data: any) => T | null,
+): AsyncGenerator<T, void, unknown> {
+    const fetchController = new AbortController();
+    const cleanup = () => fetchController.abort();
+    abortSignal?.addEventListener("abort", cleanup, { once: true });
+
+    try {
+        const response = await fetchFn(url, {
+            headers: {
+                Accept: "text/event-stream",
+                ...headers,
+            },
+            // Required, not just for cancellation: `getExpoFetch` falls back to
+            // `baseFetch`, which bounds any read that brings no signal of its
+            // own. Drop this and the stream is truncated at READ_TIMEOUT_MS.
+            signal: fetchController.signal,
+        });
+
+        if (!response.ok) {
+            await response.body?.cancel().catch(() => {});
+            throw new HttpResponseError("Unexpected status when fetching SSE stream", response);
+        }
+
+        if (!response.body) {
+            throw new Error("Response body is null");
+        }
+
+        for await (const { event, data } of readSseFrames(response.body)) {
+            if (abortSignal?.aborted) break;
+            if (event === "failure") throw streamFailureError(data);
+            if (event !== "message" || !data.trim()) continue;
+
+            try {
+                const parsed = parseData(JSON.parse(data));
+                if (parsed !== null) {
+                    yield parsed;
+                }
+            } catch (parseError) {
+                console.error("Failed to parse SSE data:", parseError);
+                throw parseError;
+            }
+        }
+    } finally {
+        abortSignal?.removeEventListener("abort", cleanup);
+    }
+}

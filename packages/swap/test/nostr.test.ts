@@ -5,10 +5,16 @@
  * package beside `httpTransport` and `relayTransport`.
  */
 import { describe, it, expect, vi } from "vitest";
-import { generateSecretKey, getPublicKey, nip44, SimplePool, type Event } from "nostr-tools";
+import {
+    finalizeEvent,
+    generateSecretKey,
+    getPublicKey,
+    nip44,
+    SimplePool,
+    type Event,
+} from "nostr-tools";
 import { SwapRefusal } from "../src/rfq";
 import {
-    RFQ_AD_KIND,
     RFQ_DIRECTED_KIND,
     RelayUnavailable,
     TransportClosed,
@@ -19,7 +25,7 @@ import {
  * A stand-in for SimplePool that behaves like a relay the solver is also on:
  * it decrypts what the client publishes and lets the test answer as the solver.
  */
-const fakePool = (solverSecret: Uint8Array) => {
+const fakePool = (solverSecret: Uint8Array, outcome?: () => Promise<string>) => {
     let onevent: ((e: Event) => void) | undefined;
     let onclose: ((reasons: unknown[]) => void) | undefined;
     const published: unknown[] = [];
@@ -38,25 +44,34 @@ const fakePool = (solverSecret: Uint8Array) => {
         publish(_relays: string[], event: Event) {
             const key = nip44.v2.utils.getConversationKey(solverSecret, event.pubkey);
             published.push(JSON.parse(nip44.v2.decrypt(event.content, key)));
-            return [Promise.resolve("ok")];
+            return [outcome ? outcome() : Promise.resolve("ok")];
         },
         close() {},
     };
+    /** Signed, then off the wire: the round trip drops `finalizeEvent`'s cached "verified" mark. */
+    const signedReply = (signer: Uint8Array, clientPubkey: string, payload: unknown): Event =>
+        JSON.parse(
+            JSON.stringify(
+                finalizeEvent(
+                    {
+                        kind: RFQ_DIRECTED_KIND,
+                        created_at: Math.floor(Date.now() / 1000),
+                        tags: [["p", clientPubkey]],
+                        content: nip44.v2.encrypt(
+                            JSON.stringify(payload),
+                            nip44.v2.utils.getConversationKey(solverSecret, clientPubkey),
+                        ),
+                    },
+                    signer,
+                ),
+            ),
+        );
+    const deliver = (event: Event) => onevent?.(event);
     /** Answer as the solver, encrypted to the client that published last. */
-    const solverReplies = (clientPubkey: string, payload: unknown) => {
-        const key = nip44.v2.utils.getConversationKey(solverSecret, clientPubkey);
-        onevent?.({
-            kind: RFQ_DIRECTED_KIND,
-            pubkey: getPublicKey(solverSecret),
-            content: nip44.v2.encrypt(JSON.stringify(payload), key),
-            tags: [["p", clientPubkey]],
-            created_at: Math.floor(Date.now() / 1000),
-            id: "x",
-            sig: "y",
-        } as Event);
-    };
+    const solverReplies = (clientPubkey: string, payload: unknown) =>
+        deliver(signedReply(solverSecret, clientPubkey, payload));
     const dropEveryRelay = (reasons: unknown[]) => onclose?.(reasons);
-    return { pool, published, seenFilters, solverReplies, dropEveryRelay };
+    return { pool, published, seenFilters, signedReply, deliver, solverReplies, dropEveryRelay };
 };
 
 describe("RFQ kinds", () => {
@@ -73,17 +88,6 @@ describe("RFQ kinds", () => {
     it("keeps directed traffic inside the NIP-01 ephemeral range", () => {
         expect(RFQ_DIRECTED_KIND).toBeGreaterThanOrEqual(20_000);
         expect(RFQ_DIRECTED_KIND).toBeLessThan(30_000);
-    });
-
-    /**
-     * The ad is standing state rather than a message, so it belongs in the
-     * addressable range where a relay keeps the current version per solver.
-     * Asserted beside the one above so the contrast is on the record: these two
-     * kinds want OPPOSITE retention, and neither is a typo of the other.
-     */
-    it("keeps the solver ad addressable, not ephemeral", () => {
-        expect(RFQ_AD_KIND).toBeGreaterThanOrEqual(30_000);
-        expect(RFQ_AD_KIND).toBeLessThan(40_000);
     });
 
     it("subscribes on the directed kind, addressed to itself, from the solver", () => {
@@ -108,6 +112,45 @@ describe("RFQ kinds", () => {
 });
 
 describe("nostrRfqTransport", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid timeout %s before opening a subscription",
+        (timeoutMs) => {
+            const solverSecret = generateSecretKey();
+            const { pool, seenFilters } = fakePool(solverSecret);
+            expect(() =>
+                nostrRfqTransport({
+                    relays: ["wss://x"],
+                    solverPubkey: getPublicKey(solverSecret),
+                    pool: pool as never,
+                    timeoutMs,
+                }),
+            ).toThrow("timeoutMs");
+            expect(seenFilters).toHaveLength(0);
+        },
+    );
+
+    it("keeps zero as an immediate reply timeout", async () => {
+        vi.useFakeTimers();
+        try {
+            const solverSecret = generateSecretKey();
+            const { pool } = fakePool(solverSecret);
+            const transport = nostrRfqTransport({
+                relays: ["wss://x"],
+                solverPubkey: getPublicKey(solverSecret),
+                pool: pool as never,
+                timeoutMs: 0,
+            });
+            const rejection = expect(
+                transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "zero" }),
+            ).rejects.toThrow("no solver reply within 0ms");
+            await vi.advanceTimersByTimeAsync(0);
+            await rejection;
+            await transport.close();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     const quote = (rfqId: string) => ({ v: 1, type: "rfq_quote", rfq_id: rfqId });
 
     it("returns the solver's quote for the negotiation it asked about", async () => {
@@ -200,8 +243,8 @@ describe("nostrRfqTransport", () => {
     /**
      * A dropped subscription and a silent solver look identical from here, and
      * mean opposite things. Both shapes of `onclose` payload nostr-tools has
-     * used across its 2.x line are exercised, because the package declares a
-     * peer range spanning both and would otherwise only work against one.
+     * used across its 2.x line are exercised, so the transport reads whichever
+     * one the installed release sends.
      */
     it.each([
         ["legacy string[]", ["relay closed"]],
@@ -218,6 +261,102 @@ describe("nostrRfqTransport", () => {
 
         const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
         dropEveryRelay(reasons);
+        await expect(pending).rejects.toBeInstanceOf(RelayUnavailable);
+        await transport.close();
+    });
+
+    it("fails at once, publishing nothing, once every relay dropped before the request", async () => {
+        const solverSecret = generateSecretKey();
+        const { pool, published, dropEveryRelay } = fakePool(solverSecret);
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            pool: pool as never,
+        });
+        dropEveryRelay([{ url: "wss://x", reason: "connection failed" }]);
+        await expect(
+            transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
+        ).rejects.toBeInstanceOf(RelayUnavailable);
+        await expect(transport.status("abc")).rejects.toBeInstanceOf(RelayUnavailable);
+        expect(published).toHaveLength(0);
+    });
+
+    it("refuses a request after close without publishing", async () => {
+        const solverSecret = generateSecretKey();
+        const { pool, published } = fakePool(solverSecret);
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            pool: pool as never,
+        });
+        await transport.close();
+        await expect(
+            transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
+        ).rejects.toBeInstanceOf(TransportClosed);
+        expect(published).toHaveLength(0);
+    });
+
+    /**
+     * nostr-tools resolves a relay it could not connect to with "connection failure: ...",
+     * so counting every fulfilled result as accepted waited out the reply timeout instead.
+     * Waiting past that timeout also proves the abandoned reply is not an unhandled rejection.
+     */
+    it("treats a relay it could not connect to as not accepting", async () => {
+        const solverSecret = generateSecretKey();
+        const { pool } = fakePool(solverSecret, () =>
+            Promise.resolve("connection failure: connection timed out"),
+        );
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            pool: pool as never,
+            timeoutMs: 20,
+        });
+        await expect(
+            transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
+        ).rejects.toThrow(/no relay accepted the RFQ message: connection failure/);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        await transport.close();
+    });
+
+    it("clears the reply timer when the publish fails", async () => {
+        vi.useFakeTimers();
+        try {
+            const solverSecret = generateSecretKey();
+            const { pool } = fakePool(solverSecret, () => Promise.reject(new Error("blocked")));
+            const transport = nostrRfqTransport({
+                relays: ["wss://x"],
+                solverPubkey: getPublicKey(solverSecret),
+                pool: pool as never,
+            });
+            await expect(
+                transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
+            ).rejects.toThrow(/no relay accepted/);
+            // A leftover 30s timer would keep a Node process alive for nothing.
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("does not leave an unhandled rejection when every relay drops mid-publish", async () => {
+        const solverSecret = generateSecretKey();
+        let ack!: (reason: string) => void;
+        const { pool, dropEveryRelay } = fakePool(
+            solverSecret,
+            () => new Promise<string>((resolve) => (ack = resolve)),
+        );
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            pool: pool as never,
+        });
+        const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        dropEveryRelay([{ url: "wss://x", reason: "closed" }]);
+        // Let Node's unhandled-rejection check run while the publish is still in flight.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        ack("");
         await expect(pending).rejects.toBeInstanceOf(RelayUnavailable);
         await transport.close();
     });
@@ -240,13 +379,13 @@ describe("nostrRfqTransport", () => {
     });
 
     /**
-     * Every other test injects a pool, so this is the only coverage of the
-     * owned-pool teardown. The two assertions are one property: `pool.close()`
-     * already ends every subscription on those relays, so closing the
-     * subscription as well sends a second CLOSE frame on a socket that is
-     * already closing — the double-close this transport exists to avoid.
+     * The default pool is shared: many transports multiplex over one socket
+     * per relay, so close() ends only this transport's subscription. The
+     * socket stays for the next negotiation; teardown is explicit via
+     * closeSharedNostrPool(). Closing the pool here too would send a second
+     * CLOSE on a socket other transports still use.
      */
-    it("tears an owned pool down through pool.close() alone", async () => {
+    it("shares one pool by default and closes only the subscription", async () => {
         const subscriptionClose = vi.fn();
         const subscribeMany = vi
             .spyOn(SimplePool.prototype, "subscribeMany")
@@ -258,14 +397,18 @@ describe("nostrRfqTransport", () => {
                 relays,
                 solverPubkey: getPublicKey(generateSecretKey()),
                 secretKey: generateSecretKey(),
-                // no `pool`: the transport creates and therefore owns one
+                // no `pool`: the transport shares the process-wide pool
             });
             await transport.close();
-            expect(poolClose).toHaveBeenCalledWith(relays);
-            expect(subscriptionClose).not.toHaveBeenCalled();
+            // A second close must not reach the subscription: each close decrements the relay's count.
+            await transport.close();
+            expect(subscriptionClose).toHaveBeenCalledTimes(1);
+            expect(poolClose).not.toHaveBeenCalled();
         } finally {
             subscribeMany.mockRestore();
             poolClose.mockRestore();
+            const { closeSharedNostrPool } = await import("../src/nostr");
+            closeSharedNostrPool();
         }
     });
 
@@ -293,5 +436,50 @@ describe("nostrRfqTransport", () => {
         const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
         await transport.close();
         await expect(pending).rejects.toBeInstanceOf(TransportClosed);
+    });
+
+    /** The responder `client/transport.ts` attests, enforced here rather than left to `pool`. */
+    describe("replies the subscription must refuse", () => {
+        const setup = () => {
+            const solverSecret = generateSecretKey();
+            const secretKey = generateSecretKey();
+            const fake = fakePool(solverSecret);
+            const transport = nostrRfqTransport({
+                relays: ["wss://x"],
+                solverPubkey: getPublicKey(solverSecret),
+                secretKey,
+                pool: fake.pool as never,
+                timeoutMs: 60,
+            });
+            return { ...fake, solverSecret, secretKey, transport };
+        };
+
+        it("takes the solver's correctly signed quote", async () => {
+            const { transport, signedReply, deliver, solverSecret, secretKey } = setup();
+            const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+            deliver(signedReply(solverSecret, getPublicKey(secretKey), quote("abc")));
+            await expect(pending).resolves.toMatchObject({ rfq_id: "abc" });
+            await transport.close();
+        });
+
+        it("ignores a quote whose signature does not check out", async () => {
+            const { transport, signedReply, deliver, solverSecret, secretKey } = setup();
+            const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+            const forged = signedReply(solverSecret, getPublicKey(secretKey), quote("abc"));
+            // Only the sig, so the id still matches and the ciphertext stays decryptable.
+            forged.sig = "00".repeat(64);
+            deliver(forged);
+            await expect(pending).rejects.toThrow(/no solver reply/);
+            await transport.close();
+        });
+
+        it("ignores a quote authored by a key other than the solver's", async () => {
+            const { transport, signedReply, deliver, secretKey } = setup();
+            const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+            // Signed by the client's own key: it decrypts and verifies, only the author differs.
+            deliver(signedReply(secretKey, getPublicKey(secretKey), quote("abc")));
+            await expect(pending).rejects.toThrow(/no solver reply/);
+            await transport.close();
+        });
     });
 });

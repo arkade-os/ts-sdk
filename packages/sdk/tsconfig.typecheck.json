@@ -1,0 +1,7 @@
+// Mirrors packages/boltz-swap/tsconfig.typecheck.json, which documents why a
+// `.test-d.ts` assertion is a silent no-op without it.
+{
+    "extends": "./tsconfig.json",
+    "include": ["src/**/*.ts", "test/**/*.test-d.ts", "../../config/types/**/*.d.ts"],
+    "exclude": ["node_modules", "dist", "test/e2e", "examples"]
+}

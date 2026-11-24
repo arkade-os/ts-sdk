@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit dependencies
+        run: pnpm audit --audit-level high
+
       # `pnpm -r <script>` silently SKIPS packages that lack the script, so a
       # package missing `test:unit` or `lint` would look green while running
       # nothing. This guard fails instead.
@@ -39,8 +42,11 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      - name: Type-check sdk type tests
+        run: pnpm -C packages/sdk run typecheck:types
+
       # Build must precede type-check: packages resolve @arkade-os/sdk's types
-      # from packages/ts-sdk/dist, so `pnpm -r typecheck` on an unbuilt tree
+      # from packages/sdk/dist, so `pnpm -r typecheck` on an unbuilt tree
       # fails with TS2307.
       - name: Build
         run: pnpm run build
@@ -67,27 +73,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package: ts-sdk
+          - package: sdk
             group: ark-core
             test_files: test/e2e/ark.test.ts
-          - package: ts-sdk
+          - package: sdk
             group: arkade-assets
             test_files: >-
               test/e2e/asset.test.ts
               test/e2e/asset-covenant.test.ts
+              test/e2e/arkade-renew.test.ts
               test/e2e/arkadeCash.test.ts
               test/e2e/liquidation.test.ts
-          - package: ts-sdk
+          - package: sdk
             group: settlement-delegation
             test_files: >-
               test/e2e/settlement.test.ts
+              test/e2e/early-settlement-fee.test.ts
               test/e2e/boardingRotation.test.ts
               test/e2e/non-interactive-delegate.test.ts
               test/e2e/contract-params-change.test.ts
               test/e2e/restore.test.ts
+              test/e2e/retiredDelegate.test.ts
               test/e2e/operatorOffline.test.ts
               test/e2e/arkade-script.test.ts
-          - package: ts-sdk
+              test/e2e/contractWatchState.test.ts
+              test/e2e/contractSubscriptionRecovery.test.ts
+              test/e2e/lookAhead.test.ts
+              test/e2e/activity.test.ts
+          - package: sdk
             group: exit-providers-rotation
             test_files: >-
               test/e2e/unilateralExit.test.ts
@@ -101,9 +114,13 @@ jobs:
               test/e2e/onchain.test.ts
               test/e2e/deprecatedSignerMigration.test.ts
               test/e2e/digestMismatch.test.ts
-          # boltz-swap is deprecated: no integration stack is spun up for it.
-          # The check job still type-checks, builds and smoke-tests it, since
-          # release.yml can still publish the package.
+          - package: sdk-executor
+            group: executor
+            test_files: test/e2e/executor.test.ts
+          # Needs an arkd with CosignOnchainTx (ArkLabsHQ/arkd#124, #173).
+          - package: sdk
+            group: onchain-cosign
+            test_files: test/e2e/onchain-cosign.test.ts
           - package: swap
             group: all
             test_files: ""
@@ -130,8 +147,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build ts-sdk
-        run: pnpm -C packages/ts-sdk build
+      - name: Build sdk
+        run: pnpm -C packages/sdk build
 
       - name: Make regtest controller executable
         run: chmod +x scripts/regtest.sh
@@ -155,12 +172,14 @@ jobs:
       - name: Capture logs on failure
         if: failure()
         run: |
-          docker logs arkd 2>&1 || true
-          docker logs arkd-wallet 2>&1 || true
-          docker logs emulator 2>&1 || true
-          docker logs boltz 2>&1 || true
-          docker logs boltz-lnd 2>&1 || true
-          docker logs boltz-fulmine 2>&1 || true
+          # arkade-regtest#62 deleted boltz/boltz-lnd/boltz-fulmine and renamed
+          # the second LND node to `lnd-peer`; the swap stacks also run the
+          # solver, covclaimd and executor now. `|| true` kept a stale list quiet, which
+          # is exactly why it went unnoticed — a Lightning failure dumped nothing.
+          for c in arkd arkd-signer redis arkd-wallet emulator lnd lnd-peer solver intent-solver covclaimd executor; do
+             echo "===== logs: $c ====="
+             docker logs --tail 200 "$c" 2>&1 || true
+           done
 
       - name: Cleanup
         if: always()

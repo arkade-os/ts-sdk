@@ -1,0 +1,388 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+    Wallet,
+    SingleKey,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    RestOperatorProvider,
+    type OnchainProvider,
+} from "../src";
+import { jsonResponse } from "./helpers/response";
+
+/**
+ * Regression for the arkade.money phantom-receive inflation (boarding sweeps).
+ *
+ * The mainnet Esplora (mempool.arkade.sh) returns `/outspends` as
+ * `[{"spent":true}]` WITHOUT the spender txid. getBoardingTxs() must still
+ * recover the sweep (commitment) txid — by scanning the boarding address's own
+ * transactions for the one whose vin spends the boarding output — so the swept
+ * VTXO is correctly suppressed by buildTransactionHistory instead of being
+ * double-counted on top of the boarding deposit.
+ */
+
+const SINGLEKEY_HEX = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+
+const mockArkInfo = {
+    signerPubkey: SERVER_PUBKEY_HEX,
+    forfeitPubkey: SERVER_PUBKEY_HEX,
+    batchExpiry: BigInt(144),
+    unilateralExitDelay: BigInt(144),
+    boardingExitDelay: BigInt(144),
+    roundInterval: BigInt(144),
+    network: "mutinynet",
+    dust: BigInt(1000),
+    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+    checkpointTapscript:
+        "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+};
+
+const FUNDING_TXID = "aa".repeat(32);
+const SWEEP_TXID = "bb".repeat(32);
+const BOARDING_VALUE = 48955;
+
+const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
+vi.mock("../src/utils/fetch", () => ({ fetch: mockFetch, baseFetch: mockFetch }));
+
+const MockEventSource = vi.fn().mockImplementation((url: string) => ({
+    url,
+    onmessage: null,
+    onerror: null,
+    close: vi.fn(),
+}));
+
+beforeEach(() => {
+    vi.stubGlobal("EventSource", MockEventSource);
+    mockFetch.mockReset();
+});
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+});
+
+describe("getBoardingTxs — sweep correlation without outspend txid", () => {
+    it("recovers the sweep commitment txid from address-tx vins (arkade Esplora omits it)", async () => {
+        // Resolved after wallet.create(); the mock closure reads it lazily so
+        // the /info fetch during create() is served before we know the address.
+        let boardingAddr = "";
+
+        // The boarding address's on-chain history: a funding deposit, then a
+        // sweep tx that spends that deposit (boarding output appears in its vin).
+        const fundingTx = {
+            txid: FUNDING_TXID,
+            vin: [{ txid: "ee".repeat(32), vout: 7 }],
+            vout: [{ scriptpubkey_address: "", value: BOARDING_VALUE }],
+            status: { confirmed: true, block_time: 1_763_000_000 },
+        };
+        const sweepTx = {
+            txid: SWEEP_TXID,
+            vin: [{ txid: FUNDING_TXID, vout: 0 }], // spends the boarding output
+            vout: [{ scriptpubkey_address: "tb1pelsewhere", value: 40000 }],
+            status: { confirmed: true, block_time: 1_763_000_500 },
+        };
+
+        mockFetch.mockImplementation((url: string) => {
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
+            if (url.includes("/info")) return reply(mockArkInfo);
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            if (url.includes("vtxo") || url.includes("scripts")) return reply({ vtxos: [] });
+            if (boardingAddr && url.includes(`/address/${boardingAddr}/txs`))
+                return reply([fundingTx, sweepTx]);
+            // arkade Esplora: spent flag present, spender txid OMITTED.
+            if (url.includes(`/tx/${FUNDING_TXID}/outspends`)) return reply([{ spent: true }]);
+            return reply([]);
+        });
+
+        const wallet = await Wallet.create({
+            identity: SingleKey.fromHex(SINGLEKEY_HEX),
+            walletMode: "static",
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
+
+            // The sweep must be ignorable so the resulting VTXO is suppressed.
+            expect(commitmentsToIgnore.has(SWEEP_TXID)).toBe(true);
+            // And we must never pollute the set with `undefined`.
+            expect(commitmentsToIgnore.has(undefined as unknown as string)).toBe(false);
+
+            const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            expect(boarding).toBeDefined();
+            expect(boarding!.settled).toBe(true);
+            expect(boarding!.key.commitmentTxid).toBe(SWEEP_TXID);
+            // The address history already names the sweep; the explorer is not asked again.
+            expect(mockFetch.mock.calls.some(([url]) => String(url).includes("/outspends"))).toBe(
+                false,
+            );
+        } finally {
+            await wallet.dispose();
+        }
+    });
+});
+
+describe("getBoardingTxs — spend status of the boarding output only", () => {
+    it("asks for the boarding output alone when the provider answers per output", async () => {
+        let boardingAddr = "";
+        const fundingTx = {
+            txid: FUNDING_TXID,
+            vin: [{ txid: "ee".repeat(32), vout: 7 }],
+            vout: [
+                { scriptpubkey_address: "", value: BOARDING_VALUE },
+                { scriptpubkey_address: "tb1pservicefee", value: 3_630 },
+            ],
+            status: { confirmed: true, block_time: 1_763_000_000 },
+        };
+        mockFetch.mockImplementation((url: string) => {
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
+            if (url.includes("/info")) return reply(mockArkInfo);
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            return reply({ vtxos: [] });
+        });
+        const getTxOutspend = vi.fn(async () => ({ spent: false, txid: "" }));
+        const getTxOutspends = vi.fn(async () => []);
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [fundingTx] : [],
+            ),
+            getTxOutspend,
+            getTxOutspends,
+        } as unknown as OnchainProvider;
+
+        const wallet = await Wallet.create({
+            identity: SingleKey.fromHex(SINGLEKEY_HEX),
+            walletMode: "static",
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
+            onchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs } = await wallet.getBoardingTxs();
+
+            expect(getTxOutspend).toHaveBeenCalledWith(FUNDING_TXID, 0);
+            expect(getTxOutspends).not.toHaveBeenCalled();
+            const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            expect(boarding?.settled).toBe(false);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("asks for every boarding output's spend status without waiting between them", async () => {
+        let boardingAddr = "";
+        const secondTxid = "cc".repeat(32);
+        const txAt = (txid: string) => ({
+            txid,
+            vin: [] as { txid: string; vout: number }[],
+            vout: [{ scriptpubkey_address: "", value: BOARDING_VALUE }],
+            status: { confirmed: true, block_time: 1_763_000_000 },
+        });
+        const fundingTx = txAt(FUNDING_TXID);
+        const secondTx = txAt(secondTxid);
+        let started = 0;
+        let release!: () => void;
+        const bothStarted = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const getTxOutspend = vi.fn(async () => {
+            started += 1;
+            if (started === 2) release();
+            await bothStarted;
+            return { spent: false, txid: "" };
+        });
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [fundingTx, secondTx] : [],
+            ),
+            getTxOutspend,
+            getTxOutspends: vi.fn(async () => []),
+        } as unknown as OnchainProvider;
+
+        mockFetch.mockImplementation((url: string) => {
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
+            if (url.includes("/info")) return reply(mockArkInfo);
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            return reply({ vtxos: [] });
+        });
+
+        const wallet = await Wallet.create({
+            identity: SingleKey.fromHex(SINGLEKEY_HEX),
+            walletMode: "static",
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
+            onchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+            secondTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const pending = wallet.getBoardingTxs();
+            const overlapped = await Promise.race([
+                bothStarted.then(() => true),
+                new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+            ]);
+            // Unblock even when the calls were sequential, so the assertion can fail
+            // instead of leaving getBoardingTxs parked on the first output.
+            release();
+            expect(overlapped).toBe(true);
+            await pending;
+            expect(getTxOutspend).toHaveBeenCalledTimes(2);
+        } finally {
+            release();
+            await wallet.dispose();
+        }
+    });
+});
+
+describe("getBoardingTxs — spender already in the address history", () => {
+    const SPENDER_TXID = "bb".repeat(32);
+    const PENDING_TXID = "cc".repeat(32);
+
+    const txAt = (
+        txid: string,
+        vin: { txid: string; vout: number }[] = [],
+        address = "tb1pelsewhere",
+    ) => ({
+        txid,
+        vin,
+        vout: [{ scriptpubkey_address: address, value: BOARDING_VALUE }],
+        status: { confirmed: true, block_time: 1_763_000_000 },
+    });
+
+    async function createWallet(onchainProvider: OnchainProvider) {
+        mockFetch.mockImplementation((url: string) => {
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
+            if (url.includes("/info")) return reply(mockArkInfo);
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            return reply({ vtxos: [] });
+        });
+        return Wallet.create({
+            identity: SingleKey.fromHex(SINGLEKEY_HEX),
+            walletMode: "static",
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
+            onchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+    }
+
+    it("makes no per-output request when the history lists the spender", async () => {
+        let boardingAddr = "";
+        const fundingTx = txAt(FUNDING_TXID);
+        const spenderTx = txAt(SPENDER_TXID, [{ txid: FUNDING_TXID, vout: 0 }]);
+        const getTxOutspend = vi.fn(async () => ({ spent: false, txid: "" }));
+        const getTxOutspends = vi.fn(async () => []);
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [fundingTx, spenderTx] : [],
+            ),
+            getTxOutspend,
+            getTxOutspends,
+        } as unknown as OnchainProvider;
+        const wallet = await createWallet(onchainProvider);
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
+
+            expect(getTxOutspend).not.toHaveBeenCalled();
+            expect(getTxOutspends).not.toHaveBeenCalled();
+            expect(commitmentsToIgnore.has(SPENDER_TXID)).toBe(true);
+            const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            expect(boarding?.settled).toBe(true);
+            expect(boarding?.key.commitmentTxid).toBe(SPENDER_TXID);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("asks only about the deposit no listed tx spends", async () => {
+        let boardingAddr = "";
+        const settledTx = txAt(FUNDING_TXID);
+        const pendingTx = txAt(PENDING_TXID);
+        const spenderTx = txAt(SPENDER_TXID, [{ txid: FUNDING_TXID, vout: 0 }]);
+        // No `getTxOutspend`: the Esplora shape, one `/outspends` list per tx.
+        const getTxOutspends = vi.fn(async () => [{ spent: false }]);
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [pendingTx, spenderTx, settledTx] : [],
+            ),
+            getTxOutspends,
+        } as unknown as OnchainProvider;
+        const wallet = await createWallet(onchainProvider);
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            settledTx.vout[0].scriptpubkey_address = boardingAddr;
+            pendingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs } = await wallet.getBoardingTxs();
+
+            expect(getTxOutspends).toHaveBeenCalledTimes(1);
+            expect(getTxOutspends).toHaveBeenCalledWith(PENDING_TXID);
+            const settled = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            const pending = boardingTxs.find((t) => t.key.boardingTxid === PENDING_TXID);
+            expect(settled?.settled).toBe(true);
+            expect(settled?.key.commitmentTxid).toBe(SPENDER_TXID);
+            expect(pending?.settled).toBe(false);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("falls back to the outspend answer when the history lists no spender", async () => {
+        let boardingAddr = "";
+        const fundingTx = txAt(FUNDING_TXID);
+        const getTxOutspend = vi.fn(async () => ({ spent: true, txid: SPENDER_TXID }));
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [fundingTx] : [],
+            ),
+            getTxOutspend,
+            getTxOutspends: vi.fn(async () => []),
+        } as unknown as OnchainProvider;
+        const wallet = await createWallet(onchainProvider);
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
+
+            expect(getTxOutspend).toHaveBeenCalledWith(FUNDING_TXID, 0);
+            expect(commitmentsToIgnore.has(SPENDER_TXID)).toBe(true);
+            const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            expect(boarding?.settled).toBe(true);
+            expect(boarding?.key.commitmentTxid).toBe(SPENDER_TXID);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+});

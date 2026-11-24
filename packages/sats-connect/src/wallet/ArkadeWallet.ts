@@ -1,5 +1,13 @@
 import * as scureBase from "@scure/base";
-import { ArkAddress, Transaction, Wallet, buildOffchainTx } from "@arkade-os/sdk";
+import {
+    ArkAddress,
+    EsploraProvider,
+    RestIndexerProvider,
+    RestOperatorProvider,
+    Transaction,
+    Wallet,
+    buildOffchainTx,
+} from "@arkade-os/sdk";
 import { getProviders, request } from "sats-connect";
 import { SatsConnectIdentity } from "../identity/SatsConnectIdentity";
 import type { ArkadeWalletConfig, ArkadeWalletInfo, SatsConnectRequest } from "../types";
@@ -115,8 +123,9 @@ export class ArkadeWallet {
 
             this.wallet = await Wallet.create({
                 identity: this.identity,
-                arkServerUrl: this.config.arkServerUrl,
-                esploraUrl: this.config.esploraUrl,
+                operatorProvider: new RestOperatorProvider(this.config.arkServerUrl),
+                indexerProvider: new RestIndexerProvider(this.config.arkServerUrl),
+                onchainProvider: new EsploraProvider(this.config.esploraUrl),
             });
 
             const arkAddress = await this.wallet.getAddress();
@@ -152,7 +161,7 @@ export class ArkadeWallet {
                 throw new Error("Amount must be a positive number");
             }
 
-            return await wallet.sendBitcoin({ address: recipient, amount: normalizedAmount });
+            return await wallet.send({ address: recipient, amount: normalizedAmount });
         } catch (error: any) {
             if (
                 error?.message?.includes("Wallet not connected") ||

@@ -1,0 +1,55 @@
+export class MockEventSource {
+    static instances: MockEventSource[] = [];
+
+    static reset() {
+        MockEventSource.instances = [];
+    }
+
+    readonly url: string;
+    readyState = 1;
+    closed = false;
+    private listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+
+    constructor(url = "") {
+        this.url = url;
+        MockEventSource.instances.push(this);
+    }
+
+    addEventListener(type: string, handler: (event: MessageEvent) => void) {
+        if (!this.listeners.has(type)) {
+            this.listeners.set(type, new Set());
+        }
+        this.listeners.get(type)!.add(handler);
+    }
+
+    removeEventListener(type: string, handler: (event: MessageEvent) => void) {
+        this.listeners.get(type)?.delete(handler);
+    }
+
+    listenerCount(type: string) {
+        return this.listeners.get(type)?.size ?? 0;
+    }
+
+    close() {
+        this.closed = true;
+    }
+
+    emitMessage(data: string) {
+        this.emit("message", { data });
+    }
+
+    emitFailure(data: string) {
+        this.emit("failure", { data });
+    }
+
+    emitError(readyState: number, detail?: { status?: number; retryAfterMs?: number }) {
+        this.readyState = readyState;
+        this.emit("error", Object.assign(new Event("error"), detail));
+    }
+
+    private emit(type: string, event: unknown) {
+        for (const handler of this.listeners.get(type) ?? []) {
+            handler(event as MessageEvent);
+        }
+    }
+}

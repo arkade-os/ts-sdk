@@ -1,0 +1,134 @@
+import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
+import { Proof } from "../proof";
+import { assertNonNegativeMs } from "../utils/time";
+import {
+    OperatorInfo,
+    OperatorProvider,
+    PendingTx,
+    SettlementEvent,
+    SignedProof,
+    TxNotificationEvent,
+} from "./ark";
+
+const DEFAULT_TTL_MS = 60_000;
+
+type ServerInfoEventSource = Partial<{
+    onServerInfoChanged(listener: (info: OperatorInfo) => void): () => void;
+}>;
+
+/**
+ * Decorates an {@link OperatorProvider}, caching {@link OperatorProvider.getInfo} for
+ * `ttlMs` (default 60s). Other provider methods pass through.
+ * Expired-cache refresh failures propagate; persisted wallet boot fallback
+ * lives in `arkInfoSnapshot`.
+ */
+export class CachingOperatorProvider implements OperatorProvider {
+    private cached?: OperatorInfo;
+    private expiresAt = 0;
+    private inflight?: Promise<OperatorInfo>;
+    /** Bumped on every event-driven cache write; see {@link getInfo}. */
+    private generation = 0;
+    private readonly unsubscribe: () => void;
+    readonly cosignOnchainTx?: (psbtB64: string) => Promise<string>;
+
+    constructor(
+        private readonly inner: OperatorProvider,
+        private readonly ttlMs: number = DEFAULT_TTL_MS,
+    ) {
+        assertNonNegativeMs("ttlMs", ttlMs);
+        this.unsubscribe =
+            (inner as ServerInfoEventSource).onServerInfoChanged?.((info) => {
+                this.cached = info;
+                this.expiresAt = Date.now() + this.ttlMs;
+                this.generation++;
+            }) ?? (() => {});
+        const cosign = inner.cosignOnchainTx;
+        if (cosign) this.cosignOnchainTx = (psbtB64) => cosign.call(inner, psbtB64);
+    }
+
+    /** Releases the inner provider's server-info subscription. */
+    dispose(): void {
+        this.unsubscribe();
+    }
+
+    get serverUrl(): string | undefined {
+        const url = (this.inner as { serverUrl?: unknown }).serverUrl;
+        return typeof url === "string" ? url : undefined;
+    }
+
+    async getInfo(): Promise<OperatorInfo> {
+        if (this.cached && Date.now() < this.expiresAt) return this.cached;
+        if (!this.inflight) {
+            // A rotation event can land while this request is in flight, making
+            // its result the older of the two. Writing it back would serve the
+            // superseded signer for a full TTL, so a bumped generation discards
+            // the response in favour of what the event already cached.
+            const generation = this.generation;
+            this.inflight = this.inner
+                .getInfo()
+                .then((info) => {
+                    if (this.generation !== generation) return this.cached ?? info;
+                    this.cached = info;
+                    this.expiresAt = Date.now() + this.ttlMs;
+                    return info;
+                })
+                .finally(() => {
+                    this.inflight = undefined;
+                });
+        }
+        return this.inflight;
+    }
+
+    submitTx(signedArkTx: string, checkpointTxs: string[]) {
+        return this.inner.submitTx(signedArkTx, checkpointTxs);
+    }
+
+    finalizeTx(arkTxid: string, finalCheckpointTxs: string[]) {
+        return this.inner.finalizeTx(arkTxid, finalCheckpointTxs);
+    }
+
+    registerIntent(intent: SignedProof<Proof.RegisterMessage>) {
+        return this.inner.registerIntent(intent);
+    }
+
+    deleteIntent(intent: SignedProof<Proof.DeleteMessage>) {
+        return this.inner.deleteIntent(intent);
+    }
+
+    confirmRegistration(intentId: string) {
+        return this.inner.confirmRegistration(intentId);
+    }
+
+    submitTreeNonces(batchId: string, pubkey: string, nonces: TreeNonces) {
+        return this.inner.submitTreeNonces(batchId, pubkey, nonces);
+    }
+
+    submitTreeSignatures(batchId: string, pubkey: string, signatures: TreePartialSigs) {
+        return this.inner.submitTreeSignatures(batchId, pubkey, signatures);
+    }
+
+    submitSignedForfeitTxs(signedForfeitTxs: string[], signedCommitmentTx?: string) {
+        return this.inner.submitSignedForfeitTxs(signedForfeitTxs, signedCommitmentTx);
+    }
+
+    getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent> {
+        return this.inner.getEventStream(signal, topics);
+    }
+
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent> {
+        return this.inner.getTransactionsStream(signal);
+    }
+
+    getPendingTxs(intent: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]> {
+        return this.inner.getPendingTxs(intent);
+    }
+
+    onServerInfoChanged(listener: (info: OperatorInfo) => void): () => void {
+        return (this.inner as ServerInfoEventSource).onServerInfoChanged?.(listener) ?? (() => {});
+    }
+}
+
+/** @deprecated Use {@link CachingOperatorProvider}. */
+export const CachingArkProvider = CachingOperatorProvider;
+/** @deprecated Use {@link CachingOperatorProvider}. */
+export type CachingArkProvider = CachingOperatorProvider;

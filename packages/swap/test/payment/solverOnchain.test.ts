@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
-import { PaymentRouter, onchainRail, type RouterContext } from "@arkade-os/sdk";
+import { PaymentRouter, onchainRail, type FeeInfo, type RouterContext } from "@arkade-os/sdk";
 import {
     SOLVER_ONCHAIN_RAIL,
     solverOnchainRail,
@@ -49,6 +49,7 @@ const negotiated = (fundAmount: number, toAmount: number) =>
         address: "tark1lockup",
         fundAmount,
         quote: {
+            pair: "arkade:BTC->onchain:BTC",
             from_amount: fundAmount,
             to_amount: toAmount,
             valid_until: NOW() + 3600,
@@ -66,7 +67,6 @@ const ctxWith = (send = vi.fn(async () => "funding-txid")): RouterContext =>
     ({ wallet: { send } as never, prefs: {} }) as RouterContext;
 
 const depsWith = (over: Partial<SolverOnchainRailDeps> = {}): SolverOnchainRailDeps => ({
-    arkServerUrl: "http://ark",
     l1Network: "regtest",
     payoutPubkey: PAYOUT_PUBKEY,
     discover: vi.fn(async () => [card("1000", "1000000")]),
@@ -77,7 +77,7 @@ const depsWith = (over: Partial<SolverOnchainRailDeps> = {}): SolverOnchainRailD
 
 /** Stub `requestOnchainSend` for the tests that drive quote()/send(). */
 const mockRequest = (result = negotiated(101_000, 100_000)) => {
-    const spy = vi.fn(async () => result);
+    const spy = vi.fn(async (..._args: unknown[]) => result);
     return { spy, result };
 };
 
@@ -253,13 +253,13 @@ describe("solverOnchainRail.available", () => {
 
 describe("the router drops this rail rather than failing the payment", () => {
     /** A request the collaborative-exit rail can price without a live wallet. */
-    const arkProvider = { getInfo: async () => ({ fees: {} }) };
+    const feeInfo = async () => ({}) as FeeInfo;
     const routerCtx = (rail: ReturnType<typeof solverOnchainRail>) =>
         new PaymentRouter({
-            wallet: { arkProvider } as never,
+            wallet: {} as never,
             prefs: { priority: [SOLVER_ONCHAIN_RAIL, "onchain"] },
         })
-            .use(onchainRail())
+            .use(onchainRail({ feeInfo }))
             .use(rail);
 
     it("ranks the solver route first when a card takes the send", async () => {
@@ -330,7 +330,7 @@ describe("solverOnchainRail.quote", () => {
         rfqStub = spy;
         await solverOnchainRail(depsWith()).quote({ raw: BTC_ADDR, amount: 100_000 }, ctxWith());
 
-        expect(spy.mock.calls[0][3]).toMatchObject({ amount: 100_000, amountSide: "to" });
+        expect(spy.mock.calls[0][2]).toMatchObject({ amount: 100_000, amountSide: "to" });
     });
 
     it("negotiates through the rendezvous the size chose", async () => {

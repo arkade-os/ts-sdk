@@ -180,6 +180,23 @@ describe("chainSourceFrom.getSpendingTx", () => {
         expect(getRawTransaction).toHaveBeenCalledWith("spender");
     });
 
+    it("asks for the one output when the provider answers per output", async () => {
+        const getTxOutspend = vi.fn(async () => ({ spent: true, txid: "spender" }));
+        const getTxOutspends = vi.fn(async () => []);
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspend,
+                getTxOutspends,
+                getRawTransaction: vi.fn(async () => Uint8Array.from([0xbe, 0xef])),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        expect(await chain.getSpendingTx("funding", 1, HTLC.pkScript)).toEqual({ txHex: "beef" });
+        expect(getTxOutspend).toHaveBeenCalledWith("funding", 1);
+        expect(getTxOutspends).not.toHaveBeenCalled();
+    });
+
     it("reads the outspend at the requested index, not the first one", async () => {
         const chain = chainSourceFrom(
             providerWith({
@@ -286,6 +303,71 @@ describe("a claimed HTLC on a deployment that omits the spender txid", () => {
                 funding: { txid: "aa".repeat(32), vout: 0 },
             }),
         ).toEqual({ phase: "claimed", txid: claim.txid, preimage: PREIMAGE });
+    });
+});
+
+describe("a funding the solver replaced by fee bump", () => {
+    const refused = vi.fn(async () => {
+        throw new Error("Failed to get transaction outspends");
+    });
+
+    it("classifies by the replacement output, since the backend refuses the gone tx's outspends", async () => {
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspends: refused,
+                getTransactions: vi.fn(async () => [historyTx("replacement", [])]),
+                getCoins: vi.fn(async () => [
+                    {
+                        txid: "replacement",
+                        vout: 0,
+                        value: 50_000,
+                        status: { confirmed: true, block_height: 90 },
+                    },
+                ]),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        expect(
+            await classifyOnchainHtlc(chain, {
+                htlc: HTLC,
+                minConfirmations: 1,
+                funding: { txid: "replaced", vout: 0 },
+            }),
+        ).toEqual({
+            phase: "claimable",
+            utxo: { txid: "replacement", vout: 0, amount: 50_000n, confirmations: 11 },
+        });
+    });
+
+    it("still fails the lookup for a funding the backend knows", async () => {
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspends: refused,
+                getTransactions: vi.fn(async () => [historyTx("funding", [])]),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        await expect(chain.getSpendingTx("funding", 0, HTLC.pkScript)).rejects.toThrow(
+            "Failed to get transaction outspends",
+        );
+    });
+
+    it("reports the outspend refusal when the history check fails too", async () => {
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspends: refused,
+                getTransactions: vi.fn(async () => {
+                    throw new Error("history unreachable");
+                }),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        await expect(chain.getSpendingTx("funding", 0, HTLC.pkScript)).rejects.toThrow(
+            "Failed to get transaction outspends",
+        );
     });
 });
 

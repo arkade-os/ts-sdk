@@ -1,0 +1,40 @@
+{
+    "contract": {
+        "type": "arkade",
+        "params": {
+            "program": "{\"version\":0,\"name\":\"banco-asset-to-btc\",\"params\":[{\"name\":\"makerWP\",\"type\":\"pubkey\"},{\"name\":\"wantAmount\",\"type\":\"int\"},{\"name\":\"server\",\"type\":\"pubkey\"},{\"name\":\"user\",\"type\":\"pubkey\"},{\"name\":\"exitDelay\",\"type\":\"int\"}],\"functions\":{\"fulfill\":{\"tapscript\":{\"signers\":[\"$server\"]},\"arkadeScript\":{\"asm\":[0,\"INSPECTOUTPUTVALUE\",\"$wantAmount\",\"GREATERTHANOREQUAL\",\"VERIFY\",0,\"INSPECTOUTPUTSCRIPTPUBKEY\",1,\"EQUALVERIFY\",\"$makerWP\",\"EQUAL\"]}},\"cancel\":{\"tapscript\":{\"signers\":[\"$user\",\"$server\"]}},\"exit\":{\"tapscript\":{\"signers\":[\"$user\"],\"csv\":{\"type\":\"seconds\",\"value\":\"$exitDelay\"}}}}}",
+            "args": "{\"makerWP\":\"0x29d1882fd4679b95871e42528293ba0087c6a05d7bad86d6b7a4901b8a7da3b8\",\"wantAmount\":\"1484\",\"server\":\"0x301078808e4f7bc0dadfe29e34b1df8eaf0108ef06b1722274075ebc107a127a\",\"user\":\"0x002ab7fb23b0d284dedc01ad9e645ead758dc5b2b44394dac16bc675f5ff73e3\",\"exitDelay\":\"2048\"}",
+            "serverKey": "301078808e4f7bc0dadfe29e34b1df8eaf0108ef06b1722274075ebc107a127a",
+            "userKey": "002ab7fb23b0d284dedc01ad9e645ead758dc5b2b44394dac16bc675f5ff73e3",
+            "emulatorKey": "f823b9b2febc81f4af967e77aed2f541cbd3397c6d8f5a72e32eb7b471af889a"
+        },
+        "script": "512014d80586167bb67f744babade7bc99177533c2601509b113f38218746710c556",
+        "address": "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf859xcqkrpv7ak0a6yh2adu77fj9m4x0pxq9gfkyfl8qscw3n3p32k75r5hk",
+        "label": "Arkade swap offer",
+        "metadata": {
+            "genericallySpendable": false,
+            "kind": "asset-swap-offer"
+        },
+        "createdAt": 1791188290203,
+        "state": "active",
+        "watch": "retained",
+        "watchState": "retained"
+    },
+    "swap": {
+        "id": "af7b6f8951f5a3f45b288861b16a10f28269d9ad57c9e12eef61c9cfff33afd8",
+        "fromAsset": "f121ac9b7656797cc68d1e8fecacfbaa2069ec1461edf0bf2f3c37404cb9791a0000",
+        "toAsset": "btc",
+        "fromAmount": "100",
+        "toAmount": "1484",
+        "swapAddress": "",
+        "swapPkScript": "512014d80586167bb67f744babade7bc99177533c2601509b113f38218746710c556",
+        "offerHex": "010022512014d80586167bb67f744babade7bc99177533c2601509b113f38218746710c55602000800000000000005cc0b0022f121ac9b7656797cc68d1e8fecacfbaa2069ec1461edf0bf2f3c37404cb9791a0000050022512029d1882fd4679b95871e42528293ba0087c6a05d7bad86d6b7a4901b8a7da3b8070020002ab7fb23b0d284dedc01ad9e645ead758dc5b2b44394dac16bc675f5ff73e3080020f823b9b2febc81f4af967e77aed2f541cbd3397c6d8f5a72e32eb7b471af889a0c0009010000000000000800",
+        "fundingTxid": "af7b6f8951f5a3f45b288861b16a10f28269d9ad57c9e12eef61c9cfff33afd8",
+        "spentTxid": "d3f15e30648f84d6c83ac95ce2eae89614aef4536c79b8cc336d55e201331d2e",
+        "status": "cancelled",
+        "createdAt": 1791187745000,
+        "quote": {
+            "feeBps": 30
+        }
+    }
+}

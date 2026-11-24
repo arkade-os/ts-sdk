@@ -1,0 +1,227 @@
+import { Outpoint } from "../../wallet";
+import {
+    BatchRegistration,
+    BatchRegistrationState,
+    BatchRegistrationPageFilter,
+    BatchRegistrationRepository,
+    intentMatchesFilter,
+    isTerminalBatchRegistrationState,
+} from "../intentRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
+import { SQLExecutor } from "./types";
+import { getSerializedExecutor, runInTransaction } from "./transaction";
+import { sanitizeTablePrefix } from "./prefix";
+
+interface IntentRow {
+    intent_tx_id: string;
+    intent_id: string | null;
+    state: string;
+    valid_from: number | null;
+    valid_until: number | null;
+    created_at: number;
+    updated_at: number;
+    register_proof: string;
+    register_proof_message: string;
+    delete_proof: string;
+    delete_proof_message: string;
+    batch_id: string | null;
+    commitment_txid: string | null;
+    cancellation_reason: string | null;
+    partial_forfeits_json: string;
+    signer_descriptor: string | null;
+    intent_vtxos_json: string;
+}
+
+export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepository {
+    readonly version = 1 as const;
+    private readonly db: SQLExecutor;
+    private initPromise: Promise<void> | null = null;
+    private readonly prefix: string;
+    private readonly t: string;
+
+    constructor(db: SQLExecutor, options?: { prefix?: string }) {
+        this.db = getSerializedExecutor(db);
+        this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
+        this.t = `${this.prefix}intents`;
+    }
+
+    private ensureInit(): Promise<void> {
+        if (!this.initPromise) this.initPromise = this.init();
+        return this.initPromise;
+    }
+
+    private async init(): Promise<void> {
+        await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.t} (
+            intent_tx_id TEXT PRIMARY KEY,
+            intent_id TEXT,
+            state TEXT NOT NULL,
+            valid_from INTEGER,
+            valid_until INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            register_proof TEXT NOT NULL,
+            register_proof_message TEXT NOT NULL,
+            delete_proof TEXT NOT NULL,
+            delete_proof_message TEXT NOT NULL,
+            batch_id TEXT,
+            commitment_txid TEXT,
+            cancellation_reason TEXT,
+            partial_forfeits_json TEXT NOT NULL,
+            signer_descriptor TEXT,
+            intent_vtxos_json TEXT NOT NULL
+        )`);
+        await this.db.run(
+            `CREATE UNIQUE INDEX IF NOT EXISTS idx_${this.prefix}intent_id ON ${this.t} (intent_id) WHERE intent_id IS NOT NULL`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}intent_state ON ${this.t} (state)`,
+        );
+    }
+
+    async clear(): Promise<void> {
+        await this.ensureInit();
+        // Route through the same serialized write chain as saveBatchRegistration so a
+        // clear can't interleave with an in-flight transaction on this executor.
+        await runInTransaction(this.db, async (tx) => {
+            await tx.run(`DELETE FROM ${this.t}`);
+        });
+    }
+
+    async saveBatchRegistration(intent: BatchRegistration): Promise<void> {
+        await this.ensureInit();
+        const now = Date.now();
+        await runInTransaction(this.db, async (tx) => {
+            // Upsert by the primary key only. INSERT OR REPLACE would also fire
+            // on the intent_id unique index, silently deleting the *other* row
+            // that holds it; ON CONFLICT(intent_tx_id) updates in place and lets
+            // an intent_id collision surface as a constraint error instead.
+            await tx.run(
+                `INSERT INTO ${this.t}
+                 (intent_tx_id, intent_id, state, valid_from, valid_until,
+                  created_at, updated_at, register_proof, register_proof_message,
+                  delete_proof, delete_proof_message, batch_id, commitment_txid,
+                  cancellation_reason, partial_forfeits_json, signer_descriptor,
+                  intent_vtxos_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(intent_tx_id) DO UPDATE SET
+                  intent_id = excluded.intent_id,
+                  state = excluded.state,
+                  valid_from = excluded.valid_from,
+                  valid_until = excluded.valid_until,
+                  created_at = excluded.created_at,
+                  updated_at = excluded.updated_at,
+                  register_proof = excluded.register_proof,
+                  register_proof_message = excluded.register_proof_message,
+                  delete_proof = excluded.delete_proof,
+                  delete_proof_message = excluded.delete_proof_message,
+                  batch_id = excluded.batch_id,
+                  commitment_txid = excluded.commitment_txid,
+                  cancellation_reason = excluded.cancellation_reason,
+                  partial_forfeits_json = excluded.partial_forfeits_json,
+                  signer_descriptor = excluded.signer_descriptor,
+                  intent_vtxos_json = excluded.intent_vtxos_json`,
+                [
+                    intent.proofTxId,
+                    intent.registrationId ?? null,
+                    intent.state,
+                    intent.validFrom ?? null,
+                    intent.validUntil ?? null,
+                    intent.createdAt,
+                    now,
+                    intent.registerProof,
+                    intent.registerProofMessage,
+                    intent.deleteProof,
+                    intent.deleteProofMessage,
+                    intent.batchId ?? null,
+                    intent.commitmentTransactionId ?? null,
+                    intent.cancellationReason ?? null,
+                    JSON.stringify(intent.partialForfeits),
+                    intent.signerDescriptor ?? null,
+                    JSON.stringify(intent.proofInputs),
+                ],
+            );
+        });
+    }
+
+    async getBatchRegistrationsPage(
+        filter: BatchRegistrationPageFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<BatchRegistration>> {
+        assertPageRequest(page);
+        await this.ensureInit();
+        if (filter?.states?.length === 0) return { items: [] };
+        const stateSql = filter?.states
+            ? ` AND state IN (${filter.states.map(() => "?").join(", ")})`
+            : "";
+        const stateParams = filter?.states ?? [];
+        const batchSize = Math.max(64, page.limit + 1);
+        const rows: BatchRegistration[] = [];
+        let after = page.after;
+        // SQL narrows by indexed state; the shared filter handles the remaining predicates.
+        while (rows.length <= page.limit) {
+            const batch = await this.db.all<IntentRow>(
+                `SELECT * FROM ${this.t} WHERE intent_tx_id > ?${stateSql} ORDER BY intent_tx_id LIMIT ?`,
+                [after ?? "", ...stateParams, batchSize],
+            );
+            if (batch.length === 0) break;
+            for (const row of batch) {
+                after = row.intent_tx_id;
+                const intent = rowToIntent(row);
+                if (!filter || intentMatchesFilter(intent, filter)) rows.push(intent);
+                if (rows.length > page.limit) break;
+            }
+            if (batch.length < batchSize) break;
+        }
+        return pageResult(rows, page.limit, (intent) => intent.proofTxId);
+    }
+
+    async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
+        await this.ensureInit();
+        const rows = await this.db.all<IntentRow>(`SELECT * FROM ${this.t}`);
+        const out: Outpoint[] = [];
+        for (const r of rows) {
+            if (isTerminalBatchRegistrationState(r.state as BatchRegistrationState)) continue;
+            for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[]) out.push(o);
+        }
+        return out;
+    }
+
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: BatchRegistration) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: BatchRegistrationPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {}
+}
+
+function rowToIntent(r: IntentRow): BatchRegistration {
+    return {
+        proofTxId: r.intent_tx_id,
+        registrationId: r.intent_id ?? undefined,
+        state: r.state as BatchRegistrationState,
+        validFrom: r.valid_from ?? undefined,
+        validUntil: r.valid_until ?? undefined,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        registerProof: r.register_proof,
+        registerProofMessage: r.register_proof_message,
+        deleteProof: r.delete_proof,
+        deleteProofMessage: r.delete_proof_message,
+        batchId: r.batch_id ?? undefined,
+        commitmentTransactionId: r.commitment_txid ?? undefined,
+        cancellationReason: r.cancellation_reason ?? undefined,
+        partialForfeits: JSON.parse(r.partial_forfeits_json),
+        signerDescriptor: r.signer_descriptor ?? undefined,
+        proofInputs: JSON.parse(r.intent_vtxos_json),
+    };
+}
+
+/** @deprecated Use {@link SQLiteBatchRegistrationRepository}. */
+export const SQLiteIntentRepository = SQLiteBatchRegistrationRepository;
+/** @deprecated Use {@link SQLiteBatchRegistrationRepository}. */
+export type SQLiteIntentRepository = SQLiteBatchRegistrationRepository;

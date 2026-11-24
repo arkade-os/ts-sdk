@@ -18,17 +18,25 @@ import {
     SingleKey,
     Transaction,
     getArkPsbtFields,
+    getNetwork,
+    type OperatorProvider,
 } from "@arkade-os/sdk";
 
-import { receiveVtxoScript } from "../src/rfq";
+import { lightningReceiveContract } from "../src/rfq";
 import {
     LockupAmountMismatchError,
-    awaitLockupFunding,
-    claimReceiveLockup,
+    finalizePendingClaim,
+    findPendingClaims,
     pushClaim,
-    type ClaimArkProvider,
 } from "../src/claim";
-import { LockupNeedsRecoveryError, type LockupVtxo, type RefundIndexer } from "../src/refund";
+import {
+    LockupNeedsRecoveryError,
+    MAX_LOCKUP_SPEND_INPUTS,
+    type LockupSpendIndexer,
+    type LockupVtxo,
+} from "../src/refund";
+import { CHF_ID, USD_ID } from "./fixtures";
+import { assetFlows } from "./helpers/assetPacket";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -44,10 +52,10 @@ const DESTINATION_PK_SCRIPT = p2tr(key(21));
  * reference solver: solver = key(1) (VHTLC sender), trader = key(13)
  * (receiver), server = key(3), emulator = key(9). */
 const swapScript = () =>
-    receiveVtxoScript({
+    lightningReceiveContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: key(3),
+        operatorPubkey: key(3),
         paymentHash: hex.encode(sha256(PREIMAGE)),
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -56,12 +64,12 @@ const swapScript = () =>
         payoutPkScript: p2tr(key(5)),
     });
 
-const CHECKPOINT_TAPSCRIPT = hex.encode(
-    CSVMultisigTapscript.encode({
-        timelock: { type: "blocks", value: BigInt(144) },
-        pubkeys: [key(3)],
-    }).script,
-);
+const checkpointTapscriptOf = (
+    timelock: { type: "blocks" | "seconds"; value: bigint },
+    pubkey: Uint8Array = key(3),
+): string => hex.encode(CSVMultisigTapscript.encode({ timelock, pubkeys: [pubkey] }).script);
+
+const CHECKPOINT_TAPSCRIPT = checkpointTapscriptOf({ type: "blocks", value: BigInt(144) });
 
 const VTXOS: LockupVtxo[] = [
     { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
@@ -71,48 +79,60 @@ const VTXOS: LockupVtxo[] = [
 const EXPECTED_AMOUNT = 100_000;
 
 /** A scripted arkd, same contract as refund.test.ts's. */
-type FakeOperator = ClaimArkProvider & {
-    submitted: { arkTx: string; checkpoints: string[] }[];
-    finalized: { arkTxid: string; checkpoints: string[] }[];
+type FakeOperator = OperatorProvider & {
+    submitted: { tx: string; checkpoints: string[] }[];
+    finalized: { txid: string; checkpoints: string[] }[];
 };
 
-/** The Ark server's own key — key(3) in the covenant above. */
-const SERVER_SIGNER = SingleKey.fromPrivateKey(priv(3));
+/** The Arkade operator's own key — key(3) in the covenant above. */
+const OPERATOR_SIGNER = SingleKey.fromPrivateKey(priv(3));
 
-const serverCosign = async (psbt: string): Promise<string> =>
-    base64.encode((await SERVER_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
+const operatorCosign = async (psbt: string): Promise<string> =>
+    base64.encode((await OPERATOR_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
 
 /** A scripted arkd that countersigns like the real one — `pushClaim` verifies
  * those signatures before finalizing, so a mute fake would prove nothing. */
 const fakeOperator = (
     over: {
+        checkpointTapscript?: string;
         checkpointsFor?: (submitted: string[]) => string[];
         /** Answer without countersigning, as a server that never signed. */
         cosign?: boolean;
-        finalArkTx?: (signed: string) => string | undefined;
+        finalTx?: (signed: string) => string | undefined;
+        /** An operator that rotated: its new forfeit key, and the keys it deprecated. */
+        rotatedTo?: Uint8Array;
+        deprecated?: Uint8Array[];
     } = {},
 ): FakeOperator => {
-    const submitted: { arkTx: string; checkpoints: string[] }[] = [];
-    const finalized: { arkTxid: string; checkpoints: string[] }[] = [];
+    const submitted: { tx: string; checkpoints: string[] }[] = [];
+    const finalized: { txid: string; checkpoints: string[] }[] = [];
     const cosign = over.cosign ?? true;
     return {
         submitted,
         finalized,
-        getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
-        submitTx: async (arkTx: string, checkpoints: string[]) => {
-            submitted.push({ arkTx, checkpoints });
+        getInfo: async () => ({
+            checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
+            network: "regtest",
+            forfeitPubkey: hex.encode(over.rotatedTo ?? key(3)),
+            deprecatedSigners: (over.deprecated ?? []).map((k) => ({
+                pubkey: hex.encode(k),
+                cutoffDate: 0n,
+            })),
+        }),
+        submitTx: async (tx: string, checkpoints: string[]) => {
+            submitted.push({ tx, checkpoints });
             const answered = over.checkpointsFor ? over.checkpointsFor(checkpoints) : checkpoints;
-            const finalArkTx = cosign ? await serverCosign(arkTx) : arkTx;
+            const finalTx = cosign ? await operatorCosign(tx) : tx;
             return {
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-                finalArkTx: over.finalArkTx ? over.finalArkTx(finalArkTx) : finalArkTx,
+                arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
+                finalArkTx: over.finalTx ? over.finalTx(finalTx) : finalTx,
                 signedCheckpointTxs: cosign
-                    ? await Promise.all(answered.map(serverCosign))
+                    ? await Promise.all(answered.map(operatorCosign))
                     : answered,
             };
         },
-        finalizeTx: async (arkTxid: string, checkpoints: string[]) => {
-            finalized.push({ arkTxid, checkpoints });
+        finalizeTx: async (txid: string, checkpoints: string[]) => {
+            finalized.push({ txid, checkpoints });
         },
     } as unknown as FakeOperator;
 };
@@ -126,10 +146,10 @@ const spentLeafOf = (psbt: string): string => {
 
 describe("pushClaim", () => {
     it("spends the claim leaf, signed by the trader's receiver key, preimage attached", async () => {
-        const script = swapScript();
+        const contract = swapScript();
         const operator = fakeOperator();
         const result = await pushClaim(operator, {
-            script,
+            contract: contract,
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -140,9 +160,9 @@ describe("pushClaim", () => {
         expect(operator.submitted).toHaveLength(1);
         // The exact leaf bytes, control block stripped — the claim leaf and no
         // other.
-        expect(spentLeafOf(operator.submitted[0]!.arkTx)).toBe(script.claimScript);
+        expect(spentLeafOf(operator.submitted[0]!.tx)).toBe(contract.claimScript);
         // One aggregate output to the trader's destination, for the full amount.
-        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0]!.arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0]!.tx));
         expect(tx.outputsLength).toBeGreaterThan(0);
         expect(hex.encode(tx.getOutput(0)!.script!)).toBe(hex.encode(DESTINATION_PK_SCRIPT));
         expect(tx.getOutput(0)!.amount).toBe(BigInt(100_000));
@@ -152,31 +172,132 @@ describe("pushClaim", () => {
         const conditionFields = getArkPsbtFields(tx, 0, ConditionWitness);
         expect(conditionFields).toHaveLength(1);
         expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
-        // …and finalize got the checkpoints back signed.
+        for (const checkpoint of operator.submitted[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig?.length).toBeGreaterThan(0);
+        }
+        expect(operator.finalized).toHaveLength(0);
+    });
+
+    it("keeps the preimage on the checkpoints a pre-one-shot arkd rebuilt", async () => {
+        // arkd before one-shot rebuilds the checkpoints: our signatures and the
+        // Ark PSBT fields are gone, and finalizeTx checks the claim leaf's
+        // condition against the preimage, so it has to come back.
+        const rebuild = (submitted: string[]) =>
+            submitted.map((c) => {
+                const tx = Transaction.fromPSBT(base64.decode(c));
+                tx.updateInput(0, { tapScriptSig: undefined, unknown: undefined }, true);
+                expect(tx.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+                expect(tx.getInput(0).unknown ?? []).toHaveLength(0);
+                return base64.encode(tx.toPSBT());
+            });
+        const operator = fakeOperator({ checkpointsFor: rebuild });
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
         expect(operator.finalized).toHaveLength(1);
-        expect(operator.finalized[0]!.arkTxid).toBe(result.arkTxid);
+        for (const checkpoint of operator.finalized[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            const conditionFields = getArkPsbtFields(cp, 0, ConditionWitness);
+            expect(conditionFields).toHaveLength(1);
+            expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
+        }
+    });
+
+    it("keeps the two-step flow with oneShot: false", async () => {
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+            oneShot: false,
+        });
+
+        for (const checkpoint of operator.submitted[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+        }
+        expect(operator.finalized).toHaveLength(1);
+        expect(operator.finalized[0]!.txid).toBe(result.txid);
+    });
+
+    it("declares every asset on the lockup in a packet that moves it to the destination", async () => {
+        const operator = fakeOperator();
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [
+                {
+                    ...VTXOS[0]!,
+                    assets: [
+                        { assetId: USD_ID, amount: 500n },
+                        { assetId: CHF_ID, amount: 7n },
+                    ],
+                },
+                { ...VTXOS[1]!, assets: [{ assetId: USD_ID, amount: 250n }] },
+            ],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(assetFlows(operator.submitted[0]!.tx)).toEqual([
+            {
+                assetId: USD_ID,
+                inputs: [
+                    [0, 500n],
+                    [1, 250n],
+                ],
+                outputs: [[0, 750n]],
+            },
+            { assetId: CHF_ID, inputs: [[0, 7n]], outputs: [[0, 7n]] },
+        ]);
+    });
+
+    it("adds no extension output to a sats-only claim", async () => {
+        const operator = fakeOperator();
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(() => assetFlows(operator.submitted[0]!.tx)).toThrow(/no extension output/);
     });
 
     it("attaches the preimage only after signing — the server's INVALID_SIGNATURE ordering", async () => {
         // A signer that records whether the ConditionWitness field was already
         // present AT SIGN TIME: it must not be, or the signature covers a
         // different payload than the one submitted.
-        const script = swapScript();
+        const contract = swapScript();
         let fieldPresentAtSignTime = false;
-        const probe = {
-            ...RECEIVER,
-            sign: async (tx: InstanceType<typeof Transaction>, inputIndexes?: number[]) => {
-                const indexes =
-                    inputIndexes ?? Array.from({ length: tx.inputsLength }, (_, i) => i);
-                for (const index of indexes) {
-                    fieldPresentAtSignTime ||=
-                        getArkPsbtFields(tx, index, ConditionWitness).length > 0;
-                }
-                return RECEIVER.sign(tx, inputIndexes);
+        const probe: SingleKey = Object.create(RECEIVER, {
+            sign: {
+                value: async (tx: InstanceType<typeof Transaction>, inputIndexes?: number[]) => {
+                    const indexes =
+                        inputIndexes ?? Array.from({ length: tx.inputsLength }, (_, i) => i);
+                    for (const index of indexes) {
+                        fieldPresentAtSignTime ||=
+                            getArkPsbtFields(tx, index, ConditionWitness).length > 0;
+                    }
+                    return RECEIVER.sign(tx, inputIndexes);
+                },
             },
-        };
+        });
         await pushClaim(fakeOperator(), {
-            script,
+            contract: contract,
             receiver: probe,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -190,7 +311,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator();
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: new Uint8Array(32).fill(8),
                 vtxos: VTXOS,
@@ -204,7 +325,7 @@ describe("pushClaim", () => {
     it("refuses a swept output rather than submitting a spend that cannot succeed", async () => {
         await expect(
             pushClaim(fakeOperator(), {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "33".repeat(32), vout: 0, value: 5_000, recoverable: true }],
@@ -221,7 +342,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator();
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: 330, recoverable: false }],
@@ -229,7 +350,7 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(LockupAmountMismatchError);
-        // `P` reaches the Ark server at submit, so this is the whole guarantee.
+        // `P` reaches the Arkade operator at submit, so this is the whole guarantee.
         expect(operator.submitted).toHaveLength(0);
     });
 
@@ -238,11 +359,13 @@ describe("pushClaim", () => {
     it.each([
         ["NaN", Number.NaN],
         ["missing from an older record", undefined as unknown as number],
+        ["zero", 0],
+        ["negative", -1],
     ])("refuses an expectedAmount that is %s instead of comparing against it", async (_, bad) => {
         const operator = fakeOperator();
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: 330, recoverable: false }],
@@ -257,7 +380,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator();
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "44".repeat(32), vout: 0, value: Number.NaN, recoverable: false }],
@@ -272,7 +395,7 @@ describe("pushClaim", () => {
         // VTXOS is 60_000 + 40_000: neither output covers the amount alone.
         const split = fakeOperator();
         await pushClaim(split, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -283,7 +406,7 @@ describe("pushClaim", () => {
 
         const over = fakeOperator();
         const result = await pushClaim(over, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: VTXOS,
@@ -293,10 +416,96 @@ describe("pushClaim", () => {
         expect(result.amount).toBe(100_000);
     });
 
+    it("spends at most MAX_LOCKUP_SPEND_INPUTS outputs, the largest", async () => {
+        const operator = fakeOperator();
+        const dust = Array.from(
+            { length: 20 },
+            (_, i): LockupVtxo => ({
+                txid: "dd".repeat(32),
+                vout: i,
+                value: 330,
+                recoverable: false,
+            }),
+        );
+        const result = await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [...dust, ...VTXOS],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
+        expect(tx.inputsLength).toBe(MAX_LOCKUP_SPEND_INPUTS);
+        expect(result.amount).toBe(100_000 + (MAX_LOCKUP_SPEND_INPUTS - 2) * 330);
+        expect(result.spent).toHaveLength(MAX_LOCKUP_SPEND_INPUTS);
+        expect(result.spent).toEqual(expect.arrayContaining(VTXOS));
+        expect(result.left).toBe(20 + VTXOS.length - MAX_LOCKUP_SPEND_INPUTS);
+    });
+
+    it("weighs every live output against the amount, though it spends only the largest", async () => {
+        const pieces = Array.from(
+            { length: 17 },
+            (_, i): LockupVtxo => ({
+                txid: "dd".repeat(32),
+                vout: i,
+                value: 6_000,
+                recoverable: false,
+            }),
+        );
+        const result = await pushClaim(fakeOperator(), {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: pieces,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(result.amount).toBe(MAX_LOCKUP_SPEND_INPUTS * 6_000);
+        expect(result.spent).toHaveLength(MAX_LOCKUP_SPEND_INPUTS);
+    });
+
+    it("claims past a swept output, which the receiver holds no leaf to recover", async () => {
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [{ txid: "33".repeat(32), vout: 0, value: 330, recoverable: true }, ...VTXOS],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(result.amount).toBe(100_000);
+        expect(Transaction.fromPSBT(base64.decode(operator.submitted[0].tx)).inputsLength).toBe(2);
+        // The receiver can never spend it, so it is not left to claim.
+        expect(result.left).toBe(0);
+    });
+
+    it("weighs only live outputs against the amount, so a swept funding publishes nothing", async () => {
+        const operator = fakeOperator();
+        await expect(
+            pushClaim(operator, {
+                contract: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: [
+                    { txid: "33".repeat(32), vout: 0, value: 100_000, recoverable: true },
+                    { txid: "44".repeat(32), vout: 0, value: 330, recoverable: false },
+                ],
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            }),
+        ).rejects.toThrow(LockupAmountMismatchError);
+        expect(operator.submitted).toHaveLength(0);
+    });
+
     it("claims the remainder of a partially-claimed lockup regardless of the amount", async () => {
         const operator = fakeOperator();
         const result = await pushClaim(operator, {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: [{ txid: "55".repeat(32), vout: 0, value: 1_000, recoverable: false }],
@@ -309,7 +518,7 @@ describe("pushClaim", () => {
         // Including one whose record predates the field: `P` is already
         // public, so refusing here would strand the remainder for nothing.
         const older = await pushClaim(fakeOperator(), {
-            script: swapScript(),
+            contract: swapScript(),
             receiver: RECEIVER,
             preimage: PREIMAGE,
             vtxos: [{ txid: "55".repeat(32), vout: 0, value: 1_000, recoverable: false }],
@@ -323,7 +532,7 @@ describe("pushClaim", () => {
     it("refuses a swept output before the amount is even considered", async () => {
         await expect(
             pushClaim(fakeOperator(), {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "33".repeat(32), vout: 0, value: 330, recoverable: true }],
@@ -339,7 +548,7 @@ describe("pushClaim", () => {
         const operator = fakeOperator({ cosign: false });
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: VTXOS,
@@ -351,10 +560,10 @@ describe("pushClaim", () => {
     });
 
     it("fails closed when the server returns no final ark tx to check", async () => {
-        const operator = fakeOperator({ finalArkTx: () => undefined });
+        const operator = fakeOperator({ finalTx: () => undefined });
         await expect(
             pushClaim(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: VTXOS,
@@ -368,7 +577,7 @@ describe("pushClaim", () => {
     it("throws on nothing to claim", async () => {
         await expect(
             pushClaim(fakeOperator(), {
-                script: swapScript(),
+                contract: swapScript(),
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
                 vtxos: [],
@@ -377,43 +586,182 @@ describe("pushClaim", () => {
             }),
         ).rejects.toThrow(/nothing to claim/);
     });
+
+    describe("the checkpoint script the operator hands out is gated", () => {
+        // Refusing after submit has already published `P`, so both refusals precede signing.
+        const claim = (operator: FakeOperator) =>
+            pushClaim(operator, {
+                contract: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: VTXOS,
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            });
+
+        it("refuses a checkpoint exit delay below the floor", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(0) }),
+            });
+            await expect(claim(operator)).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("refuses a checkpoint pinned to a key other than the advertised forfeit key", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf(
+                    { type: "blocks", value: BigInt(144) },
+                    key(4),
+                ),
+            });
+            await expect(claim(operator)).rejects.toThrow(
+                /does not match the advertised forfeitPubkey/,
+            );
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("floors against the caller's pinned network, not the one the operator names", async () => {
+            // The operator names regtest, whose floor admits this block-typed script: only the pin rejects it.
+            const operator = fakeOperator();
+            await expect(
+                pushClaim(operator, {
+                    contract: swapScript(),
+                    receiver: RECEIVER,
+                    preimage: PREIMAGE,
+                    vtxos: VTXOS,
+                    destinationPkScript: DESTINATION_PK_SCRIPT,
+                    expectedAmount: EXPECTED_AMOUNT,
+                    network: getNetwork("bitcoin"),
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+    });
 });
 
-describe("awaitLockupFunding + claimReceiveLockup", () => {
-    const indexerOver = (rounds: LockupVtxo[][]): RefundIndexer => {
-        let calls = 0;
-        return {
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => {
-                // The real findLockupVtxos asks both filters; only the
-                // spendable answer carries the live lockup.
-                if (opts?.recoverableOnly) return { vtxos: [] };
-                return { vtxos: rounds[Math.min(calls++, rounds.length - 1)]! };
-            },
-        } as unknown as RefundIndexer;
+describe("finalizePendingClaim", () => {
+    /** A two-step claim whose finalize was lost: arkd holds it accepted and cosigned. */
+    const lostFinalize = async () => {
+        const contract = swapScript();
+        const operator = fakeOperator();
+        operator.finalizeTx = async () => {
+            throw new Error("connection reset");
+        };
+        await expect(
+            pushClaim(operator, {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: VTXOS,
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+                oneShot: false,
+            }),
+        ).rejects.toThrow(/connection reset/);
+        const [{ tx, checkpoints }] = operator.submitted;
+        const stored = await Promise.all(checkpoints.map(operatorCosign));
+        const arkTxid = Transaction.fromPSBT(base64.decode(tx)).id;
+        const pending = VTXOS.map((vtxo, i) => ({
+            ...vtxo,
+            isSpent: true,
+            spentBy: Transaction.fromPSBT(base64.decode(stored[i]!)).id,
+            arkTxId: arkTxid,
+        }));
+        return { contract, arkTxid, stored, pending, withheld: checkpoints };
     };
 
-    it("waits for the lockup, then claims it in one call", async () => {
-        const indexer = indexerOver([[], VTXOS]);
+    const indexerOf = (pending: object[], stored: string[]): LockupSpendIndexer =>
+        ({
+            getVtxos: async (opts?: { pendingOnly?: boolean }) => ({
+                vtxos: opts?.pendingOnly ? pending : [],
+            }),
+            getVirtualTxs: async (txids: string[]) => ({
+                txs: stored.filter((c) =>
+                    txids.includes(Transaction.fromPSBT(base64.decode(c)).id),
+                ),
+            }),
+        }) as unknown as LockupSpendIndexer;
+
+    it("finalizes it with the server's signature, ours and exactly one preimage", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
         const operator = fakeOperator();
-        const result = await claimReceiveLockup(indexer, operator, {
-            script: swapScript(),
-            receiver: RECEIVER,
-            preimage: PREIMAGE,
-            swapPkScript: swapScript().pkScript,
-            destinationPkScript: DESTINATION_PK_SCRIPT,
-            expectedAmount: EXPECTED_AMOUNT,
-            pollMs: 1,
-        });
-        expect(operator.submitted).toHaveLength(1);
-        expect(result.amount).toBe(100_000);
+        await expect(
+            finalizePendingClaim(operator, indexerOf(pending, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([arkTxid]);
+
+        expect(operator.finalized.map((f) => f.txid)).toEqual([arkTxid]);
+        for (const checkpoint of operator.finalized[0]!.checkpoints) {
+            const tx = Transaction.fromPSBT(base64.decode(checkpoint));
+            const signers = tx.getInput(0).tapScriptSig!.map(([{ pubKey }]) => hex.encode(pubKey));
+            expect(signers.sort()).toEqual([hex.encode(key(3)), hex.encode(key(13))].sort());
+            expect(getArkPsbtFields(tx, 0, ConditionWitness)).toEqual([[PREIMAGE]]);
+        }
     });
 
-    it("times out with a stable reason when the lockup never lands", async () => {
+    it("refuses to finalize when the indexer withheld the operator's signature", async () => {
+        const { contract, pending, withheld } = await lostFinalize();
+        const operator = fakeOperator();
         await expect(
-            awaitLockupFunding(indexerOver([[]]), swapScript().pkScript, {
-                pollMs: 1,
-                deadline: Math.floor(Date.now() / 1000) - 1,
+            finalizePendingClaim(operator, indexerOf(pending, withheld), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
             }),
-        ).rejects.toThrow(expect.objectContaining({ reason: "lockup_timeout" }));
+        ).rejects.toThrow(/without the operator's signature/);
+        expect(operator.finalized).toEqual([]);
+    });
+
+    it("finalizes a claim checkpointed under a signer the operator has since deprecated", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
+        const operator = fakeOperator({
+            checkpointTapscript: checkpointTapscriptOf(
+                { type: "blocks", value: BigInt(144) },
+                key(4),
+            ),
+            rotatedTo: key(4),
+            deprecated: [key(3)],
+        });
+        await expect(
+            finalizePendingClaim(operator, indexerOf(pending, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([arkTxid]);
+    });
+
+    it("finds a claim of ours without any key, and nothing else the indexer names", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
+        const operator = fakeOperator();
+        const found = await findPendingClaims(operator, indexerOf(pending, stored), { contract });
+        expect(found.map((claim) => claim.arkTxid)).toEqual([arkTxid]);
+
+        // Spent through checkpoints our claim leaf does not rebuild, or not spent at all (an
+        // indexer that ignores `pendingOnly`): neither proves the spend is ours, nor `P` public.
+        const foreign = pending.map((vtxo) => ({ ...vtxo, spentBy: "ee".repeat(32) }));
+        const unspent = pending.map((vtxo) => ({ ...vtxo, isSpent: false, spentBy: "" }));
+        for (const vtxos of [foreign, unspent]) {
+            await expect(
+                findPendingClaims(operator, indexerOf(vtxos, stored), { contract }),
+            ).resolves.toEqual([]);
+        }
+    });
+
+    it("leaves a pending spend whose checkpoints are not our claim's to its submitter", async () => {
+        const { contract, stored, pending } = await lostFinalize();
+        const foreign = pending.map((vtxo) => ({ ...vtxo, spentBy: "ee".repeat(32) }));
+        const operator = fakeOperator();
+        await expect(
+            finalizePendingClaim(operator, indexerOf(foreign, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([]);
+        expect(operator.finalized).toEqual([]);
     });
 });

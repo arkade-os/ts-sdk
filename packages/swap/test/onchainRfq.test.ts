@@ -15,12 +15,10 @@ import {
     ONCHAIN_BTC,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
-    ONCHAIN_RECEIVE_PAIR,
     ONCHAIN_SEND_PAIR,
     assertFundable,
     deriveOnchainSend,
-    lightningSendVtxoScript,
-    onchainReceiveRequest,
+    lightningSendContract,
     onchainSendRequest,
     type RfqQuote,
 } from "../src/rfq";
@@ -41,7 +39,7 @@ const NOW = 1_800_000_000;
 const REFUND_LOCKTIME = NOW + 200 * 3600;
 const HTLC_LOCKTIME = NOW + 24 * 3600;
 
-// The onchain leg's Arkade lockup shares `lightningSendVtxoScript` with the
+// The onchain leg's Arkade lockup shares `lightningSendContract` with the
 // Lightning leg directly (see `deriveOnchainSend` below) — one function, one
 // golden test (`rfq.test.ts`). There is no separate onchain program object
 // left to compare it against, so there is nothing to pin here any more.
@@ -49,7 +47,6 @@ describe("pairs", () => {
     it("names the onchain legs", () => {
         expect(ONCHAIN_BTC).toBe("onchain:BTC");
         expect(ONCHAIN_SEND_PAIR).toBe(`${ARKADE_BTC}->${ONCHAIN_BTC}`);
-        expect(ONCHAIN_RECEIVE_PAIR).toBe(`${ONCHAIN_BTC}->${ARKADE_BTC}`);
     });
 });
 
@@ -80,34 +77,6 @@ describe("request builders", () => {
             },
         });
     });
-
-    it("builds the on-board request with the sealed packet riding the profile", () => {
-        const request = onchainReceiveRequest({
-            rfqId: RFQ_ID,
-            paymentHash: PAYMENT_HASH,
-            payoutAddress: "ark1q...",
-            payoutPubkey: key(9),
-            refundPubkey: key(7),
-            claimPacket: "abc=",
-            amount: 100_000,
-            amountSide: "from",
-        });
-        expect(request).toEqual({
-            v: 1,
-            type: "rfq_request",
-            rfq_id: RFQ_ID,
-            pair: "onchain:BTC->arkade:BTC",
-            amount_side: "from",
-            amount: 100_000,
-            profile: {
-                payment_hash: PAYMENT_HASH,
-                claim_packet: "abc=",
-                refund_pubkey: hex.encode(key(7)),
-                payout_address: "ark1q...",
-                payout_pubkey: hex.encode(key(9)),
-            },
-        });
-    });
 });
 
 describe("assertFundable — onchain gates", () => {
@@ -127,7 +96,6 @@ describe("assertFundable — onchain gates", () => {
     const onchain = {
         htlcLocktime: HTLC_LOCKTIME,
         minConfirmations: 2,
-        direction: "send" as const,
     };
 
     it("passes a well-ordered quote, without requiring an invoice expiry", () => {
@@ -146,6 +114,14 @@ describe("assertFundable — onchain gates", () => {
         }
     });
 
+    it("refuses a non-positive quoted amount", () => {
+        for (const over of [{ to_amount: 0 }, { to_amount: -1 }, { from_amount: 0 }]) {
+            expect(() => assertFundable({ quote: quote(over), now: NOW, onchain })).toThrow(
+                expect.objectContaining({ reason: "non_positive_amount" }),
+            );
+        }
+    });
+
     it("requires a safe claim window before the L1 refund leaf opens", () => {
         const tight = NOW + 2 * 600 + ONCHAIN_CLAIM_MARGIN_SECONDS; // exactly the bound
         expect(() =>
@@ -157,7 +133,7 @@ describe("assertFundable — onchain gates", () => {
         ).toThrow(expect.objectContaining({ reason: "claim_window_too_short" }));
     });
 
-    it("enforces timelock order for the send direction: L1 + margin before the Arkade refund", () => {
+    it("enforces timelock order: L1 + margin before the Arkade refund", () => {
         const late = REFUND_LOCKTIME - ONCHAIN_ORDER_MARGIN_SECONDS + 1;
         expect(() =>
             assertFundable({
@@ -166,12 +142,6 @@ describe("assertFundable — onchain gates", () => {
                 onchain: { ...onchain, htlcLocktime: late },
             }),
         ).toThrow(expect.objectContaining({ reason: "timelock_order" }));
-        // The receive direction leaves ordering to the solver's own safety check.
-        assertFundable({
-            quote: quote({ refund_locktime: undefined }),
-            now: NOW,
-            onchain: { ...onchain, htlcLocktime: late, direction: "receive" },
-        });
     });
 });
 
@@ -179,13 +149,13 @@ describe("deriveOnchainSend", () => {
     // The maker's own view of its stack: server key(3), emulator key(9),
     // claim delay 4096, sender key(13) — and a real, decodable arkade refund
     // address.
-    const SERVER = key(3);
+    const OPERATOR_PUBKEY = key(3);
     const SENDER_PUBKEY = key(13);
     const RECEIVER_PK_SCRIPT = p2tr(key(1));
-    const REFUND_ADDRESS = lightningSendVtxoScript({
+    const REFUND_ADDRESS = lightningSendContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: PAYMENT_HASH,
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -193,13 +163,13 @@ describe("deriveOnchainSend", () => {
         senderPubkey: SENDER_PUBKEY,
         receiverPkScript: RECEIVER_PK_SCRIPT,
     })
-        .address("ark", SERVER)
+        .address("ark", OPERATOR_PUBKEY)
         .encode();
 
     const derivation = () => ({
         paymentHash: PAYMENT_HASH,
         payoutPubkey: key(5),
-        serverPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         emulatorPubkey: key(9),
         claimDelay: 4096,
         hrp: "ark",
@@ -209,14 +179,15 @@ describe("deriveOnchainSend", () => {
     });
 
     /** A quote whose compare-only fields MATCH the maker's own derivations. */
-    const consistentQuote = (): RfqQuote => {
+    const consistentQuote = (refundWithoutReceiverDelay?: number): RfqQuote => {
         const input = derivation();
-        const lockup = lightningSendVtxoScript({
+        const lockup = lightningSendContract({
             solverPubkey: key(1),
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
+            refundWithoutReceiverDelay,
             emulatorPubkey: key(9),
             refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
             senderPubkey: SENDER_PUBKEY,
@@ -242,12 +213,15 @@ describe("deriveOnchainSend", () => {
             valid_until: NOW + 900,
             refund_locktime: REFUND_LOCKTIME,
             profile: {
-                lockup_address: lockup.address("ark", SERVER).encode(),
+                lockup_address: lockup.address("ark", OPERATOR_PUBKEY).encode(),
                 htlc_pubkey: hex.encode(key(11)),
                 htlc_locktime: HTLC_LOCKTIME,
                 htlc_address: htlc.address,
                 min_confirmations: 2,
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
+                ...(refundWithoutReceiverDelay !== undefined && {
+                    refund_without_receiver_delay: refundWithoutReceiverDelay,
+                }),
             },
         };
     };
@@ -270,6 +244,21 @@ describe("deriveOnchainSend", () => {
         const quote = consistentQuote();
         quote.profile.lockup_address = "ark1qtampered";
         expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(AddressMismatch);
+    });
+
+    it("builds the lockup with the solo refund delay the quote stretched", () => {
+        const derived = deriveOnchainSend({ quote: consistentQuote(30 * 512), ...derivation() });
+        expect(derived.refundWithoutReceiverDelay).toBe(30 * 512);
+    });
+
+    it("refuses a solo refund delay that is not a valid ladder rung", () => {
+        for (const delay of [3584, 30 * 512 + 1, 0x10000 * 512]) {
+            const quote = consistentQuote();
+            quote.profile.refund_without_receiver_delay = delay;
+            expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(
+                /invalid refund_without_receiver_delay/,
+            );
+        }
     });
 
     it("refuses a quote missing a binding field", () => {
@@ -302,6 +291,7 @@ describe("deriveOnchainSend", () => {
             network: "regtest",
             htlcAddress: derived.htlc.address,
             minConfirmations: 2,
+            expectedAmount: 99_000,
             payoutPkScript: hex.encode(PAYOUT),
         });
     });
@@ -331,6 +321,7 @@ describe("deriveOnchainSend", () => {
                 refundLocktime: derived.refundLocktime,
                 htlc: derived.htlc,
                 minConfirmations: derived.minConfirmations,
+                expectedAmount: derived.expectedAmount,
                 createdAt: NOW,
                 updatedAt: NOW,
             } as unknown as Parameters<typeof createRfqSwapRecord>[1],
@@ -376,6 +367,7 @@ describe("deriveOnchainSend", () => {
                 refundLocktime: derived.refundLocktime,
                 htlc: derived.htlc,
                 minConfirmations: derived.minConfirmations,
+                expectedAmount: derived.expectedAmount,
                 createdAt: NOW,
                 updatedAt: NOW,
             } as unknown as Parameters<typeof createRfqSwapRecord>[1],

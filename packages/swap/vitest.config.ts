@@ -11,7 +11,8 @@ export default mergeConfig(
             // emits no `vtxo_received`/`vtxo_spent`, and anything event-driven
             // — `watchOfferSwaps`, `RfqSwapManager`'s contract subscription —
             // silently degrades to whatever polling the test does itself.
-            poolOptions: { forks: { execArgv: ["--experimental-eventsource"] } },
+            // UNDICI-ES is the flag's own "this is experimental" warning.
+            execArgv: ["--experimental-eventsource", "--disable-warning=UNDICI-ES"],
         },
     }),
 );

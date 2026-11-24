@@ -1,0 +1,395 @@
+#!/usr/bin/env node
+// Post-build smoke for dist/. Run after `pnpm build`.
+//
+// Catches what `vitest` cannot: export-map regressions, missing or
+// mis-pathed .d.ts/.d.cts files, CJS/ESM dual-package hazards, and
+// tsup code-splitting breaking the contractHandlers singleton.
+//
+// Exits 0 on success; non-zero if any check fails.
+//
+// Layout:
+//   1. Walk package.json `exports` (+ legacy main/module/types); every
+//      referenced file must exist.
+//   2. Walk dist/**/*.d.{ts,cts}; every relative `from "..."` import
+//      must resolve to a sibling .d.ts/.d.cts. Runtime resolution is
+//      covered by sections 3–5 (Node require/import probes).
+//   3. CJS singleton: spawn `node -e ...` from the repo root, require
+//      ./dist/index.cjs and ./dist/contracts/handlers/index.cjs by
+//      relative path, assert object identity for `contractHandlers`
+//      and that the registered handler types are exactly
+//      arkade,boarding,default,delegate,executor,vhtlc,vhtlc-v2.
+//   4. ESM singleton: same but via `await import("...")` with
+//      --input-type=module.
+//   5. Public package-name resolution: build a consumer dir with
+//      node_modules/@arkade-os/sdk → symlink to repo root, spawn
+//      Node CJS and ESM probes for each Node-safe public subpath.
+//   6. compiler: the /compiler subpath compiles from CJS and ESM with the
+//      optional peer, and with the peer unresolvable the root still loads
+//      while compile() rejects with the install hint.
+//   7. wallet/expo/background is validated structurally only — it
+//      eagerly imports optional Expo peers so it cannot be Node-imported
+//      without them installed.
+
+import {
+    readFileSync,
+    existsSync,
+    readdirSync,
+    symlinkSync,
+    writeFileSync,
+    mkdirSync,
+    rmSync,
+    mkdtempSync,
+} from "node:fs";
+import { dirname, join, resolve, relative } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const distRoot = join(repoRoot, "dist");
+const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+
+let failures = 0;
+const fail = (msg) => {
+    failures++;
+    console.error("FAIL: " + msg);
+};
+const ok = (msg) => console.log("ok  : " + msg);
+const section = (msg) => console.log("\n== " + msg + " ==");
+
+if (!existsSync(distRoot)) {
+    console.error("smoke-dist: dist/ not found. Run `pnpm build` before this script.");
+    process.exit(1);
+}
+
+// ── 1. exports map ────────────────────────────────────────────────────
+section("exports map: every target file exists");
+
+const walkExports = (node, label) => {
+    if (typeof node === "string") {
+        const target = resolve(repoRoot, node);
+        if (!existsSync(target)) fail(`${label} → missing ${node}`);
+        else ok(`${label}: ${node}`);
+        return;
+    }
+    if (node && typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) {
+            walkExports(v, `${label}.${k}`);
+        }
+    }
+};
+walkExports(pkg.exports, "exports");
+
+for (const f of ["main", "module", "types"]) {
+    if (pkg[f]) {
+        const target = resolve(repoRoot, pkg[f]);
+        if (!existsSync(target)) fail(`${f} → missing ${pkg[f]}`);
+        else ok(`${f}: ${pkg[f]}`);
+    }
+}
+
+// ── 2. declaration relative imports resolve ───────────────────────────
+section("dist declarations: relative imports resolve");
+
+function* walkDistFiles(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, entry.name);
+        if (entry.isDirectory()) yield* walkDistFiles(p);
+        else yield p;
+    }
+}
+
+const relImport = /(?:from|import)\s+["'](\.[^"']+)["']/g;
+const stripComments = (src) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+let dtsChecked = 0;
+let dtsImports = 0;
+for (const file of walkDistFiles(distRoot)) {
+    const isCts = file.endsWith(".d.cts");
+    const isDts = file.endsWith(".d.ts");
+    if (!isCts && !isDts) continue;
+    dtsChecked++;
+    const text = stripComments(readFileSync(file, "utf8"));
+    relImport.lastIndex = 0;
+    let m;
+    while ((m = relImport.exec(text))) {
+        dtsImports++;
+        const spec = m[1];
+        const dtsExt = isCts ? ".d.cts" : ".d.ts";
+        // Strip .js/.cjs if present in the specifier; tsup writes the JS
+        // path in declarations and TypeScript matches the sibling .d.ts.
+        // Runtime siblings are deliberately not checked: tsup gives
+        // declaration chunks (e.g. ark-Da7zYanl.d.ts) different hashed
+        // names than the runtime chunks (chunk-XYZ.js), so the .js path
+        // in a .d.ts only exists for TS extension-swap resolution.
+        // Runtime resolution is covered by the Node probes below.
+        const stem = resolve(dirname(file), spec.replace(/\.c?js$/, ""));
+        const candidates = [stem + dtsExt, join(stem, "index" + dtsExt)];
+        if (!candidates.some(existsSync)) {
+            fail(
+                `${relative(repoRoot, file)} → "${spec}" resolves to no declaration: ${candidates
+                    .map((c) => relative(repoRoot, c))
+                    .join(", ")}`,
+            );
+        }
+    }
+}
+ok(`declarations scanned: ${dtsChecked}, relative imports verified: ${dtsImports}`);
+
+// ── 3 + 4. singleton smoke (CJS + ESM) — direct file-path requires ────
+section("contractHandlers singleton: CJS + ESM");
+
+const runNode = (args, cwd) => spawnSync(process.execPath, args, { cwd, encoding: "utf8" });
+
+const expectedTypes = "arkade,boarding,default,delegate,executor,vhtlc,vhtlc-v2";
+const publicExports = `
+for (const name of ["classifyBoardingExpiry", "decodeBoardingExit"]) {
+    if (typeof root[name] !== "function") throw new Error("missing root export " + name);
+}
+for (const name of ["ServiceWorkerWallet", "ServiceWorkerReadonlyWallet"]) {
+    if (typeof root[name]?.prototype.onWalletUpdate !== "function") {
+        throw new Error("missing " + name + ".onWalletUpdate");
+    }
+}
+`;
+
+const cjsSingleton = `
+const root = require("./dist/index.cjs");
+${publicExports}
+const handlerEntry = require("./dist/contracts/handlers/index.cjs");
+if (root.contractHandlers !== handlerEntry.contractHandlers) {
+    throw new Error("contractHandlers identity differs across CJS entries");
+}
+const got = root.contractHandlers.getRegisteredTypes().slice().sort().join(",");
+if (got !== ${JSON.stringify(expectedTypes)}) {
+    throw new Error("registered types " + got + " !== " + ${JSON.stringify(expectedTypes)});
+}
+`;
+{
+    const r = runNode(["-e", cjsSingleton], repoRoot);
+    if (r.status === 0) ok("CJS singleton + registered types");
+    else fail("CJS singleton: " + (r.stderr || r.stdout).trim());
+}
+
+const esmSingleton = `
+const root = await import("./dist/index.js");
+${publicExports}
+const handlerEntry = await import("./dist/contracts/handlers/index.js");
+if (root.contractHandlers !== handlerEntry.contractHandlers) {
+    throw new Error("contractHandlers identity differs across ESM entries");
+}
+const got = root.contractHandlers.getRegisteredTypes().slice().sort().join(",");
+if (got !== ${JSON.stringify(expectedTypes)}) {
+    throw new Error("registered types " + got + " !== " + ${JSON.stringify(expectedTypes)});
+}
+`;
+{
+    const r = runNode(["--input-type=module", "-e", esmSingleton], repoRoot);
+    if (r.status === 0) ok("ESM singleton + registered types");
+    else fail("ESM singleton: " + (r.stderr || r.stdout).trim());
+}
+
+// ── 5. public package-name resolution ─────────────────────────────────
+section("public subpaths: Node package-name resolution");
+
+const tmp = mkdtempSync(join(tmpdir(), "smoke-dist-"));
+const consumer = join(tmp, "consumer");
+mkdirSync(join(consumer, "node_modules", "@arkade-os"), { recursive: true });
+symlinkSync(
+    repoRoot,
+    join(consumer, "node_modules", "@arkade-os", "sdk"),
+    process.platform === "win32" ? "junction" : "dir",
+);
+writeFileSync(
+    join(consumer, "package.json"),
+    JSON.stringify({ name: "smoke-consumer", type: "module", private: true }),
+);
+writeFileSync(
+    join(consumer, "wallet-update.ts"),
+    `import { ServiceWorkerWallet, type WalletUpdate } from "@arkade-os/sdk";
+declare const wallet: ServiceWorkerWallet;
+const unsubscribe: () => void = wallet.onWalletUpdate((update: WalletUpdate) => {
+    if (update.type === "CONTRACT_EVENT") update.payload.event.type satisfies string;
+    else if (update.type === "UTXO_UPDATE") update.payload.coins.length satisfies number;
+    else update.payload.newVtxos.length satisfies number;
+});
+void unsubscribe;
+`,
+);
+{
+    const r = runNode(
+        [
+            createRequire(import.meta.url).resolve("typescript/bin/tsc"),
+            "--noEmit",
+            "--strict",
+            "--skipLibCheck",
+            "--target",
+            "ES2022",
+            "--module",
+            "NodeNext",
+            "--moduleResolution",
+            "NodeNext",
+            "--lib",
+            "ES2022,DOM",
+            "wallet-update.ts",
+        ],
+        consumer,
+    );
+    if (r.status === 0) ok("WalletUpdate public type and subscription compile for a consumer");
+    else fail(`WalletUpdate consumer → ${(r.stderr || r.stdout).trim()}`);
+}
+
+// Subpaths that must Node-import cleanly without optional Expo peers.
+// wallet/expo/background is intentionally absent — see section 6.
+const nodeSafe = [
+    ".",
+    "./repositories/sqlite",
+    "./repositories/realm",
+    "./worker/expo",
+    "./wallet/expo",
+    "./compiler",
+];
+
+const signerSessionProbe = `
+if (sp === ".") {
+    const key = await mod.TreeSignerSession.random().getPublicKey();
+    if (!(key instanceof Uint8Array) || key.length !== 33 || ![2, 3].includes(key[0])) {
+        throw new Error("TreeSignerSession did not return a compressed public key");
+    }
+}
+`;
+
+const cjsProbe = `
+(async () => {
+const subpaths = ${JSON.stringify(nodeSafe)};
+const failures = [];
+for (const sp of subpaths) {
+    const spec = sp === "." ? "@arkade-os/sdk" : "@arkade-os/sdk/" + sp.slice(2);
+    try {
+        const mod = require(spec);
+        if (Object.keys(mod).length === 0) failures.push(spec + ": no exports");
+        ${signerSessionProbe}
+    } catch (err) {
+        failures.push(spec + ": " + err.message);
+    }
+}
+if (failures.length) {
+    console.error(failures.join("\\n"));
+    process.exit(1);
+}
+})().catch(err => { console.error(err); process.exit(1); });
+`;
+{
+    const r = runNode(["-e", cjsProbe], consumer);
+    if (r.status === 0) ok(`CJS require resolves all ${nodeSafe.length} subpaths`);
+    else {
+        const out = (r.stderr || r.stdout).trim();
+        for (const line of out.split("\n")) fail(`CJS require → ${line}`);
+    }
+}
+
+const esmProbe = `
+const subpaths = ${JSON.stringify(nodeSafe)};
+const failures = [];
+for (const sp of subpaths) {
+    const spec = sp === "." ? "@arkade-os/sdk" : "@arkade-os/sdk/" + sp.slice(2);
+    try {
+        const mod = await import(spec);
+        if (Object.keys(mod).length === 0) failures.push(spec + ": no exports");
+        ${signerSessionProbe}
+    } catch (err) {
+        failures.push(spec + ": " + err.message);
+    }
+}
+if (failures.length) {
+    console.error(failures.join("\\n"));
+    process.exit(1);
+}
+`;
+{
+    const r = runNode(["--input-type=module", "-e", esmProbe], consumer);
+    if (r.status === 0) ok(`ESM import resolves all ${nodeSafe.length} subpaths`);
+    else {
+        const out = (r.stderr || r.stdout).trim();
+        for (const line of out.split("\n")) fail(`ESM import → ${line}`);
+    }
+}
+
+// ── 6. compiler peer: present and absent ─────────────────────────────
+section("compiler: compiles with the peer, hints without it");
+
+// Resolve the peer from an empty directory, so Node fails to find it exactly as
+// it would in an application that never installed it.
+const noPeerDir = join(tmp, "no-compiler");
+mkdirSync(noPeerDir);
+writeFileSync(
+    join(tmp, "hooks.mjs"),
+    `const parentURL = ${JSON.stringify(pathToFileURL(join(noPeerDir, "index.js")).href)};
+export function resolve(specifier, context, next) {
+    return next(specifier, specifier === "@arkade-os/compiler" ? { ...context, parentURL } : context);
+}`,
+);
+writeFileSync(
+    join(tmp, "no-compiler.mjs"),
+    `import { register } from "node:module";\nregister("./hooks.mjs", import.meta.url);`,
+);
+
+const noPeer = ["--import", pathToFileURL(join(tmp, "no-compiler.mjs")).href];
+
+const compilerProbe = (load, expected) => `
+(async () => {
+    const root = ${load}("@arkade-os/sdk");
+    if (Object.keys(root).length === 0) throw new Error("root SDK has no exports");
+    const { compile } = ${load}("@arkade-os/sdk/compiler");
+    const source = "contract A(pubkey user) { function spend(signature s) tapscript { require(older(serverExitDelay)); require(checkSig(s, user)); } }";
+    const outcome = await compile({ entry: "a.ark", files: { "a.ark": source } }).then(
+        (r) => (r.program.functions.spend ? "compiled" : "no spend function"),
+        (e) => (/npm install --save-exact @arkade-os\\/compiler/.test(e.message) ? "hinted" : e.stack),
+    );
+    if (outcome !== ${JSON.stringify(expected)}) throw new Error(outcome);
+})().catch((e) => {
+    console.error(e.message);
+    process.exit(1);
+});
+`;
+for (const [label, args] of [
+    ["CJS", ["-e", compilerProbe("require", "compiled")]],
+    ["ESM", ["--input-type=module", "-e", compilerProbe("await import", "compiled")]],
+    ["CJS without peer", [...noPeer, "-e", compilerProbe("require", "hinted")]],
+    [
+        "ESM without peer",
+        [...noPeer, "--input-type=module", "-e", compilerProbe("await import", "hinted")],
+    ],
+]) {
+    const r = runNode(args, consumer);
+    if (r.status === 0) ok(`compiler ${label}`);
+    else fail(`compiler ${label}: ` + (r.stderr || r.stdout).trim());
+}
+
+// ── 7. wallet/expo/background: structural only ────────────────────────
+section("wallet/expo/background: structural files exist");
+
+const bg = pkg.exports["./wallet/expo/background"];
+if (!bg) fail("exports map missing ./wallet/expo/background");
+else {
+    for (const cond of ["import", "require"]) {
+        for (const key of ["types", "default"]) {
+            const p = bg[cond]?.[key];
+            if (!p) fail(`./wallet/expo/background.${cond}.${key} not set`);
+            else if (!existsSync(resolve(repoRoot, p)))
+                fail(`./wallet/expo/background ${cond}.${key} missing: ${p}`);
+            else ok(`./wallet/expo/background ${cond}.${key}: ${p}`);
+        }
+    }
+}
+
+// ── cleanup ───────────────────────────────────────────────────────────
+rmSync(tmp, { recursive: true, force: true });
+
+console.log("");
+if (failures > 0) {
+    console.error(`smoke-dist: ${failures} failure(s)`);
+    process.exit(1);
+}
+console.log("smoke-dist: all checks passed");

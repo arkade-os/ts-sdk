@@ -5,7 +5,7 @@
 // Catches what `vitest` cannot: export-map regressions, missing or
 // mis-pathed .d.ts/.d.cts files, CJS/ESM dual-package hazards.
 //
-// Unlike the per-package copies in packages/ts-sdk and packages/boltz-swap,
+// Unlike the per-package copies in packages/sdk and packages/swap,
 // this resolves the target package from process.cwd(), so every package that
 // needs only the generic checks can share it.
 //
