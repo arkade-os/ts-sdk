@@ -8,11 +8,34 @@ export type { ExecutorContractKeys };
 export interface ExecutorInfo extends ExecutorContractKeys {
     version: string;
     network: string;
+    /** Seals template secrets for this Executor; absent when it has no encryption key. */
+    encryptionPubkey?: string;
 }
 
 export interface ExecutorTemplate {
     id: string;
     status: string;
+}
+
+export interface ExecutorTemplateParam {
+    name: string;
+    type: string;
+}
+
+/** A template with its document, as `getTemplate` and `registerTemplate` return it. */
+export interface ExecutorTemplateDetails extends ExecutorTemplate {
+    document: string;
+    artifactIds: string[];
+    params: ExecutorTemplateParam[];
+    /** proof, virtual or onchain. */
+    type: string;
+    createdAt?: number;
+}
+
+export interface ExecutorArtifact {
+    id: string;
+    document: string;
+    createdAt?: number;
 }
 
 export interface ExecutorDelegationInput {
@@ -74,6 +97,19 @@ export interface ExecutorProvider {
         address: string,
         options?: { signal?: AbortSignal },
     ): Promise<ExecutorDelegationDetails>;
+    // Optional, so a provider serving delegated boarding alone still conforms.
+    /** `document` is the JSON text, or an object to send as its JSON. */
+    registerArtifact?(
+        document: string | object,
+        options?: { signal?: AbortSignal },
+    ): Promise<ExecutorArtifact>;
+    getArtifact?(id: string, options?: { signal?: AbortSignal }): Promise<ExecutorArtifact>;
+    /** Needs the template's artifacts registered first; `document` as in `registerArtifact`. */
+    registerTemplate?(
+        document: string | object,
+        options?: { signal?: AbortSignal },
+    ): Promise<ExecutorTemplateDetails>;
+    getTemplate?(id: string, options?: { signal?: AbortSignal }): Promise<ExecutorTemplateDetails>;
 }
 
 /** REST provider for the Executor, the service that renews and boards a wallet's coins. */
@@ -139,19 +175,11 @@ export class RestExecutorProvider implements ExecutorProvider {
         address: string,
         options: { signal?: AbortSignal } = {},
     ): Promise<ExecutorDelegationDetails> {
-        const url = this.endpoint(`/v1/delegation?address=${encodeURIComponent(address)}`);
-        const response = await rateGate.runHttp(url, () =>
-            baseFetch(url, { signal: options.signal }),
+        const data = await this.getJson(
+            `/v1/delegation?address=${encodeURIComponent(address)}`,
+            "get Executor delegation",
+            options.signal,
         );
-        if (!response.ok) {
-            const body = await response.text();
-            // Only the Executor's own NOT_FOUND says the watch is gone, not a proxy's 404 page.
-            throw new ExecutorRequestError(
-                `Failed to get Executor delegation (${response.status}): ${body}`,
-                response.status === 404 && !isGrpcNotFound(body) ? undefined : response.status,
-            );
-        }
-        const data: unknown = await response.json();
         if (!isObject(data)) {
             throw new Error("Invalid Executor delegation response");
         }
@@ -160,6 +188,96 @@ export class RestExecutorProvider implements ExecutorProvider {
             coins: optionalArray(data.coins, "coins").map(parseCoin),
         };
     }
+
+    async registerArtifact(
+        document: string | object,
+        options: { signal?: AbortSignal } = {},
+    ): Promise<ExecutorArtifact> {
+        const data = await this.postJson(
+            "/v1/artifact",
+            { document: documentText(document) },
+            "register Executor artifact",
+            options.signal,
+        );
+        return parseArtifact(isObject(data) ? data.artifact : undefined);
+    }
+
+    async getArtifact(
+        id: string,
+        options: { signal?: AbortSignal } = {},
+    ): Promise<ExecutorArtifact> {
+        const data = await this.getJson(
+            `/v1/artifact/${encodeURIComponent(id)}`,
+            "get Executor artifact",
+            options.signal,
+        );
+        return parseArtifact(isObject(data) ? data.artifact : undefined);
+    }
+
+    async registerTemplate(
+        document: string | object,
+        options: { signal?: AbortSignal } = {},
+    ): Promise<ExecutorTemplateDetails> {
+        const data = await this.postJson(
+            "/v1/template",
+            { document: documentText(document) },
+            "register Executor template",
+            options.signal,
+        );
+        return parseTemplateDetails(isObject(data) ? data.template : undefined);
+    }
+
+    async getTemplate(
+        id: string,
+        options: { signal?: AbortSignal } = {},
+    ): Promise<ExecutorTemplateDetails> {
+        const data = await this.getJson(
+            `/v1/template/${encodeURIComponent(id)}`,
+            "get Executor template",
+            options.signal,
+        );
+        return parseTemplateDetails(isObject(data) ? data.template : undefined);
+    }
+
+    private async postJson(
+        path: string,
+        body: unknown,
+        what: string,
+        signal?: AbortSignal,
+    ): Promise<unknown> {
+        const url = this.endpoint(path);
+        const response = await baseFetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal,
+        });
+        if (response.status === 429) {
+            rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
+        }
+        if (!response.ok) {
+            throw await notFoundFailure(response, what);
+        }
+        return response.json();
+    }
+
+    private async getJson(path: string, what: string, signal?: AbortSignal): Promise<unknown> {
+        const url = this.endpoint(path);
+        const response = await rateGate.runHttp(url, () => baseFetch(url, { signal }));
+        if (!response.ok) {
+            throw await notFoundFailure(response, what);
+        }
+        return response.json();
+    }
+}
+
+/** Only the Executor's own NOT_FOUND says it lacks the record, not a proxy's 404 page. */
+async function notFoundFailure(response: Response, what: string): Promise<ExecutorRequestError> {
+    const body = await response.text();
+    return new ExecutorRequestError(
+        `Failed to ${what} (${response.status}): ${body}`,
+        response.status === 404 && !isGrpcNotFound(body) ? undefined : response.status,
+    );
 }
 
 async function failure(response: Response, what: string): Promise<ExecutorRequestError> {
@@ -167,6 +285,10 @@ async function failure(response: Response, what: string): Promise<ExecutorReques
         `Failed to ${what} (${response.status}): ${await response.text()}`,
         response.status,
     );
+}
+
+function documentText(document: string | object): string {
+    return typeof document === "string" ? document : JSON.stringify(document);
 }
 
 /** The gateway's gRPC status body for NOT_FOUND, whatever its message. */
@@ -183,10 +305,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-function requiredString(object: Record<string, unknown>, key: string): string {
+function requiredString(object: Record<string, unknown>, key: string, what = "info"): string {
     const value = object[key];
     if (typeof value !== "string" || value.length === 0) {
-        throw new Error(`Invalid Executor info: missing ${key}`);
+        throw new Error(`Invalid Executor ${what}: missing ${key}`);
     }
     return value;
 }
@@ -299,6 +421,38 @@ function parseTemplate(value: unknown): ExecutorTemplate {
     return { id: value.id, status: typeof value.status === "string" ? value.status : "" };
 }
 
+function parseTemplateDetails(value: unknown): ExecutorTemplateDetails {
+    if (!isObject(value)) throw new Error("Invalid Executor template");
+    const artifactIds = optionalArray(value.artifactIds, "artifactIds");
+    if (artifactIds.some((id) => typeof id !== "string" || id.length === 0)) {
+        throw new Error("Invalid Executor template: artifactIds are not strings");
+    }
+    return {
+        id: requiredString(value, "id", "template"),
+        status: requiredString(value, "status", "template"),
+        document: requiredString(value, "document", "template"),
+        artifactIds: artifactIds as string[],
+        params: optionalArray(value.params, "params").map((param) => {
+            if (!isObject(param)) throw new Error("Invalid Executor template param");
+            return {
+                name: requiredString(param, "name", "template param"),
+                type: requiredString(param, "type", "template param"),
+            };
+        }),
+        type: requiredString(value, "type", "template"),
+        createdAt: parseOptionalInt64(value.createdAt, "createdAt"),
+    };
+}
+
+function parseArtifact(value: unknown): ExecutorArtifact {
+    if (!isObject(value)) throw new Error("Invalid Executor artifact");
+    return {
+        id: requiredString(value, "id", "artifact"),
+        document: requiredString(value, "document", "artifact"),
+        createdAt: parseOptionalInt64(value.createdAt, "createdAt"),
+    };
+}
+
 function parseExecutorInfo(value: unknown): ExecutorInfo {
     if (!isObject(value)) throw new Error("Invalid Executor info");
     const info: ExecutorInfo = {
@@ -311,6 +465,10 @@ function parseExecutorInfo(value: unknown): ExecutorInfo {
     decodeCompressed(info.cosignerPubkey, "cosignerPubkey");
     decodeCompressed(info.serverPubkey, "serverPubkey");
     decodeCompressed(info.emulatorPubkey, "emulatorPubkey");
+    if (value.encryptionPubkey !== undefined && value.encryptionPubkey !== "") {
+        info.encryptionPubkey = requiredString(value, "encryptionPubkey");
+        decodeCompressed(info.encryptionPubkey, "encryptionPubkey");
+    }
     return info;
 }
 
