@@ -1,0 +1,459 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "closures": [
+        {
+            "script": "",
+            "valid": false,
+            "error": "cannot decode empty script"
+        },
+        {
+            "script": "50",
+            "valid": false,
+            "error": "script contains forbidden OP_SUCCESS opcode"
+        },
+        {
+            "script": "20d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "20d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bad204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ac",
+            "valid": true,
+            "keys": [
+                "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+            ]
+        },
+        {
+            "script": "20d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ba529c",
+            "valid": true,
+            "keys": [
+                "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+            ]
+        },
+        {
+            "script": "20d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ba539c",
+            "valid": false,
+            "error": "failed to decode script 20d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766ba539c.\nCLTV Multisig: numeric value encoded as d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b is 32 bytes which exceeds the max allowed of 6\nCondition Multisig: forbidden opcode ac in condition script\nCondition CSV Multisig: forbidden opcode ac in condition script"
+        },
+        {
+            "script": "009c",
+            "valid": true
+        },
+        {
+            "script": "029000b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "03010040b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "03900001b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "050000008000b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "failed to decode script 050000008000b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac.\nCSV Multisig: sequence is disabled\nCondition Multisig: forbidden opcode b2 in condition script\nCondition CSV Multisig: forbidden opcode b2 in condition script"
+        },
+        {
+            "script": "020500b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "failed to decode script 020500b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac.\nCSV Multisig: numeric value encoded as 0500 is not minimally encoded\nCLTV Multisig: numeric value encoded as 0500 is not minimally encoded\nCondition Multisig: forbidden opcode b2 in condition script\nCondition CSV Multisig: forbidden opcode b2 in condition script"
+        },
+        {
+            "script": "0320a107b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "55b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "0105b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "failed to decode script 0105b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac.\nCLTV Multisig: expected minimal encoding OP_5 for locktime value 5\nCondition Multisig: forbidden opcode b1 in condition script\nCondition CSV Multisig: forbidden opcode b1 in condition script"
+        },
+        {
+            "script": "0181b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "failed to decode script 0181b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac.\nCondition Multisig: forbidden opcode b1 in condition script\nCondition CSV Multisig: forbidden opcode b1 in condition script"
+        },
+        {
+            "script": "06000000000001b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "failed to decode script 06000000000001b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac.\nCondition Multisig: forbidden opcode b1 in condition script\nCondition CSV Multisig: forbidden opcode b1 in condition script"
+        },
+        {
+            "script": "0700000000000001b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "failed to decode script 0700000000000001b17520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac.\nCLTV Multisig: numeric value encoded as 00000000000001 is 7 bytes which exceeds the max allowed of 6\nCondition Multisig: forbidden opcode b1 in condition script\nCondition CSV Multisig: forbidden opcode b1 in condition script"
+        },
+        {
+            "script": "516920d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "a820abababababababababababababababababababababababababababababababab876920d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "ac6920d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "failed to decode script ac6920d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac.\nCondition Multisig: forbidden opcode ac in condition script\nCondition CSV Multisig: forbidden opcode ac in condition script"
+        },
+        {
+            "script": "4c01516920d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "failed to decode script 4c01516920d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac.\nCondition Multisig: failed to parse condition script: opcode OP_PUSHDATA1 pushes 81 bytes, but script only has 0 remaining\nCondition CSV Multisig: failed to parse condition script: opcode OP_PUSHDATA1 pushes 81 bytes, but script only has 0 remaining"
+        },
+        {
+            "script": "5169029000b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": true,
+            "keys": ["d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b"]
+        },
+        {
+            "script": "516903900001b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac",
+            "valid": false,
+            "error": "script does not match any known closure type: 516903900001b27520d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac"
+        },
+        {
+            "script": "200000000000000000000000000000000000000000000000000000000000000005ac",
+            "valid": false,
+            "error": "failed to decode script 200000000000000000000000000000000000000000000000000000000000000005ac.\nCLTV Multisig: numeric value encoded as 0000000000000000000000000000000000000000000000000000000000000005 is 32 bytes which exceeds the max allowed of 6\nMultisig: failed to decode checksig: invalid public key: x coordinate 0000000000000000000000000000000000000000000000000000000000000005 is not on the secp256k1 curve\nCondition Multisig: forbidden opcode ac in condition script\nCondition CSV Multisig: forbidden opcode ac in condition script"
+        },
+        {
+            "script": "20ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffac",
+            "valid": false,
+            "error": "failed to decode script 20ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffac.\nCLTV Multisig: numeric value encoded as ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff is 32 bytes which exceeds the max allowed of 6\nMultisig: failed to decode checksig: invalid public key: x >= field prime\nCondition Multisig: forbidden opcode ac in condition script\nCondition CSV Multisig: forbidden opcode ac in condition script"
+        },
+        {
+            "script": "20d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac4c",
+            "valid": false,
+            "error": "failed to decode script 20d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6bac4c.\nCLTV Multisig: numeric value encoded as d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b is 32 bytes which exceeds the max allowed of 6\nCondition Multisig: forbidden opcode ac in condition script\nCondition CSV Multisig: forbidden opcode ac in condition script"
+        },
+        {
+            "script": "51",
+            "valid": false,
+            "error": "failed to decode script 51.\nCondition Multisig: failed to decode: script is empty\nCondition CSV Multisig: empty script"
+        }
+    ],
+    "draft": [
+        {
+            "name": "proof",
+            "prevTx": "020000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff02e803000000000000225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad007000000000000160014bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00000000",
+            "queries": [
+                {
+                    "outpoint": "0000000000000000000000000000000000000000000000000000000000000000:0",
+                    "value": 0,
+                    "script": "5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "arkTx": "nil",
+                    "vtxoScript": "5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                    "outpoint": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f:0",
+                    "value": 1000,
+                    "script": "5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "arkTx": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f",
+                    "vtxoScript": "5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                    "outpoint": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f:1",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                },
+                {
+                    "outpoint": "0707070707070707070707070707070707070707070707070707070707070707:7",
+                    "value": 5,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                },
+                {
+                    "outpoint": "0909090909090909090909090909090909090909090909090909090909090909:9",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                }
+            ]
+        },
+        {
+            "name": "proof whose first source is unbound",
+            "prevTx": "020000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff02e803000000000000225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad007000000000000160014bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00000000",
+            "queries": [
+                {
+                    "outpoint": "0000000000000000000000000000000000000000000000000000000000000000:0",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                },
+                {
+                    "outpoint": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f:0",
+                    "value": 1000,
+                    "script": "5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "arkTx": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f",
+                    "vtxoScript": "5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                    "outpoint": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f:1",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                },
+                {
+                    "outpoint": "0707070707070707070707070707070707070707070707070707070707070707:7",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                },
+                {
+                    "outpoint": "0909090909090909090909090909090909090909090909090909090909090909:9",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                }
+            ]
+        },
+        {
+            "name": "virtual",
+            "prevTx": "020000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff02e803000000000000225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad007000000000000160014bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00000000",
+            "queries": [
+                {
+                    "outpoint": "0000000000000000000000000000000000000000000000000000000000000000:0",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                },
+                {
+                    "outpoint": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f:0",
+                    "value": 1000,
+                    "script": "5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "arkTx": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f",
+                    "vtxoScript": "5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                    "outpoint": "c15de2b9bc7fac56dd92d1ebd59baee1b2c6431e80d12601a4b185d03cce607f:1",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                },
+                {
+                    "outpoint": "0707070707070707070707070707070707070707070707070707070707070707:7",
+                    "value": 5,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                },
+                {
+                    "outpoint": "0909090909090909090909090909090909090909090909090909090909090909:9",
+                    "value": null,
+                    "script": "nil",
+                    "arkTx": "nil",
+                    "vtxoScript": "nil"
+                }
+            ]
+        }
+    ],
+    "service": [
+        {
+            "name": "ark input without witness utxo",
+            "digest": "217b622c0b7babe7f93bff00ce894576fbc32bab7e20ae26e75997639df1e349",
+            "error": "emulate offchain tx ark_txid=1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396: failed to create prevout fetcher: witness utxo is nil"
+        },
+        {
+            "name": "two prevarktx fields",
+            "digest": "452256deefce7ebe63e399cf21aeb797d071f323d22aab8f293e383f35a2c1d3",
+            "error": "emulate offchain tx ark_txid=1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396: failed to create prevout fetcher: multiple prevout tx fields found for input 0"
+        },
+        {
+            "name": "prevarktx with trailing bytes",
+            "digest": "73403829d04ffc2c983bc67dde28659c0bb21491af85a860dff2436cef619cf5",
+            "requests": [
+                {
+                    "txid": "1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396",
+                    "inputIndex": 0,
+                    "scriptHash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                    "closurePubKeys": [
+                        "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                        "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                    ]
+                },
+                {
+                    "txid": "71d028e95153582c4eb0c8bfaa6bc44c7c562f3817bb35990865ef8fff42c538",
+                    "inputIndex": 0,
+                    "scriptHash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                    "closurePubKeys": [
+                        "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                        "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "prevarktx with a superfluous witness record",
+            "digest": "5b0e20c57053cc0c8a290b7e22a329ce07522cd0bd41f6d9038c2a861abec421",
+            "error": "emulate offchain tx ark_txid=1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396: failed to create prevout fetcher: failed to decode prevout tx for input 0: witness flag set but tx has no witnesses"
+        },
+        {
+            "name": "identical prevarktx twice",
+            "digest": "7001faa690c939bd7fce369cc97dcb9407593fce4a90ef026f93be0f46b57569",
+            "parseError": "Invalid Psbt due to duplicate key"
+        },
+        {
+            "name": "nil checkpoint",
+            "digest": "33dac199e403469065cc1ef61eeb3ca0d83716d7c092bac0652fabc7cfce4b60",
+            "error": "emulate offchain tx ark_txid=1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396: checkpoint 0 is missing its transaction"
+        },
+        {
+            "name": "checkpoint without inputs",
+            "digest": "d33edd861dcaa5550ee850879a013894fb2621429c2f8c7f11bd9d5dc5f8f554",
+            "error": "emulate offchain tx ark_txid=f39b486e479ba099f2fd3c307378edfb10442e23f0a263c7d49674386adb828f: failed to create prevout fetcher: checkpoint has no inputs for input 0"
+        },
+        {
+            "name": "ark input vout beyond checkpoint outputs",
+            "digest": "10f4e5b7cc345f35b4b0626c3af559426da9be3dde5f33d555c1d342700cfea5",
+            "error": "emulate offchain tx ark_txid=99361ee1701e6da73e2410e7af813a3399e1a060e8167babd94a1eb333d2f96e: failed to create prevout fetcher: ark input: prevout tx output index out of range for input 0: index=5 outputs=2"
+        },
+        {
+            "name": "ark input without tapleaf",
+            "digest": "57ae388b179dd4fa4c04bf98709c20680057059cd2e7bdf471a7c5202db5a18b",
+            "error": "emulate offchain tx ark_txid=1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396: failed to read arkade script: input does not specify any TaprootLeafScript vin=0"
+        },
+        {
+            "name": "tapleaf decodes as no closure",
+            "digest": "5dafad4cb9cd916a80a88db93173a4d8d4c3f74712074a4762fa5567acf1730c",
+            "error": "emulate offchain tx ark_txid=1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396: failed to read arkade script: failed to decode tapscript: failed to decode script 51.\nCondition Multisig: failed to decode: script is empty\nCondition CSV Multisig: empty script vin=0"
+        },
+        {
+            "name": "witness utxo script length byte is not read",
+            "digest": "a5239100248bece70023f4a02a3b13609eadf3693dda810c19ba40e3e9ebde34",
+            "requests": [
+                {
+                    "txid": "1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396",
+                    "inputIndex": 0,
+                    "scriptHash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                    "closurePubKeys": [
+                        "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                        "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                    ]
+                },
+                {
+                    "txid": "71d028e95153582c4eb0c8bfaa6bc44c7c562f3817bb35990865ef8fff42c538",
+                    "inputIndex": 0,
+                    "scriptHash": "7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4",
+                    "closurePubKeys": [
+                        "d231c179b485a576e303d0e4e7405dbf53d16ea296c09030f7110444e0c0cf6b",
+                        "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "malformed script fails expiry scan",
+            "digest": "82875bdf02d8b40e5d0720910f0f677724f9ca1f929ef845bcf229ef72e48592",
+            "error": "emulate offchain tx ark_txid=c5b9a17e46eb9df13157fd88ef2e2381ef83fbe3370fac963663dd25287f9141: input 0: expiry: opcode OP_DATA_2 requires 3 bytes, but script only has 2 remaining",
+            "code": "ErrMalformedPush"
+        },
+        {
+            "name": "emulator packet with trailing byte",
+            "digest": "070c7b23781bce8b6e57f8abec964c324ce4ae6f1653a60a34f103763e902c7d",
+            "error": "emulate offchain tx ark_txid=977e3904652c6c96c6e6b8908f708fb1f6382d3b24404e840c64358013e6724b: failed to parse emulator packet: unexpected 1 trailing bytes"
+        },
+        {
+            "name": "proof with only its message input",
+            "digest": "17c768d582ca65f375de080dfe3fad32936bfcf7beb406aa1e623056490518bb",
+            "error": "emulate batch registration proof_txid=0e02e0c422368ab5dd789f86152c64b5b82a3cafa58273b3fae362fca9991297: failed to create prevout fetcher: proof must have at least 2 inputs"
+        },
+        {
+            "name": "onchain input spending a non-taproot prevout",
+            "digest": "dc25357547718af9fd006c2585e2ee1c5953ec86c0dfeca3ee2066b7b08b5335",
+            "error": "emulate onchain tx txid=0e8dbdd928e276c3f6d87b6656596663320d608f1ee8b18baab94ba7a43804a0: cannot request signature for input 0: not a taproot input, cannot sign"
+        },
+        {
+            "name": "malformed script fails engine creation",
+            "digest": "3d6e8efda2d55cc41b8d82ceba7a99cc0b0c30bae8a8ba5987f131f9418b2abd",
+            "error": "emulate onchain tx txid=bb660d6f2531dd873ae339d0fe13e018ab07cef991ea1fd75e353e303377eedf: input 0: failed to create engine: opcode OP_DATA_2 requires 3 bytes, but script only has 2 remaining",
+            "code": "ErrMalformedPush"
+        },
+        {
+            "name": "ark input control block with the wrong parity",
+            "digest": "78251450a3ce31b88bbeb698c7e9f497b80c8b3f4dfae1f85f94ceac78fe86fc",
+            "error": "emulate offchain tx ark_txid=1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396: invalid checkpoint for ark input 0 checkpoint_txid=71d028e95153582c4eb0c8bfaa6bc44c7c562f3817bb35990865ef8fff42c538: ark input tapleaf: tapleaf is not committed by witness utxo: control block y is odd: true, derived parity is odd: false",
+            "code": "ErrTaprootOutputKeyParityMismatch"
+        },
+        {
+            "name": "ark input witness utxo is not taproot",
+            "digest": "448bd5f32ccf56d48a24d51d1ab02f9162bee5e754a78abe988d18e149d393b2",
+            "error": "emulate offchain tx ark_txid=269c1abe49f30235d686ac8d40b2108f6b8a71dcc1fc4b0881a8d70cb95b54c4: invalid checkpoint for ark input 0 checkpoint_txid=84a346b79fd3397567137373ff97153b4eb9f72fefddf3b9bd759d7f296b448d: ark input tapleaf: witness utxo is not taproot"
+        },
+        {
+            "name": "prevarktx over the length cap",
+            "digest": "ee18321600c6d4cc77a6eac2f2c7494470196fe7234765861a80a231383e461f",
+            "error": "emulate offchain tx ark_txid=1243c6a407b3d502dcc0fe11d459a1f747c8cc45c8538cdbc01c295eca87d396: failed to create prevout fetcher: failed to decode prevout tx for input 0: max prevout tx length exceeded, max=1000000 got=1000001"
+        },
+        {
+            "name": "control block leaf version differs from the leaf's",
+            "digest": "e4f1ae5f61c1c09946198680bfed686453ba275d4dbf2c162359ebdab3968809",
+            "error": "emulate onchain tx txid=bf49b103f1422439bb8e28122a74029cd09b15d32e91716790001409e1af6d01: cannot request signature for input 0: cannot sign input: control block leaf version 0xc2 does not match tapscript leaf version 0xc0"
+        },
+        {
+            "name": "exact compute limits replace the defaults",
+            "digest": "68dac119ba72c59c4280bebb9e0cff3a8cc2f6a09c3c1146a5bc8b3803d4e155",
+            "error": "emulate onchain tx txid=bf49b103f1422439bb8e28122a74029cd09b15d32e91716790001409e1af6d01: input 0: failed to execute arkade script: script=1 opcode=OP_1 position=0: opcode OP_1 exceeded execution limit of 0",
+            "code": "ErrScriptTooBig"
+        },
+        {
+            "name": "emulator packet without entries",
+            "digest": "76277a0c4ee635702d7c678e1ee04bcb925fdae09816ac3718d07c87e9a8c0a9",
+            "error": "emulate offchain tx ark_txid=d74f7efb44762a82d4cefe40f8b14cf75c23f58ace6b52e61afec4dfd28969a7: failed to parse emulator packet: empty packet"
+        },
+        {
+            "name": "emulator entry with an empty script",
+            "digest": "871a5b60bb81ff9328b2387236fd71415b2bc9d6bf0e862ae21e6516d3061eac",
+            "error": "emulate offchain tx ark_txid=3f04d8d4cc0937bb3e9c578999ac8edd7c4f0f1ccfa66505435b1dcbc1b9dc60: failed to parse emulator packet: empty script at entry 0"
+        },
+        {
+            "name": "emulator entries sharing a vin",
+            "digest": "4943d014c964fff41a3d8df3da1fccc4fe763d14a5dc94d0d8969bbc77dc145c",
+            "error": "emulate offchain tx ark_txid=c506710432e593bcacf97c0cfad6cb5dfd23f545c55a818d4febdbd86cb4c46c: failed to parse emulator packet: duplicate vin 0 at entry 1"
+        },
+        {
+            "name": "emulator packet over the entry cap",
+            "digest": "4f60067a82ffd967d51be6d15d8a3ff91092a115a9f1cc748c561f627fc086a4",
+            "error": "emulate offchain tx ark_txid=715cebe5db42df5a149ee34ff1ec845330dc66efd63c1fe1b5e7845f43fd86ed: failed to parse emulator packet: max emulator entry count exceeded, max=1000 got=1001"
+        },
+        {
+            "name": "emulator entry vin beyond the inputs",
+            "digest": "49b9ae01746289e5adbb2c470c3801d0850a4693b76836e4cb91b16c3e36d178",
+            "error": "emulate offchain tx ark_txid=7b5e0d9b5797dbcac42e69c8eaed28ffdf59e08b96c394b3ced0f943538bd487: failed to parse emulator packet: input index out of range: vin 5 out of range at entry 0, tx has 1 inputs"
+        },
+        {
+            "name": "extension shorter than its packet length",
+            "digest": "b25256a2ad4f5913d969a4b94c97cbd98465c39cbf54118bf1543341af53809c",
+            "error": "emulate offchain tx ark_txid=0e2c43c5ade5d6505782f0c3877e64024e0d3fba95353ec45730f3860074637e: failed to parse emulator packet: failed to parse extension: missing packet data: EOF"
+        }
+    ]
+}

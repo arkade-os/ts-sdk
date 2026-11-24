@@ -1,0 +1,2125 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "family": "hash",
+    "worlds": {
+        "default": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "emulator-0": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "5000",
+                    "script": "5120"
+                }
+            ]
+        }
+    },
+    "cases": [
+        {
+            "name": "hash/OP_DIGEST/selector-0",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626300c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "hash/OP_DIGEST/selector-1",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626351c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+            }
+        },
+        {
+            "name": "hash/OP_DIGEST/selector-2",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626352c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a9993e364706816aba3e25717850c26c9cd0d89d"]
+            }
+        },
+        {
+            "name": "hash/OP_DIGEST/selector-3",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626353c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["8eb208f7e05d987a9b044a8e98c6b087f15a0bfc"]
+            }
+        },
+        {
+            "name": "hash/OP_DIGEST/selector-4",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626354c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"]
+            }
+        },
+        {
+            "name": "hash/OP_DIGEST/selector-5",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626355c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"]
+            }
+        },
+        {
+            "name": "hash/OP_DIGEST/selector-6",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626356c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "hash/OP_DIGEST/selector-popped-first",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5403616263c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "hash/OP_DIGEST/five-byte-selector",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "hazard": "3.4/digest-selectors",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263050100000001c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrNumberTooBig",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "hash/OP_SHA256INITIALIZE/fresh-context",
+            "mode": "expression",
+            "op": "OP_SHA256INITIALIZE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c4",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                ]
+            }
+        },
+        {
+            "name": "hash/OP_SHA256INITIALIZE/with-data",
+            "mode": "expression",
+            "op": "OP_SHA256INITIALIZE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c6407070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707c4",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c7368610382d9d75f46af41860371ed07540c4fa516e1379be530feab6f5da25f180214b3070707070707070707070707070707070707070707070707070707070707070707070707000000000000000000000000000000000000000000000000000000000000000000000064"
+                ]
+            }
+        },
+        {
+            "name": "hash/OP_SHA256UPDATE/round-trip",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "hazard": "3.4/sha256-pop-order",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "026162c4026364c5026566c6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721"]
+            }
+        },
+        {
+            "name": "hash/OP_SHA256UPDATE/pop-order-swapped",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "hazard": "3.4/sha256-pop-order",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd196162000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000027c0263647cc5",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SWAP"
+            }
+        },
+        {
+            "name": "hash/OP_SHA256FINALIZE/witnessless-state",
+            "mode": "expression",
+            "op": "OP_SHA256FINALIZE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1961626300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300c6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+            }
+        },
+        {
+            "name": "hash/OP_SHA256FINALIZE/block-boundary-state",
+            "mode": "expression",
+            "op": "OP_SHA256FINALIZE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c73686103da5698be17b9b46962335799779fbeca8ce5d491c0d26243bafef9ea1837a9d800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004051c6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["2ccc1ceb1041efbf582b4decc50878234c2d2adb7829ffa23c92ed64105c8a38"]
+            }
+        },
+        {
+            "name": "hash/OP_SHA256UPDATE/short-state",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7a097f060102ff8200000070ff80006c73686103da5698be17b9b46962335799779fbeca8ce5d491c0d26243bafef9ea1837a9d8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000051c5",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "hash/OP_SHA256UPDATE/bad-prefix",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097e060102ff8200000070ff80006c73686103da5698be17b9b46962335799779fbeca8ce5d491c0d26243bafef9ea1837a9d800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004051c5",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "hash/OP_SHA256FINALIZE/bad-magic",
+            "mode": "expression",
+            "op": "OP_SHA256FINALIZE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c78686103da5698be17b9b46962335799779fbeca8ce5d491c0d26243bafef9ea1837a9d800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000c6",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256FINALIZE"
+            }
+        },
+        {
+            "name": "hash/OP_SHA256FINALIZE/arbitrary-h-words",
+            "mode": "expression",
+            "op": "OP_SHA256FINALIZE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c73686103131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30313200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000c6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["6e797e9d365fb7289ad375524d597392e81592bbaa16f56c7da6e247d56c7dff"]
+            }
+        },
+        {
+            "name": "hash/OP_SHA256UPDATE/length-sets-pending-count",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c73686103da5698be17b9b46962335799779fbeca8ce5d491c0d26243bafef9ea1837a9d8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000043017ac500c6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0babae3c1648027fd6691487334234b522c5e6646958ebfc35512153e37a9c24"]
+            }
+        },
+        {
+            "name": "hash/OP_SHA256UPDATE/witness-supplied-state",
+            "mode": "covenant",
+            "op": "OP_SHA256UPDATE",
+            "hazard": "3.4/sha256-midstate-framing",
+            "world": "default",
+            "input_index": 0,
+            "script_hex": "03646566c500c6820120887551",
+            "witness_hex": [
+                "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19616263000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003"
+            ],
+            "tap_leaf_hex": "201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fac",
+            "leaf_version": 192,
+            "expect": {
+                "ok": true
+            }
+        },
+        {
+            "name": "hash/OP_RIPEMD160/of-520",
+            "mode": "expression",
+            "op": "OP_RIPEMD160",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4d080261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161a6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["d2a418a265d091e879ae803cba9ffadd1612a22e"]
+            }
+        },
+        {
+            "name": "hash/OP_RIPEMD160/empty-stack",
+            "mode": "expression",
+            "op": "OP_RIPEMD160",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a6",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_RIPEMD160"
+            }
+        },
+        {
+            "name": "hash/OP_SHA1/of-520",
+            "mode": "expression",
+            "op": "OP_SHA1",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4d080261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161a7",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["5d86f9f59d148bff394a28146d62578ac72450f4"]
+            }
+        },
+        {
+            "name": "hash/OP_SHA1/empty-stack",
+            "mode": "expression",
+            "op": "OP_SHA1",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a7",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA1"
+            }
+        },
+        {
+            "name": "hash/OP_SHA256/of-520",
+            "mode": "expression",
+            "op": "OP_SHA256",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4d080261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161a8",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["4ca38a09ecf4fc99e375f0f6befa443579c20a0171b1fa4e947c32869ac5487c"]
+            }
+        },
+        {
+            "name": "hash/OP_SHA256/empty-stack",
+            "mode": "expression",
+            "op": "OP_SHA256",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a8",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256"
+            }
+        },
+        {
+            "name": "hash/OP_HASH160/of-520",
+            "mode": "expression",
+            "op": "OP_HASH160",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4d080261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161a9",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["b5c90009be7bc8faa0add03f76ee9c88fd36d6b4"]
+            }
+        },
+        {
+            "name": "hash/OP_HASH160/empty-stack",
+            "mode": "expression",
+            "op": "OP_HASH160",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_HASH160"
+            }
+        },
+        {
+            "name": "hash/OP_HASH256/of-520",
+            "mode": "expression",
+            "op": "OP_HASH256",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4d080261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161aa",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["fffaf19de60b0273e0c6c7dc04c2d95a55c7a52fde9a7bff55a36a465d8fba77"]
+            }
+        },
+        {
+            "name": "hash/OP_HASH256/empty-stack",
+            "mode": "expression",
+            "op": "OP_HASH256",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "aa",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_HASH256"
+            }
+        },
+        {
+            "name": "emulator/OP_RIPEMD160/valid/hash",
+            "mode": "expression",
+            "op": "OP_RIPEMD160",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "020102a6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["189f7c8b1a386ffe8eed91b3830c7a7bcd1e778c"]
+            }
+        },
+        {
+            "name": "emulator/OP_RIPEMD160/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_RIPEMD160",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a6",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_RIPEMD160"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA1/valid/hash",
+            "mode": "expression",
+            "op": "OP_SHA1",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "020102a7",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0ca623e2855f2c75c842ad302fe820e41b4d197d"]
+            }
+        },
+        {
+            "name": "emulator/OP_SHA1/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_SHA1",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a7",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA1"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256/valid/hash",
+            "mode": "expression",
+            "op": "OP_SHA256",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "020102a8",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222"]
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_SHA256",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a8",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256"
+            }
+        },
+        {
+            "name": "emulator/OP_HASH160/valid/hash",
+            "mode": "expression",
+            "op": "OP_HASH160",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "020102a9",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["15cc49e191cbc520d91944600a5cb77af6aa3291"]
+            }
+        },
+        {
+            "name": "emulator/OP_HASH160/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_HASH160",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_HASH160"
+            }
+        },
+        {
+            "name": "emulator/OP_HASH256/valid/hash",
+            "mode": "expression",
+            "op": "OP_HASH256",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "020102aa",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["76a56aced915d2513dcd84c2c378b2e8aa5cd632b5b71ca2f2ac5b0e3a649bdb"]
+            }
+        },
+        {
+            "name": "emulator/OP_HASH256/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_HASH256",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "aa",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_HASH256"
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/valid/sha256",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "02010251c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222"]
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/valid/sha1",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "02010252c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0ca623e2855f2c75c842ad302fe820e41b4d197d"]
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/valid/ripemd160",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "02010253c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["189f7c8b1a386ffe8eed91b3830c7a7bcd1e778c"]
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/valid/keccak256",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "02010254c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["22ae6da6b482f9b1b19b0b897c3fd43884180a1c5ee361e1107a1bc635649dda"]
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/valid/sha3_256",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "02010255c3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["76e8bb05214d1e776c2a4836f6c1a7446c90a274b9ae719c3c6c8a727d862c12"]
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/invalid/underflow_no_selector",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/invalid/underflow_no_data",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/invalid/unknown_type_high",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0201020163c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/invalid/unknown_type_zero",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "02010200c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/invalid/non_minimal_selector",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "020102020100c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrMinimalData",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "emulator/OP_DIGEST/invalid/oversized_selector",
+            "mode": "expression",
+            "op": "OP_DIGEST",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "020102050100000000c3",
+            "expect": {
+                "ok": false,
+                "code": "ErrNumberTooBig",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256INITIALIZE/valid/init_golden",
+            "mode": "expression",
+            "op": "OP_SHA256INITIALIZE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0548656c6c6fc4",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1948656c6c6f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256INITIALIZE/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_SHA256INITIALIZE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c4",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256INITIALIZE"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256UPDATE/valid/valid_update_golden",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1948656c6c6f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050620576f726c64c5",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1948656c6c6f20576f726c640000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256UPDATE/invalid/invalid_state",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0201020178c5",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256UPDATE/invalid/underflow_data",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c5",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256UPDATE/invalid/underflow_state",
+            "mode": "expression",
+            "op": "OP_SHA256UPDATE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0178c5",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256FINALIZE/valid/valid_finalize_golden",
+            "mode": "expression",
+            "op": "OP_SHA256FINALIZE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1948656c6c6f20576f726c640000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b0121c6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"]
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256FINALIZE/invalid/invalid_state",
+            "mode": "expression",
+            "op": "OP_SHA256FINALIZE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0201020178c6",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256FINALIZE"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256FINALIZE/invalid/underflow_data",
+            "mode": "expression",
+            "op": "OP_SHA256FINALIZE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c6",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256FINALIZE"
+            }
+        },
+        {
+            "name": "emulator/OP_SHA256FINALIZE/invalid/underflow_state",
+            "mode": "expression",
+            "op": "OP_SHA256FINALIZE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0178c6",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256FINALIZE"
+            }
+        },
+        {
+            "name": "ops/hash/ripemd160",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263a6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["8eb208f7e05d987a9b044a8e98c6b087f15a0bfc"]
+            }
+        },
+        {
+            "name": "ops/hash/ripemd160-empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00a6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["9c1185a5c5e9fc54612808977ee8f548b2258d31"]
+            }
+        },
+        {
+            "name": "ops/hash/ripemd160-short",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a6",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_RIPEMD160"
+            }
+        },
+        {
+            "name": "ops/hash/sha1",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263a7",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a9993e364706816aba3e25717850c26c9cd0d89d"]
+            }
+        },
+        {
+            "name": "ops/hash/sha1-empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00a7",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["da39a3ee5e6b4b0d3255bfef95601890afd80709"]
+            }
+        },
+        {
+            "name": "ops/hash/sha1-short",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a7",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA1"
+            }
+        },
+        {
+            "name": "ops/hash/sha256",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263a8",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+            }
+        },
+        {
+            "name": "ops/hash/sha256-empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00a8",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
+            }
+        },
+        {
+            "name": "ops/hash/sha256-witness",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a8",
+            "seed_hex": [
+                "616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161"
+            ],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba35c170729417f1499e0886e7e12fcdb4ab00ad411110ae1e888c766d4ed70d"]
+            }
+        },
+        {
+            "name": "ops/hash/sha256-short",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a8",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256"
+            }
+        },
+        {
+            "name": "ops/hash/hash160",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263a9",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["bb1be98c142444d7a56aa3981c3942a978e4dc33"]
+            }
+        },
+        {
+            "name": "ops/hash/hash160-short",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "a9",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_HASH160"
+            }
+        },
+        {
+            "name": "ops/hash/hash256",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263aa",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["4f8b42c22dd3729b519ba6f68d2da7cc5b2d606d05daed5ad5128cc03e6c6358"]
+            }
+        },
+        {
+            "name": "ops/hash/hash256-empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00aa",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"]
+            }
+        },
+        {
+            "name": "ops/hash/hash256-short",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "aa",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_HASH256"
+            }
+        },
+        {
+            "name": "ops/digest/sha256",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626351c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+            }
+        },
+        {
+            "name": "ops/digest/sha1",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626352c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a9993e364706816aba3e25717850c26c9cd0d89d"]
+            }
+        },
+        {
+            "name": "ops/digest/ripemd160",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626353c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["8eb208f7e05d987a9b044a8e98c6b087f15a0bfc"]
+            }
+        },
+        {
+            "name": "ops/digest/keccak256",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626354c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"]
+            }
+        },
+        {
+            "name": "ops/digest/sha3-256",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626355c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"]
+            }
+        },
+        {
+            "name": "ops/digest/keccak256-empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0054c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"]
+            }
+        },
+        {
+            "name": "ops/digest/sha3-256-empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0055c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"]
+            }
+        },
+        {
+            "name": "ops/digest/witness",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "55c3",
+            "seed_hex": [
+                "616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161"
+            ],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a6fb53a743c06c82eef0ceaa86b991b9db7854121e37419f88a78d758ca2ef09"]
+            }
+        },
+        {
+            "name": "ops/digest/selector-0",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626300c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/digest/selector-6",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626356c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/digest/selector-negative",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "036162634fc3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/digest/selector-max-int32",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0361626304ffffff7fc3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/digest/selector-5-bytes",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263050100000001c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrNumberTooBig",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/digest/selector-non-minimal",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263020100c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrMinimalData",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/digest/selector-neg-zero",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "036162630180c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrMinimalData",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/digest/no-data",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/digest/empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_DIGEST"
+            }
+        },
+        {
+            "name": "ops/mid/init-empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c4",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/init-empty-is-iv",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c44c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000087",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "ops/mid/init-abc",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263c4",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19616263000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/init-final-abc",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "03616263c400c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+            }
+        },
+        {
+            "name": "ops/mid/init-update-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0161c40162c50163c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+            }
+        },
+        {
+            "name": "ops/mid/empty-update-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c403616263c500c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+            }
+        },
+        {
+            "name": "ops/mid/init-63",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "3faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac4",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000003f"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/init-64",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "40aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac4",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c7368610354067259e9447b444aabb5505eeacca88841dc0a73f583867ead1f866e71340e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/init-65",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "41aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac4",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c7368610354067259e9447b444aabb5505eeacca88841dc0a73f583867ead1f866e71340eaa0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/init-520",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4d0802aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac4",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c73686103054dfda53fd69a9fbe51953d1cb8d72cc8f9dc103708a79e7fc22e67958e22eaaaaaaaaaaaaaaaaa00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000208"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/init-witness",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c4",
+            "seed_hex": [
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c73686103230d4d12d1691930e50a073d4068eb9fbf05284f835c1315b1e45f169025dad4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000258"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/cross-block-stale-buffer",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "28aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac428bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc5",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c73686103082e622be90e98484e4f1a819648b6b16b6b6263d9ef08803287547ac18b9fd9bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/cross-block-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "28aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac428bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc51eccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["9ed5f1f8b2c475ba3b3e84500df778b8685e060847e93b8f9cb90e241a1f3fa6"]
+            }
+        },
+        {
+            "name": "ops/mid/update-exact-block",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0aaaaaaaaaaaaaaaaaaaaac436bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc5",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c73686103deb3aa498edb4feeb74e521f4ea854a688579d1d75065256a018dad61630f87c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/update-many-blocks",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0aaaaaaaaaaaaaaaaaaaaac44d2c01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc507ccccccccccccccc6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["db36ec44720f94daeff4afa97b0b79bcd9b384d5d27894919f27e99b325e35c2"]
+            }
+        },
+        {
+            "name": "ops/mid/final-pad-55",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa000000000000000000000000000000003700c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a8fb7c3a4d8ea13ca3cbe329d52274d3224c732d4e53e8c90c06bd3089248cf2"]
+            }
+        },
+        {
+            "name": "ops/mid/final-pad-56",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000000000000000000000003800c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["d464bb04abbc80a2254cd4ad0f3356f1b70b5b6390085b193edcd291f065b01e"]
+            }
+        },
+        {
+            "name": "ops/mid/final-pad-63",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000003f00c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["aeb651ca18a18fd5af871bb6c8a16c5aa8947e82d833995c9f10e8998680bfb8"]
+            }
+        },
+        {
+            "name": "ops/mid/final-data-crosses-pad",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa000000000000000000000000000000000000000000320abbbbbbbbbbbbbbbbbbbbc6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["90131d3ae5c8796eafb74d1a5f128e7563e0744fe0e5a84f4e7586d6de3bc87b"]
+            }
+        },
+        {
+            "name": "ops/mid/witness-zero-h",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c73686103000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["361ab6322fa9e7a7bb23818d839e01bddafdf47305426edd297aedb9f6202bae"]
+            }
+        },
+        {
+            "name": "ops/mid/witness-arbitrary-h",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861030123456789abcdeffedcba987654321000112233445566778899aabbccddeeff5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a00000000000003e851c5",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861030123456789abcdeffedcba987654321000112233445566778899aabbccddeeff5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a01000000000000000000000000000000000000000000000000000000000003e9"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/witness-garbage-past-nx-update",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19616263ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000000000000300c5",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19616263000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/witness-garbage-past-nx-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19616263ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000000000000300c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+            }
+        },
+        {
+            "name": "ops/mid/witness-len-nx-mismatch",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd196162630000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000430164c5",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19616263640000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/len-max-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00ffffffffffffffff00c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["8db9b9cefbdf1471ff639ea1251cc5e545bdfc5113d0cadd1c1513c39225f1cc"]
+            }
+        },
+        {
+            "name": "ops/mid/len-max-update-wraps",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00ffffffffffffffff01bbc5",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861034bec1e5377972248e8557b7748369d17e50d88dd3c511d1ce2edfd73bc0e536e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/len-max-update-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00ffffffffffffffff01bbc6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ca35c49c383a80abd5cc32c1df4ea486434ac1431542934ade18e432f9cc9632"]
+            }
+        },
+        {
+            "name": "ops/mid/len-2-53-plus-1-update",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aa000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000101bbc5",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aabb00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020000000000002"
+                ]
+            }
+        },
+        {
+            "name": "ops/mid/len-2-53-plus-1-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aa000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000101bbc6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["4572c50bbb1fec86120961bcb546e3fc165779fa2e089f9ace4d696ffa819ccf"]
+            }
+        },
+        {
+            "name": "ops/mid/len-2-61-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
+            }
+        },
+        {
+            "name": "ops/mid/len-2-61-plus-5-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1901020304050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000500c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["74f81fe167d99b4cb41d6d0ccda82278caee9f3e2f25d5e5a3936ff3dcec60d0"]
+            }
+        },
+        {
+            "name": "ops/mid/seeded-state-and-data",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c6",
+            "seed_hex": [
+                "097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19aaaaaaaaaaaaaa0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["d98babab95feec2f9308fc69b6ea1c4b6f5b7cdeb5e95d7995d8cc97bff8e079"]
+            }
+        },
+        {
+            "name": "ops/mid/bad-magic-224",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736861026a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c5",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "ops/mid/bad-magic-final",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b097f060102ff8200000070ff80006c736862036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256FINALIZE"
+            }
+        },
+        {
+            "name": "ops/mid/bad-prefix",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7b087f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c5",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "ops/mid/len-122",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7a097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c5",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "ops/mid/len-124",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4c7c097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd190000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256FINALIZE"
+            }
+        },
+        {
+            "name": "ops/mid/empty-state",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0000c5",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "ops/mid/swapped-operands",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0161c401627cc5",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "ops/mid/init-short",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c4",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256INITIALIZE"
+            }
+        },
+        {
+            "name": "ops/mid/update-short",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c5",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256UPDATE"
+            }
+        },
+        {
+            "name": "ops/mid/final-short",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c6",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_SHA256FINALIZE"
+            }
+        }
+    ]
+}

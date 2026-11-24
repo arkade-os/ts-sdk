@@ -1,0 +1,573 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "family": "merkle",
+    "worlds": {
+        "default": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "emulator-0": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "5000",
+                    "script": "5120"
+                }
+            ]
+        }
+    },
+    "cases": [
+        {
+            "name": "merkle/tagged-leaf-two-steps",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/lexicographic",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "046c656166066272616e6368400101010101010101010101010101010101010101010101010101010101010101eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee077061796c6f6164b3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["59765683ee1238fda8ac37877c678c37ddf74113f9bff725ac16c2440ee2f84a"]
+            }
+        },
+        {
+            "name": "merkle/raw-hash-mode",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/raw-hash-mode",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00066272616e636820eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee201111111111111111111111111111111111111111111111111111111111111111b3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0ae3fc8931d9154757ba18e0550f59ebc96a2499924803365df230ca5e15cb5a"]
+            }
+        },
+        {
+            "name": "merkle/raw-hash-mode-wrong-size",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/raw-hash-mode",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00066272616e636820eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1f11111111111111111111111111111111111111111111111111111111111111b3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "merkle/empty-proof",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/empty-proof",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "046c656166066272616e6368000178b3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["cfe7fc86d0aa3ffe785263bdcdcbb8be26cff4343f20fed4e9c7ac7dca8b8ae8"]
+            }
+        },
+        {
+            "name": "merkle/proof-not-multiple-of-32",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/proof-multiple-of-32",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "046c656166066272616e63681f010101010101010101010101010101010101010101010101010101010101010178b3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "merkle/empty-branch-tag",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/pop-order",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "046c656166002001010101010101010101010101010101010101010101010101010101010101010178b3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "merkle/pop-order-swapped",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/pop-order",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "066272616e6368046c6561660178200101010101010101010101010101010101010101010101010101010101010101b3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "merkle/sibling-smaller-sorts-first",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/lexicographic",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "000162200101010101010101010101010101010101010101010101010101010101010101201111111111111111111111111111111111111111111111111111111111111111b3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["004347b087ba7b1259b8fe476c6328c3fd61cff72ebf54dcd703e069c09d3c68"]
+            }
+        },
+        {
+            "name": "merkle/sibling-larger-sorts-second",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/lexicographic",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00016220eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee201111111111111111111111111111111111111111111111111111111111111111b3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["dc4b00404dd122e365921637287c910fb5b9a1078f096f506c763bad4f921160"]
+            }
+        },
+        {
+            "name": "merkle/computes-root-not-verify",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "hazard": "3.5/computes-not-verifies",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00016200201111111111111111111111111111111111111111111111111111111111111111b320111111111111111111111111111111111111111111111111111111111111111187",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "emulator/OP_MERKLEBRANCHROOT/valid/valid_path",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "087461675f6c6561660a7461675f6272616e6368200101010101010101010101010101010101010101010101010101010101010101200000000000000000000000000000000000000000000000000000000000000000b3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["1771612c3a97c188dbcb1d5a939a53e9a1e6fa6b8a78a4aebca6928c6b198735"]
+            }
+        },
+        {
+            "name": "emulator/OP_MERKLEBRANCHROOT/invalid/invalid_proof_len",
+            "mode": "expression",
+            "op": "OP_MERKLEBRANCHROOT",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "057461675f6c057461675f6251046c656166b3",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/tagged-no-proof",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c5402425400077061796c6f6164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["b5222f019c7b64f7c8df9ddb20896dd14e027f4a818171ffd8b98d71d04c6106"]
+            }
+        },
+        {
+            "name": "ops/merkle/raw-no-proof",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0002425400201111111111111111111111111111111111111111111111111111111111111111b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["1111111111111111111111111111111111111111111111111111111111111111"]
+            }
+        },
+        {
+            "name": "ops/merkle/raw-31",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00024254001f11111111111111111111111111111111111111111111111111111111111111b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/raw-33",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "000242540021111111111111111111111111111111111111111111111111111111111111111111b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/raw-empty-leaf",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "000242540000b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/proof-31",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c540242541faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/proof-33",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c5402425421aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/empty-branch-tag",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c5400000164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/sibling-high",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c5402425420ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a1d1f5613f26ffb54c26661d3916acdcd00e638253003a58ef3f4387c3a60368"]
+            }
+        },
+        {
+            "name": "ops/merkle/sibling-low",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c540242542000000000000000000000000000000000000000000000000000000000000000000164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["67fa8fcd780a01642f69e8d6b79794f7562522bfd7ffc3427217afc704ec0ed3"]
+            }
+        },
+        {
+            "name": "ops/merkle/sibling-equal",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00024254201111111111111111111111111111111111111111111111111111111111111111201111111111111111111111111111111111111111111111111111111111111111b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["5f98760f9a3784df056ce7b9c37bedcd84bfd695ccf671e4f99b23690c1b2795"]
+            }
+        },
+        {
+            "name": "ops/merkle/raw-two-steps",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00024254400000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff201111111111111111111111111111111111111111111111111111111111111111b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["c4e94391dd1d02422ac245114db897dcf896d3a63eeff1af7a3c22228ea5ddd5"]
+            }
+        },
+        {
+            "name": "ops/merkle/tagged-three-steps",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c540242544c600000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff80808080808080808080808080808080808080808080808080808080808080800164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["f94b41c6448df94f2057aae5e31fa675cea470ec7ef2a27738343d39b41c105e"]
+            }
+        },
+        {
+            "name": "ops/merkle/binary-tags",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0200ff51202222222222222222222222222222222222222222222222222222222222222222020203b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["b25bb806b44825fb006be201414eb9d8fd61c50880fd17347905f91dbdee7042"]
+            }
+        },
+        {
+            "name": "ops/merkle/empty-leaf-tagged",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c540242540000b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["343061add165dc2838d55644aa260601a0d17596e09a342d5ed09e4f1f5394ab"]
+            }
+        },
+        {
+            "name": "ops/merkle/proof-over-520",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "b3",
+            "seed_hex": [
+                "4c54",
+                "4254",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "64"
+            ],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["69157852254ffee766d07b70fdce502cd47526869beddcb0575ceabf7d0c30f2"]
+            }
+        },
+        {
+            "name": "ops/merkle/chain",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024c5402425420ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0164b300024254200000000000000000000000000000000000000000000000000000000000000000537ab3",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["7f24581ab4ba483375cd20f7269e4652d384297e7b0482c9df97f93e93e3ff04"]
+            }
+        },
+        {
+            "name": "ops/merkle/dead-branch",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0063b36851",
+            "seed_hex": [],
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "ops/merkle/short-1",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/short-2",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "000164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/short-3",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "024254000164b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        },
+        {
+            "name": "ops/merkle/empty",
+            "mode": "expression",
+            "op": null,
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "b3",
+            "seed_hex": [],
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_MERKLEBRANCHROOT"
+            }
+        }
+    ]
+}

@@ -1,0 +1,2337 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "family": "introspect",
+    "worlds": {
+        "default": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "emulator-0": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "5000",
+                    "script": "5120"
+                }
+            ]
+        },
+        "emulator-10": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    }
+                }
+            ]
+        },
+        "emulator-11": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "-1",
+                    "script": "5120"
+                }
+            ]
+        },
+        "emulator-12": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "2100000000000001",
+                    "script": "5120"
+                }
+            ]
+        },
+        "emulator-13": {
+            "tx_hex": "0200000001000000000000000000000000000000000000000000000000000000000000000000000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "index": 0
+                    }
+                }
+            ]
+        },
+        "emulator-14": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a0000000064000000010040075af0750700015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "5000",
+                    "script": "5120"
+                }
+            ]
+        },
+        "emulator-15": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001ffffffffffffffff015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "5000",
+                    "script": "5120"
+                }
+            ]
+        },
+        "emulator-16": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a0000000064000000010140075af0750700015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "5000",
+                    "script": "5120"
+                }
+            ]
+        },
+        "emulator-8": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000002581b000000000000015100000000000000000e6a0c41524b01070100000151010090000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "5000",
+                    "script": "5120"
+                }
+            ]
+        },
+        "emulator-9": {
+            "tx_hex": "0200000001c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b20a000000006400000001581b000000000000015190000000",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                        "index": 10
+                    },
+                    "value": "2100000000000000",
+                    "script": "5120"
+                }
+            ]
+        },
+        "emulator-packet": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000003581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766000000000000000016001422222222222222222222222222222222222222220000000000000000186a1641524b01110201000151040201aa0000000252750100c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "emulator-packet-vin0": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000003581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07660000000000000000160014222222222222222222222222222222222222222200000000000000000e6a0c41524b010701000001510100c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "in0-value--1": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "-1",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "in0-value-0": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "0",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "in0-value-2100000000000000": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "2100000000000000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "in0-value-2100000000000001": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "2100000000000001",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "in1-legacy-vtxo": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac",
+                    "vtxo_script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "in1-unfetchable": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                }
+            ]
+        },
+        "locktime-max": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222ffffffff",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "odd-outputs": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a000000060100000000000000036a01070200000000000000046002beef03000000000000002a51284444444444444444444444444444444444444444444444444444444444444444444444444444444404000000000000002b51294444444444444444444444444444444444444444444444444444444444444444444444444444444444050000000000000000ffffffffffffffff00c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "scriptsig-one": {
+            "tx_hex": "02000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6010000000151feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "version--1": {
+            "tx_hex": "ffffffff021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "version-1": {
+            "tx_hex": "01000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        },
+        "version-3": {
+            "tx_hex": "03000000021ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c60100000000feffffff87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec07000000000a00000002581b0000000000002251204d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000000000001600142222222222222222222222222222222222222222c0270900",
+            "prevouts": [
+                {
+                    "outpoint": {
+                        "txid": "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                        "index": 1
+                    },
+                    "value": "5000",
+                    "script": "5120531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+                    "ark_tx_hex": "0300000001d1f1dcc91996dd3c05f84b0e7adafaf394d17ec0336d8c7533f9745902c5ad770000000000ffffffff02a00f00000000000022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f78813000000000000225120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b00000000",
+                    "vtxo_script": "5120462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+                },
+                {
+                    "outpoint": {
+                        "txid": "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                        "index": 7
+                    },
+                    "value": "3000",
+                    "script": "76a914333333333333333333333333333333333333333388ac"
+                }
+            ]
+        }
+    },
+    "cases": [
+        {
+            "name": "coverage/OP_PUSHCURRENTINPUTINDEX/stack-count-overflow",
+            "mode": "expression",
+            "op": "OP_PUSHCURRENTINPUTINDEX",
+            "hazard": "2.9/post-step-limits",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5176766f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f76cd",
+            "expect": {
+                "ok": false,
+                "code": "ErrStackOverflow",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_PUSHCURRENTINPUTINDEX"
+            }
+        },
+        {
+            "name": "coverage/OP_INSPECTVERSION/stack-count-overflow",
+            "mode": "expression",
+            "op": "OP_INSPECTVERSION",
+            "hazard": "2.9/post-step-limits",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5176766f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f76d2",
+            "expect": {
+                "ok": false,
+                "code": "ErrStackOverflow",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTVERSION"
+            }
+        },
+        {
+            "name": "coverage/OP_INSPECTLOCKTIME/stack-count-overflow",
+            "mode": "expression",
+            "op": "OP_INSPECTLOCKTIME",
+            "hazard": "2.9/post-step-limits",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5176766f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f76d3",
+            "expect": {
+                "ok": false,
+                "code": "ErrStackOverflow",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTLOCKTIME"
+            }
+        },
+        {
+            "name": "coverage/OP_INSPECTNUMINPUTS/stack-count-overflow",
+            "mode": "expression",
+            "op": "OP_INSPECTNUMINPUTS",
+            "hazard": "2.9/post-step-limits",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5176766f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f76d4",
+            "expect": {
+                "ok": false,
+                "code": "ErrStackOverflow",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTNUMINPUTS"
+            }
+        },
+        {
+            "name": "coverage/OP_INSPECTNUMOUTPUTS/stack-count-overflow",
+            "mode": "expression",
+            "op": "OP_INSPECTNUMOUTPUTS",
+            "hazard": "2.9/post-step-limits",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5176766f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f76d5",
+            "expect": {
+                "ok": false,
+                "code": "ErrStackOverflow",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTNUMOUTPUTS"
+            }
+        },
+        {
+            "name": "coverage/OP_TXWEIGHT/stack-count-overflow",
+            "mode": "expression",
+            "op": "OP_TXWEIGHT",
+            "hazard": "2.9/post-step-limits",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5176766f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f76d6",
+            "expect": {
+                "ok": false,
+                "code": "ErrStackOverflow",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_TXWEIGHT"
+            }
+        },
+        {
+            "name": "coverage/OP_TXID/stack-count-overflow",
+            "mode": "expression",
+            "op": "OP_TXID",
+            "hazard": "2.9/post-step-limits",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "5176766f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f76f3",
+            "expect": {
+                "ok": false,
+                "code": "ErrStackOverflow",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_TXID"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTOUTPOINT/index-0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTOUTPOINT",
+            "hazard": "3.9/outpoint-internal-order",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c7",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "1ca4b3296f0b31b9f584e06c4dfc59119ecc408ba0395047c8d616f4c88a20c6",
+                    "01"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/index-0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "3.9/value-vs-script-sources",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["8813"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSCRIPTPUBKEY/index-0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "hazard": "3.9/value-vs-script-sources",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00ca",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b",
+                    "01"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSEQUENCE/index-0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSEQUENCE",
+            "hazard": "3.9/index-negative",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00cb",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["feffffff00"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/index-0",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/index-negative",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["581b"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/index-0",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766",
+                    "01"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTOUTPOINT/index-1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTOUTPOINT",
+            "hazard": "3.9/outpoint-internal-order",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51c7",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "87dac51506d06652be02110bd1e34c2156faa5fa37253dc885da93b840b4bdec",
+                    "07"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/index-1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "3.9/value-vs-script-sources",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51c9",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["b80b"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSCRIPTPUBKEY/index-1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "hazard": "3.9/value-vs-script-sources",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51ca",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSEQUENCE/index-1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSEQUENCE",
+            "hazard": "3.9/index-negative",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51cb",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0a"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/index-1",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/index-negative",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": [""]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/index-1",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["2222222222222222222222222222222222222222", ""]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTOUTPOINT/index-2",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTOUTPOINT",
+            "hazard": "3.9/outpoint-internal-order",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52c7",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTOUTPOINT"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/index-2",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "3.9/value-vs-script-sources",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSCRIPTPUBKEY/index-2",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "hazard": "3.9/value-vs-script-sources",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52ca",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSEQUENCE/index-2",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSEQUENCE",
+            "hazard": "3.9/index-negative",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52cb",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSEQUENCE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/index-2",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/index-negative",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52cf",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTVALUE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/index-2",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52d1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTOUTPOINT/index--1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTOUTPOINT",
+            "hazard": "3.9/outpoint-internal-order",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fc7",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTOUTPOINT"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/index--1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "3.9/value-vs-script-sources",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fc9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSCRIPTPUBKEY/index--1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "hazard": "3.9/value-vs-script-sources",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fca",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSEQUENCE/index--1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSEQUENCE",
+            "hazard": "3.9/index-negative",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fcb",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSEQUENCE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/index--1",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/index-negative",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fcf",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTVALUE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/index--1",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fd1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/fetcher-miss",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "2.6/fetcher-nil",
+            "world": "in1-unfetchable",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTSCRIPTPUBKEY/non-witness-hash-and-minus-one",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "in1-legacy-vtxo",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51ca",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "46402f61b3239cd80b93294e10b552d66a31b79c8fe7fdd92a832d00f832e82e",
+                    "81"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/value--1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "in0-value--1",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/value-2100000000000000",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "in0-value-2100000000000000",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0040075af07507"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/value-2100000000000001",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "in0-value-2100000000000001",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTVALUE/value-0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "in0-value-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": true,
+                "stack_hex": [""]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/odd-0",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "53cdd0390eef14e75fb95114ad989571a6c524d6bb3d19a9a0ca5a5ad3a02f8b",
+                    "81"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/odd-0",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/odd-1",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["beef", "10"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/odd-1",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["02"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/odd-2",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "44444444444444444444444444444444444444444444444444444444444444444444444444444444",
+                    "01"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/odd-2",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["03"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/odd-3",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "53d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "91711a471d3b2ed58ae9c6fa358f26d4057c874a745780448a6ecb6603096329",
+                    "81"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/odd-3",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "53cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["04"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/odd-4",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "54d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "81"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/odd-4",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "54cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["05"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTSCRIPTPUBKEY/odd-5",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "hazard": "3.9/pushscriptpubkey-sentinel",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "55d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "81"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTOUTPUTVALUE/odd-5",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "hazard": "3.9/value-range",
+            "world": "odd-outputs",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "55cf",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTVALUE"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTVERSION/version--1",
+            "mode": "expression",
+            "op": "OP_INSPECTVERSION",
+            "hazard": "3.9/inspectversion-uint32",
+            "world": "version--1",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d2",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ffffffff00"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTVERSION/version-3",
+            "mode": "expression",
+            "op": "OP_INSPECTVERSION",
+            "hazard": "3.9/inspectversion-uint32",
+            "world": "version-3",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d2",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["03"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTVERSION/version-1",
+            "mode": "expression",
+            "op": "OP_INSPECTVERSION",
+            "hazard": "3.9/inspectversion-uint32",
+            "world": "version-1",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d2",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTLOCKTIME/max",
+            "mode": "expression",
+            "op": "OP_INSPECTLOCKTIME",
+            "world": "locktime-max",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["ffffffff00"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTLOCKTIME/default",
+            "mode": "expression",
+            "op": "OP_INSPECTLOCKTIME",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["c02709"]
+            }
+        },
+        {
+            "name": "introspect/counts",
+            "mode": "expression",
+            "op": "OP_INSPECTNUMINPUTS",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d4d5",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["02", "02"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTNUMOUTPUTS/default",
+            "mode": "expression",
+            "op": "OP_INSPECTNUMOUTPUTS",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d5",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["02"]
+            }
+        },
+        {
+            "name": "introspect/OP_TXWEIGHT/stripped-times-four",
+            "mode": "expression",
+            "op": "OP_TXWEIGHT",
+            "hazard": "3.9/txweight-txid-stripped",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["9802"]
+            }
+        },
+        {
+            "name": "introspect/OP_TXID/stripped-internal-order",
+            "mode": "expression",
+            "op": "OP_TXID",
+            "hazard": "3.9/txweight-txid-stripped",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "f3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["dabb00a7933c4edd0f7308458c7d5c9bc7857714e8bed0528cdd801a86c10c12"]
+            }
+        },
+        {
+            "name": "introspect/OP_TXID/scriptsig-changes-it",
+            "mode": "expression",
+            "op": "OP_TXID",
+            "hazard": "3.9/txweight-txid-stripped",
+            "world": "scriptsig-one",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "f3",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "01",
+                    "664483abfcedfb801678ef87224411c63bd400a16b03dd1c9ce4a944f7f26123"
+                ]
+            }
+        },
+        {
+            "name": "introspect/OP_PUSHCURRENTINPUTINDEX/at-1",
+            "mode": "expression",
+            "op": "OP_PUSHCURRENTINPUTINDEX",
+            "world": "default",
+            "input_index": 1,
+            "input_amount": "3000",
+            "script_hex": "cd",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADESCRIPTHASH/vin-0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "hazard": "3.9/arkadescripthash-by-vin",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c8",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": true,
+                "stack_hex": ["a5874d7258d12dd9b949afe1f9c1d29f45092ec609d80ee898259dc344801600"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADEWITNESSHASH/vin-0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "hazard": "3.9/witnesshash-empty",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00ce",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0000000000000000000000000000000000000000000000000000000000000000"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADESCRIPTHASH/vin-1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "hazard": "3.9/arkadescripthash-by-vin",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51c8",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": true,
+                "stack_hex": ["7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADEWITNESSHASH/vin-1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "hazard": "3.9/witnesshash-empty",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51ce",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": true,
+                "stack_hex": ["74816ea7b36e58b3efa4b4c3a5936d4e9ea5c08afc60672db5d24f3271a3f9df"]
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADESCRIPTHASH/vin-2",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "hazard": "3.9/arkadescripthash-by-vin",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52c8",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADESCRIPTHASH"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADEWITNESSHASH/vin-2",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "hazard": "3.9/witnesshash-empty",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "52ce",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADEWITNESSHASH"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADESCRIPTHASH/vin--1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "hazard": "3.9/arkadescripthash-by-vin",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fc8",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADESCRIPTHASH"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADEWITNESSHASH/vin--1",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "hazard": "3.9/witnesshash-empty",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fce",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADEWITNESSHASH"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADESCRIPTHASH/no-packet",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "hazard": "3.9/arkadescripthash-by-vin",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c8",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADESCRIPTHASH"
+            }
+        },
+        {
+            "name": "introspect/OP_INSPECTINPUTARKADESCRIPTHASH/no-entry",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "hazard": "3.9/arkadescripthash-by-vin",
+            "world": "emulator-packet-vin0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "51c8",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADESCRIPTHASH"
+            }
+        },
+        {
+            "name": "introspect/covenant/reads-own-packet",
+            "mode": "covenant",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "hazard": "3.9/witnesshash-empty",
+            "world": "emulator-packet",
+            "input_index": 0,
+            "script_hex": "cdce820120887551",
+            "witness_hex": [],
+            "tap_leaf_hex": "201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fac",
+            "leaf_version": 192,
+            "expect": {
+                "ok": true
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTOUTPOINT/valid/input0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTOUTPOINT",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c7",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "c4c5e772447dd3f0168f5f4334e6246bd50752d69e1b649b2b28f67fafbb18b2",
+                    "0a"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTOUTPOINT/invalid/negative",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTOUTPOINT",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fc7",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTOUTPOINT"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTOUTPOINT/invalid/out_of_range",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTOUTPOINT",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "59c7",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTOUTPOINT"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTOUTPOINT/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTOUTPOINT",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c7",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTOUTPOINT"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADESCRIPTHASH/valid/valid",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "world": "emulator-8",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c8",
+            "packets_from_tx": true,
+            "expect": {
+                "ok": true,
+                "stack_hex": ["7b96efa0ce630de0802dd38e8c9c8510af4d65c4a782d6841d98fbea039d56d4"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADESCRIPTHASH/invalid/negative",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fc8",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADESCRIPTHASH"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADESCRIPTHASH/invalid/out_of_range",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "59c8",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADESCRIPTHASH"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADESCRIPTHASH/invalid/no_packet",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c8",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADESCRIPTHASH"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADESCRIPTHASH/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c8",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADESCRIPTHASH"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/valid/val0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["8813"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/valid/max_value",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-9",
+            "input_index": 0,
+            "input_amount": "2100000000000000",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0040075af07507"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/invalid/negative",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fc9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/invalid/out_of_range",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "59c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/invalid/no_prev_fetcher",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-10",
+            "input_index": 0,
+            "input_amount": "0",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/invalid/negative_value",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-11",
+            "input_index": 0,
+            "input_amount": "-1",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/invalid/above_max_value",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-12",
+            "input_index": 0,
+            "input_amount": "2100000000000001",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/invalid/missing_prevout",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-13",
+            "input_index": 0,
+            "input_amount": "0",
+            "script_hex": "00c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTVALUE/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTVALUE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "c9",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSCRIPTPUBKEY/invalid/negative",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fca",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSCRIPTPUBKEY/invalid/out_of_range",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "59ca",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSCRIPTPUBKEY/invalid/no_prev_fetcher",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "world": "emulator-10",
+            "input_index": 0,
+            "input_amount": "0",
+            "script_hex": "00ca",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSCRIPTPUBKEY/invalid/missing_prevout",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "world": "emulator-13",
+            "input_index": 0,
+            "input_amount": "0",
+            "script_hex": "00ca",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSCRIPTPUBKEY/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "ca",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSEQUENCE/valid/seq0",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSEQUENCE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00cb",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["64"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSEQUENCE/invalid/negative",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSEQUENCE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fcb",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSEQUENCE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSEQUENCE/invalid/out_of_range",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSEQUENCE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "59cb",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSEQUENCE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTSEQUENCE/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTSEQUENCE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "cb",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTSEQUENCE"
+            }
+        },
+        {
+            "name": "emulator/OP_PUSHCURRENTINPUTINDEX/valid/push",
+            "mode": "expression",
+            "op": "OP_PUSHCURRENTINPUTINDEX",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "cd",
+            "expect": {
+                "ok": true,
+                "stack_hex": [""]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADEWITNESSHASH/invalid/negative",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fce",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADEWITNESSHASH"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADEWITNESSHASH/invalid/out_of_range",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "59ce",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADEWITNESSHASH"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADEWITNESSHASH/invalid/no_packet",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00ce",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADEWITNESSHASH"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTINPUTARKADEWITNESSHASH/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "ce",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTINPUTARKADEWITNESSHASH"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTVALUE/valid/val0",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["581b"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTVALUE/valid/max_value",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "world": "emulator-14",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00cf",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["0040075af07507"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTVALUE/invalid/negative",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fcf",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTVALUE/invalid/out_of_range",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "59cf",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTVALUE/invalid/negative_value",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "world": "emulator-15",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00cf",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTVALUE/invalid/above_max_value",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "world": "emulator-16",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00cf",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTVALUE/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTVALUE",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "cf",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTVALUE"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTSCRIPTPUBKEY/valid/spk0",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "00d1",
+            "expect": {
+                "ok": true,
+                "stack_hex": [
+                    "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+                    "81"
+                ]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTSCRIPTPUBKEY/invalid/negative",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "4fd1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTSCRIPTPUBKEY/invalid/out_of_range",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "59d1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidIndex",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTOUTPUTSCRIPTPUBKEY/invalid/underflow",
+            "mode": "expression",
+            "op": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d1",
+            "expect": {
+                "ok": false,
+                "code": "ErrInvalidStackOperation",
+                "kind": null,
+                "stage": "step",
+                "failed_op": "OP_INSPECTOUTPUTSCRIPTPUBKEY"
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTVERSION/valid/push",
+            "mode": "expression",
+            "op": "OP_INSPECTVERSION",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d2",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["02"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTLOCKTIME/valid/push",
+            "mode": "expression",
+            "op": "OP_INSPECTLOCKTIME",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["9000"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTNUMINPUTS/valid/push",
+            "mode": "expression",
+            "op": "OP_INSPECTNUMINPUTS",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d4",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "emulator/OP_INSPECTNUMOUTPUTS/valid/push",
+            "mode": "expression",
+            "op": "OP_INSPECTNUMOUTPUTS",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d5",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01"]
+            }
+        },
+        {
+            "name": "emulator/OP_TXWEIGHT/valid/push",
+            "mode": "expression",
+            "op": "OP_TXWEIGHT",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "d6",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["f400"]
+            }
+        },
+        {
+            "name": "emulator/OP_TXID/valid/push",
+            "mode": "expression",
+            "op": "OP_TXID",
+            "world": "emulator-0",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "f3",
+            "expect": {
+                "ok": true,
+                "stack_hex": ["5484985ba80ff7bb8efadaea35d95f9beb5a2924d5ff37123ac8a6944f0c1111"]
+            }
+        }
+    ]
+}

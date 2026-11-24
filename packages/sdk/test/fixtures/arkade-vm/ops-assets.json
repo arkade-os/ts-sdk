@@ -1,0 +1,2843 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "ark_tx": "03000000014a89053ec2c1aa5da0dad5a44922af2cfeab59e55479bf89db780a6834f20ac30000000000ffffffff018813000000000000225120010101010101010101010101010101010101010101010101010101010101010100000000",
+    "base_tx": "03000000026ca1e62b98a747a3026f8bceba4687ecd637fee218f724cee8a071e8aaf4d6700000000000ffffffffb94af9a325c8b9ddc10dce03453398d70b994e511f738192055c3385624447460300000000ffffffff0388130000000000002251200101010101010101010101010101010101010101010101010101010101010101b80b00000000000022512002020202020202020202020202020202020202020202020202020202020202028813000000000000225120090909090909090909090909090909090909090909090909090909090909090900000000",
+    "cases": [
+        {
+            "go": {
+                "stack": ["05"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/num-groups",
+            "packets": "assets",
+            "script": "e5",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["cb6e503f7b6523fc2e2630fb52656678da55674f4258f886b529c7aa7c63f5ec", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/id/k0",
+            "packets": "assets",
+            "script": "00e6",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["971ef1fb3b55e9ac214f1aea5dc8abc02abd9e71d8c2b59838d70144e9beadd9", "07"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/id/k1",
+            "packets": "assets",
+            "script": "51e6",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["38dedf70f8b8e94ee87c9cf0435f27a594aa8e9fbeb6a369deffb2c8c34ad193", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/id/k2",
+            "packets": "assets",
+            "script": "52e6",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["cb6e503f7b6523fc2e2630fb52656678da55674f4258f886b529c7aa7c63f5ec", "03"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/id/k3",
+            "packets": "assets",
+            "script": "53e6",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": [
+                    "1630b77c4bd13e17173b8c693a6a2784eff40bdfea1ea65f9c7d579ba7f29d30",
+                    "ffff00"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/id/k4",
+            "packets": "assets",
+            "script": "54e6",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": [
+                    "38dedf70f8b8e94ee87c9cf0435f27a594aa8e9fbeb6a369deffb2c8c34ad193",
+                    "",
+                    "01"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/ctrl/k0",
+            "packets": "assets",
+            "script": "00e7",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["113c81c65aa9ffa9b6e62e0bcde3a7bb123960e801cec9565fada2002b112dbd"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/metadata/k0",
+            "packets": "assets",
+            "script": "00e9",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["", "", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/ctrl/k1",
+            "packets": "assets",
+            "script": "51e7",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["0000000000000000000000000000000000000000000000000000000000000000"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/metadata/k1",
+            "packets": "assets",
+            "script": "51e9",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": [
+                    "9a9c068d1a19ecb4ac9b84abd039cc9798f3d03c0d4adcec1248cc04f6868fd3",
+                    "02",
+                    "01"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/ctrl/k3",
+            "packets": "assets",
+            "script": "53e7",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["f8ba6eb7e3c3a414f7d145d93081959ed9565ff327a96d683143cc6285136e8f"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/metadata/k3",
+            "packets": "assets",
+            "script": "53e9",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/num/id-only-group",
+            "packets": "assets",
+            "script": "5152ea",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": [
+                    "02",
+                    "08772fef3896f51e4c9f197081aa537d56d6c3e60e27692bd2693e7ffbd52399",
+                    "",
+                    "09"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/group/intent-input",
+            "packets": "assets",
+            "script": "525100eb",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["01", "", "ffffffffffffffff00"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/group/max-amount",
+            "packets": "assets",
+            "script": "540000eb",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/group/id-only-has-no-outputs",
+            "packets": "assets",
+            "script": "510051eb",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["040000000000000001", "03"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/sum/overflows-uint64",
+            "packets": "assets",
+            "script": "5452ec",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["10"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/sum/intent-inputs",
+            "packets": "assets",
+            "script": "5200ec",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["04", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/find/explicit",
+            "packets": "assets",
+            "script": "201630b77c4bd13e17173b8c693a6a2784eff40bdfea1ea65f9c7d579ba7f29d3003ffff00e8",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["03", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/find/fresh",
+            "packets": "assets",
+            "script": "20cb6e503f7b6523fc2e2630fb52656678da55674f4258f886b529c7aa7c63f5ec53e8",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/find/wire-order-misses",
+            "packets": "assets",
+            "script": "20309df2a79b577d9c5fa61eeadf0bf4ef84276a3a698c3b17173ed14b7cb7301603ffff00e8",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["03"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/out-count/0",
+            "packets": "assets",
+            "script": "00ed",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["02"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/out-count/1",
+            "packets": "assets",
+            "script": "51ed",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": [
+                    "cb6e503f7b6523fc2e2630fb52656678da55674f4258f886b529c7aa7c63f5ec",
+                    "03",
+                    "02"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/out-at/o1-t1",
+            "packets": "assets",
+            "script": "5151ee",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": [
+                    "1630b77c4bd13e17173b8c693a6a2784eff40bdfea1ea65f9c7d579ba7f29d30",
+                    "ffff00",
+                    "03"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/out-at/o0-t2",
+            "packets": "assets",
+            "script": "0052ee",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/out-at/o0-t3",
+            "packets": "assets",
+            "script": "0053ee",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["0a", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/out-lookup/fresh",
+            "packets": "assets",
+            "script": "0020cb6e503f7b6523fc2e2630fb52656678da55674f4258f886b529c7aa7c63f5ec00ef",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/out-lookup/miss",
+            "packets": "assets",
+            "script": "5120cb6e503f7b6523fc2e2630fb52656678da55674f4258f886b529c7aa7c63f5ec00ef",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["02"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/in-count/1",
+            "packets": "assets",
+            "script": "51f0",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": [
+                    "1630b77c4bd13e17173b8c693a6a2784eff40bdfea1ea65f9c7d579ba7f29d30",
+                    "ffff00",
+                    "ffffffffffffffff00"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/in-at/i0-t1",
+            "packets": "assets",
+            "script": "0051f1",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["05", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/in-lookup/explicit",
+            "packets": "assets",
+            "script": "51201630b77c4bd13e17173b8c693a6a2784eff40bdfea1ea65f9c7d579ba7f29d3003ffff00f2",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "asset/in-lookup/intent-txid-is-not-an-asset-id",
+            "packets": "assets",
+            "script": "51203dcfb31f356f28571df05bed9fcf2eb092b234ad9907a194e776a371ddbd7bd600f2",
+            "world": "assets"
+        },
+        {
+            "go": {
+                "stack": ["9feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd45872", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/id/fresh-k0",
+            "packets": "collide-src",
+            "script": "00e6",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/id/explicit-k1",
+            "packets": "collide-src",
+            "script": "51e6",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/ctrl/by-group",
+            "packets": "collide-src",
+            "script": "52e7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/find/hit-before-collision",
+            "packets": "collide-src",
+            "script": "209feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd4587200e8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/find/miss-reaches-collision",
+            "packets": "collide-src",
+            "script": "202d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a488100e8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["03"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/out-count-never-resolves",
+            "packets": "collide-src",
+            "script": "00ed",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": [
+                    "9feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd45872",
+                    "",
+                    "01"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/out-at/t0",
+            "packets": "collide-src",
+            "script": "0000ee",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/out-at/t1",
+            "packets": "collide-src",
+            "script": "0051ee",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "collide/tunnel",
+            "packets": "collide-src",
+            "script": "005400f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/assets/zero-input-unbalanced",
+            "packets": "tunnel",
+            "script": "005400f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "stack": ["01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/assets/exception-balances",
+            "packets": "tunnel",
+            "script": "0054200d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e9ae0051f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "stack": ["01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/assets/duplicate-exception",
+            "packets": "tunnel",
+            "script": "0054200d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e9ae00200d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e9ae0052f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "stack": ["01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/assets/all-flags",
+            "packets": "tunnel",
+            "script": "0057200d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e9ae0051f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/assets/other-output",
+            "packets": "tunnel",
+            "script": "5154200d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e9ae0051f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/exception/txid-31",
+            "packets": "tunnel",
+            "script": "00541f0d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e90051f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/exception/gidx-65536",
+            "packets": "tunnel",
+            "script": "0054200d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e9ae0300000151f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/exception/count-guard",
+            "packets": "tunnel",
+            "script": "005451f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/exception/needs-asset-flag",
+            "packets": "tunnel",
+            "script": "0053200d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e9ae0051f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/depth-under-2",
+            "packets": "tunnel",
+            "script": "5400f7",
+            "world": "tunnel"
+        },
+        {
+            "go": {
+                "stack": ["01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/script/vtxo-hit",
+            "script": "005100f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/script/vtxo-wins-over-prevout",
+            "script": "525100f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["01"]
+            },
+            "input": 1,
+            "mode": "expression",
+            "name": "tunnel/script/fallback-to-prevout",
+            "script": "515100f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 1,
+            "mode": "expression",
+            "name": "tunnel/script/fallback-mismatch",
+            "script": "005100f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidIndex"
+            },
+            "input": 1,
+            "mode": "expression",
+            "name": "tunnel/script/both-nil",
+            "script": "515100f7",
+            "world": "orphan"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidIndex"
+            },
+            "input": 1,
+            "mode": "expression",
+            "name": "tunnel/value/both-nil",
+            "script": "515200f7",
+            "world": "orphan"
+        },
+        {
+            "go": {
+                "stack": ["01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/value/ok",
+            "script": "525200f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/value/mismatch",
+            "script": "515200f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/flags/9",
+            "script": "005900f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidIndex"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "tunnel/output/negative",
+            "script": "4f5100f7",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": [
+                    "01015b4a891260eb3cf969fe10693d96f64fc1742e1648a8636b53c59d60a353e726010001010000010101000001",
+                    "01"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/mixed/type-0",
+            "script": "00f4",
+            "world": "packets"
+        },
+        {
+            "go": {
+                "stack": ["0501", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/mixed/type-1",
+            "script": "51f4",
+            "world": "packets"
+        },
+        {
+            "go": {
+                "stack": ["", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/mixed/type-3",
+            "script": "53f4",
+            "world": "packets"
+        },
+        {
+            "go": {
+                "stack": ["aabb", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/mixed/type-7",
+            "script": "57f4",
+            "world": "packets"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/mixed/type-8",
+            "script": "58f4",
+            "world": "packets"
+        },
+        {
+            "go": {
+                "stack": [
+                    "0101efebe396f7c269251f4b69cd332e44944eac6d404f7efc53364ef095a228ece90000000101000001",
+                    "01"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/metadata-presence-dropped",
+            "script": "00f4",
+            "world": "metadata-empty"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/dup-intent-vin",
+            "script": "00f4",
+            "world": "dup-intent-vin"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/groups-1001",
+            "script": "57f4",
+            "world": "groups-1001"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/inputs-1001",
+            "script": "57f4",
+            "world": "inputs-1001"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/outputs-1001",
+            "script": "57f4",
+            "world": "outputs-1001"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/trail-empty",
+            "script": "57f4",
+            "world": "trail-empty"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/bad-ext-first",
+            "script": "57f4",
+            "world": "bad-ext-first"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/asset-empty-data",
+            "script": "57f4",
+            "world": "asset-empty-data"
+        },
+        {
+            "go": {
+                "stack": ["e803"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/groups-1000",
+            "packets": "groups-1000",
+            "script": "e5",
+            "world": "groups-1000"
+        },
+        {
+            "go": {
+                "stack": ["aa", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/junk-after-push/type-7",
+            "script": "57f4",
+            "world": "junk-after-push"
+        },
+        {
+            "go": {
+                "stack": ["aa", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/two-pushes/type-7",
+            "script": "57f4",
+            "world": "two-pushes"
+        },
+        {
+            "go": {
+                "stack": ["aa", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/nonminimal-push/type-7",
+            "script": "57f4",
+            "world": "nonminimal-push"
+        },
+        {
+            "go": {
+                "stack": ["aa", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/leb-nonminimal/type-7",
+            "script": "57f4",
+            "world": "leb-nonminimal"
+        },
+        {
+            "go": {
+                "stack": ["cc", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/not-ext-first/type-7",
+            "script": "57f4",
+            "world": "not-ext-first"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/short-magic/type-7",
+            "script": "57f4",
+            "world": "short-magic"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/two-pushes/type-8",
+            "script": "58f4",
+            "world": "two-pushes"
+        },
+        {
+            "go": {
+                "stack": ["fd01000000015100", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "packet/emu-noncanonical/type-1",
+            "script": "51f4",
+            "world": "emu-noncanonical"
+        },
+        {
+            "go": {
+                "stack": ["0e", "01"]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "inputpacket/found",
+            "script": "5700f5",
+            "world": "prev-ext"
+        },
+        {
+            "go": {
+                "code": "ErrElementTooBig"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "inputpacket/too-big",
+            "script": "5900f5",
+            "world": "prev-ext"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "inputpacket/absent",
+            "script": "5800f5",
+            "world": "prev-ext"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "inputpacket/malformed",
+            "script": "5700f5",
+            "world": "prev-bad-ext"
+        },
+        {
+            "go": {
+                "stack": [
+                    "01015b4a891260eb3cf969fe10693d96f64fc1742e1648a8636b53c59d60a353e726010001010000010101000001",
+                    "01"
+                ]
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "inputpacket/canonical-asset",
+            "script": "0000f5",
+            "world": "prev-noncanonical-asset"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "mode": "expression",
+            "name": "inputpacket/no-ark-tx",
+            "script": "5751f5",
+            "world": "prev-ext"
+        },
+        {
+            "go": {
+                "kind": "ErrEmulatorPacketParse"
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-noncanonical",
+            "script": "51",
+            "world": "emu-noncanonical"
+        },
+        {
+            "go": {
+                "ok": true
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-witness-trailing",
+            "script": "e5",
+            "world": "emu-witness-trailing"
+        },
+        {
+            "go": {
+                "kind": "ErrEmulatorPacketParse"
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-dup-vin",
+            "script": "51",
+            "world": "emu-dup-vin"
+        },
+        {
+            "go": {
+                "kind": "ErrEmulatorPacketParse"
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-vin-out-of-range",
+            "script": "51",
+            "world": "emu-vin-out-of-range"
+        },
+        {
+            "go": {
+                "ok": true
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-valid",
+            "script": "e5",
+            "world": "emu-valid"
+        },
+        {
+            "go": {
+                "ok": true
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-valid-messy",
+            "script": "e5",
+            "world": "emu-valid-messy"
+        },
+        {
+            "go": {
+                "kind": "ErrEmulatorPacketParse"
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-witness-noncanonical",
+            "script": "51",
+            "world": "emu-witness-noncanonical"
+        },
+        {
+            "go": {
+                "kind": "ErrExtensionParse"
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/dup-intent-vin",
+            "script": "51",
+            "world": "dup-intent-vin"
+        },
+        {
+            "go": {
+                "ok": true
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/junk-after-push-asset",
+            "script": "e5",
+            "world": "junk-after-push-asset"
+        },
+        {
+            "go": {
+                "kind": "ErrExtensionParse"
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/bad-ext-first",
+            "script": "51",
+            "world": "bad-ext-first"
+        },
+        {
+            "go": {
+                "kind": "ErrEmulatorPacketParse"
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-budget-over",
+            "script": "51",
+            "world": "emu-budget-over"
+        },
+        {
+            "go": {
+                "ok": true
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-budget-max",
+            "script": "51",
+            "world": "emu-budget-max"
+        },
+        {
+            "go": {
+                "kind": "ErrEmulatorPacketParse"
+            },
+            "input": 0,
+            "mode": "covenant",
+            "name": "covenant/emu-witness-item-10001",
+            "script": "51",
+            "world": "emu-witness-item-10001"
+        },
+        {
+            "go": {
+                "stack": ["64", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n1",
+            "script": "026e31f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n2",
+            "script": "026e32f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n3",
+            "script": "026e33f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n4",
+            "script": "026e34f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["0c", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n5",
+            "script": "026e35f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n6",
+            "script": "026e36f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["01", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n7",
+            "script": "026e37f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["02", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n8",
+            "script": "026e38f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": [
+                    "sha256:cd779a29d0d23e361f35b6e406d2df559c472976f4ad8e3626ee37be20905ad8",
+                    "01"
+                ]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n9",
+            "script": "026e39f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrNumberTooBig"
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n10",
+            "script": "036e3130f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n11",
+            "script": "036e3131f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrNumberTooBig"
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n12",
+            "script": "036e3132f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n13",
+            "script": "036e3133f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["cb444271764eb6429d82", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n14",
+            "script": "036e3134f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrNumberTooBig"
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n15",
+            "script": "036e3135f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrNumberTooBig"
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n16",
+            "script": "036e3136f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n17",
+            "script": "036e3137f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["6122625c", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s1",
+            "script": "027331f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["7822795c7a2f770a09080c0d", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s2",
+            "script": "027332f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["f09f9880", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s3",
+            "script": "027333f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["efbfbd", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s4",
+            "script": "027334f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["efbfbdefbfbd", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s5",
+            "script": "027335f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["efbfbd", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s6",
+            "script": "027336f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["c3a9e282ac", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s7",
+            "script": "027337f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["efbfbd78", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s8",
+            "script": "027338f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["efbfbd", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/s9",
+            "script": "027339f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": [
+                    "7b2270223a5b5b312c325d2c5b335d5d2c2271223a7b20227222203a2074727565207d2c2265223a7b7d2c226561223a5b205d7d",
+                    "01"
+                ]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o",
+            "script": "016ff8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["5b5b312c325d2c5b335d5d", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.p",
+            "script": "036f2e70f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["5b312c325d", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.p.0",
+            "script": "056f2e702e30f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["5b335d", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.p.1",
+            "script": "056f2e702e31f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["02", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.p.0.1",
+            "script": "076f2e702e302e31f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.p.2",
+            "script": "056f2e702e32f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["7b20227222203a2074727565207d", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.q",
+            "script": "036f2e71f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["01", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.q.r",
+            "script": "056f2e712e72f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["7b7d", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.e",
+            "script": "036f2e65f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["5b205d", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.ea",
+            "script": "046f2e6561f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["6573632d6b6579", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/ab",
+            "script": "026162f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/z",
+            "script": "017af8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", "01"]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/f",
+            "script": "0166f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/missing",
+            "script": "076d697373696e67f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.p.x",
+            "script": "056f2e702e78f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/o.q.0",
+            "script": "056f2e712e30f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{\"n1\":1E+2,\"n2\":-0.0e5,\"n3\":1.50,\"n4\":15e-1,\"n5\":120e-1,\"n6\":0.00012e4,\"n7\":1e-0,\"n8\":2.000,\"n9\":1e1251,\"n10\":1e1252,\"n11\":0e99999999999999999999,\"n12\":1e9223372036854775808,\"n13\":1e-9223372036854775809,\"n14\":-12345678901234567890123,\"n15\":1e1254,\"n16\":-1e1255,\"n17\":5e-1,\"s1\":\"a%u0022b%u005c\",\"s2\":\"x\\\"y\\\\z\\/w\\n\\t\\b\\f\\r\",\"s3\":\"%ud83d%ude00\",\"s4\":\"%ud800%u0041\",\"s5\":\"%udc00%ud800%udc00\",\"s6\":\"%ude00\",\"s7\":\"\u00e9\u20ac\",\"s8\":\"%ud800x\",\"s9\":\"%ud800%ud800\",\"o\":{\"p\":[[1,2],[3]],\"q\":{ \"r\" : true },\"e\":{},\"ea\":[ ]},\"%u0061b\":\"esc-key\",\"z\":null,\"f\":false}",
+            "mode": "expression",
+            "name": "intent/doc/n1.x",
+            "script": "046e312e78f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["01", "01"]
+            },
+            "input": 0,
+            "message": "\"[1]\"",
+            "mode": "expression",
+            "name": "intent/top-level-string-with-bracket",
+            "script": "0130f8",
+            "unsupported": true,
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "\"abc\"",
+            "mode": "expression",
+            "name": "intent/top-level-string",
+            "script": "0161f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": " 5 ",
+            "mode": "expression",
+            "name": "intent/top-level-number",
+            "script": "0161f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["01", "01"]
+            },
+            "input": 0,
+            "message": "{\"a\":1,\"b\":{\"c\":1,\"c\":2}}",
+            "mode": "expression",
+            "name": "intent/duplicate-off-path",
+            "script": "0161f8",
+            "unsupported": true,
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["01", "01"]
+            },
+            "input": 0,
+            "message": "{\"a\":1,\"%u0061\":2}",
+            "mode": "expression",
+            "name": "intent/duplicate-escaped",
+            "script": "0161f8",
+            "unsupported": true,
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["01", "01"]
+            },
+            "input": 0,
+            "message": "{\"a\":1,}",
+            "mode": "expression",
+            "name": "intent/trailing-comma",
+            "script": "0161f8",
+            "unsupported": true,
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["", ""]
+            },
+            "input": 0,
+            "message": "{'a':1}",
+            "mode": "expression",
+            "name": "intent/single-quotes",
+            "script": "0161f8",
+            "unsupported": true,
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "message": "{\"a\":1,",
+            "mode": "expression",
+            "name": "intent/invalid-path-checked-first",
+            "script": "0141f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrElementTooBig"
+            },
+            "input": 0,
+            "message_nesting": 10000,
+            "mode": "expression",
+            "name": "intent/depth-10000",
+            "script": "0130f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrElementTooBig"
+            },
+            "input": 0,
+            "message_nesting": 10001,
+            "mode": "expression",
+            "name": "intent/depth-10001",
+            "script": "0130f8",
+            "unsupported": true,
+            "world": "plain"
+        },
+        {
+            "go": {
+                "stack": ["01", "01"]
+            },
+            "input": 0,
+            "message": "\ufeff{\"a\":1}",
+            "mode": "expression",
+            "name": "intent/bom",
+            "script": "0161f8",
+            "unsupported": true,
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "message": "{\"a\":1}",
+            "mode": "expression",
+            "name": "intent/path-with-bom",
+            "script": "04efbbbf61f8",
+            "world": "plain"
+        },
+        {
+            "go": {
+                "code": "ErrInvalidStackOperation"
+            },
+            "input": 0,
+            "message": "{\"\u00e9\":1}",
+            "mode": "expression",
+            "name": "intent/path-utf8",
+            "script": "02c3a9f8",
+            "world": "plain"
+        }
+    ],
+    "codec": [
+        {
+            "emu": null,
+            "ext": null,
+            "mask": null,
+            "mask_check": "no-extension",
+            "world": "plain"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": {
+                            "group": 2,
+                            "id": {
+                                "index": 0,
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000"
+                            },
+                            "type": 2
+                        },
+                        "id": null,
+                        "inputs": [],
+                        "metadata": ["01610131", "01620132", "01630133", "01640134", "01650135"],
+                        "outputs": [
+                            {
+                                "amount": "10",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    },
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 7,
+                            "txid": "971ef1fb3b55e9ac214f1aea5dc8abc02abd9e71d8c2b59838d70144e9beadd9"
+                        },
+                        "inputs": [],
+                        "metadata": [],
+                        "outputs": []
+                    },
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 0,
+                            "txid": "38dedf70f8b8e94ee87c9cf0435f27a594aa8e9fbeb6a369deffb2c8c34ad193"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "7",
+                                "txid": "3dcfb31f356f28571df05bed9fcf2eb092b234ad9907a194e776a371ddbd7bd6",
+                                "type": 2,
+                                "vin": 1
+                            },
+                            {
+                                "amount": "9",
+                                "txid": "08772fef3896f51e4c9f197081aa537d56d6c3e60e27692bd2693e7ffbd52399",
+                                "type": 2,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "16",
+                                "type": 1,
+                                "vout": 1
+                            }
+                        ]
+                    },
+                    {
+                        "ctrl": {
+                            "group": 0,
+                            "id": {
+                                "index": 2,
+                                "txid": "9a9c068d1a19ecb4ac9b84abd039cc9798f3d03c0d4adcec1248cc04f6868fd3"
+                            },
+                            "type": 1
+                        },
+                        "id": null,
+                        "inputs": [],
+                        "metadata": ["016b0176", "026b32027632"],
+                        "outputs": [
+                            {
+                                "amount": "1",
+                                "type": 1,
+                                "vout": 0
+                            },
+                            {
+                                "amount": "2",
+                                "type": 1,
+                                "vout": 1
+                            }
+                        ]
+                    },
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 65535,
+                            "txid": "1630b77c4bd13e17173b8c693a6a2784eff40bdfea1ea65f9c7d579ba7f29d30"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "18446744073709551615",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            },
+                            {
+                                "amount": "5",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 1
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "3",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "sha256:1c7d59f15ca5a871352592072551378a5988f972ada30283f76dcdb88af48231",
+                        "type": 0
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "assets"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": null,
+                        "id": null,
+                        "inputs": [],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "1",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    },
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 0,
+                            "txid": "9feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd45872"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "1",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "1",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    },
+                    {
+                        "ctrl": {
+                            "group": 1,
+                            "id": {
+                                "index": 0,
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000"
+                            },
+                            "type": 2
+                        },
+                        "id": null,
+                        "inputs": [],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "2",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "0300000101000001017258d40dc6f2416510118cd8e3f9f00a7ec28664eb6e566f5a27788b1c4deb9f00000101000001010100000102020100000101000002",
+                        "type": 0
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "collide-src"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 1,
+                            "txid": "850a601351088c428f52ba5e03d16e4aee2f1e511e791f0b743d4e7cef306de8"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "50",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "50",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    },
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 0,
+                            "txid": "0d85d3995393575d021c6907612ee1b724dee7a552f2408a658586599014e9ae"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "0",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": []
+                    },
+                    {
+                        "ctrl": null,
+                        "id": null,
+                        "inputs": [],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "4",
+                                "type": 1,
+                                "vout": 1
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "sha256:0582e7617dcd7a51a85041aedbb9421301ad03cdf060742140e286e4a7883b5b",
+                        "type": 0
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "tunnel"
+        },
+        {
+            "emu": "error",
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 1,
+                            "txid": "26e753a3609dc5536b63a848162e74c14ff6963d6910fe69f93ceb6012894a5b"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "1",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "1",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "01015b4a891260eb3cf969fe10693d96f64fc1742e1648a8636b53c59d60a353e726010001010000010101000001",
+                        "type": 0
+                    },
+                    {
+                        "data": "0501",
+                        "type": 1
+                    },
+                    {
+                        "data": "",
+                        "type": 3
+                    },
+                    {
+                        "data": "aabb",
+                        "type": 7
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "packets"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 0,
+                            "txid": "e9ec28a295f04e3653fc7e4f406dac4e94442e33cd694b1f2569c2f796e3ebef"
+                        },
+                        "inputs": [],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "1",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "0101efebe396f7c269251f4b69cd332e44944eac6d404f7efc53364ef095a228ece90000000101000001",
+                        "type": 0
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "metadata-empty"
+        },
+        {
+            "emu": "error",
+            "ext": "error",
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "dup-intent-vin"
+        },
+        {
+            "emu": "error",
+            "ext": "error",
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "groups-1001"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": {
+                    "groups": 1000
+                },
+                "packets": [
+                    {
+                        "data": "sha256:5f557854e7052fd656312525aeb32db09309d5603be1590ffc7aec3e2509c129",
+                        "type": 0
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "groups-1000"
+        },
+        {
+            "emu": "error",
+            "ext": "error",
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "inputs-1001"
+        },
+        {
+            "emu": "error",
+            "ext": "error",
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "outputs-1001"
+        },
+        {
+            "emu": "error",
+            "ext": "error",
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "trail-empty"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "aa",
+                        "type": 7
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "junk-after-push"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "aa",
+                        "type": 7
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "two-pushes"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "aa",
+                        "type": 7
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "nonminimal-push"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "aa",
+                        "type": 7
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "leb-nonminimal"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "cc",
+                        "type": 7
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "not-ext-first"
+        },
+        {
+            "emu": null,
+            "ext": null,
+            "mask": null,
+            "mask_check": "no-extension",
+            "world": "short-magic"
+        },
+        {
+            "emu": "error",
+            "ext": "error",
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "bad-ext-first"
+        },
+        {
+            "emu": "error",
+            "ext": "error",
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "asset-empty-data"
+        },
+        {
+            "emu": null,
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 2,
+                            "txid": "8a543964a4d157634948aaf8d677ddd3afc31788628f7b0542479f9dbc134134"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "4",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "4",
+                                "type": 1,
+                                "vout": 1
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "0101344113bc9d9f4742057b8f628817c3afd3dd77d6f8aa48496357d1a46439548a020001010000040101010004",
+                        "type": 0
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "junk-after-push-asset"
+        },
+        {
+            "emu": "error",
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "fd01000000015100",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "emu-noncanonical"
+        },
+        {
+            "emu": [
+                {
+                    "script": "51",
+                    "vin": 0,
+                    "witness": "0101aa"
+                }
+            ],
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 2,
+                            "txid": "8a543964a4d157634948aaf8d677ddd3afc31788628f7b0542479f9dbc134134"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "4",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "4",
+                                "type": 1,
+                                "vout": 1
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "0101344113bc9d9f4742057b8f628817c3afd3dd77d6f8aa48496357d1a46439548a020001010000040101010004",
+                        "type": 0
+                    },
+                    {
+                        "data": "0100000151050101aaffff",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": {
+                "index": 3,
+                "script": "6a3b41524b002e0101344113bc9d9f4742057b8f628817c3afd3dd77d6f8aa48496357d1a46439548a0200010100000401010100040106010000015100",
+                "value": "0"
+            },
+            "mask_check": "masked-equal",
+            "world": "emu-witness-trailing"
+        },
+        {
+            "emu": "error",
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "0200000151000000015200",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "emu-dup-vin"
+        },
+        {
+            "emu": "error",
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "01050001510401020102",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": {
+                "index": 3,
+                "script": "6a0b41524b0106010500015100",
+                "value": "0"
+            },
+            "mask_check": "masked-equal",
+            "world": "emu-vin-out-of-range"
+        },
+        {
+            "emu": [
+                {
+                    "script": "5152",
+                    "vin": 0,
+                    "witness": "0202aabb00"
+                },
+                {
+                    "script": "53",
+                    "vin": 1,
+                    "witness": "0101cc"
+                }
+            ],
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 2,
+                            "txid": "8a543964a4d157634948aaf8d677ddd3afc31788628f7b0542479f9dbc134134"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "4",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "4",
+                                "type": 1,
+                                "vout": 1
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "0101344113bc9d9f4742057b8f628817c3afd3dd77d6f8aa48496357d1a46439548a020001010000040101010004",
+                        "type": 0
+                    },
+                    {
+                        "data": "020000025152050202aabb0001000153030101cc",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": {
+                "index": 3,
+                "script": "sha256:6f95d88b4ed201959f6514cd4dd6c1716cf381e4f6bfba28af1a32e3c674c091",
+                "value": "0"
+            },
+            "mask_check": "masked-equal",
+            "world": "emu-valid"
+        },
+        {
+            "emu": [
+                {
+                    "script": "5152",
+                    "vin": 0,
+                    "witness": "0202aabb00"
+                },
+                {
+                    "script": "53",
+                    "vin": 1,
+                    "witness": "0101cc"
+                }
+            ],
+            "ext": {
+                "assets": [
+                    {
+                        "ctrl": null,
+                        "id": {
+                            "index": 1,
+                            "txid": "26e753a3609dc5536b63a848162e74c14ff6963d6910fe69f93ceb6012894a5b"
+                        },
+                        "inputs": [
+                            {
+                                "amount": "1",
+                                "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "type": 1,
+                                "vin": 0
+                            }
+                        ],
+                        "metadata": [],
+                        "outputs": [
+                            {
+                                "amount": "1",
+                                "type": 1,
+                                "vout": 0
+                            }
+                        ]
+                    }
+                ],
+                "packets": [
+                    {
+                        "data": "01015b4a891260eb3cf969fe10693d96f64fc1742e1648a8636b53c59d60a353e726010001010000010101000001",
+                        "type": 0
+                    },
+                    {
+                        "data": "020000025152050202aabb0001000153030101cc",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": {
+                "index": 3,
+                "script": "sha256:e047dbff3ddb6a6c415907aa320aa3173382b1cffe26481dc7907a3707153d82",
+                "value": "7"
+            },
+            "mask_check": "masked-equal",
+            "world": "emu-valid-messy"
+        },
+        {
+            "emu": "error",
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "01000001510501fd0100aa",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "emu-witness-noncanonical"
+        },
+        {
+            "emu": "error",
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "sha256:6e6396277a05f2cb536a193f9bd2f88840ef878c96dc663dd05e90a5f7abc80c",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "emu-witness-item-10001"
+        },
+        {
+            "emu": [
+                {
+                    "script": "sha256:27dd1f61b867b6a0f6e9d8a41c43231de52107e53ae424de8f847b821db4b711",
+                    "vin": 0,
+                    "witness": "sha256:e1ffbe1309221264136cad8bf4977a5979d03b0cf1c5456c4243bc948d7d747a"
+                }
+            ],
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "sha256:ad8f31bcf7b71c001a51fd0f2fd8e21fa7c5bd7159f2d1ddb1e4d923d60fdae1",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": {
+                "index": 3,
+                "script": "sha256:d01ff6c19c1b0604b04e25e5826d5599eeb316b1e98a0c0cd40992393ecfc7a9",
+                "value": "0"
+            },
+            "mask_check": "masked-equal",
+            "world": "emu-budget-max"
+        },
+        {
+            "emu": "error",
+            "ext": {
+                "assets": null,
+                "packets": [
+                    {
+                        "data": "sha256:dd2483e6e5c77450e0aca70eb78bf543d0405548ae0cbaa54110681c4a462741",
+                        "type": 1
+                    }
+                ]
+            },
+            "mask": null,
+            "mask_check": "fail-open-raw",
+            "world": "emu-budget-over"
+        },
+        {
+            "emu": null,
+            "ext": null,
+            "mask": null,
+            "mask_check": "no-extension",
+            "world": "prev-ext"
+        },
+        {
+            "emu": null,
+            "ext": null,
+            "mask": null,
+            "mask_check": "no-extension",
+            "world": "prev-bad-ext"
+        },
+        {
+            "emu": null,
+            "ext": null,
+            "mask": null,
+            "mask_check": "no-extension",
+            "world": "prev-noncanonical-asset"
+        }
+    ],
+    "worlds": [
+        {
+            "name": "plain",
+            "outputs": [],
+            "txid": "9feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd45872"
+        },
+        {
+            "name": "orphan",
+            "orphan": true,
+            "outputs": [],
+            "txid": "9feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd45872"
+        },
+        {
+            "name": "assets",
+            "outputs": [
+                [
+                    "0",
+                    "6a4d2f0141524b00a902050602020005016101310162013201630133016401340165013500010100000a01d9adbee94401d73898b5c2d8719ebd2ac0abc85dea1a4f21ace9553bfbf11e97070000000193d14ac3c8b2ffde69a3b6be9f8eaa94a5275f43f09c7ce84ee9b8f870dfde3800000202d67bbddd71a376e794a10799ad34b292b02ecf9fed5bf01d57286f351fb3cf3d010007029923d5fb7f3e69d22b69270ee6c3d6567d53aa8170199f4c1ef59638ef2f770800000901010100100601d38f86f604cc4812ecdc4a0d3cd0f39897cc39d0ab849bacb4ec191a8d069c9a020002016b0176026b320276320002010000010101000201309df2a79b577d9c5fa61eeadf0bf4ef84276a3a698c3b17173ed14b7cb73016ffff02010000ffffffffffffffffff01010100050101000003"
+                ]
+            ],
+            "txid": "cb6e503f7b6523fc2e2630fb52656678da55674f4258f886b529c7aa7c63f5ec"
+        },
+        {
+            "name": "collide-src",
+            "outputs": [
+                [
+                    "0",
+                    "6a4441524b003f0300000101000001017258d40dc6f2416510118cd8e3f9f00a7ec28664eb6e566f5a27788b1c4deb9f00000101000001010100000102020100000101000002"
+                ]
+            ],
+            "txid": "565c638f18aba5a39ef56635ba816afd1a22936fdcf696fe6543208c32fd5e99"
+        },
+        {
+            "name": "tunnel",
+            "outputs": [
+                [
+                    "0",
+                    "6a4c6341524b005e0301e86d30ef7c4e3d740b1f791e511e2fee4a6ed1035eba528f428c085113600a8501000101000032010100003201aee91490598685658a40f252a5e7de24b7e12e6107691c025d57935399d3850d000001010000000000000101010004"
+                ]
+            ],
+            "txid": "52f316f8dfe71707ebab85444dda0682673dd1f0ce4edf1cf04aceef418164bd"
+        },
+        {
+            "name": "packets",
+            "outputs": [
+                [
+                    "0",
+                    "6a3f41524b00308100095b4a891260eb3cf969fe10693d96f64fc1742e1648a8636b53c59d60a353e726010001010000810001010000010102050103000702aabb"
+                ]
+            ],
+            "txid": "3e6c65f59bdda9aa3c8e6178dcfd966d25eaf8544559defb65e6a2551db09165"
+        },
+        {
+            "name": "metadata-empty",
+            "outputs": [
+                [
+                    "0",
+                    "6a3041524b002b0105efebe396f7c269251f4b69cd332e44944eac6d404f7efc53364ef095a228ece9000000000101000001"
+                ]
+            ],
+            "txid": "b8d97b963ad92ba370169eed504d2a3ee2d65fdec3bc2c8fca36a7d2d9449b27"
+        },
+        {
+            "name": "dup-intent-vin",
+            "outputs": [
+                [
+                    "0",
+                    "6a4c7341524b006e0101d3552c74cf3ef9f0cef5512273bf2bbc2c738e81257e278ac65f83fce813c3f1000002027e37fafd3d2206c22e2d9e41b5a570a55867e6719a508380c9ce00354b82f9580300010244d77132904911c4d14093ab0b996c8fd18d95f6f8f9cbba3e3d551799e8277303000200"
+                ]
+            ],
+            "txid": "1624d87cf5d377e3778bb631e2fc9458381bb54d3bae1839270a10b89b3dbb42"
+        },
+        {
+            "name": "groups-1001",
+            "recipe": "groups-1001",
+            "txid": "fd8640d52d5fdd74d970cadfbbb2d8a9290fd29ee50affd8a57a194a611ff379"
+        },
+        {
+            "name": "groups-1000",
+            "recipe": "groups-1000",
+            "txid": "92c7d97d2640b87ed2ac5461b99c1b3fd53949deafdee206c83ec1a3289d5e3a"
+        },
+        {
+            "name": "inputs-1001",
+            "recipe": "inputs-1001",
+            "txid": "a7b3f1c3e402d7a839e9b7858de9a3d4852d4976af265378c00765d591954d86"
+        },
+        {
+            "name": "outputs-1001",
+            "recipe": "outputs-1001",
+            "txid": "7bd6da3fd2ab6c1d04b78ef4a3d917fbc5875fda3c43d21becc2dc866bb06eee"
+        },
+        {
+            "name": "trail-empty",
+            "outputs": [["0", "6a0841524b0701aa0500"]],
+            "txid": "82437f26819947ef7926db1a0fda2fa4f48f6945de4d18f028ad18bb268eed67"
+        },
+        {
+            "name": "junk-after-push",
+            "outputs": [["0", "6a0641524b0701aa4c"]],
+            "txid": "e5143f68a0b0cdec38e5d74444f68be9eb005c54d0f74d325b7976e329e5b94b"
+        },
+        {
+            "name": "two-pushes",
+            "outputs": [["0", "6a0641524b0701aa030801bb"]],
+            "txid": "071a88b01d5862ade29f377a75181f38c74acd4cd80a09348df0c493d087aac3"
+        },
+        {
+            "name": "nonminimal-push",
+            "outputs": [["0", "6a4d060041524b0701aa"]],
+            "txid": "c649b11b8cc90f2fc858b645c80c6f40452cc3e2d0c721b2924eb13e34567b20"
+        },
+        {
+            "name": "leb-nonminimal",
+            "outputs": [["0", "6a0741524b078100aa"]],
+            "txid": "adbb6d9044d37cb17f72c8064e85164a2e79199a84688e9dd8e322daa294ed0d"
+        },
+        {
+            "name": "not-ext-first",
+            "outputs": [["0", "6a0441525801"], ["0", "6a0641524b0701cc"]],
+            "txid": "b98da8abbd744974162537fa71aab81e12826da75f45dea4f6eaa747842b2873"
+        },
+        {
+            "name": "short-magic",
+            "outputs": [["0", "6a024152"]],
+            "txid": "168e9e012e774032b992133b90097909e84b6a59d9e35e3b855d94f2eb32a3e5"
+        },
+        {
+            "name": "bad-ext-first",
+            "outputs": [["0", "6a0541524b0709"], ["0", "6a0641524b0701dd"]],
+            "txid": "dc330271803e7bd5030822db5e6aae8942a4ec7e40bf7445c511903af2f44ad6"
+        },
+        {
+            "name": "asset-empty-data",
+            "outputs": [["0", "6a0841524b0000070101"]],
+            "txid": "5882ace306a3516216c4b673bd48e3b1805d17849ba98cdb484b7ffc98562191"
+        },
+        {
+            "name": "junk-after-push-asset",
+            "outputs": [
+                [
+                    "0",
+                    "6a3341524b002e0101344113bc9d9f4742057b8f628817c3afd3dd77d6f8aa48496357d1a46439548a0200010100000401010100044c"
+                ]
+            ],
+            "txid": "d03107410259219ee77f138b5a9444b660ebbfba3ef12fe00b48f122fe0a2af7"
+        },
+        {
+            "name": "emu-noncanonical",
+            "outputs": [["0", "6a0d41524b0108fd01000000015100"]],
+            "txid": "cbf7eae2f9e570cc5ab6e72a158508481f441b72adb26da8e7bc0acc7b5e3289"
+        },
+        {
+            "name": "emu-witness-trailing",
+            "outputs": [
+                [
+                    "0",
+                    "6a4041524b002e0101344113bc9d9f4742057b8f628817c3afd3dd77d6f8aa48496357d1a46439548a020001010000040101010004010b0100000151050101aaffff"
+                ]
+            ],
+            "txid": "b20e20f518289634e8bed14b8a67751eaf05daa6ad02ce21ddbc92b594639812"
+        },
+        {
+            "name": "emu-dup-vin",
+            "outputs": [["0", "6a1041524b010b0200000151000000015200"]],
+            "txid": "7155e7b1fc4facb43ebd1dfa7810f01a6d0b3f2d6732a118fb7e09b691f0ceb0"
+        },
+        {
+            "name": "emu-vin-out-of-range",
+            "outputs": [["0", "6a0f41524b010a01050001510401020102"]],
+            "txid": "2b054484bc468e645185717b9eb8416936bb77cf1def02e1e0b6d5f9ba3c1758"
+        },
+        {
+            "name": "emu-valid",
+            "outputs": [
+                [
+                    "0",
+                    "6a4941524b002e0101344113bc9d9f4742057b8f628817c3afd3dd77d6f8aa48496357d1a46439548a0200010100000401010100040114020000025152050202aabb0001000153030101cc"
+                ]
+            ],
+            "txid": "4d8fca07de597f5afc6832ee4ec56d18a18465e4a0d3344adb321c57970586e1"
+        },
+        {
+            "name": "emu-valid-messy",
+            "outputs": [
+                [
+                    "7",
+                    "6a4d4b0041524b00308100095b4a891260eb3cf969fe10693d96f64fc1742e1648a8636b53c59d60a353e726010001010000810001010000010114020000025152050202aabb0001000153030101cc4c"
+                ]
+            ],
+            "txid": "bc1861e1cbb5b75af44d4243fb1498a646ad87135ba907748e193dfab38f5e96"
+        },
+        {
+            "name": "emu-witness-noncanonical",
+            "outputs": [["0", "6a1041524b010b01000001510501fd0100aa"]],
+            "txid": "8da98ce08c021681d57581dfb638df39d19f038d2d4d2654052e60f200883d32"
+        },
+        {
+            "name": "emu-witness-item-10001",
+            "recipe": "emu-witness-item-10001",
+            "txid": "e9d587f991790eeca0d2cf184abe072f30e932f4d730f9fb6cd152415206d67a"
+        },
+        {
+            "name": "emu-budget-max",
+            "recipe": "emu-budget-max",
+            "txid": "2955d0e468e233c471b4699c03eec18e427a2bd5a5fad9910671c123746a099b"
+        },
+        {
+            "name": "emu-budget-over",
+            "recipe": "emu-budget-over",
+            "txid": "719ff64a49c0ce5c259f2d92896b5fcdb88214d8bbb3d01c763e06c4c7ede6d9"
+        },
+        {
+            "ark_tx": "03000000014a89053ec2c1aa5da0dad5a44922af2cfeab59e55479bf89db780a6834f20ac30000000000ffffffff02881300000000000022512001010101010101010101010101010101010101010101010101010101010101010000000000000000fd16026a4d120241524b07010e098904020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020200000000",
+            "name": "prev-ext",
+            "outputs": [],
+            "txid": "9feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd45872"
+        },
+        {
+            "ark_tx": "03000000014a89053ec2c1aa5da0dad5a44922af2cfeab59e55479bf89db780a6834f20ac30000000000ffffffff02881300000000000022512001010101010101010101010101010101010101010101010101010101010101010000000000000000076a0541524b070900000000",
+            "name": "prev-bad-ext",
+            "outputs": [],
+            "txid": "9feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd45872"
+        },
+        {
+            "ark_tx": "03000000014a89053ec2c1aa5da0dad5a44922af2cfeab59e55479bf89db780a6834f20ac30000000000ffffffff02881300000000000022512001010101010101010101010101010101010101010101010101010101010101010000000000000000376a3541524b00308100095b4a891260eb3cf969fe10693d96f64fc1742e1648a8636b53c59d60a353e7260100010100008100010100000100000000",
+            "name": "prev-noncanonical-asset",
+            "outputs": [],
+            "txid": "9feb4d1c8b78275a6f566eeb6486c27e0af0f9e3d88c11106541f2c60dd45872"
+        }
+    ]
+}
