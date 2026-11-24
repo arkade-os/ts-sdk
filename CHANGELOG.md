@@ -212,7 +212,8 @@ style and have not been backfilled.
   mainnet none yet. A received invoice asks the payer for the amount plus the
   solver's fee, `createLightningInvoice`'s `description` and `NetworkConfig.boltzUrl`
   are ignored, and the payment is claimed while the provider stays mounted; a later
-  connect resumes the claim before the refund time.
+  connect resumes the claim before the refund time. A swap store that cannot open sets
+  `error`, and a claim that ends after a disconnect no longer reports into the next session.
 
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service

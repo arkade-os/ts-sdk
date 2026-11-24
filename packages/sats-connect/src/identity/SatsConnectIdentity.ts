@@ -113,6 +113,7 @@ export class SatsConnectIdentity implements Identity {
 
     async isConnected(): Promise<boolean> {
         try {
+            // A probe needs only the ordinals account this identity signs with; reconnect asks for both.
             const response = await this.satsConnectRequest("wallet_connect", {
                 addresses: [AddressPurpose.Ordinals],
                 message: "Checking connection status",

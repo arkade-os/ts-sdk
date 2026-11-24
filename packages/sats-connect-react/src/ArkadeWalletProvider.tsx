@@ -48,6 +48,24 @@ const outcomeIn = (client: SwapClient, swapId: string, ends: readonly Outcome[])
         if (done) off();
     });
 
+/** Reports how a receive ends, unless the session that issued it has closed since. */
+export const followReceive = (
+    client: SwapClient,
+    swapId: string,
+    isLive: () => boolean,
+    onClaimed: () => Promise<void> | void,
+    onFailed: (message: string) => void,
+): Promise<void> =>
+    outcomeIn(client, swapId, RECEIVE_ENDS)
+        .then(async (outcome) => {
+            if (!isLive()) return;
+            if (outcome === "claimed") await onClaimed();
+            else onFailed(`Lightning receive ${outcome}`);
+        })
+        .catch((err) => {
+            if (isLive()) onFailed(err?.message || "Failed to claim swap");
+        });
+
 export interface ArkadeWalletProviderProps<TNetwork extends string> {
     children: ReactNode;
     config: ArkadeWalletProviderConfig<TNetwork>;
@@ -88,7 +106,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         [networks, currentNetwork],
     );
 
-    const fetchBalance = async (arkWalletInstance: ArkadeWallet): Promise<Balance> => {
+    const fetchBalance = useCallback(async (arkWalletInstance: ArkadeWallet): Promise<Balance> => {
         const bal = await arkWalletInstance.getBalance();
         const vtxos = await arkWalletInstance.getVtxos();
         const boardingUtxos = await arkWalletInstance.getBoardingUtxos();
@@ -117,7 +135,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
 
         setBalance(balanceData);
         return balanceData;
-    };
+    }, []);
 
     const connectWallet = useCallback(
         async (options?: { silent?: boolean }) => {
@@ -152,7 +170,11 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                     const client = createSwapClient({ wallet: walletInstance, repository });
                     lightningRef.current = { client, repository };
                     // Resumes claiming invoices a previous session issued.
-                    void client.ready.catch(() => {});
+                    client.ready.catch((err) => {
+                        if (lightningRef.current?.client !== client) return;
+                        console.error("Lightning swap store unavailable", err);
+                        setError(`Lightning unavailable: ${err?.message ?? String(err)}`);
+                    });
                 }
 
                 setArkWallet(arkWalletInstance);
@@ -183,7 +205,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 setIsConnecting(false);
             }
         },
-        [currentNetwork, networks, autoConnectKey, connectMessage, closeLightning],
+        [currentNetwork, networks, autoConnectKey, connectMessage, closeLightning, fetchBalance],
     );
 
     const disconnectWallet = useCallback(() => {
@@ -238,7 +260,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 }
             }
         },
-        [arkWallet],
+        [arkWallet, fetchBalance],
     );
 
     const sendBitcoin = useCallback(
@@ -261,7 +283,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 setIsLoading(false);
             }
         },
-        [arkWallet],
+        [arkWallet, fetchBalance],
     );
 
     const getTransactionHistory = useCallback(async () => {
@@ -340,7 +362,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 setIsLoading(false);
             }
         },
-        [arkWallet, lightningSession],
+        [arkWallet, lightningSession, fetchBalance],
     );
 
     const createLightningInvoice = useCallback(
@@ -353,17 +375,15 @@ export function ArkadeWalletProvider<TNetwork extends string>({
             try {
                 const request = await client.receive({ amount: BigInt(amount), via: "lightning" });
 
-                outcomeIn(client, request.id, RECEIVE_ENDS)
-                    .then(async (outcome) => {
-                        if (outcome !== "claimed") {
-                            setError(`Lightning receive ${outcome}`);
-                        } else if (arkWallet) {
-                            await fetchBalance(arkWallet);
-                        }
-                    })
-                    .catch((err) => {
-                        setError(err?.message || "Failed to claim swap");
-                    });
+                void followReceive(
+                    client,
+                    request.id,
+                    () => lightningRef.current?.client === client,
+                    async () => {
+                        if (arkWallet) await fetchBalance(arkWallet);
+                    },
+                    setError,
+                );
 
                 return request.artifact.bolt11;
             } catch (err: any) {
@@ -373,7 +393,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 setIsLoading(false);
             }
         },
-        [arkWallet, lightningSession],
+        [arkWallet, lightningSession, fetchBalance],
     );
 
     const onboardFunds = useCallback(async (): Promise<string> => {
@@ -400,7 +420,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         } finally {
             setIsLoading(false);
         }
-    }, [wallet, arkWallet]);
+    }, [wallet, arkWallet, fetchBalance]);
 
     const switchNetwork = useCallback(
         async (network: TNetwork) => {

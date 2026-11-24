@@ -213,6 +213,7 @@ export class ArkadeWallet {
             },
         ];
 
+        // As in wallet.send(): no fee is taken, and change below dust goes to the subdust script.
         if (selected.changeAmount > 0n) {
             const changeScript =
                 selected.changeAmount < wallet.dustAmount
