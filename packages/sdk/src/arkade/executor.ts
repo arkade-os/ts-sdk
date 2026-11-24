@@ -146,6 +146,11 @@ function prepare(saved: Saved, keys: ContractKeys): Prepared {
             "NativeExecutor: the spent leaf has no covenant for the emulator to co-sign",
         );
     }
+    // arkd rebuilds a virtual input's sequence as final, so it refuses a leaf with a relative
+    // timelock; the engine and the dry run accept one, and funds would only unlock by exit.
+    if (input.selectedLeaf.asm.some((t) => t === "OP_CHECKSEQUENCEVERIFY" || t === "OP_NOP3")) {
+        throw new Error("NativeExecutor: arkd refuses a virtual spend through a CSV leaf");
+    }
     if (template.requiredKeys.cosigner) {
         throw new Error("NativeExecutor: the template needs the Executor's cosigner key");
     }

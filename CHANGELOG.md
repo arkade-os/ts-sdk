@@ -785,12 +785,16 @@ style and have not been backfilled.
   the emulator VM before funding and before each emulator submission, which
   carries no wallet signature. Hash-conditioned leaves, such as a VHTLC's
   non-interactive claim, are supported; `proof` and `onchain` templates, a
-  cosigner key and a supplied taptree are refused at import. Funding, restore
+  cosigner key, a supplied taptree and a leaf with a relative timelock (which
+  arkd refuses in a virtual spend) are refused at import. Funding, restore
   and the locked contract go through the existing wallet, builder and
   ContractManager. A position funded from asset-bearing coins stays spendable
   when the funding transaction's asset packet assigns nothing to it.
   `delegate()` seals the template's sealed variables to the Executor's
-  encryption key and registers its artifacts, the template and a delegation.
+  encryption key and registers a delegation, uploading the artifacts and the
+  template only when the Executor lacks them; when it refuses uploads (v0.0.5
+  accepts them on its admin port only by default), the error names the template
+  its operator must install.
   RestExecutorProvider adds artifact and template registration and lookup, and
   reports the Executor's `encryptionPubkey`.
 - **Native execution can await persistence before emulator dispatch.** The

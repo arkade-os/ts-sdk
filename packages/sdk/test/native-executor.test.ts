@@ -271,6 +271,16 @@ describe("NativeExecutor import", () => {
             variables,
             /signer <owner> is not available offline/,
         ],
+        [
+            "a leaf with a relative timelock",
+            () =>
+                document(["1"], (d) => {
+                    const leaf = d.inputs[0].contract.definition.functions[1].leaves[0];
+                    leaf.asm.unshift("144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP");
+                }),
+            variables,
+            /CSV leaf/,
+        ],
         ["a leaf without a covenant", () => plainLeaf.template, {}, /no covenant/],
         [
             "the Executor's cosigner key",
