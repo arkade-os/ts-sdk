@@ -256,6 +256,29 @@ describe("RestIndexerProvider", () => {
         );
 
         it.each(["vtxos", "txs"] as const)(
+            "measures the %s cap against decoded bytes, not an encoded Content-Length",
+            async (field) => {
+                const bytes = new TextEncoder().encode(`{"${field}":[]}`);
+                const response = new Response(
+                    new ReadableStream({
+                        start(controller) {
+                            controller.enqueue(bytes);
+                            controller.close();
+                        },
+                    }),
+                    { headers: { "content-encoding": "gzip", "content-length": "4096" } },
+                );
+                mockFetch.mockResolvedValueOnce(response);
+                expect(
+                    await read(new RestIndexerProvider("http://localhost:7070"), field, {
+                        ...options,
+                        maxResponseBytes: bytes.length,
+                    }),
+                ).toMatchObject({ [field]: [] });
+            },
+        );
+
+        it.each(["vtxos", "txs"] as const)(
             "accepts an exact-limit split UTF-8 %s response",
             async (field) => {
                 const body = `{"${field}":[],"padding":"€"}`;
@@ -277,7 +300,8 @@ describe("RestIndexerProvider", () => {
                         ...options,
                         maxResponseBytes: bytes.length,
                     }),
-                ).toMatchObject({ [field]: [] });
+                    // getVtxos rebuilds its reply, so only the verbatim txs one keeps the padding
+                ).toMatchObject(field === "txs" ? { txs: [], padding: "€" } : { vtxos: [] });
                 expect(json).not.toHaveBeenCalled();
                 expect(
                     new URL(mockFetch.mock.calls[0][0]).searchParams.has("maxResponseBytes"),

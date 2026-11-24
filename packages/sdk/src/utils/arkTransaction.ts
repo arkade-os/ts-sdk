@@ -1112,11 +1112,14 @@ export async function submitViaEmulator(
     }
     const encodedArkTx = base64.encode(arkTx.toPSBT());
     const checkpointTxs = checkpoints.map((c) => base64.encode(c.toPSBT()));
-    // Decode the encoded bytes so the receipt's txid is that of the exact request, even if
-    // `arkTx` is mutated while the callback awaits.
+    // Decoded back so the reply is validated against the exact request, even if the callback's
+    // await window is used to mutate `arkTx` or `checkpoints`.
     const submittedArkTx = beforeEmulatorSubmit
         ? Transaction.fromPSBT(base64.decode(encodedArkTx))
         : arkTx;
+    const submittedCheckpoints = beforeEmulatorSubmit
+        ? checkpointTxs.map((encoded) => Transaction.fromPSBT(base64.decode(encoded)))
+        : checkpoints;
     if (beforeEmulatorSubmit) {
         await beforeEmulatorSubmit(
             Object.freeze({
@@ -1129,7 +1132,7 @@ export async function submitViaEmulator(
     const res = await emulator.submitTx(encodedArkTx, checkpointTxs);
     const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
     assertSubmittedArkTxid({ arkTxid: txid }, submittedArkTx, "emulator submitTx");
-    matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "emulator submitTx");
+    matchServerCheckpoints(res.signedCheckpointTxs, submittedCheckpoints, "emulator submitTx");
     return { txid, signedArkTx: res.signedArkTx, signedCheckpointTxs: res.signedCheckpointTxs };
 }
 

@@ -827,6 +827,20 @@ describe("NativeExecutionJournal observation", () => {
         expect(f.indexer.getVtxos).toHaveBeenCalledOnce();
         expect(f.indexer.getVirtualTxs).toHaveBeenCalledOnce();
     });
+
+    it.each(["vtxos", "txs"] as const)(
+        "rejects a %s item count without serializing the reply",
+        async (field) => {
+            const f = await observationFixture();
+            const toJSON = vi.fn(() => "serialized");
+            const flood = Array.from({ length: 3 }, () => ({ toJSON }));
+            if (field === "vtxos")
+                f.indexer.getVtxos.mockResolvedValueOnce({ vtxos: flood } as any);
+            else f.indexer.getVirtualTxs.mockResolvedValueOnce({ txs: flood } as any);
+            expect((await f.journal.observe(source, f.indexer))?.state).toBe("unknown");
+            expect(toJSON).not.toHaveBeenCalled();
+        },
+    );
 });
 
 describe("NativeExecutionJournal", () => {

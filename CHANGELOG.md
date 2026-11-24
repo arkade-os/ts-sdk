@@ -799,7 +799,10 @@ style and have not been backfilled.
   arkd refuses in a virtual spend) are refused at import. Funding, restore
   and the locked contract go through the existing wallet, builder and
   ContractManager. A position funded from asset-bearing coins stays spendable
-  when the funding transaction's asset packet assigns nothing to it.
+  when the funding transaction's asset packet assigns nothing to it. Funding
+  refuses a covenant that opens only once its coin has expired, since arkd
+  refuses an expired input offchain. A position that expires at a block height
+  executes only when a chain tip can be read.
   `delegate()` seals the template's sealed variables to the Executor's
   encryption key and registers a delegation, uploading the artifacts and the
   template only when the Executor lacks them; when it refuses uploads (v0.0.5
@@ -1177,8 +1180,8 @@ style and have not been backfilled.
   before the rejection reaches the caller, which can retry as before.
 
 - **Native journal observation bounds REST bodies before parsing.** Observation
-  requests one explicit two-item page with an opt-in 4 MiB wire-byte cap, including
-  error bodies. Oversized or unstreamable replies remain unknown; legacy indexer
+  requests one explicit two-item page with an opt-in 4 MiB cap on the decoded body,
+  including error bodies. Oversized or unstreamable replies remain unknown; legacy indexer
   reads keep their existing defaults. Pagination whose current page exceeds its
   total cannot acknowledge a receipt or release the occupied prepared slot.
 

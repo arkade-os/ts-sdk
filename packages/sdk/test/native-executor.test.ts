@@ -36,6 +36,7 @@ const managers: ContractManager[] = [];
 
 afterEach(async () => {
     for (const manager of managers.splice(0)) await manager.dispose();
+    vi.useRealTimers();
     vi.restoreAllMocks();
 });
 
@@ -96,6 +97,7 @@ async function setup() {
     const wallet = {
         getContractManager: vi.fn(async () => manager),
         send: vi.fn(async () => "funding"),
+        onchainProvider: { getChainTip: vi.fn(async () => ({ height: 100 })) },
     };
     const executor = new NativeExecutor(arkade, wallet as unknown as IWallet);
     /** Serves the coins of every funded position to the execution's contract. */
@@ -382,6 +384,23 @@ describe("NativeExecutor fund", () => {
         expect(s.submitTx).not.toHaveBeenCalled();
     });
 
+    it("refuses a covenant that only passes once the coin has expired", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate(document(["OP_PUSHEXPIRY", "OP_CHECKTIME"]));
+        await expect(s.executor.fund(execution, 50_000)).rejects.toThrow(
+            /no probed time or expiry lets the covenant pass/,
+        );
+        expect(s.wallet.send).not.toHaveBeenCalled();
+    });
+
+    it("funds a covenant open only in a live coin's last 1024 seconds", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate(
+            document(["OP_PUSHEXPIRY", "1024", "OP_SUB", "OP_CHECKTIME"]),
+        );
+        await expect(s.executor.fund(execution, 50_000)).resolves.toBe("funding");
+    });
+
     it("refuses an amount the template cannot pay out", async () => {
         const s = await setup();
         const execution = await s.importTemplate();
@@ -417,6 +436,7 @@ describe("NativeExecutor execute", () => {
         expect(s.manager.refreshOutpoints).toHaveBeenLastCalledWith([
             { txid: coin.txid, vout: coin.vout },
         ]);
+        expect(s.wallet.onchainProvider.getChainTip).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -434,6 +454,60 @@ describe("NativeExecutor execute", () => {
         if (passes) await expect(run).resolves.toBeDefined();
         else await expect(run).rejects.toThrow(/fails its dry run: .*not found/);
         expect(s.submitTx).toHaveBeenCalledTimes(passes ? 1 : 0);
+    });
+
+    it.each([
+        ["below the chain tip", 99, undefined],
+        ["at the chain tip", 100, /expired/],
+        ["without a reachable chain tip", undefined, /spendability could not be established/],
+    ])("judges a height-expiring coin %s", async (_, height, refusal) => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
+        Object.assign(coin, { expiresAtHeight: 100 });
+        if (height === undefined) {
+            s.wallet.onchainProvider.getChainTip.mockRejectedValue(new Error("esplora down"));
+            vi.spyOn(console, "warn").mockImplementation(() => {});
+        } else s.wallet.onchainProvider.getChainTip.mockResolvedValue({ height });
+        const hook = vi.fn();
+        const run = s.executor.execute(execution, coin, { beforeEmulatorSubmit: hook });
+        if (refusal) {
+            await expect(run).rejects.toThrow(refusal);
+            expect(hook).not.toHaveBeenCalled();
+        } else await expect(run).resolves.toBeDefined();
+        expect(s.submitTx).toHaveBeenCalledTimes(refusal ? 0 : 1);
+    });
+
+    it("refuses a height-expiring coin on a wallet with no chain tip source", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
+        Object.assign(coin, { expiresAtHeight: 100 });
+        delete (s.wallet as { onchainProvider?: unknown }).onchainProvider;
+        await expect(s.executor.execute(execution, coin)).rejects.toThrow(
+            /spendability could not be established/,
+        );
+        expect(s.submitTx).not.toHaveBeenCalled();
+    });
+
+    it("refuses a coin that expires while its spend is being prepared", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
+        const expiresAt = new Date(Date.now() + 60_000);
+        Object.assign(coin, { expiresAt });
+        const serve = vi.mocked(s.indexer.getVirtualTxs).getMockImplementation()!;
+        vi.mocked(s.indexer.getVirtualTxs).mockImplementation(async (...args) => {
+            vi.setSystemTime(expiresAt.getTime());
+            return serve(...args);
+        });
+        const hook = vi.fn();
+        await expect(
+            s.executor.execute(execution, coin, { beforeEmulatorSubmit: hook }),
+        ).rejects.toThrow(/expired while its spend was prepared/);
+        expect(hook).not.toHaveBeenCalled();
+        expect(s.submitTx).not.toHaveBeenCalled();
     });
 
     it.each(["refreshOutpoints", "refreshVtxos"] as const)(

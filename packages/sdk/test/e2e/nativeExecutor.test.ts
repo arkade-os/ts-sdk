@@ -32,7 +32,9 @@ const EMULATOR_URL = process.env.EMULATOR_URL ?? "http://localhost:7073";
 const EXECUTOR_URL = process.env.EXECUTOR_URL ?? "http://localhost:7280";
 const AMOUNT = 20_000;
 
-const reachable = await fetch(`${EXECUTOR_URL}/v1/info`)
+// No test or hook timeout exists during collection, so an Executor that accepts the connection
+// and never answers would hang the file instead of skipping it.
+const reachable = await fetch(`${EXECUTOR_URL}/v1/info`, { signal: AbortSignal.timeout(10_000) })
     .then((r) => r.ok)
     .catch(() => false);
 if (!reachable) {

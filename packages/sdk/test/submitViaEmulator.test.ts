@@ -156,6 +156,22 @@ describe("submitViaEmulator", () => {
         },
     );
 
+    it("validates the reply against the captured checkpoints despite their mutation", async () => {
+        const tx = await spend();
+        const emu = emulator();
+        const submitted = tx.checkpoints.map((c) => c.id);
+        await expect(
+            submitViaEmulator(emu, tx, undefined, {
+                inputIndexes: [],
+                beforeEmulatorSubmit: async () => {
+                    await Promise.resolve();
+                    tx.checkpoints.splice(0);
+                },
+            }),
+        ).resolves.toMatchObject({ txid: tx.arkTx.id });
+        expect(emu.submitTx.mock.calls[0][1].map((psbt) => decode(psbt).id)).toEqual(submitted);
+    });
+
     it("signs only the user's inputs and their checkpoints, and submits them", async () => {
         const emu = emulator();
         await submitViaEmulator(emu, await spend(), user, { inputIndexes: [1] });

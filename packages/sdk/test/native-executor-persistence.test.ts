@@ -358,6 +358,28 @@ describe("NativeExecutor with existing SQLite contracts", () => {
         await session.native.restore(script);
     });
 
+    it("reuses a valid row but refuses a stored spendId restore would reject", async () => {
+        const session = await open();
+        const execution = await importTemplate(session);
+        const script = hex.encode(execution.contract.pkScript);
+        const [row] = await manager!.getContracts({ script });
+        const stored = row.metadata!.nativeExecution as Record<string, unknown>;
+        const valid = rows();
+        expect((await importTemplate(session)).spendId).toBe(execution.spendId);
+        expect(rows()).toEqual(valid);
+        await manager!.updateContract(script, {
+            metadata: { ...row.metadata, nativeExecution: { ...stored, spendId: "11".repeat(32) } },
+        });
+        const tampered = rows();
+        await expect(importTemplate(session)).rejects.toThrow(
+            /does not derive the stored contract/,
+        );
+        await expect(session.native.restore(script)).rejects.toThrow(
+            /does not derive the stored contract/,
+        );
+        expect(rows()).toEqual(tampered);
+    });
+
     it("refuses to fund an import when the retained SQLite row has another address", async () => {
         const session = await open();
         const execution = await importTemplate(session);

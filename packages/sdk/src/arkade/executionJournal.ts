@@ -50,9 +50,11 @@ export type NativeExecutionReceipt = Readonly<{
  * The 4 MiB JSON request budget is journal policy, not a universal protocol limit.
  *
  * Lifecycle: `admit()` the proposal in `beforeEmulatorSubmit`, then dispatch it. Once `admit()` has
- * succeeded a retry must not call it again: `get(source)` first, and when it returns a record the
- * earlier attempt was admitted and may have been dispatched, so dispatch that record's `proposal`
- * unchanged. `reconcile()` is the recovery entry point that settles the outcome.
+ * succeeded a retry must not call it again, nor resend on the strength of `get(source)` alone: the
+ * slot stays occupied through `reconcile()`, so a record keeps coming back for a settled outcome.
+ * Check `getReceipt(source)` and `reconcile()` first; `reconciled` means the configured indexer
+ * already shows the spend, so it must not be resent, while `unknown` settles nothing and does not
+ * make a replay safe. Only a separately authorized replay may dispatch that `proposal`, unchanged.
  */
 export class NativeExecutionJournal {
     private readonly atomic: AtomicWalletState;
@@ -249,19 +251,16 @@ async function observeRecord(
 
 function assertCompleteReply(reply: unknown, field: "vtxos" | "txs"): void {
     const value = reply as Record<string, any> | null;
+    // Counted before serializing: a reply of 100k items must not be stringified to be refused.
+    if (!value || !Array.isArray(value[field]) || value[field].length !== 2)
+        throw new Error("invalid or oversized observation reply");
     let json: string | undefined;
     try {
         json = JSON.stringify(value);
     } catch {
         json = undefined;
     }
-    if (
-        !value ||
-        !Array.isArray(value[field]) ||
-        value[field].length !== 2 ||
-        typeof json !== "string" ||
-        utf8.decode(json).length > MAX_REQUEST_BYTES
-    )
+    if (typeof json !== "string" || utf8.decode(json).length > MAX_REQUEST_BYTES)
         throw new Error("invalid or oversized observation reply");
     // The indexer pages from 1; a terminal page reports next as 0 or its own index.
     const page = value.page;

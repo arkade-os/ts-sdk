@@ -113,12 +113,9 @@ function assertResponseLimit(limit: number | undefined): void {
         throw new Error("maxResponseBytes must be a positive safe integer");
 }
 
+// `Content-Length` describes the encoded body, so a compressed reply within the cap declares more
+// than it decodes to: only the stream count can cap decoded bytes.
 async function readBoundedText(response: Response, limit: number): Promise<string> {
-    const length = response.headers.get("content-length");
-    if (length !== null && /^\d+$/.test(length) && Number(length) > limit) {
-        void response.body?.cancel().catch(() => {});
-        throw new Error("indexer response exceeds maxResponseBytes");
-    }
     const reader = response.body?.getReader?.();
     if (!reader) throw new Error("bounded indexer reads require a streaming response body");
     const decoder = new TextDecoder();

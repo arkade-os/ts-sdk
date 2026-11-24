@@ -1,6 +1,15 @@
 import { hex } from "@scure/base";
 import { equalBytes } from "@scure/btc-signer/utils.js";
-import { canSpendOffchain, type IWallet, normalizeVtxo } from "../wallet";
+import {
+    canSpendOffchain,
+    isPastExpiry,
+    type IWallet,
+    normalizeVtxo,
+    type TimeHeight,
+    type VirtualCoin,
+} from "../wallet";
+import { resolveTimeHeight } from "../wallet/vtxo";
+import type { OnchainProvider } from "../providers/onchain";
 import { toXOnly } from "../utils/keys";
 import { resolvePrevTxs } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
@@ -171,6 +180,19 @@ function prepare(saved: Saved, keys: ContractKeys): Prepared {
     return { doc, template, instance };
 }
 
+/** A stored plan must rebuild the very contract it is filed under, or `restore` refuses it. */
+function derived(saved: Saved, keys: ContractKeys, script: string): Prepared {
+    const prepared = prepare(saved, keys);
+    if (
+        prepared.doc.id !== saved.templateId ||
+        prepared.doc.spendId !== saved.spendId ||
+        hex.encode(prepared.instance.pkScript(0)) !== script
+    ) {
+        throw new Error("NativeExecutor: the stored template does not derive the stored contract");
+    }
+    return prepared;
+}
+
 // programFromArtifact wants each witness item's per-type encoding (raw-32 for bytes32) where
 // template/v1 also allows raw; witness metadata never reaches the taproot tree.
 function withoutEncodings(artifact: ContractArtifact): ContractArtifact {
@@ -282,6 +304,23 @@ function dryRun(
     });
     if (requests.length === 0) throw new Error("the emulator has nothing to sign");
     return offchain;
+}
+
+/** A height expiry means nothing without a chain tip, so this path refuses when it has none rather
+ * than reading the coin as live the way the offline-first balance paths deliberately do. */
+async function spendableAt(wallet: IWallet, coin?: VirtualCoin): Promise<TimeHeight> {
+    if (coin === undefined || normalizeVtxo(coin).expiresAtHeight === undefined) {
+        return { timestamp: new Date() };
+    }
+    const at = await resolveTimeHeight(
+        (wallet as { onchainProvider?: Pick<OnchainProvider, "getChainTip"> }).onchainProvider,
+    );
+    if (at.height === undefined) {
+        throw new Error(
+            "NativeExecutor: the position expires at a block height and no chain tip is available, so its spendability could not be established",
+        );
+    }
+    return at;
 }
 
 function reason(error: unknown): string {
@@ -411,6 +450,11 @@ export class NativeExecutor {
                     "NativeExecutor: conflicting native execution plan for existing contract",
                 );
             }
+            derived(
+                plan,
+                { server: evenOwnerKey(this.arkade.serverKey), emulator },
+                registered.script,
+            );
             return this.own(contract, saved, prepared);
         });
     }
@@ -441,16 +485,11 @@ export class NativeExecutor {
         const { serverKey, emulatorKey } = contract.keys;
         if (!emulatorKey)
             throw new Error("NativeExecutor: the stored contract has no emulator key");
-        const prepared = prepare(saved, { server: evenOwnerKey(serverKey), emulator: emulatorKey });
-        if (
-            prepared.doc.id !== saved.templateId ||
-            prepared.doc.spendId !== saved.spendId ||
-            hex.encode(prepared.instance.pkScript(0)) !== script
-        ) {
-            throw new Error(
-                "NativeExecutor: the stored template does not derive the stored contract",
-            );
-        }
+        const prepared = derived(
+            saved,
+            { server: evenOwnerKey(serverKey), emulator: emulatorKey },
+            script,
+        );
         return this.own(contract, saved, prepared);
     }
 
@@ -467,8 +506,8 @@ export class NativeExecutor {
     }
 
     /**
-     * Dry-runs the covenant against a coin of exactly `amount` at the current time and at 2^40, each
-     * with a near and a far expiry, and refuses when every probe fails; then pays through the wallet.
+     * Dry-runs the covenant against a coin of exactly `amount` at the current time and at 2^40,
+     * each 1 and 2^40 seconds short of expiry; refuses if every probe fails, else pays via wallet.
      */
     async fund(execution: NativeExecution, amount: number): Promise<string> {
         await this.manager();
@@ -484,7 +523,9 @@ export class NativeExecutor {
         const now = Math.floor(Date.now() / 1000);
         let failure: unknown;
         for (const clock of [now, FUTURE]) {
-            for (const expiry of [now, FUTURE]) {
+            // All model a live coin: arkd refuses an expired input offchain, so a covenant that
+            // opens only by then would strand the funding.
+            for (const expiry of [clock + 1, clock + FUTURE]) {
                 try {
                     dryRun(
                         prepared,
@@ -616,11 +657,8 @@ export class NativeExecutor {
             const coin = (await execution.contract.getUtxos()).find(
                 (v) => v.txid === sourceOutpoint.txid && v.vout === sourceOutpoint.vout,
             );
-            if (
-                !coin ||
-                !canSpendOffchain(coin, { timestamp: new Date() }) ||
-                (coin.assets?.length ?? 0) > 0
-            ) {
+            const at = await spendableAt(this.wallet, coin);
+            if (!coin || !canSpendOffchain(coin, at) || (coin.assets?.length ?? 0) > 0) {
                 throw new Error(
                     "NativeExecutor: position is missing, spent, expired, swept, unrolled or contains assets",
                 );
@@ -675,6 +713,13 @@ export class NativeExecutor {
                 throw new Error(`NativeExecutor: the spend fails its dry run: ${reason(error)}`, {
                     cause: error,
                 });
+            }
+            // The awaits above can outlast the expiry, and the journal's one slot must not be
+            // spent on a dead coin by `beforeEmulatorSubmit`.
+            if (isPastExpiry(coin, { ...at, timestamp: new Date() })) {
+                throw new Error(
+                    "NativeExecutor: the position expired while its spend was prepared",
+                );
             }
             const result = await submitViaEmulator(emulator, offchain, undefined, {
                 inputIndexes: [],
