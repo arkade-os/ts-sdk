@@ -219,12 +219,23 @@ function packetsOf(c: VmCase, tx: VmTx) {
 const limitsMap = (l?: Record<string, number>): ComputeLimits | undefined =>
     l && new Map(Object.entries(l).map(([op, n]) => [Number(op), n]));
 
+function disasmPC(e: ReturnType<typeof vm.newEngine>): string | undefined {
+    const b = e.scripts[e.scriptIdx]?.[e.tokenizer.byteIndex()];
+    return b === undefined ? undefined : opcodeArray[b].name;
+}
+
+// Go used its wall clock; every CHECKTIME vector agrees at this instant, 2001-is-past at equality
+const NOW = 1_000_000_000n;
+
 function runExpression(c: VmCase, file: CaseFile) {
-    const opts = { ...base(c, file), inputAmount: BigInt(c.input_amount ?? "0") };
+    const opts = { ...base(c, file), inputAmount: BigInt(c.input_amount ?? "0"), now: NOW };
+    let pc: string | undefined;
     const got = attempt(() => {
         const engine = vm.newEngine({ ...opts, ...packetsOf(c, opts.tx) });
         if (c.seed_hex?.length) engine.setStack(c.seed_hex.map((s) => hex.decode(s)));
-        while (!engine.step()) {}
+        do {
+            pc = disasmPC(engine) ?? pc;
+        } while (!engine.step());
         return engine.getStack().map((s) => hex.encode(s));
     });
     if (c.expect.ok && !c.port_unsupported) {
@@ -232,6 +243,9 @@ function runExpression(c: VmCase, file: CaseFile) {
         expect(got.value).toEqual(c.expect.stack_hex);
     } else {
         expectFailure(got.err, c);
+        if (!c.port_unsupported && c.expect.failed_op !== undefined) {
+            expect(pc, "failed opcode").toBe(c.expect.failed_op);
+        }
     }
     if (c.packets_from_tx || c.seed_hex || opts.intentMessage !== undefined) return;
     const { intentMessage: _, ...exprOpts } = opts;
@@ -246,6 +260,12 @@ function runExpression(c: VmCase, file: CaseFile) {
     }
 }
 
+// The kind alone cannot tell a limit from a truncated read, so pin the codec's reason.
+const CODEC_FAILURE: Record<string, string> = {
+    "packet/emulator-packet/count-1001": "emulator entry count 1001 exceeded",
+    "packet/emulator-packet/script-length-10001": "emulator entry too large",
+};
+
 function runCovenant(c: VmCase, file: CaseFile) {
     const got = attempt(() =>
         vm.executeCovenant({
@@ -258,6 +278,8 @@ function runCovenant(c: VmCase, file: CaseFile) {
     );
     if (c.expect.ok) expect(got.err).toBeUndefined();
     else expectFailure(got.err, c);
+    const why = CODEC_FAILURE[c.name];
+    if (why) expect(String(got.err)).toContain(why);
 }
 
 function runService(c: VmCase) {

@@ -110,7 +110,10 @@ const executorScriptsFile = "testdata/executor-v1-af8d9eb.json"
 // extractExecutor reads the executor's template/v1 vectors once into testdata, so
 // a normal run depends on no checkout but the one this module pins.
 func extractExecutor(dir string) {
-	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil || len(files) == 0 {
+		fatal("no executor vectors in %s (%v)", dir, err)
+	}
 	sort.Strings(files)
 	exprs := map[string][]string{}
 	type cov struct {

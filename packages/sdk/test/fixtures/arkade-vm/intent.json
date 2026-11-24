@@ -570,6 +570,22 @@
             }
         },
         {
+            "name": "intent/duplicate-key-after-huge-number",
+            "mode": "expression",
+            "op": "OP_INSPECTINTENTMESSAGE",
+            "hazard": "3.12/intent",
+            "world": "default",
+            "input_index": 0,
+            "input_amount": "5000",
+            "script_hex": "0161f8",
+            "intent_message": "{\"large\":1e1300,\"a\":1,\"a\":2}",
+            "port_unsupported": true,
+            "expect": {
+                "ok": true,
+                "stack_hex": ["01", "01"]
+            }
+        },
+        {
             "name": "intent/malformed-json-tolerated",
             "mode": "expression",
             "op": "OP_INSPECTINTENTMESSAGE",

@@ -148,7 +148,7 @@
         },
         {
             "id": "3.12/intent",
-            "text": "gjson queries: path grammar, number rules, verbatim objects, miss vs null"
+            "text": "gjson queries: path grammar, number rules, verbatim objects, explicit null reads as a miss"
         },
         {
             "id": "3.12/tunnel",
@@ -176,7 +176,7 @@
         },
         {
             "id": "3.13/return-fails",
-            "text": "OP_RETURN always fails"
+            "text": "OP_RETURN fails when executed; a dead branch skips it"
         },
         {
             "id": "3.13/verif-dead-branch",

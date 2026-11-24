@@ -212,7 +212,7 @@ func hashHand() []*Case {
 	b.ex("hash/OP_SHA256INITIALIZE/fresh-context", OP_SHA256INITIALIZE, "3.4/sha256-midstate-framing", sc([]byte{}, o(OP_SHA256INITIALIZE)))
 	b.ex("hash/OP_SHA256INITIALIZE/with-data", OP_SHA256INITIALIZE, "3.4/sha256-midstate-framing", sc(rep(7, 100), o(OP_SHA256INITIALIZE)))
 	b.ex("hash/OP_SHA256UPDATE/round-trip", OP_SHA256UPDATE, "3.4/sha256-pop-order", sc([]byte("ab"), o(OP_SHA256INITIALIZE), []byte("cd"), o(OP_SHA256UPDATE), []byte("ef"), o(OP_SHA256FINALIZE)))
-	b.ex("hash/OP_SHA256UPDATE/pop-order-swapped", OP_SHA256UPDATE, "3.4/sha256-pop-order", sc(ini([]byte("ab")), o(OP_SWAP), []byte("cd"), o(OP_SWAP, OP_SHA256UPDATE)))
+	b.ex("hash/OP_SHA256UPDATE/pop-order-swapped", OP_SHA256UPDATE, "3.4/sha256-pop-order", sc(ini([]byte("ab")), []byte("cd"), o(OP_SWAP, OP_SHA256UPDATE)))
 	b.ex("hash/OP_SHA256FINALIZE/witnessless-state", OP_SHA256FINALIZE, "3.4/sha256-midstate-framing", sc(ini([]byte("abc")), []byte{}, o(OP_SHA256FINALIZE)))
 	st := ini(rep(0, 64))
 	b.ex("hash/OP_SHA256FINALIZE/block-boundary-state", OP_SHA256FINALIZE, "3.4/sha256-midstate-framing", sc(st, []byte{1}, o(OP_SHA256FINALIZE)))

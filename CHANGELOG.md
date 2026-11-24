@@ -2077,7 +2077,9 @@ style and have not been backfilled.
   v0.2.0, a taproot-only fork of btcd's `txscript` that carries the Arkade
   opcodes, together with its offchain, batch-registration and onchain emulate
   entry points. It is not exported yet, and `pnpm run check:vm`, part of
-  `lint`, keeps it free of imports from the rest of the SDK. A Go oracle pinned
+  `lint`, keeps it free of imports from the rest of the SDK. Stack values enter
+  and leave the engine as copies, and no opcode mutates one in place, so running
+  a script never writes through to a caller's Node `Buffer`. A Go oracle pinned
   to the emulator module (`packages/sdk/test/arkade-vm-oracle`) generates its
   conformance fixtures; CI runs only the TypeScript side. `@noble/hashes`
   2.4.0, already installed through other dependencies, is now a direct
