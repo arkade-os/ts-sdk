@@ -183,6 +183,16 @@ style and have not been backfilled.
 
 ### Features
 
+- **`ExecutorProvider` can register and read the Executor's templates and
+  artifacts.** The SDK's Executor client covered only delegations, so a caller
+  delegating its own template needed a second client to upload it.
+  `RestExecutorProvider` adds `registerArtifact`, `getArtifact`,
+  `registerTemplate` and `getTemplate`, optional on the `ExecutorProvider`
+  interface so existing implementations still conform. A 404 from these calls
+  counts as the Executor's only when its body is the gRPC NOT_FOUND status.
+  `ExecutorInfo` reports the service's `encryptionPubkey` when it advertises
+  one, validated as a compressed key.
+
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
@@ -2152,6 +2162,33 @@ style and have not been backfilled.
   `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
   audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
   high` and fails on any new high or critical advisory.
+
+- **An Arkade script VM, ported from the emulator.** The SDK could build an
+  Arkade spend but not run the covenant script that decides whether the
+  emulator co-signs it. `src/arkade/vm/` ports the emulator's `pkg/arkade`
+  v0.2.0, a taproot-only fork of btcd's `txscript` that carries the Arkade
+  opcodes, together with its offchain, batch-registration and onchain emulate
+  entry points. It is not exported yet, and `pnpm run check:vm`, part of
+  `lint`, keeps it free of imports from the rest of the SDK. Stack values enter
+  and leave the engine as copies, and no opcode mutates one in place, so running
+  a script never writes through to a caller's Node `Buffer`. A Go oracle pinned
+  to the emulator module (`packages/sdk/test/arkade-vm-oracle`) generates its
+  conformance fixtures; CI runs only the TypeScript side. `@noble/hashes`
+  2.4.0, already installed through other dependencies, is now a direct
+  dependency.
+
+- **The Executor's `template/v1` engine, ported.** The Executor builds a
+  delegation's transaction from a template, and a wallet that executes the same
+  template itself must build it the same way, or their addresses and
+  transactions disagree. `src/arkade/template/` ports the Executor's
+  `pkg/template` v0.0.5. It covers decoding with the canonical template,
+  spend and artifact ids, compilation, binding, and instantiation. It builds
+  the unsigned PSBT that the Executor's `Build` emits for `proof`, `virtual` and
+  `onchain` templates, runs binding expressions in the arkade VM, and seals
+  sealed variables with ECIES. It is not exported yet. The Executor's 80
+  vectors, copied into `packages/sdk/test/fixtures/template-v1/`, and
+  differential runs against its Go API check it. `@noble/ciphers` 2.1.1,
+  already installed for the swap package, is now an SDK dependency.
 
 ## [0.1.13] - 2026-11-21
 

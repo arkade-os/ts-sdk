@@ -1,7 +1,10 @@
 import { hex } from "@scure/base";
 import type { OutPoint, VmTx, VmTxOut } from "./tx";
 
-/** Every miss is `undefined`; what a miss means differs per call site, so never substitute. */
+/**
+ * Every miss is `undefined`; what a miss means differs per call site, so never substitute. One
+ * execution reads an outpoint more than once, as Go does, so each read must give the same answer.
+ */
 export interface ArkPrevOutFetcher {
     /** The output being spent: an ark tx output for intents, a checkpoint output for ark txs. */
     fetchPrevOutput(op: OutPoint): VmTxOut | undefined;
@@ -23,7 +26,7 @@ export class MapArkPrevOutFetcher implements ArkPrevOutFetcher {
         return this;
     }
 
-    /** Without `vout`, or with one out of range, fetchVtxoPrevOutPkScript misses. */
+    /** Sets the vtxo script only when `vout` names an output; never clears one already set. */
     setArkTx(op: OutPoint, tx: VmTx, vout?: number): this {
         this.arkTxs.set(outpointKey(op), tx);
         const out = vout === undefined ? undefined : tx.outputs[vout];

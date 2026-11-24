@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +22,8 @@ import (
 	"github.com/btcsuite/btcd/wire/v2"
 )
 
+var vtxoNotFound = regexp.MustCompile(`vtxo \S+ not found`)
+
 type serviceInput struct {
 	variant       string
 	psbt          string
@@ -27,6 +31,7 @@ type serviceInput struct {
 	message       string
 	expiries      map[string]int64
 	errorContains string
+	valid         bool
 }
 
 func (s *serviceInput) json() obj {
@@ -95,6 +100,9 @@ func runService(s *serviceInput) *expect {
 	default:
 		reqs, err = svc.EmulateOnchainTx(ctx, emulator.OnchainTx{Tx: decodePSBT(s.psbt)})
 	}
+	if (err == nil) != s.valid {
+		panic(fmt.Sprintf("service case outcome flipped: valid=%v, err=%v", s.valid, err))
+	}
 	e := &expect{}
 	if err != nil {
 		e.ok, e.stage, e.errorContains = false, "service", s.errorContains
@@ -105,9 +113,19 @@ func runService(s *serviceInput) *expect {
 		var xe *arkade.ExecutionError
 		if errors.As(err, &xe) {
 			e.failedOp, e.position, e.stage = xe.Opcode, xe.Position, "step"
+			if strings.HasPrefix(xe.Err.Error(), "final script validation failed") {
+				e.stage = "final"
+			}
 		}
 		if !strings.Contains(err.Error(), s.errorContains) {
 			panic("service error " + err.Error() + " lacks " + s.errorContains)
+		}
+		// upstream's bare "not found" also matches a checkpoint miss; pin the vtxo lookup
+		if s.errorContains == "not found" {
+			e.errorContains = vtxoNotFound.FindString(err.Error())
+			if e.errorContains == "" {
+				panic("missing-expiry error lacks the vtxo lookup: " + err.Error())
+			}
 		}
 		return e
 	}
@@ -155,7 +173,7 @@ func serviceCases() []*Case {
 		}{{"valid", fix.Valid}, {"invalid", fix.Invalid}} {
 			for _, x := range group.list {
 				in := &serviceInput{variant: f.variant, checkpoints: x.Checkpoints, message: x.Message,
-					expiries: x.VtxoExpiries, errorContains: x.ErrorContains}
+					expiries: x.VtxoExpiries, errorContains: x.ErrorContains, valid: group.name == "valid"}
 				in.psbt = map[string]string{"offchain": x.ArkTx, "proof": x.Proof, "onchain": x.Tx}[f.variant]
 				if in.psbt == "" && f.variant == "proof" {
 					continue // emulator.Proof holds the packet by value: there is no absent proof

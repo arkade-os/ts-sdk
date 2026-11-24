@@ -24,7 +24,13 @@ import { vmExtensionCodec as codec } from "../src/extension/vmCodec";
 
 // Every expectation is Go's: emulator v0.2.0 (30a59c7) run by test/arkade-vm-oracle on the exact
 // bytes each case builds, which `digest` pins.
-type ServiceWant = { digest: string; error?: string; code?: string; parseError?: string };
+type ServiceWant = {
+    digest: string;
+    error?: string;
+    code?: string;
+    parseError?: string;
+    requests?: { txid: string; inputIndex: number; scriptHash: string; closurePubKeys: string[] }[];
+};
 const oracle: {
     closures: { script: string; valid: boolean; keys?: string[]; error?: string }[];
     service: ({ name: string } & ServiceWant)[];
@@ -139,14 +145,6 @@ type VmCase = {
     psbt_b64: string;
     checkpoints_b64?: string[];
     message?: string;
-    expect: {
-        requests?: {
-            txid: string;
-            input_index: number;
-            script_hash: string;
-            closure_pubkeys: string[];
-        }[];
-    };
 };
 const fixtures = JSON.parse(
     readFileSync(new URL("./fixtures/arkade-vm/service.json", import.meta.url), "utf8"),
@@ -387,9 +385,9 @@ function codeOf(e: unknown): string | undefined {
 
 const asJson = (r: SignRequest) => ({
     txid: r.txid,
-    input_index: r.inputIndex,
-    script_hash: hex.encode(r.scriptHash),
-    closure_pubkeys: r.closurePubKeys.map((k) => hex.encode(k)),
+    inputIndex: r.inputIndex,
+    scriptHash: hex.encode(r.scriptHash),
+    closurePubKeys: r.closurePubKeys.map((k) => hex.encode(k)),
 });
 
 describe("emulate gates and fetchers", () => {
@@ -403,7 +401,7 @@ describe("emulate gates and fetchers", () => {
                 return;
             }
             if (!want.error) {
-                expect(emulate(built).map(asJson)).toEqual(singleVtxo.expect.requests);
+                expect(emulate(built).map(asJson)).toEqual(want.requests ?? []);
                 return;
             }
             let err: unknown;

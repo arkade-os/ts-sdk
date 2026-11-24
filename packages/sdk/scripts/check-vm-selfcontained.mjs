@@ -23,9 +23,17 @@ const files = sourceFiles(vmRoot);
 const findings = [];
 for (const file of files) {
     const rel = relative(vmRoot, file).split(sep).join("/");
-    // also reports `export ... from`, `import type`, dynamic import() and require()
-    const { importedFiles } = ts.preProcessFile(readFileSync(file, "utf8"), true, true);
-    for (const { fileName: specifier } of importedFiles) {
+    const text = readFileSync(file, "utf8");
+    // covers `export ... from`, `import type`, import() and require(), but not `export * as`
+    const specifiers = new Set(
+        ts.preProcessFile(text, true, true).importedFiles.map((f) => f.fileName),
+    );
+    for (const s of ts.createSourceFile(file, text, ts.ScriptTarget.Latest).statements) {
+        if (ts.isExportDeclaration(s) && s.moduleSpecifier && ts.isStringLiteral(s.moduleSpecifier)) {
+            specifiers.add(s.moduleSpecifier.text);
+        }
+    }
+    for (const specifier of specifiers) {
         if (specifier.startsWith(".")) {
             const target = relative(vmRoot, resolve(dirname(file), specifier));
             if (target.startsWith("..") || isAbsolute(target)) {

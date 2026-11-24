@@ -3455,11 +3455,10 @@
         {
             "n": "checksig/single-at-last-output",
             "m": "c",
-            "w": "d",
-            "i": 2,
+            "w": "few",
             "s": "206930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82ac",
             "x": [
-                "7fd0cd99867f03f25dceca28fcafbac5dde6e103c5968df017b6b62483e4dc110286d8245e258fa380b04a1ce83c8e7cbfa696ba4b1edb27eb8c16d7e34d9ccb03"
+                "e1316ceb142ce733e6490416f1d2848a31a16ab87c5a63c24c5226564b9b76462eab7d61fe2126fa03d54bdff3749407b1061562fa9798748caf4789e96af5b403"
             ],
             "l": "201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fac",
             "st": ["01"]
@@ -3750,28 +3749,23 @@
             "n": "codesep/after-pushes-position-2",
             "m": "c",
             "w": "d",
-            "s": "02aabb02ccddab40fbe906669fb1e0386e31874a37d0a219aae4f9f17bf823785c8361f1aff6a5c94c085dd68f4802caadd19260977e02072578e56d54619a4c98d336e5fffa98c7206930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82ac",
+            "s": "02aabb02ccddab6d40fbe906669fb1e0386e31874a37d0a219aae4f9f17bf823785c8361f1aff6a5c94c085dd68f4802caadd19260977e02072578e56d54619a4c98d336e5fffa98c7206930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82ac",
             "l": "201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fac",
-            "st": ["aabb", "ccdd", "01"],
-            "e": "ErrCleanStack",
-            "op": "OP_CHECKSIG",
-            "pos": 105
+            "st": ["01"]
         },
         {
             "n": "codesep/byte-offset-is-wrong",
             "m": "c",
             "w": "d",
-            "s": "02aabb02ccddab40ff2617e30d77d609b86c5b6b33ed41f6f68fc19b03d1a919dd9828217ee676841a9f4b22f80b8540312c9439694cfb1f9b16ae65a8a27ec3b6ff4e4be0598408206930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82ac",
+            "s": "02aabb02ccddab6d40ff2617e30d77d609b86c5b6b33ed41f6f68fc19b03d1a919dd9828217ee676841a9f4b22f80b8540312c9439694cfb1f9b16ae65a8a27ec3b6ff4e4be0598408206930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82ac",
             "l": "201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fac",
             "st": [
-                "aabb",
-                "ccdd",
                 "ff2617e30d77d609b86c5b6b33ed41f6f68fc19b03d1a919dd9828217ee676841a9f4b22f80b8540312c9439694cfb1f9b16ae65a8a27ec3b6ff4e4be0598408",
                 "6930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82"
             ],
             "e": "ErrNullFail",
             "op": "OP_CHECKSIG",
-            "pos": 105
+            "pos": 106
         },
         {
             "n": "codesep/blank-is-wrong",
@@ -3792,12 +3786,9 @@
             "n": "codesep/last-one-wins",
             "m": "c",
             "w": "d",
-            "s": "ab02aabbab40fbe906669fb1e0386e31874a37d0a219aae4f9f17bf823785c8361f1aff6a5c94c085dd68f4802caadd19260977e02072578e56d54619a4c98d336e5fffa98c7206930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82ac",
+            "s": "ab02aabbab7540fbe906669fb1e0386e31874a37d0a219aae4f9f17bf823785c8361f1aff6a5c94c085dd68f4802caadd19260977e02072578e56d54619a4c98d336e5fffa98c7206930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82ac",
             "l": "201b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078fac",
-            "st": ["aabb", "01"],
-            "e": "ErrCleanStack",
-            "op": "OP_CHECKSIG",
-            "pos": 103
+            "st": ["01"]
         },
         {
             "n": "codesep/sighash-after-separator",

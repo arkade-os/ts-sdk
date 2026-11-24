@@ -100,7 +100,7 @@ export function readPsbt(raw: Uint8Array): Psbt {
 }
 
 /** chainhash.Hash.String(): the reversed, displayed form. */
-export const displayHash = (h: Uint8Array): string => hex.encode(h.slice().reverse());
+export const displayHash = (h: Uint8Array): string => hex.encode(Uint8Array.from(h).reverse());
 
 export const equalTxOut = (a: VmTxOut | undefined, b: VmTxOut): boolean =>
     a !== undefined && a.value === b.value && equalBytes(a.script, b.script);

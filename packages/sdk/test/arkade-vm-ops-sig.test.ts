@@ -168,13 +168,14 @@ function runDigest(c: Case, w: ReturnType<typeof load>) {
     try {
         return { d: hex.encode(computeArkadeSighash(vm, c.ht ?? 0)) };
     } catch (err) {
-        return { e: failure(err) };
+        if (!(err instanceof ScriptError) || err.kind !== KIND.sigHash) throw err;
+        return { e: `~msg:${err.message}` };
     }
 }
 
 const expected = (c: Case) => {
     if (c.m === "e") return c.e ? { e: c.e } : { st: c.st };
-    if (c.m === "h") return c.d ? { d: c.d } : { e: `~${KIND.sigHash}` };
+    if (c.m === "h") return c.d ? { d: c.d } : { e: c.e };
     return c.e ? { st: c.st, e: c.e, op: c.op, pos: c.pos } : { st: c.st };
 };
 
