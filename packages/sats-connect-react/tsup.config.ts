@@ -11,7 +11,7 @@ export default defineConfig({
     external: [
         "react",
         "@arkade-os/sdk",
-        "@arkade-os/boltz-swap",
+        "@arkade-os/swap",
         "@arkade-os/sats-connect",
         "sats-connect",
     ],

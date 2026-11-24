@@ -192,6 +192,17 @@ style and have not been backfilled.
   SDK peer floor to 0.5.4. `@arkade-os/checkout` stays in `arkade-os/packages`: its
   server needs durable swap storage, and no mainnet solver serves Lightning yet.
 
+- **`@arkade-os/sats-connect-react`: Lightning goes through `@arkade-os/swap`.**
+  `payLightningInvoice` and `createLightningInvoice` use the swap client's `pay` and
+  `receive({ via: "lightning" })` over an IndexedDB swap store, replacing
+  `@arkade-os/boltz-swap`, which this repository no longer ships; the peer
+  dependencies trade it for `@arkade-os/swap` and `nostr-tools`. Lightning needs a
+  solver listed for the wallet's network in the solver registry: mutinynet lists one,
+  mainnet none yet. A received invoice asks the payer for the amount plus the
+  solver's fee, `createLightningInvoice`'s `description` and `NetworkConfig.boltzUrl`
+  are ignored, and the payment is claimed while the provider stays mounted; a later
+  connect resumes the claim before the refund time.
+
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet

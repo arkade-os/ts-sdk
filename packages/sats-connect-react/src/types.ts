@@ -7,7 +7,12 @@ export interface NetworkConfig {
     networkName: NetworkName;
     arkServerUrl: string;
     esploraUrl: string;
+    /** @deprecated Ignored: Lightning goes through a solver listed for the network. */
     boltzUrl?: string;
+    /**
+     * Turns on `payLightningInvoice` and `createLightningInvoice`, routed by `@arkade-os/swap` to a
+     * solver listed for the network in the solver registry (mutinynet has one, mainnet none yet).
+     */
     hasLightning: boolean;
     satsConnectNetwork: SatsConnectNetwork;
 }

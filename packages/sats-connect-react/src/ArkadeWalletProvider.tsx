@@ -1,6 +1,20 @@
-import { createContext, useState, useCallback, useMemo, useEffect, type ReactNode } from "react";
+import {
+    createContext,
+    useState,
+    useCallback,
+    useMemo,
+    useEffect,
+    useRef,
+    type ReactNode,
+} from "react";
 import { Wallet, Ramps } from "@arkade-os/sdk";
-import { ArkadeSwaps, BoltzSwapProvider } from "@arkade-os/boltz-swap";
+import {
+    createSwapClient,
+    IndexedDbAssetSwapRepository,
+    quoteIdOfSwapId,
+    type Outcome,
+    type SwapClient,
+} from "@arkade-os/swap";
 import { ArkadeWallet } from "@arkade-os/sats-connect";
 import type {
     ArkadeWalletProviderConfig,
@@ -11,6 +25,28 @@ import type {
 } from "./types";
 
 const ArkadeWalletContext = createContext<ArkadeWalletContextType<string> | undefined>(undefined);
+
+interface LightningSession {
+    client: SwapClient;
+    repository: IndexedDbAssetSwapRepository;
+}
+
+const PAY_ENDS: readonly Outcome[] = ["paid", "refunding", "refunded", "failed", "needs_recovery"];
+const RECEIVE_ENDS: readonly Outcome[] = ["claimed", "lapsed", "failed", "needs_recovery"];
+
+/** The swap's first outcome in `ends`. `onUpdate` replays synchronously, before `off` is set. */
+const outcomeIn = (client: SwapClient, swapId: string, ends: readonly Outcome[]) =>
+    new Promise<Outcome>((resolve) => {
+        let off: (() => void) | undefined;
+        let done = false;
+        off = client.onUpdate(({ swap, outcome }) => {
+            if (done || swap.id !== swapId || !ends.includes(outcome)) return;
+            done = true;
+            off?.();
+            resolve(outcome);
+        });
+        if (done) off();
+    });
 
 export interface ArkadeWalletProviderProps<TNetwork extends string> {
     children: ReactNode;
@@ -37,6 +73,15 @@ export function ArkadeWalletProvider<TNetwork extends string>({
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [currentNetwork, setCurrentNetwork] = useState<TNetwork>(defaultNetwork);
+    const lightningRef = useRef<LightningSession | null>(null);
+
+    const closeLightning = useCallback(() => {
+        const session = lightningRef.current;
+        lightningRef.current = null;
+        void session?.client[Symbol.asyncDispose]();
+    }, []);
+
+    useEffect(() => closeLightning, [closeLightning]);
 
     const currentNetworkConfig = useMemo(
         () => networks[currentNetwork],
@@ -98,6 +143,18 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                     throw new Error("Failed to initialize Arkade wallet");
                 }
 
+                closeLightning();
+                if (networkConfig.hasLightning) {
+                    // One store per network and key: a drive must not act on another wallet's swaps.
+                    const repository = new IndexedDbAssetSwapRepository(
+                        `arkade-swaps:${networkConfig.networkName}:${info.userPubKey}`,
+                    );
+                    const client = createSwapClient({ wallet: walletInstance, repository });
+                    lightningRef.current = { client, repository };
+                    // Resumes claiming invoices a previous session issued.
+                    void client.ready.catch(() => {});
+                }
+
                 setArkWallet(arkWalletInstance);
                 setWallet(walletInstance);
                 setWalletInfo({
@@ -117,6 +174,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 if (!silent) {
                     setError(err.message || "Failed to connect wallet");
                 }
+                closeLightning();
                 setArkWallet(null);
                 setWallet(null);
                 setWalletInfo(null);
@@ -125,10 +183,11 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 setIsConnecting(false);
             }
         },
-        [currentNetwork, networks, autoConnectKey, connectMessage],
+        [currentNetwork, networks, autoConnectKey, connectMessage, closeLightning],
     );
 
     const disconnectWallet = useCallback(() => {
+        closeLightning();
         arkWallet?.reset();
         setArkWallet(null);
         setWallet(null);
@@ -139,7 +198,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         if (typeof window !== "undefined") {
             window.localStorage.removeItem(autoConnectKey);
         }
-    }, [arkWallet, autoConnectKey]);
+    }, [arkWallet, autoConnectKey, closeLightning]);
 
     useEffect(() => {
         if (typeof window === "undefined") {
@@ -237,38 +296,43 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         }
     }, [wallet]);
 
+    const lightningSession = useCallback((): LightningSession => {
+        if (!wallet) {
+            throw new Error("Wallet not connected");
+        }
+        if (!lightningRef.current) {
+            throw new Error(`Lightning not supported on ${currentNetwork} network`);
+        }
+        return lightningRef.current;
+    }, [wallet, currentNetwork]);
+
     const payLightningInvoice = useCallback(
         async (invoice: string): Promise<string> => {
-            if (!wallet) {
-                throw new Error("Wallet not connected");
-            }
-
-            const networkConfig = networks[currentNetwork];
-
-            if (!networkConfig.hasLightning || !networkConfig.boltzUrl) {
-                throw new Error(`Lightning not supported on ${currentNetwork} network`);
+            const { client, repository } = lightningSession();
+            // `pay` also takes Arkade and onchain addresses, which would move funds here.
+            if (!/^ln/i.test(invoice)) {
+                throw new Error("Not a Lightning invoice");
             }
 
             setIsLoading(true);
             setError(null);
 
             try {
-                const swapProvider = new BoltzSwapProvider({
-                    apiUrl: networkConfig.boltzUrl,
-                    network: networkConfig.networkName as "bitcoin" | "testnet",
-                });
-                const lightning = new ArkadeSwaps({
-                    wallet: wallet as any,
-                    swapProvider,
-                });
-
-                const result = await lightning.sendLightningPayment({ invoice });
+                const result = await client.pay(invoice);
+                if (result.kind !== "swap") {
+                    throw new Error("Not a Lightning invoice");
+                }
+                const outcome = await outcomeIn(client, result.swap.id, PAY_ENDS);
+                if (outcome !== "paid") {
+                    throw new Error(`Lightning payment ${outcome}`);
+                }
+                const record = await repository.getSwapRecord(quoteIdOfSwapId(result.swap.id));
 
                 if (arkWallet) {
                     await fetchBalance(arkWallet);
                 }
 
-                return result.preimage || "";
+                return record?.family === "rfq" ? (record.settlementPreimageHex ?? "") : "";
             } catch (err: any) {
                 setError(err.message || "Failed to pay Lightning invoice");
                 throw err;
@@ -276,43 +340,24 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 setIsLoading(false);
             }
         },
-        [wallet, arkWallet, currentNetwork, networks],
+        [arkWallet, lightningSession],
     );
 
     const createLightningInvoice = useCallback(
-        async (amount: number, description?: string): Promise<string> => {
-            if (!wallet) {
-                throw new Error("Wallet not connected");
-            }
-
-            const networkConfig = networks[currentNetwork];
-
-            if (!networkConfig.hasLightning || !networkConfig.boltzUrl) {
-                throw new Error(`Lightning not supported on ${currentNetwork} network`);
-            }
+        async (amount: number, _description?: string): Promise<string> => {
+            const { client } = lightningSession();
 
             setIsLoading(true);
             setError(null);
 
             try {
-                const swapProvider = new BoltzSwapProvider({
-                    apiUrl: networkConfig.boltzUrl,
-                    network: networkConfig.networkName as "bitcoin" | "testnet",
-                });
-                const lightning = new ArkadeSwaps({
-                    wallet: wallet as any,
-                    swapProvider,
-                });
+                const request = await client.receive({ amount: BigInt(amount), via: "lightning" });
 
-                const result = await lightning.createLightningInvoice({
-                    amount,
-                    description: description || "Arkade wallet payment",
-                });
-
-                lightning
-                    .waitAndClaim(result.pendingSwap)
-                    .then(async () => {
-                        if (arkWallet) {
+                outcomeIn(client, request.id, RECEIVE_ENDS)
+                    .then(async (outcome) => {
+                        if (outcome !== "claimed") {
+                            setError(`Lightning receive ${outcome}`);
+                        } else if (arkWallet) {
                             await fetchBalance(arkWallet);
                         }
                     })
@@ -320,7 +365,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                         setError(err?.message || "Failed to claim swap");
                     });
 
-                return result.invoice;
+                return request.artifact.bolt11;
             } catch (err: any) {
                 setError(err.message || "Failed to create Lightning invoice");
                 throw err;
@@ -328,7 +373,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 setIsLoading(false);
             }
         },
-        [wallet, arkWallet, currentNetwork, networks],
+        [arkWallet, lightningSession],
     );
 
     const onboardFunds = useCallback(async (): Promise<string> => {
