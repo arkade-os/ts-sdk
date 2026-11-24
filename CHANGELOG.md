@@ -365,8 +365,9 @@ style and have not been backfilled.
   until one recovery pass has reached the operator — not until every pending
   transaction finalizes, and not when no output could be found to prove ownership
   with. Whatever a pass leaves unfinalized stays flagged for the next startup to
-  retry, and recovery keeps retrying on its own only while the operator is
-  unreachable.
+  retry. Until a pass does reach the operator — while it is unreachable, reports
+  another network, or answers unusably — sends stay refused and the tick keeps
+  retrying, so recovery self-heals once the operator is fixed.
 
 - **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
 

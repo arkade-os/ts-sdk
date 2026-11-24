@@ -5520,6 +5520,10 @@ export class Wallet
                         await this.arkProvider.finalizeTx(pendingTx.arkTxid, finalCheckpoints);
                         batchFinalized.push(pendingTx.arkTxid);
                     } catch (error) {
+                        // In recovery a transient failure means the operator went away
+                        // mid-pass; swallowing it would unfence sends on a pass that never
+                        // reached a conclusion. A live boot still reports it as pending.
+                        if (recovery && isTransientOperatorError(error)) throw error;
                         console.error(
                             `Failed to finalize transaction ${pendingTx.arkTxid}:`,
                             error,

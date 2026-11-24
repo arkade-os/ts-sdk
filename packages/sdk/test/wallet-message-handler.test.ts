@@ -2765,10 +2765,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
         }
         expect(attempt).toHaveBeenCalledTimes(3);
 
-        // A misconfigured operator fails identically every tick; log the reason once.
+        // Waits on the re-arm, not the call: the slot is set only after the catch logs.
         attempt.mockRejectedValue(stuck());
         await updater.tick(1);
-        await until(() => attempt.mock.calls.length === 4);
+        await until(armed);
         expect(attempt).toHaveBeenCalledTimes(4);
         expect(logged).toHaveBeenCalledTimes(1);
     });
