@@ -4,9 +4,7 @@ import {
     EsploraProvider,
     RestIndexerProvider,
     RestOperatorProvider,
-    Transaction,
     Wallet,
-    buildOffchainTx,
 } from "@arkade-os/sdk";
 import { getProviders, request } from "sats-connect";
 import { SatsConnectIdentity } from "../identity/SatsConnectIdentity";
@@ -196,84 +194,6 @@ export class ArkadeWallet {
         }
     }
 
-    // Advanced flow: manual offchain tx construction/signing for custom outputs.
-    // Kept as a helper for more complex scenarios.
-    async sendBitcoinAdvanced(recipient: string, amount: number) {
-        const wallet = this.ensureWallet();
-
-        await this.ensureIdentityConnected();
-
-        if (!this.isValidArkAddress(recipient)) {
-            throw new Error("Invalid Ark address format");
-        }
-
-        const normalizedAmount = wholeSats(amount);
-
-        const vtxos = await wallet.getVtxos({ withRecoverable: false });
-        const selected = selectVirtualCoins(vtxos, normalizedAmount);
-
-        const selectedLeaf = wallet.offchainTapscript.forfeit();
-        if (!selectedLeaf) {
-            throw new Error("Selected leaf not found");
-        }
-
-        const outputAddress = ArkAddress.decode(recipient);
-        const outputScript =
-            BigInt(normalizedAmount) < wallet.dustAmount
-                ? outputAddress.subdustPkScript
-                : outputAddress.pkScript;
-
-        const outputs: Array<{ script: Uint8Array; amount: bigint }> = [
-            {
-                script: outputScript,
-                amount: BigInt(normalizedAmount),
-            },
-        ];
-
-        // As in wallet.send(): no fee is taken, and change below dust goes to the subdust script.
-        if (selected.changeAmount > 0n) {
-            const changeScript =
-                selected.changeAmount < wallet.dustAmount
-                    ? wallet.arkAddress.subdustPkScript
-                    : wallet.arkAddress.pkScript;
-            outputs.push({
-                script: changeScript,
-                amount: selected.changeAmount,
-            });
-        }
-
-        const tapTree = wallet.offchainTapscript.encode();
-        const offchainTx = buildOffchainTx(
-            selected.inputs.map((input) => ({
-                ...input,
-                tapLeafScript: selectedLeaf,
-                tapTree,
-            })),
-            outputs,
-            wallet.serverUnrollScript,
-        );
-
-        const signedVirtualTx = await wallet.identity.sign(offchainTx.arkTx);
-        const { arkTxid, signedCheckpointTxs } = await wallet.arkProvider.submitTx(
-            scureBase.base64.encode(signedVirtualTx.toPSBT()),
-            offchainTx.checkpoints.map((checkpoint) =>
-                scureBase.base64.encode(checkpoint.toPSBT()),
-            ),
-        );
-
-        const finalCheckpoints = await Promise.all(
-            signedCheckpointTxs.map(async (checkpoint) => {
-                const serverCheckpoint = Transaction.fromPSBT(scureBase.base64.decode(checkpoint));
-                const signedCheckpoint = await wallet.identity.sign(serverCheckpoint);
-                return scureBase.base64.encode(signedCheckpoint.toPSBT());
-            }),
-        );
-
-        await wallet.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
-
-        return arkTxid;
-    }
-
     async settle(outputs: Array<{ address: string; amount: number }> | null = null) {
         const wallet = this.ensureWallet();
 
@@ -400,46 +320,6 @@ export class ArkadeWallet {
         return (method, params, overrideProviderId) =>
             baseRequest(method, params, overrideProviderId ?? providerId);
     }
-}
-
-type VirtualCoinLike = {
-    value: number;
-    virtualStatus?: { batchExpiry?: number };
-};
-
-function selectVirtualCoins<T extends VirtualCoinLike>(coins: T[], targetAmount: number) {
-    const sortedCoins = [...coins].sort((a, b) => {
-        const expiryA = a.virtualStatus?.batchExpiry ?? Number.MAX_SAFE_INTEGER;
-        const expiryB = b.virtualStatus?.batchExpiry ?? Number.MAX_SAFE_INTEGER;
-        if (expiryA !== expiryB) {
-            return expiryA - expiryB;
-        }
-        return b.value - a.value;
-    });
-
-    const selectedCoins: T[] = [];
-    let selectedAmount = 0;
-
-    for (const coin of sortedCoins) {
-        selectedCoins.push(coin);
-        selectedAmount += coin.value;
-        if (selectedAmount >= targetAmount) {
-            break;
-        }
-    }
-
-    if (selectedAmount === targetAmount) {
-        return { inputs: selectedCoins, changeAmount: 0n };
-    }
-
-    if (selectedAmount < targetAmount) {
-        throw new Error("Insufficient funds");
-    }
-
-    return {
-        inputs: selectedCoins,
-        changeAmount: BigInt(selectedAmount - targetAmount),
-    };
 }
 
 function wholeSats(amount: number): number {

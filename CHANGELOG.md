@@ -203,8 +203,11 @@ style and have not been backfilled.
   a peer range or `workspace:^`, so an SDK release does not bump them.
   `@arkade-os/sats-connect` now builds its wallet from `RestOperatorProvider`,
   `RestIndexerProvider` and `EsploraProvider` and pays with `send`, which raises its
-  SDK peer floor to 0.5.4. Its sends refuse an amount that is not a positive whole
-  number of sats. `reset()` disposes the SDK wallet, and a `reset()` or
+  SDK peer floor to 0.5.4. `sendBitcoin` refuses an amount that is not a positive whole
+  number of sats. `sendBitcoinAdvanced` is gone: it built and submitted the transaction
+  by hand, outside the SDK's coin holds, pending-transaction record and recipient
+  operator check. Use `sendBitcoin`, or the SDK's `send({ recipients })` for several
+  outputs. `reset()` disposes the SDK wallet, and a `reset()` or
   `updateConfig()` during the connect prompt makes that `connect()` reject instead of
   publishing a wallet. With a custom `satsConnectRequest` or a `providerId`, batch
   signing signs each transaction through that transport. `@arkade-os/checkout` stays
