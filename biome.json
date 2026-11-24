@@ -26,7 +26,8 @@
             "!packages/swap/src/legacy/*.program.v1.json",
             "!packages/swap/src/contracts/*.json",
             "!**/fixtures/arkadec/**",
-            "!**/fixtures/arkade-vm/**"
+            "!**/fixtures/arkade-vm/**",
+            "!**/fixtures/template-v1/**"
         ]
     },
     "linter": { "enabled": false },

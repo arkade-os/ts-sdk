@@ -1,0 +1,360 @@
+{
+  "artifacts": {},
+  "bindings": {
+    "keys": {
+      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {}
+  },
+  "expected": {
+    "error": {
+      "stage": "build",
+      "code": "ineligible"
+    }
+  },
+  "format": "template-test/v1",
+  "name": "reject-duplicate-source",
+  "request": {
+    "decryption": {},
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "2027-01-15T08:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000003a086010000000000225120deaa67e89e71ebcb866f50fb0ab7a9565ac542f3e59ead5d8251d3daf1185bf0a08601000000000022512069161656f8ba739f86392f44244d6fe93cf563998f15fd065035e07c27a6c6900000000000000000386a3641524b0208050000000000000005270124009c9b59518d972f5473773b52d57bd18280ed89b4b7143000d979558c8af49a080000010000000000",
+        "txid": "bb9207fc026718e1885f374fc552d33ce1142ea1be33f81285f6930129de7869",
+        "vout": 0
+      },
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "2027-01-15T08:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000003a086010000000000225120deaa67e89e71ebcb866f50fb0ab7a9565ac542f3e59ead5d8251d3daf1185bf0a08601000000000022512069161656f8ba739f86392f44244d6fe93cf563998f15fd065035e07c27a6c6900000000000000000386a3641524b0208050000000000000005270124009c9b59518d972f5473773b52d57bd18280ed89b4b7143000d979558c8af49a080000010000000000",
+        "txid": "bb9207fc026718e1885f374fc552d33ce1142ea1be33f81285f6930129de7869",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "proof",
+    "inputs": [
+      {
+        "name": "counter",
+        "contract": {
+          "definition": {
+            "contractName": "Counter",
+            "constructorInputs": [],
+            "structs": [],
+            "functions": [
+              {
+                "name": "delayed_server_spend",
+                "leaves": [
+                  {
+                    "name": "delayed_server_spend",
+                    "asm": [
+                      "4194306",
+                      "OP_CHECKSEQUENCEVERIFY",
+                      "OP_DROP",
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "renew",
+                "arkade": {
+                  "inputs": [],
+                  "asm": [
+                    "OP_PUSHEXPIRY",
+                    "1024",
+                    "OP_SUB",
+                    "OP_CHECKTIME",
+                    "OP_VERIFY",
+                    "0x74797065",
+                    "OP_INSPECTINTENTMESSAGE",
+                    "OP_VERIFY",
+                    "0x7265676973746572",
+                    "OP_EQUALVERIFY",
+                    "0x6f6e636861696e5f6f75747075745f696e6465786573",
+                    "OP_INSPECTINTENTMESSAGE",
+                    "OP_VERIFY",
+                    "0x5b5d",
+                    "OP_EQUALVERIFY",
+                    "0x636f7369676e6572735f7075626c69635f6b6579732e30",
+                    "OP_INSPECTINTENTMESSAGE",
+                    "OP_VERIFY",
+                    "<COSIGNER_KEY>",
+                    "OP_EQUALVERIFY",
+                    "0x636f7369676e6572735f7075626c69635f6b6579732e31",
+                    "OP_INSPECTINTENTMESSAGE",
+                    "OP_NOT",
+                    "OP_VERIFY",
+                    "OP_DROP",
+                    "2",
+                    "OP_INSPECTPACKET",
+                    "OP_VERIFY",
+                    "OP_SIZE",
+                    "8",
+                    "OP_EQUALVERIFY",
+                    "OP_BIN2NUM",
+                    "2",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTPACKET",
+                    "OP_VERIFY",
+                    "OP_BIN2NUM",
+                    "OP_1ADD",
+                    "OP_EQUALVERIFY",
+                    "5",
+                    "OP_INSPECTPACKET",
+                    "OP_VERIFY",
+                    "5",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTPACKET",
+                    "OP_VERIFY",
+                    "OP_EQUALVERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_1SUB",
+                    "7",
+                    "0",
+                    "OP_TUNNEL"
+                  ]
+                },
+                "leaves": [
+                  {
+                    "name": "renew",
+                    "asm": [
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIGVERIFY",
+                      "<EMULATOR_KEY:renew>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      },
+                      {
+                        "name": "emulatorSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "spend": {
+          "function": "renew",
+          "leaf": "renew"
+        }
+      },
+      {
+        "name": "reserve",
+        "contract": {
+          "definition": {
+            "contractName": "Reserve",
+            "constructorInputs": [],
+            "structs": [],
+            "functions": [
+              {
+                "name": "delayed_server_spend",
+                "leaves": [
+                  {
+                    "name": "delayed_server_spend",
+                    "asm": [
+                      "4194306",
+                      "OP_CHECKSEQUENCEVERIFY",
+                      "OP_DROP",
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "renew",
+                "arkade": {
+                  "inputs": [],
+                  "asm": [
+                    "1",
+                    "OP_DROP",
+                    "OP_PUSHEXPIRY",
+                    "1024",
+                    "OP_SUB",
+                    "OP_CHECKTIME",
+                    "OP_VERIFY",
+                    "0x74797065",
+                    "OP_INSPECTINTENTMESSAGE",
+                    "OP_VERIFY",
+                    "0x7265676973746572",
+                    "OP_EQUALVERIFY",
+                    "0x6f6e636861696e5f6f75747075745f696e6465786573",
+                    "OP_INSPECTINTENTMESSAGE",
+                    "OP_VERIFY",
+                    "0x5b5d",
+                    "OP_EQUALVERIFY",
+                    "0x636f7369676e6572735f7075626c69635f6b6579732e30",
+                    "OP_INSPECTINTENTMESSAGE",
+                    "OP_VERIFY",
+                    "<COSIGNER_KEY>",
+                    "OP_EQUALVERIFY",
+                    "0x636f7369676e6572735f7075626c69635f6b6579732e31",
+                    "OP_INSPECTINTENTMESSAGE",
+                    "OP_NOT",
+                    "OP_VERIFY",
+                    "OP_DROP",
+                    "5",
+                    "OP_INSPECTPACKET",
+                    "OP_VERIFY",
+                    "5",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTPACKET",
+                    "OP_VERIFY",
+                    "OP_EQUALVERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_1SUB",
+                    "7",
+                    "0",
+                    "OP_TUNNEL"
+                  ]
+                },
+                "leaves": [
+                  {
+                    "name": "renew",
+                    "asm": [
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIGVERIFY",
+                      "<EMULATOR_KEY:renew>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      },
+                      {
+                        "name": "emulatorSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "spend": {
+          "function": "renew",
+          "leaf": "renew"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "next_counter",
+        "index": 0,
+        "value": {
+          "from": "counter"
+        },
+        "locking": {
+          "from": "counter"
+        },
+        "assets": [
+          {
+            "from": "counter"
+          }
+        ]
+      },
+      {
+        "name": "next_reserve",
+        "index": 1,
+        "value": {
+          "from": "reserve"
+        },
+        "locking": {
+          "from": "reserve"
+        },
+        "assets": [
+          {
+            "from": "reserve"
+          }
+        ]
+      }
+    ],
+    "packets": {
+      "output_index": 2,
+      "rules": [
+        {
+          "type": 2,
+          "action": "emit",
+          "from": "counter",
+          "data": "$(2 OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTPACKET OP_VERIFY OP_BIN2NUM OP_1ADD 8 OP_NUM2BIN)"
+        }
+      ],
+      "advertise": [
+        {
+          "template": "self",
+          "outputs": [
+            "next_counter",
+            "next_reserve"
+          ]
+        }
+      ]
+    },
+    "delegation": {
+      "schedule": {
+        "counter": {
+          "before_expiry_seconds": 1024
+        },
+        "reserve": {
+          "before_expiry_seconds": 1024
+        }
+      }
+    }
+  },
+  "artifact_version": "artifact/v1"
+}

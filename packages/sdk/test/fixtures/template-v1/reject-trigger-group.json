@@ -1,0 +1,191 @@
+{
+  "artifacts": {},
+  "bindings": {
+    "keys": {
+      "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    },
+    "variables": {
+      "receiver_program": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+      "taptree": "01c06082012088a914b566a3eecce809896361988823cd2f423fe800e7876920e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac02c06620c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad20e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac03c04b04c07dc06ab17520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac04c04482012088a914b566a3eecce809896361988823cd2f423fe800e7876903020040b27520e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ac05c04a03030040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad20e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ac06c02803040040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac07c06082012088a914b566a3eecce809896361988823cd2f423fe800e787692079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad201d6688752e2c6a13508150e4927a13d9e32609bf181fc25dbb8e0d37ffd08a86ac08c0662079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13ad20b36bbd533f8567627d18d25405a612452cdd5870fb72a248e6dc4c88c41820b8ac08c04b04c07dc06ab1752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20b36bbd533f8567627d18d25405a612452cdd5870fb72a248e6dc4c88c41820b8ac",
+      "preimage": "0707070707070707070707070707070707070707070707070707070707070707"
+    }
+  },
+  "expected": {
+    "error": {
+      "stage": "decode",
+      "code": "invalid_template"
+    }
+  },
+  "format": "template-test/v1",
+  "name": "reject-trigger-group",
+  "request": {
+    "decryption": {
+      "0707070707070707070707070707070707070707070707070707070707070707": "0707070707070707070707070707070707070707070707070707070707070707"
+    },
+    "fee": {
+      "dust": "330",
+      "intent": {
+        "offchain_input": "",
+        "offchain_output": "",
+        "onchain_input": "",
+        "onchain_output": ""
+      }
+    },
+    "sources": [
+      {
+        "amount": "100000",
+        "assets": [],
+        "confirmations": 0,
+        "created_at": "0001-01-01T00:00:00Z",
+        "expiry": "0001-01-01T00:00:00Z",
+        "swept": false,
+        "tx_hex": "0300000001000000000000000000000000000000000000000000000000000000000000000001000000000000000001a0860100000000002251207e7e91260579cca8f3ff594c3838a1b5a8ae3c63efd3bbaed3ed3178b1e876ea00000000",
+        "txid": "3255b8a7d051e3325cf8e89419cb3bbaa3d8bb8e57b1189871c010a421a593db",
+        "vout": 0
+      }
+    ]
+  },
+  "template": {
+    "format": "template/v1",
+    "type": "virtual",
+    "variables": {
+      "taptree": "bytes",
+      "receiver_program": "bytes32",
+      "preimage": "bytes32"
+    },
+    "inputs": [
+      {
+        "name": "htlc",
+        "contract": {
+          "definition": {
+            "contractName": "CovenantClaim",
+            "constructorInputs": [
+              {
+                "name": "preimageHash",
+                "type": "bytes20"
+              },
+              {
+                "name": "receiverProgram",
+                "type": "bytes32"
+              }
+            ],
+            "structs": [],
+            "functions": [
+              {
+                "name": "claim",
+                "arkade": {
+                  "inputs": [],
+                  "asm": [
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_DUP",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "1",
+                    "OP_EQUALVERIFY",
+                    "<receiverProgram>",
+                    "OP_EQUALVERIFY",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTVALUE",
+                    "OP_GREATERTHANOREQUAL"
+                  ]
+                },
+                "leaves": [
+                  {
+                    "name": "claim",
+                    "asm": [
+                      "OP_SIZE",
+                      "32",
+                      "OP_EQUALVERIFY",
+                      "OP_HASH160",
+                      "<preimageHash>",
+                      "OP_EQUAL",
+                      "OP_VERIFY",
+                      "<SERVER_KEY>",
+                      "OP_CHECKSIGVERIFY",
+                      "<EMULATOR_KEY:claim>",
+                      "OP_CHECKSIG"
+                    ],
+                    "witness": [
+                      {
+                        "name": "preimage",
+                        "type": "bytes32",
+                        "encoding": "raw"
+                      },
+                      {
+                        "name": "serverSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      },
+                      {
+                        "name": "emulatorSig",
+                        "type": "signature",
+                        "encoding": "schnorr-64",
+                        "injected": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "arguments": {
+            "preimageHash": "$(<preimage> OP_HASH160)",
+            "receiverProgram": "<receiver_program>"
+          },
+          "taptree": "<taptree>"
+        },
+        "spend": {
+          "function": "claim",
+          "leaf": "claim",
+          "witness": {
+            "preimage": "<preimage>"
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "payout",
+        "index": 0,
+        "value": {
+          "from": "htlc"
+        },
+        "locking": "5120<receiver_program>",
+        "assets": [
+          {
+            "from": "htlc"
+          }
+        ]
+      }
+    ],
+    "packets": {
+      "output_index": 1,
+      "unmatched": "drop"
+    },
+    "delegation": {
+      "sealed": [
+        "preimage"
+      ],
+      "trigger": {
+        "htlc": {
+          "packet": 4,
+          "decode": "tlv",
+          "min_value": 1000,
+          "require": {
+            "tlv:3": "<ENCRYPTION_KEY>"
+          },
+          "capture": {
+            "preimage": "tlv:1",
+            "receiver_program": "$(<tlv:2> 6 32 OP_SUBSTR)",
+            "taptree": "output:taptree"
+          },
+          "expires_after_seconds": 86400,
+          "group": "tlv:0"
+        }
+      }
+    }
+  },
+  "artifact_version": "artifact/v1"
+}
