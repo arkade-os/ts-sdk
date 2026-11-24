@@ -406,6 +406,42 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         await bus.stop();
     });
 
+    it("carries an error's wireData beside it, and nothing for an error without any", async () => {
+        // An Error's own properties do not survive the clone, so `error.wireData` rides on the
+        // envelope as plain data. Stamped at the egress, like `errorName`.
+        const withData = Object.assign(new Error("signed and refused"), {
+            wireData: { signed: { txid: "aa".repeat(32) } },
+        });
+        handler.handleMessage
+            .mockResolvedValueOnce({
+                id: "m-data",
+                tag: handler.messageTag,
+                error: withData,
+            } as ResponseEnvelope)
+            .mockResolvedValueOnce({
+                id: "m-plain",
+                tag: handler.messageTag,
+                error: new Error("plain"),
+            } as ResponseEnvelope);
+        const bus = await createAndInitBus({ handlers: [handler] });
+        const postMessage = vi.fn();
+
+        for (const id of ["m-data", "m-plain"]) {
+            await messageHandler({
+                data: { id, tag: handler.messageTag },
+                source: { postMessage },
+                waitUntil: (p) => p,
+            });
+        }
+
+        expect((postMessage.mock.calls[0][0] as ResponseEnvelope).errorData).toEqual(
+            withData.wireData,
+        );
+        expect((postMessage.mock.calls[1][0] as ResponseEnvelope).errorData).toBeUndefined();
+
+        await bus.stop();
+    });
+
     it("delivers an ack envelope when a handler returns null", async () => {
         handler.handleMessage.mockResolvedValueOnce(null);
         const bus = await createAndInitBus({ handlers: [handler] });

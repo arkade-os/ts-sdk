@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { Ramps, DustChangeError, OversizedChangeError } from "../src/wallet/ramps";
+import { OnchainCosignAmbiguousError, OnchainCosignRejectedError } from "../src/providers/ark";
 
 const BTC_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const ARK_ADDR =
@@ -313,5 +314,163 @@ describe("both exits keep the change under the server's per-output ceiling", () 
         });
         await exactExit(mock, priced, 30_000n);
         expect(mock.settle).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("Ramps.offboardExact after a cosign that failed once signed", () => {
+    const signed = { txid: "aa".repeat(32), outpoints: [{ txid: "bb".repeat(32), vout: 1 }] };
+    const signedCoin = {
+        txid: "bb".repeat(32),
+        vout: 1,
+        value: 20_000,
+        status: { confirmed: true },
+        tapTree: new Uint8Array(),
+    };
+    const rejected = new OnchainCosignRejectedError("m", "INVALID_ARK_PSBT", signed);
+    const failing = (error: Error, over: Record<string, unknown> = {}) =>
+        wallet({
+            sendOnchain: vi.fn().mockRejectedValue(error),
+            resolveCosignedSpend: vi.fn().mockResolvedValue({ paid: false, coins: [signedCoin] }),
+            getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]),
+            ...over,
+        });
+    const spent = (w: any, call = 0) =>
+        w.settle.mock.calls[call]![0].inputs.map((i: any) => `${i.txid}:${i.vout}`);
+
+    it("spends the signed coin and only what is left of the exit from VTXOs", async () => {
+        const w = failing(rejected);
+
+        expect(await exactExit(w, fees, 30_000n)).toBe("txSETTLE");
+
+        expect(w.resolveCosignedSpend).toHaveBeenCalledWith(signed);
+        expect(spent(w)).toEqual([`${"bb".repeat(32)}:1`, `${"11".repeat(32)}:0`]);
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 30_000n },
+            { address: ARK_ADDR, amount: 90_000n },
+        ]);
+    });
+
+    it("leaves the VTXOs alone when the signed coin covers the exit", async () => {
+        const w = failing(rejected, {
+            getSpendableVtxos: vi.fn().mockRejectedValue(new Error("none")),
+        });
+
+        await exactExit(w, fees, 5_000n);
+
+        expect(spent(w)).toEqual([`${"bb".repeat(32)}:1`]);
+        expect(w.getSpendableVtxos).not.toHaveBeenCalled();
+    });
+
+    it("keeps the signed coin when a lost reservation re-picks the VTXOs", async () => {
+        const lost = Object.assign(new Error("reserved"), { name: "VtxoReservedError" });
+        const w = failing(rejected, {
+            concurrentSpending: true,
+            settle: vi.fn().mockRejectedValueOnce(lost).mockResolvedValue("txSETTLE"),
+        });
+
+        expect(await exactExit(w, fees, 30_000n)).toBe("txSETTLE");
+
+        expect(w.settle).toHaveBeenCalledTimes(2);
+        expect(spent(w, 0)).toContain(`${"bb".repeat(32)}:1`);
+        expect(spent(w, 1)).toContain(`${"bb".repeat(32)}:1`);
+    });
+
+    it("leaves a sub-dust surplus of the signed coin to the fee instead of giving up", async () => {
+        // 20_000 in, 19_800 out: 200 left, under the 330 dust floor.
+        const w = failing(rejected);
+
+        expect(await exactExit(w, fees, 19_800n)).toBe("txSETTLE");
+
+        expect(spent(w)).toEqual([`${"bb".repeat(32)}:1`]);
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 19_800n },
+        ]);
+    });
+
+    it("leaves a sub-dust surplus after a VTXO top-up to the fee as well", async () => {
+        // 20_000 + 10_000 in, 29_900 out: 100 left.
+        const w = failing(rejected, {
+            getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 10_000)]),
+        });
+
+        expect(await exactExit(w, fees, 29_900n)).toBe("txSETTLE");
+
+        expect(spent(w)).toEqual([`${"bb".repeat(32)}:1`, `${"11".repeat(32)}:0`]);
+        expect(w.settle.mock.calls[0]![0].outputs).toEqual([
+            { address: BTC_ADDR, amount: 29_900n },
+        ]);
+    });
+
+    it("still refuses a sub-dust change on a plain exit, which the caller can act on", async () => {
+        const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 20_000)]) });
+
+        await expect(exactExit(w, fees, 19_800n)).rejects.toThrow(DustChangeError);
+    });
+
+    it("rethrows the cosign error when a wallet with no VTXOs cannot cover the batch fee", async () => {
+        // The coin covers the cosign's onchain fee but not the batch's exit fee.
+        const w = failing(rejected, { getSpendableVtxos: vi.fn().mockResolvedValue([]) });
+        const priced = { intentFee: { onchainOutput: "1000.0" }, txFeeRate: "1" } as any;
+
+        await expect(exactExit(w, priced, 19_500n)).rejects.toBe(rejected);
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("returns the cosign txid, settling nothing, when it was already broadcast", async () => {
+        const w = failing(rejected, {
+            resolveCosignedSpend: vi.fn().mockResolvedValue({ paid: true }),
+        });
+
+        expect(await exactExit(w, fees, 5_000n)).toBe(signed.txid);
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("rethrows the cosign error when the coins cannot join a batch", async () => {
+        const w = failing(rejected, {
+            resolveCosignedSpend: vi.fn().mockResolvedValue({ paid: false }),
+        });
+
+        await expect(exactExit(w, fees, 5_000n)).rejects.toBe(rejected);
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("rethrows an error that names no signed tx, as a service-worker timeout does", async () => {
+        const timeout = new OnchainCosignAmbiguousError("MessageBus timed out");
+        const w = failing(timeout);
+
+        await expect(exactExit(w, fees, 5_000n)).rejects.toBe(timeout);
+        expect(w.resolveCosignedSpend).not.toHaveBeenCalled();
+        expect(w.settle).not.toHaveBeenCalled();
+    });
+
+    it("rethrows the cosign error when the wallet cannot look the coins up", async () => {
+        const w = failing(rejected, { resolveCosignedSpend: undefined });
+        await expect(exactExit(w, fees, 5_000n)).rejects.toBe(rejected);
+
+        const broken = failing(rejected, {
+            resolveCosignedSpend: vi.fn().mockRejectedValue(new Error("worker gone")),
+        });
+        await expect(exactExit(broken, fees, 5_000n)).rejects.toBe(rejected);
+        expect(w.settle).not.toHaveBeenCalled();
+        expect(broken.settle).not.toHaveBeenCalled();
+    });
+
+    it("rethrows the cosign error when the batch fails and the tx was not broadcast", async () => {
+        const ambiguous = new OnchainCosignAmbiguousError("500", { signed });
+        const w = failing(ambiguous, {
+            settle: vi.fn().mockRejectedValue(new Error("registration failed")),
+        });
+
+        await expect(exactExit(w, fees, 5_000n)).rejects.toBe(ambiguous);
+        expect(w.resolveCosignedSpend).toHaveBeenCalledTimes(2);
+    });
+
+    it("still pays from VTXOs when the cosign never reached signing", async () => {
+        const { OnchainCosignPreflightError } = await import("../src/contracts/onchainSpend");
+        const w = failing(new OnchainCosignPreflightError("insufficient onchain funds"));
+
+        expect(await exactExit(w, fees, 5_000n)).toBe("txSETTLE");
+        expect(w.resolveCosignedSpend).not.toHaveBeenCalled();
+        expect(spent(w)).toEqual([`${"11".repeat(32)}:0`]);
     });
 });

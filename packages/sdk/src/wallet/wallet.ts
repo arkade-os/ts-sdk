@@ -21,6 +21,8 @@ import {
     BatchFinalizationEvent,
     BatchStartedEvent,
     OnchainCosignAmbiguousError,
+    OnchainCosignRejectedError,
+    type SignedCosign,
     PendingTx,
     RestOperatorProvider,
     SettlementEvent,
@@ -255,6 +257,7 @@ import {
     estimateOnchainCosignFee,
     prepareOwnedInput,
     submitOnchainSpend,
+    type CosignedSpend,
 } from "../contracts/onchainSpend";
 import { attachPrevoutTxs } from "../utils/prevoutTx";
 import { Transaction as SdkTransaction } from "../utils/transaction";
@@ -5624,6 +5627,13 @@ export class Wallet
                 if (e instanceof OnchainCosignAmbiguousError || isCosignRejectedAfterSigning(e)) {
                     await markPending(signed.id);
                 }
+                // The signature is out: name the tx and its coins, so a caller can settle them.
+                if (
+                    e instanceof OnchainCosignAmbiguousError ||
+                    e instanceof OnchainCosignRejectedError
+                ) {
+                    e.signed = { txid: signed.id, outpoints: spent };
+                }
                 throw e;
             }
             await markPending(txid);
@@ -5652,6 +5662,49 @@ export class Wallet
             )
             .slice(0, MAX_COSIGN_INPUTS)
             .map(({ coin }) => ({ txid: coin.txid, vout: coin.vout }));
+    }
+
+    /**
+     * @internal What became of the coins a failed cosign signed, for `Ramps.offboardExact`'s
+     * fallback: {@link getBoardingUtxos} cannot answer, as it hides coins the cosign marked pending.
+     */
+    async resolveCosignedSpend(signed: SignedCosign): Promise<CosignedSpend> {
+        const manager = await this.getContractManager();
+        await manager.syncOnchain();
+        const wanted = new Set(signed.outpoints.map(vtxoOutpoint));
+        const currentOnly = new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+        ]);
+        const tapscripts = new Map(
+            (await this.getBoardingTapscripts(currentOnly)).map((t) => [hex.encode(t.pkScript), t]),
+        );
+        const rows = (
+            await manager.getContractsWithVtxos(undefined, undefined, {
+                maxSyncAgeMs: Number.MAX_SAFE_INTEGER,
+            })
+        ).flatMap(({ contract, vtxos }) =>
+            vtxos.filter((v) => wanted.has(vtxoOutpoint(v))).map((row) => ({ contract, row })),
+        );
+        if (rows.some(({ row }) => row.isSpent && row.spentBy === signed.txid)) {
+            return { paid: true };
+        }
+        // Spent only by the cosign's own pending mark: that hold is what the settle takes back.
+        const coins = rows.map(({ contract, row }) => {
+            const tapscript = tapscripts.get(contract.script);
+            const free =
+                !row.isSpent && !row.settledBy && (!row.spentBy || row.spentBy === signed.txid);
+            const boarding = onchainRows(contract, [row]).length === 1;
+            return tapscript && free && boarding && row.status.confirmed
+                ? extendCoinWithTapscript(tapscript, {
+                      txid: row.txid,
+                      vout: row.vout,
+                      value: row.value,
+                      status: row.status,
+                  })
+                : undefined;
+        });
+        const resolved = coins.filter((c) => c !== undefined);
+        return { paid: false, ...(resolved.length === wanted.size ? { coins: resolved } : {}) };
     }
 
     /** Unspent onchain coins from the store; the onchain rows are kept fresh by syncOnchain, not the indexer. */

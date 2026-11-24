@@ -51,6 +51,12 @@ export type ResponseEnvelope = {
      * clone-normalized name, exactly as it always did.
      */
     errorName?: string;
+    /**
+     * Plain data an error carries in `error.wireData`, for what its message cannot hold
+     * (a long list, a structure): the clone drops own properties of a custom Error, a
+     * plain envelope field survives, and the page puts it back as `error.wireData`.
+     */
+    errorData?: unknown;
     broadcast?: boolean;
 };
 type MessageBusServices = {
@@ -898,6 +904,9 @@ export class MessageBus {
         // each site remembering to.
         if (response.error instanceof Error && !response.errorName) {
             response.errorName = response.error.name;
+        }
+        if (response.error instanceof Error && response.errorData === undefined) {
+            response.errorData = (response.error as { wireData?: unknown }).wireData;
         }
         source.postMessage(response);
     }

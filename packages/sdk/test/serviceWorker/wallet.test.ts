@@ -1099,12 +1099,32 @@ describe("ServiceWorkerWallet", () => {
         expect(sent.find((m: any) => m.type === "SEND_ONCHAIN").payload).toEqual(params);
     });
 
+    const signedCosign = {
+        txid: "aa".repeat(32),
+        outpoints: [
+            { txid: "bb".repeat(32), vout: 1 },
+            { txid: "cc".repeat(32), vout: 0 },
+        ],
+    };
+
     it.each([
         [
             "Rejected",
             new OnchainCosignRejectedError("too late", "INVALID_ARK_PSBT"),
             OnchainCosignRejectedError,
             true,
+        ],
+        [
+            "Rejected with the signed tx",
+            new OnchainCosignRejectedError("too late", "INVALID_ARK_PSBT", signedCosign),
+            OnchainCosignRejectedError,
+            true,
+        ],
+        [
+            "Ambiguous with the signed tx",
+            new OnchainCosignAmbiguousError("500", { signed: signedCosign }),
+            OnchainCosignAmbiguousError,
+            false,
         ],
         [
             "Preflight",
@@ -1119,6 +1139,7 @@ describe("ServiceWorkerWallet", () => {
             id: message.id,
             tag: messageTag,
             error: new Error(error.message),
+            errorData: (error as { wireData?: unknown }).wireData,
         }));
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
         const wallet = createSWWallet(serviceWorker as any, messageTag);
@@ -1132,6 +1153,24 @@ describe("ServiceWorkerWallet", () => {
             expect(isCosignFallback(err)).toBe(fallback);
             expect(err).toEqual(error);
         }
+    });
+
+    it("resolveCosignedSpend asks the worker about the signed coins and returns its answer", async () => {
+        const spend = { paid: false, coins: [{ txid: "bb".repeat(32), vout: 1, value: 5_000 }] };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "RESOLVE_COSIGNED_SPEND"
+                ? { id: message.id, tag: messageTag, type: "COSIGNED_SPEND", payload: { spend } }
+                : null,
+        );
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+
+        await expect(wallet.resolveCosignedSpend(signedCosign)).resolves.toEqual(spend);
+
+        const sent = serviceWorker.postMessage.mock.calls.map((c: any[]) => walletRequestOf(c[0]));
+        expect(sent.find((m: any) => m.type === "RESOLVE_COSIGNED_SPEND").payload).toEqual({
+            signed: signedCosign,
+        });
     });
 
     it("maps an older worker's unknown-message reply to OnchainCosignUnsupportedError", async () => {
@@ -1171,6 +1210,8 @@ describe("ServiceWorkerWallet", () => {
                 const err = await outcome;
                 expect(err).toBeInstanceOf(OnchainCosignAmbiguousError);
                 expect(err.cause).toBeInstanceOf(ServiceWorkerTimeoutError);
+                // The page cannot know which coins the worker signed.
+                expect(err.signed).toBeUndefined();
                 expect(isCosignFallback(err)).toBe(false);
             }
         } finally {

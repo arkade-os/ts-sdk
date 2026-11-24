@@ -33,11 +33,12 @@ import {
     OnchainCosignAmbiguousError,
     OnchainCosignUnsupportedError,
     SettlementEvent,
+    type SignedCosign,
 } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { base64, hex } from "@scure/base";
 import type { Transaction } from "@scure/btc-signer";
-import { rehydrateCosignError } from "../../contracts/onchainSpend";
+import { rehydrateCosignError, type CosignedSpend } from "../../contracts/onchainSpend";
 import {
     Identity,
     ReadonlyIdentity,
@@ -155,6 +156,8 @@ import {
     ResponseCosignOnchainTx,
     RequestSendOnchain,
     ResponseSendOnchain,
+    RequestResolveCosignedSpend,
+    ResponseResolveCosignedSpend,
     RequestMigrateDeprecatedSignerVtxos,
     ResponseMigrateDeprecatedSignerVtxos,
     ResponseMigrateDeprecatedSignerVtxosEvent,
@@ -230,16 +233,29 @@ import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../vtxo";
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
- * Undo the structured-clone algorithm's Error-name normalization: a custom
- * `name` (ProviderUnavailableError, ReadonlyWalletError, …) reaches the page
- * as `"Error"`, so the worker sends the original beside it as a plain string
- * (`ResponseEnvelope.errorName`) and it is restored here before the reject.
- * `instanceof` can never survive the boundary; `name` now genuinely does.
+ * Undo what the structured-clone algorithm does to an Error: a custom `name`
+ * (ProviderUnavailableError, ReadonlyWalletError, …) reaches the page as `"Error"`,
+ * and its own properties are dropped. The worker sends the name
+ * (`ResponseEnvelope.errorName`) and any `error.wireData` (`errorData`) beside the error as
+ * plain data, and both are restored here before the reject. `instanceof` can never survive
+ * the boundary; `name` and `wireData` now genuinely do.
  */
-const restoreErrorName = (response: { error?: Error; errorName?: string }): Error => {
+const restoreWireError = (response: {
+    error?: Error;
+    errorName?: string;
+    errorData?: unknown;
+}): Error => {
     const error = response.error as Error;
     if (response.errorName && error instanceof Error && error.name !== response.errorName) {
         error.name = response.errorName;
+    }
+    if (response.errorData !== undefined && error instanceof Error) {
+        // Not an assignment: an error that was never cloned has a getter-only `wireData`.
+        Object.defineProperty(error, "wireData", {
+            value: response.errorData,
+            configurable: true,
+            writable: true,
+        });
     }
     return error;
 };
@@ -336,6 +352,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     ARKADE_CASH: 50_000,
     COSIGN_ONCHAIN_TX: 50_000,
     SEND_ONCHAIN: 50_000,
+    // A sync and a store read, no operator round trip.
+    RESOLVE_COSIGNED_SPEND: 30_000,
     // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
     // kept for type completeness and is never enforced as an inactivity deadline.
     MIGRATE_DEPRECATED_SIGNER_VTXOS: 50_000,
@@ -632,7 +650,7 @@ const initializeMessageBus = (
             if (response?.id !== initCmd.id) return;
             cleanup();
             if (response.error) {
-                reject(restoreErrorName(response));
+                reject(restoreWireError(response));
             } else {
                 resolve();
             }
@@ -912,7 +930,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
                 cleanup();
                 if (response.error) {
-                    reject(restoreErrorName(response));
+                    reject(restoreWireError(response));
                 } else {
                     resolve(response);
                 }
@@ -946,7 +964,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
                 if (response.error) {
                     cleanup();
-                    reject(restoreErrorName(response));
+                    reject(restoreWireError(response));
                     return;
                 }
 
@@ -1234,7 +1252,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             // structuredClone drops the prototype AND normalizes a custom
             // `name` to "Error", so neither survives the boundary on its own;
             // the worker sends the name beside the error as plain data and
-            // `restoreErrorName` puts it back — which is what makes
+            // `restoreWireError` puts it back — which is what makes
             // `cause.name` the one thing a page can branch on.
             throw new Error(`Failed to get operator info: ${cause}`, { cause });
         }
@@ -2421,6 +2439,18 @@ export class ServiceWorkerWallet
         } catch (e) {
             throw cosignWorkerError(e);
         }
+    }
+
+    /** @internal What became of the coins a failed cosign signed; see `Wallet.resolveCosignedSpend`. */
+    async resolveCosignedSpend(signed: SignedCosign): Promise<CosignedSpend> {
+        const message: RequestResolveCosignedSpend = {
+            tag: this.messageTag,
+            type: "RESOLVE_COSIGNED_SPEND",
+            id: getRandomId(),
+            payload: { signed },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseResolveCosignedSpend).payload.spend;
     }
 
     async getDelegateManager(): Promise<IDelegateManager | undefined> {

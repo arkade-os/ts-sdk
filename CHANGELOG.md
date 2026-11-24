@@ -12,6 +12,12 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- **`Ramps.offboardExact` no longer leaves the signed coins out of its fallback.** 0.5.12 and 0.5.13 rethrow every arkd rejection of a cosign the client already signed, and an operator that kept the signed transaction could still complete it after a retry paid from VTXOs. The fallback now settles through a batch that spends the signed boarding coins too, so the batch and the signed transaction conflict and one confirms. If arkd had broadcast it, `offboardExact` returns the cosign txid; it rethrows when a signed coin is unconfirmed or an unrolled VTXO, when the wallet cannot name the coins (a service-worker timeout), or when the batch fails with the cosign unseen. A change below dust is left to the fee. `OnchainCosignRejectedError` and `OnchainCosignAmbiguousError` carry `signed: { txid, outpoints }`, and `isCosignFallback` means only that arkd did not sign.
+
+## [0.5.13] - 2026-11-23
+
 ### Breaking Changes
 
 - **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.

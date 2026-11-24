@@ -1,6 +1,12 @@
 import { hex } from "@scure/base";
 import { requiresWalletScope, walletOperation, type WalletRequestBinding } from "./wallet-request";
-import { OperatorInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
+import {
+    OperatorInfo,
+    OperatorProvider,
+    SettlementEvent,
+    type SignedCosign,
+} from "../../providers/ark";
+import type { CosignedSpend } from "../../contracts/onchainSpend";
 import { GetVtxosOptions, IndexerProvider, PaginationOptions } from "../../providers/indexer";
 import { WalletRepository } from "../../repositories";
 import type {
@@ -862,6 +868,15 @@ export type ResponseSendOnchain = ResponseEnvelope & {
     payload: { txid: string };
 };
 
+export type RequestResolveCosignedSpend = RequestEnvelope & {
+    type: "RESOLVE_COSIGNED_SPEND";
+    payload: { signed: SignedCosign };
+};
+export type ResponseResolveCosignedSpend = ResponseEnvelope & {
+    type: "COSIGNED_SPEND";
+    payload: { spend: CosignedSpend };
+};
+
 // Deprecated-signer migration. Reports carry `bigint` cutoff dates, which are
 // serialized to strings for transport over the postMessage boundary (mirrors
 // how RECOVERABLE_BALANCE stringifies its bigints) and reconstructed on the
@@ -1088,6 +1103,7 @@ export type WalletRequest =
     | RequestSweepExpiredBoardingUtxos
     | RequestCosignOnchainTx
     | RequestSendOnchain
+    | RequestResolveCosignedSpend
     | RequestMigrateDeprecatedSignerVtxos
     | RequestGetDeprecatedSignerStatus
     | RequestRestoreWallet
@@ -1167,6 +1183,7 @@ export type WalletUpdaterResponse = ResponseEnvelope & {
         | ResponseSweepExpiredBoardingUtxos
         | ResponseCosignOnchainTx
         | ResponseSendOnchain
+        | ResponseResolveCosignedSpend
         | ResponseMigrateDeprecatedSignerVtxos
         | ResponseMigrateDeprecatedSignerVtxosEvent
         | ResponseGetDeprecatedSignerStatus
@@ -2307,6 +2324,11 @@ export class WalletMessageHandler
                         type: "SEND_ONCHAIN_SUCCESS",
                         payload: { txid },
                     });
+                }
+                case "RESOLVE_COSIGNED_SPEND": {
+                    const { signed } = (message as RequestResolveCosignedSpend).payload;
+                    const spend = await this.requireWallet(context).resolveCosignedSpend(signed);
+                    return this.tagged({ id, type: "COSIGNED_SPEND", payload: { spend } });
                 }
                 case "MIGRATE_DEPRECATED_SIGNER_VTXOS": {
                     const wallet = this.requireWallet(context);

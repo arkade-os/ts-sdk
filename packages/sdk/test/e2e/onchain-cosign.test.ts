@@ -7,6 +7,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     networks,
+    OnchainCosignRejectedError,
     OnchainWallet,
     Ramps,
     RestOperatorProvider,
@@ -67,10 +68,10 @@ const covenantProgram = {
     },
 } satisfies arkade.Program;
 
-async function createWallet(): Promise<Wallet> {
+async function createWallet(operator = new RestOperatorProvider(ARK_SERVER_URL)): Promise<Wallet> {
     return Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestOperatorProvider(ARK_SERVER_URL),
+        arkProvider: operator,
         indexerProvider: new RestIndexerProvider(ARK_SERVER_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
@@ -236,6 +237,39 @@ describe("onchain cosign", () => {
 
         expect(events).toHaveLength(0);
         expect((await waitForUtxo(dest)).value).toBe(40_000);
+    });
+
+    it("settles the coins a refused cosign signed, so the kept tx can no longer pay", {
+        timeout: 240_000,
+    }, async () => {
+        // An operator that answers INVALID_ARK_PSBT but keeps the signed PSBT to broadcast later.
+        class KeepingOperator extends RestOperatorProvider {
+            kept?: string;
+            async cosignOnchainTx(psbt: string): Promise<string> {
+                this.kept = psbt;
+                throw new OnchainCosignRejectedError("kept", "INVALID_ARK_PSBT");
+            }
+        }
+        const operator = new KeepingOperator(ARK_SERVER_URL);
+        const wallet = await createWallet(operator);
+        const coin = await fundBoarding(wallet);
+        const dest = await externalAddress();
+        const { fees } = await wallet.arkProvider.getInfo();
+
+        await new Ramps(wallet).offboardExact({
+            destinationAddress: dest,
+            feeInfo: fees,
+            amount: 40_000n,
+        });
+        expect(operator.kept).toBeDefined();
+        mineBlocks(1);
+        expect((await waitForUtxo(dest)).value).toBe(40_000);
+
+        // The operator now tries to complete the tx it kept: the batch spent its coin.
+        await expect(arkProvider.cosignOnchainTx(operator.kept!)).rejects.toThrow();
+        mineBlocks(1);
+        expect(await explorer.getCoins(dest)).toHaveLength(1);
+        expect((await storedRow(wallet, coin))?.isSpent).toBe(true);
     });
 
     it("sweeps an unrolled VTXO before its exit matures", { timeout: 240_000 }, async () => {

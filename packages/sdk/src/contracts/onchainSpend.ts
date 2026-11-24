@@ -11,6 +11,7 @@ import {
     OnchainCosignAmbiguousError,
     OnchainCosignRejectedError,
     OnchainCosignUnsupportedError,
+    type SignedCosign,
 } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { OnchainProvider } from "../providers/onchain";
@@ -22,7 +23,7 @@ import {
     getArkPsbtFields,
     setArkPsbtField,
 } from "../utils/unknownFields";
-import type { VirtualCoin } from "../wallet";
+import type { ExtendedCoin, VirtualCoin } from "../wallet";
 import type { Contract, PathSelection } from "./types";
 import { exitSequence } from "./handlers/helpers";
 import { ExecutorContractHandler } from "./handlers/executor";
@@ -233,7 +234,11 @@ export function isCosignRejectedAfterSigning(e: unknown): boolean {
     return e instanceof OnchainCosignRejectedError && !isCosignFallback(e);
 }
 
-/** True only when the coins were definitely not spent, so paying another way is safe. */
+/**
+ * True when arkd did not sign: the cosign was refused before signing, or never reached it. That
+ * says nothing about the coins the client signed, which an operator may still hold, so paying with
+ * other coins is not safe on its own (see `Ramps.offboardExact`, which settles those coins instead).
+ */
 export function isCosignFallback(e: unknown): boolean {
     if (e instanceof OnchainCosignRejectedError) {
         return !!e.arkErrorName && DEFINITE_COSIGN_REJECTIONS.has(e.arkErrorName);
@@ -241,7 +246,34 @@ export function isCosignFallback(e: unknown): boolean {
     return e instanceof OnchainCosignUnsupportedError || e instanceof OnchainCosignPreflightError;
 }
 
-/** Structured clone across the service-worker bus strips error classes; restore them by message prefix. */
+/**
+ * What became of the coins a failed cosign signed. `paid`: the store shows one spent by that tx, so
+ * it went out. Otherwise `coins` are those coins as boarding inputs a settle can take back, absent
+ * when any cannot join a batch (unconfirmed, an unrolled VTXO, not a boarding row of the current
+ * signer): then no settle may stand in for the cosign.
+ */
+export type CosignedSpend = { paid: true } | { paid: false; coins?: ExtendedCoin[] };
+
+const isHex32 = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
+
+/** The `signed` the worker sent as `wireData`, or undefined if it is absent or malformed. */
+function wireSigned(e: Error): SignedCosign | undefined {
+    const signed = (e as { wireData?: { signed?: Partial<SignedCosign> } }).wireData?.signed;
+    if (!signed || !isHex32(signed.txid) || !Array.isArray(signed.outpoints)) return undefined;
+    const valid = signed.outpoints.every(
+        (o) => isHex32(o?.txid) && Number.isInteger(o.vout) && o.vout >= 0,
+    );
+    if (!valid || signed.outpoints.length === 0) return undefined;
+    return {
+        txid: signed.txid,
+        outpoints: signed.outpoints.map((o) => ({ txid: o.txid, vout: o.vout })),
+    };
+}
+
+/**
+ * Structured clone across the service-worker bus strips error classes; restore them by message
+ * prefix, and `signed` from the `wireData` the bus carried beside the error.
+ */
 export function rehydrateCosignError(e: unknown): unknown {
     if (
         !(e instanceof Error) ||
@@ -256,13 +288,17 @@ export function rehydrateCosignError(e: unknown): unknown {
     if (message.startsWith(ONCHAIN_COSIGN_REJECTED_PREFIX)) {
         const rest = message.slice(ONCHAIN_COSIGN_REJECTED_PREFIX.length);
         const named = rest.match(/^\[([A-Z0-9_]+)\] ([\s\S]*)$/);
+        const signed = wireSigned(e);
         return named
-            ? new OnchainCosignRejectedError(named[2], named[1])
-            : new OnchainCosignRejectedError(rest);
+            ? new OnchainCosignRejectedError(named[2], named[1], signed)
+            : new OnchainCosignRejectedError(rest, undefined, signed);
     }
     if (message.startsWith(ONCHAIN_COSIGN_AMBIGUOUS_PREFIX)) {
         return new OnchainCosignAmbiguousError(
             message.slice(ONCHAIN_COSIGN_AMBIGUOUS_PREFIX.length),
+            {
+                signed: wireSigned(e),
+            },
         );
     }
     if (message.startsWith(ONCHAIN_COSIGN_PREFLIGHT_PREFIX)) {
