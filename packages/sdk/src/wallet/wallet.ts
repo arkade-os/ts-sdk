@@ -166,7 +166,7 @@ import {
     ServerResponseMismatchError,
     type ProviderKind,
 } from "../providers/errors";
-import { isRetryableProviderError } from "../providers/availability";
+import { isRetryableProviderError, isTransientOperatorError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -4063,6 +4063,12 @@ export class Wallet
 
     private _concurrentSpending = false;
     private _submitsAwaitingFinalize = 0;
+    private pendingTxRecoveryDeferred = false;
+
+    /** @internal */
+    get hasDeferredPendingTxRecovery(): boolean {
+        return this.pendingTxRecoveryDeferred;
+    }
 
     /** @see WalletConfig.concurrentSpending */
     get concurrentSpending(): boolean {
@@ -4079,10 +4085,19 @@ export class Wallet
     async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
         const ark = this.arkProvider;
         return {
-            submitTx: (signedArkTx, checkpointTxs) => ark.submitTx(signedArkTx, checkpointTxs),
+            submitTx: async (signedArkTx, checkpointTxs) => {
+                this.assertNoDeferredPendingTxRecovery();
+                return ark.submitTx(signedArkTx, checkpointTxs);
+            },
             finalizeTx: (arkTxid, finalCheckpointTxs) =>
                 ark.finalizeTx(arkTxid, finalCheckpointTxs),
         };
+    }
+
+    private assertNoDeferredPendingTxRecovery(): void {
+        if (this.pendingTxRecoveryDeferred) {
+            throw new Error("Pending Arkade transaction recovery is required before sending");
+        }
     }
 
     protected constructor(
@@ -5764,13 +5779,56 @@ export class Wallet
     async finalizePendingTxs(
         vtxos?: ExtendedVirtualCoin[],
     ): Promise<{ finalized: string[]; pending: string[] }> {
+        return this.finalizePendingTxsImpl(vtxos);
+    }
+
+    /** @internal */
+    async deferPendingTxRecovery(): Promise<boolean> {
+        this.pendingTxRecoveryDeferred = await this.hasPendingTxFlag();
+        return this.pendingTxRecoveryDeferred;
+    }
+
+    /** @internal */
+    async resumeDeferredPendingTxs(isCurrent: () => boolean): Promise<void> {
+        // Outside the lock: a failure here never reached the operator, so it must not
+        // reach the unfencing below either.
+        const info = await this.getOperatorInfo({ requireLive: true });
+        if (info.network !== this.network.name) {
+            throw new Error("Operator network changed while recovering pending transactions");
+        }
+        await this._withTxLock(async () => {
+            if (!isCurrent()) return;
+            try {
+                // A stale local candidate list can miss the inputs of the interrupted send.
+                await this.finalizePendingTxsImpl(undefined, { info, isCurrent });
+            } catch (error) {
+                // One pass against a reachable operator is enough; `hasPendingTx` keeps
+                // what it left for the next startup, as a live boot would. Only a
+                // transient failure is worth another tick, so only it keeps the fence.
+                if (!isTransientOperatorError(error) && isCurrent()) {
+                    this.pendingTxRecoveryDeferred = false;
+                }
+                throw error;
+            }
+            if (isCurrent()) this.pendingTxRecoveryDeferred = false;
+        });
+    }
+
+    private async finalizePendingTxsImpl(
+        vtxos?: ExtendedVirtualCoin[],
+        recovery?: { info: OperatorInfo; isCurrent: () => boolean },
+    ): Promise<{ finalized: string[]; pending: string[] }> {
+        const isCurrent = recovery?.isCurrent ?? (() => true);
         const hasPending = await this.hasPendingTxFlag();
-        if (!hasPending) {
+        if (!hasPending || !isCurrent()) {
+            // Nothing left to recover, so nothing to block sends for.
+            if (!hasPending && isCurrent()) this.pendingTxRecoveryDeferred = false;
             return { finalized: [], pending: [] };
         }
 
         if (!vtxos || vtxos.length === 0) {
             const scriptMap = await this.getScriptMap();
+            if (!isCurrent()) return { finalized: [], pending: [] };
             const allExtended: ExtendedVirtualCoin[] = [];
 
             const fetchedVtxos = await getAllNormalizedVtxos(this.indexerProvider, [
@@ -5781,7 +5839,11 @@ export class Wallet
                 const vtxoScript = scriptMap.get(vtxo.script);
                 if (!vtxoScript) continue;
 
-                if (!vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
+                // Recovery proves ownership of historical outputs, swept included, but
+                // subdust and exited outputs sink the whole proof — as in claimCash.
+                if (recovery) {
+                    if (isSubdust(vtxo, this.dustAmount) || vtxo.isUnrolled) continue;
+                } else if (!vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
                     continue;
                 }
 
@@ -5794,6 +5856,7 @@ export class Wallet
             }
 
             if (allExtended.length === 0) {
+                // Without a proof input, there is no operator response to clear the flag.
                 return { finalized: [], pending: [] };
             }
 
@@ -5804,7 +5867,10 @@ export class Wallet
             batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_PROOF));
         }
 
-        const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
+        const unrollCandidates = this.checkpointUnrollCandidates(
+            recovery?.info ?? (await this.arkProvider.getInfo()),
+        );
+        if (!isCurrent()) return { finalized: [], pending: [] };
         // Checked against every VTXO of this run, not the chunk that produced
         // the proof: a pending tx spends whatever the interrupted send did, and
         // its inputs can straddle two chunks.
@@ -5816,15 +5882,17 @@ export class Wallet
         // Track seen arkTxids so parallel batches don't finalize the same tx twice
         const seen = new Set<string>();
 
-        const results = await Promise.all(
+        const results = await Promise.allSettled(
             batches.map(async (batch) => {
                 const batchFinalized: string[] = [];
                 const batchPending: string[] = [];
 
                 const intent = await this.makeGetPendingTxIntentSignature(batch);
+                if (!isCurrent()) return { finalized: batchFinalized, pending: batchPending };
                 const pendingTxs = await this.arkProvider.getPendingTxs(intent);
 
                 for (const pendingTx of pendingTxs) {
+                    if (!isCurrent()) break;
                     if (seen.has(pendingTx.arkTxid)) continue;
                     seen.add(pendingTx.arkTxid);
 
@@ -5868,6 +5936,7 @@ export class Wallet
                         const batchEligible =
                             isBatchSignable(identity) &&
                             (await this._signerRouter.canBatch(...checkpointJobs));
+                        if (!isCurrent()) break;
 
                         let finalCheckpoints: string[];
                         if (batchEligible) {
@@ -5897,9 +5966,14 @@ export class Wallet
                             );
                         }
 
+                        if (!isCurrent()) break;
                         await this.arkProvider.finalizeTx(pendingTx.arkTxid, finalCheckpoints);
                         batchFinalized.push(pendingTx.arkTxid);
                     } catch (error) {
+                        // In recovery a transient failure means the operator went away
+                        // mid-pass; swallowing it would unfence sends on a pass that never
+                        // reached a conclusion. A live boot still reports it as pending.
+                        if (recovery && isTransientOperatorError(error)) throw error;
                         console.error(
                             `Failed to finalize transaction ${pendingTx.arkTxid}:`,
                             error,
@@ -5916,15 +5990,19 @@ export class Wallet
 
         const finalized: string[] = [];
         const pending: string[] = [];
+        // Settled, not raced: failing out while a sibling batch is still signing would
+        // release the tx lock, and the next pass could finalize that tx a second time.
         for (const result of results) {
-            finalized.push(...result.finalized);
-            pending.push(...result.pending);
+            if (result.status === "rejected") throw result.reason;
+            finalized.push(...result.value.finalized);
+            pending.push(...result.value.pending);
         }
 
         // Only clear the flag if every discovered pending tx was finalized;
         // if any failed, keep it so recovery retries on next startup.
-        if (finalized.length === pending.length) {
-            await this.setPendingTxFlag(false);
+        if (finalized.length === pending.length && isCurrent()) {
+            await this.setPendingTxFlag(false, isCurrent);
+            if (isCurrent()) this.pendingTxRecoveryDeferred = false;
         }
 
         return { finalized, pending };
@@ -5964,11 +6042,12 @@ export class Wallet
         return state?.settings?.hasPendingTx === true;
     }
 
-    private async setPendingTxFlag(value: boolean): Promise<void> {
-        await updateWalletState(this.walletRepository, (state) => ({
-            ...state,
-            settings: { ...state.settings, hasPendingTx: value },
-        }));
+    private async setPendingTxFlag(value: boolean, isCurrent = () => true): Promise<void> {
+        await updateWalletState(this.walletRepository, (state) =>
+            isCurrent()
+                ? { ...state, settings: { ...state.settings, hasPendingTx: value } }
+                : state,
+        );
     }
 
     /**
@@ -7247,6 +7326,7 @@ export class Wallet
         serverUnrollScript: CSVMultisigTapscript.Type,
         options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        this.assertNoDeferredPendingTxRecovery();
         await assertNoIntentLockedInputs(inputs, this.intentRepository);
         assertNoPersistentReservation(inputs, this.persistentReservedOutpoints);
         const validUntil = captureSendDeadline(options?.validUntil);
