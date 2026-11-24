@@ -55,6 +55,8 @@ export interface ServiceOptions {
     readonly limits?: ComputeLimits;
     /** Reads the emulator and asset packets; without one, only a tx with no extension passes. */
     readonly codec?: ExtensionCodec;
+    /** Unix seconds OP_CHECKTIME compares against; the current time when absent. */
+    readonly now?: bigint;
 }
 
 /** OffchainData.VtxoExpiries, keyed `<displayed txid>:<vout>` like wire.OutPoint.String(). */
@@ -283,8 +285,8 @@ function execute(s: ArkadeScript, tx: VmTx, fetcher: ArkTxFetcher, opts: Execute
 }
 
 /** executeOptions (service.go:272-277): one budget is shared by every input of the request. */
-function executeOptions(limits: ComputeLimits = DefaultComputeLimits(), codec?: ExtensionCodec) {
-    return { limits, budget: new ComputeBudget(AggregateComputeLimits(limits)), codec };
+function executeOptions({ limits = DefaultComputeLimits(), codec, now }: ServiceOptions) {
+    return { limits, budget: new ComputeBudget(AggregateComputeLimits(limits)), codec, now };
 }
 
 function service(
@@ -324,7 +326,7 @@ export function emulateOffchainTx(
         const fetcher = prefixed("failed to create prevout fetcher", () =>
             arkTxFetcher(ark, checkpoints),
         );
-        const opts = executeOptions(o.limits, o.codec);
+        const opts = executeOptions(o);
         return scripts.flatMap((s) => {
             const op = ark.tx.inputs[s.vin];
             const cpTxid = displayHash(op.txid);
@@ -364,7 +366,7 @@ export function emulateBatchRegistration(
         const fetcher = prefixed("failed to create prevout fetcher", () => proofFetcher(ptx));
         const run = scripts.filter((s) => s.vin !== 0);
         if (run.length === 0) throw new Error("no input to execute");
-        const opts = executeOptions(o.limits, o.codec);
+        const opts = executeOptions(o);
         return run.flatMap((s) => {
             const expiry = prefixed(`input ${s.vin}: expiry`, () =>
                 expiryForScript(s.script, ptx.tx.inputs[s.vin], o.vtxoExpiries),
@@ -394,7 +396,7 @@ export function emulateOnchainTx(o: ServiceOptions & { psbt: Uint8Array }): Sign
         const scripts = txScripts(ptx, o.codec);
         if (scripts.length === 0) return [];
         const fetcher = prefixed("failed to create prevout fetcher", () => onchainFetcher(ptx));
-        const opts = executeOptions(o.limits, o.codec);
+        const opts = executeOptions(o);
         return scripts.map((s) => {
             execute(s, ptx.tx, fetcher, opts);
             return prefixed(`cannot request signature for input ${s.vin}`, () =>
