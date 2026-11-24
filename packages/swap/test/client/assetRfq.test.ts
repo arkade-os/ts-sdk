@@ -684,18 +684,15 @@ describe("accept() on a negotiated asset market", () => {
     });
 
     it.each([ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE])(
-        "resumes a %s record from its binding and rebuilds the funding packet",
+        "keeps a %s record as its binding and funds the packet rebuilt from it",
         async (version) => {
-            let failing = true;
-            const { client, repository, transport, wallet } = await harness(
-                { failSend: () => (failing ? new Error("send exploded") : (undefined as never)) },
-                (payload) =>
-                    arkadeAssetAnswer(payload, CLOCK, {
-                        supportsNonce: version === ASSET_SWAP_DIRECTED_NONCE,
-                    }),
+            const { client, repository, transport, wallet } = await harness({}, (payload) =>
+                arkadeAssetAnswer(payload, CLOCK, {
+                    supportsNonce: version === ASSET_SWAP_DIRECTED_NONCE,
+                }),
             );
             const quote = await client.quote(buy());
-            await expect(client.accept(quote)).rejects.toThrow(/send exploded/);
+            await client.accept(quote);
             const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
             expect(stored.offerHex).toBeUndefined();
             expect(stored.binding?.version).toBe(version);
@@ -705,9 +702,6 @@ describe("accept() on a negotiated asset market", () => {
                     ? hex.encode(assetRfqNonce(rfqId))
                     : undefined,
             );
-            failing = false;
-
-            await client.accept(quote);
 
             const [extension] = wallet.sent[0]?.extensions ?? [];
             expect(extension?.type).toBe(OFFER_PACKET_TYPE);

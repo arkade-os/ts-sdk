@@ -43,7 +43,7 @@ const INSERT_CHUNK = 500;
  * write chain is keyed by that object, and a per-repository literal splits it.
  */
 export class SQLiteAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 5 as const;
+    readonly version = 6 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly swaps: string;
@@ -235,6 +235,21 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
                 [record.id, record.family, record.updatedAt, JSON.stringify(record)],
             );
         });
+    }
+
+    async createSwapRecordIfAbsent(record: SwapRecord): Promise<boolean> {
+        await this.ensureInit();
+        let created = false;
+        // `BEGIN IMMEDIATE` takes the write lock first, so no other connection inserts between.
+        await this.withTx(async (tx) => {
+            if (await tx.get(`SELECT 1 FROM ${this.swapRecords} WHERE id = ?`, [record.id])) return;
+            await tx.run(
+                `INSERT INTO ${this.swapRecords} (id, family, updated_at, data) VALUES (?, ?, ?, ?)`,
+                [record.id, record.family, record.updatedAt, JSON.stringify(record)],
+            );
+            created = true;
+        });
+        return created;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

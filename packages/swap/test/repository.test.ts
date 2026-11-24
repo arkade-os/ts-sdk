@@ -1,6 +1,6 @@
 import { collectAssetSwaps, collectRfqSwaps, collectSwapRecords } from "../src/repository";
 import "fake-indexeddb/auto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AssetSwap } from "../src/store";
 import type { RfqSwapRecord } from "../src/rfqRecord";
 import type { AtomicDecimal } from "../src/client/amount";
@@ -614,6 +614,19 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         expect(await repository.getSwapRecord("never-stored")).toBeUndefined();
     });
 
+    it("creates a record only when none has its id, keeping the first whole", async () => {
+        await using repository = create();
+        const contender = { ...swapRecord("q1"), fundingTxid: "ab".repeat(32) };
+        expect(
+            await Promise.all([
+                repository.createSwapRecordIfAbsent(swapRecord("q1")),
+                repository.createSwapRecordIfAbsent(contender),
+            ]),
+        ).toEqual([true, false]);
+        expect(await repository.createSwapRecordIfAbsent(contender)).toBe(false);
+        expect(await repository.getSwapRecord("q1")).toEqual(swapRecord("q1"));
+    });
+
     it("replaces a record on a second save rather than duplicating it", async () => {
         await using repository = create();
         await repository.saveSwapRecord(swapRecord("q1"));
@@ -687,6 +700,43 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         expect(await collectSwapRecords(repository)).toEqual([]);
         expect(await collectAssetSwaps(repository)).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
+    });
+});
+
+describe("IndexedDB swap-record creation", () => {
+    it("lets one of two instances on the same database create the record", async () => {
+        const dbName = `create-${Math.random()}`;
+        await using first = new IndexedDbAssetSwapRepository(dbName);
+        await using second = new IndexedDbAssetSwapRepository(dbName);
+        const contender = { ...swapRecord("q1"), fundingTxid: "ab".repeat(32) };
+        const created = await Promise.all([
+            first.createSwapRecordIfAbsent(swapRecord("q1")),
+            second.createSwapRecordIfAbsent(contender),
+        ]);
+        expect(created.filter(Boolean)).toHaveLength(1);
+        expect(await second.getSwapRecord("q1")).toEqual(created[0] ? swapRecord("q1") : contender);
+    });
+
+    it("does not report an insert whose transaction never committed", async () => {
+        await using repository = new IndexedDbAssetSwapRepository(`abort-${Math.random()}`);
+        await repository.getSwapRecord("q1");
+        const add = IDBObjectStore.prototype.add;
+        const aborting = vi.spyOn(IDBObjectStore.prototype, "add").mockImplementation(function (
+            this: IDBObjectStore,
+            value,
+            key,
+        ) {
+            const request = add.call(this, value, key);
+            request.addEventListener("success", () => this.transaction.abort());
+            return request;
+        });
+        try {
+            await expect(repository.createSwapRecordIfAbsent(swapRecord("q1"))).rejects.toThrow();
+        } finally {
+            aborting.mockRestore();
+        }
+        expect(await repository.getSwapRecord("q1")).toBeUndefined();
+        expect(await repository.createSwapRecordIfAbsent(swapRecord("q1"))).toBe(true);
     });
 });
 

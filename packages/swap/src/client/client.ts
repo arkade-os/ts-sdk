@@ -235,11 +235,12 @@ export interface SwapClient {
     quote(input: QuoteInput, options?: { readonly solverId?: string }): Promise<Quote>;
     /**
      * Make the quote durable, then move the value: record and secrets are at rest before anything
-     * irreversible. Idempotent by quote id — never a second invoice or a second funding. Returns
+     * irreversible. Idempotent by quote id — never a second invoice or a second funding: a stored
+     * record without a funding txid is answered as it stands until its deposit is found. Returns
      * once durable: an invoice shown while its claim secret is only in memory buys an unclaimable
      * lockup.
      *
-     * @throws {QuoteExpired} past `quote.expiresAt`; the client never re-quotes.
+     * @throws {QuoteExpired} creating a record past `quote.expiresAt`; the client never re-quotes.
      * @throws {InsufficientFunds} before the persist, on funding routes only.
      * @throws {AcceptConflict} when a record for this quote id contradicts it.
      * @throws {MissingCorridorDep} when the client was given no repository.
