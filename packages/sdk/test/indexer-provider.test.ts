@@ -578,10 +578,10 @@ describe("RestIndexerProvider", () => {
                 isSpent: false,
                 spentBy: "",
             });
-            const fullPage = Array.from({ length: 500 }, (_, i) => vtxo(`page0-${i}`));
-            // The server clamps page.index=0 to page 1 and echoes the 1-based
-            // page in `current`; `next` points at the following page until the
-            // last one, where it pins at `total`.
+            const fullPage = Array.from({ length: 100 }, (_, i) => vtxo(`page0-${i}`));
+            // The server caps page.size at 100, clamps page.index=0 to page 1 and
+            // echoes the 1-based page in `current`; `next` points at the following
+            // page until the last one, where it pins at `total`.
             mockFetch
                 .mockResolvedValueOnce(
                     jsonResponse({
@@ -600,8 +600,8 @@ describe("RestIndexerProvider", () => {
             const result = await provider.getVtxos({ scripts: ["script-a"] });
 
             expect(mockFetch).toHaveBeenCalledTimes(2);
-            expect(result.vtxos).toHaveLength(501);
-            expect(result.vtxos[500].txid).toBe("page1-0");
+            expect(result.vtxos).toHaveLength(101);
+            expect(result.vtxos[100].txid).toBe("page1-0");
             // Nothing is left to ask for, so there is no cursor to hand back.
             expect(result.page).toBeUndefined();
 
@@ -980,11 +980,36 @@ describe("RestIndexerProvider", () => {
                 new AbortController().signal,
             );
 
-            await expect(subscription.next()).rejects.toThrow(/Unexpected status 500/);
+            await expect(subscription.next()).rejects.toThrow(
+                /Unexpected status when fetching SSE stream.*\(500\)/,
+            );
             const url = new URL(mockFetch.mock.calls[0][0] as string);
             expect(url.pathname).toBe("/v1/indexer/subscription");
             expect(url.searchParams.getAll("filter.expressions")).toEqual([PACKET_4]);
             expect(MockEventSource.instances).toHaveLength(0);
+            for (const spy of quiet) spy.mockRestore();
+            vi.doUnmock("expo/fetch");
+        });
+
+        it("carries an Expo refusal's status and Retry-After to the watcher", async () => {
+            vi.doMock("expo/fetch", () => {
+                throw new Error("expo/fetch unavailable");
+            });
+            const quiet = (["warn", "error"] as const).map((level) =>
+                vi.spyOn(console, level).mockImplementation(() => undefined),
+            );
+            mockFetch.mockResolvedValueOnce(
+                new Response(null, { status: 429, headers: { "retry-after": "7" } }),
+            );
+            const { ExpoIndexerProvider } = await import("../src/providers/expoIndexer");
+            const provider = new ExpoIndexerProvider("http://localhost:7070");
+
+            const error = await provider
+                .getSubscription("sub-1", new AbortController().signal)
+                .next()
+                .catch((e: unknown) => e);
+
+            expect(error).toMatchObject({ status: 429, retryAfterMs: 7_000 });
             for (const spy of quiet) spy.mockRestore();
             vi.doUnmock("expo/fetch");
         });

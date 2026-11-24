@@ -166,7 +166,9 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
     const rotateServerSigner = vi.fn(async (next: Uint8Array) => {
         arkServerPublicKey = next;
     });
-    const getContractsWithVtxos = vi.fn().mockResolvedValue(opts.contractsWithVtxos);
+    const getContractsWithVtxos = vi.fn(async (filter?: { type?: string[] }) =>
+        opts.contractsWithVtxos.filter((c) => filter?.type?.includes(c.contract.type) ?? true),
+    );
     // Filter the supplied boarding groups by the requested signer set, mirroring
     // the real wallet's allowed-signer discovery.
     const getBoardingUtxosForSigners = vi.fn(async (allowed: Set<string>) =>
@@ -251,6 +253,19 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(sentInputs[0].value).toBe(5000);
     });
 
+    it("migrates a coin the Executor renews like the wallet's own", async () => {
+        const vtxo = makeVtxo("executor-" + DEP_DUE, 5000);
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [{ contract: makeContract(DEP_DUE, "executor"), vtxos: [vtxo] }],
+        });
+
+        const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        expect(sendSelectedVtxosToSelf.mock.calls[0][0]).toEqual([vtxo]);
+    });
+
     it("orders migration inputs by value, highest first", async () => {
         const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [
@@ -312,6 +327,23 @@ describe("VtxoManager - deprecated-signer migration", () => {
 
         expect(report.vtxos?.migrated).toHaveLength(1);
         expect(sendSelectedVtxosToSelf.mock.calls[0][0]).toHaveLength(1);
+    });
+
+    it("leaves VTXOs held by reserveVtxos out of the migration send", async () => {
+        const script = "default-" + DEP_DUE;
+        const held = makeVtxo(script, 9000);
+        const free = makeVtxo(script, 5000);
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [held, free])],
+        });
+        Object.assign(wallet, { getHeldVtxos: vi.fn().mockResolvedValue([held]) });
+
+        const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        const inputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(inputs.map((v) => v.txid)).toEqual([free.txid]);
     });
 
     it("excludes deprecated-signer VTXOs without a batchExpiry and still migrates the rest", async () => {

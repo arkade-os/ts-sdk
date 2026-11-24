@@ -14,10 +14,6 @@ import type { CorridorDrive, CorridorFactory, CorridorModule } from "./contract"
 import type { OnchainCorridorDeps } from "./deps";
 
 /**
- * On `onchain -> arkade` the Arkade lockup is the solver's and the L1 HTLC's refund leaf the
- * trader's own: the trader claims the lockup, or takes its L1 funding back after
- * `htlc.refundLocktime`.
- *
  * On `arkade -> onchain` the two covenants have different owners: the Arkade lockup is
  * the trader's (`refundLocktime` = money comes back), but the L1 HTLC's refund leaf is
  * the solver's, so reaching `htlc.refundLocktime` means the claim was missed.
@@ -29,14 +25,6 @@ export const ONCHAIN_DRIVE = {
             { covenant: "onchain_htlc", owner: "solver", deadline: "htlc_refund_locktime" },
         ],
         actions: ["claimOnchain", "refundArkade"],
-        seams: ["indexer", "chain"],
-    },
-    give: {
-        lockups: [
-            { covenant: "arkade_lockup", owner: "solver", deadline: "refund_locktime" },
-            { covenant: "onchain_htlc", owner: "trader", deadline: "htlc_refund_locktime" },
-        ],
-        actions: ["claimLockup", "refundOnchain"],
         seams: ["indexer", "chain"],
     },
 } as const satisfies CorridorDrive;

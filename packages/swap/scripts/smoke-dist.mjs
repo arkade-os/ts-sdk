@@ -78,7 +78,9 @@ for (const specifier of specifiers) {
 //
 // Only value exports are checkable at runtime. Types are covered by
 // `tsconfig.test.json` and by the barrel typechecking at all.
-const dispositions = JSON.parse(readFileSync(resolve(pkgRoot, "scripts/dispositions.json"), "utf8"));
+const dispositions = JSON.parse(
+    readFileSync(resolve(pkgRoot, "scripts/dispositions.json"), "utf8"),
+);
 const isValue = (mod, name) => Object.hasOwn(mod, name) && mod[name] !== undefined;
 
 const [rootEsm, rootCjs] = [await import("@arkade-os/swap"), require("@arkade-os/swap")];
@@ -132,7 +134,9 @@ for (const [condition, root, protocol] of [
     // where the module resolved empty and nothing was checked.
     const values = dispositions.P.filter((name) => isValue(protoEsm, name));
     if (values.length < 100) {
-        throw new Error(`@arkade-os/swap/protocol (${condition}) exports only ${values.length} values`);
+        throw new Error(
+            `@arkade-os/swap/protocol (${condition}) exports only ${values.length} values`,
+        );
     }
     const missing = values.filter((name) => !isValue(protocol, name));
     if (missing.length) {
@@ -158,7 +162,9 @@ for (const [condition, root, protocol] of [
         (name) => isValue(root, name) || isValue(protocol, name),
     );
     if (returned.length) {
-        throw new Error(`(${condition}) internalized/deleted names are exported again: ${returned}`);
+        throw new Error(
+            `(${condition}) internalized/deleted names are exported again: ${returned}`,
+        );
     }
 }
 
@@ -187,7 +193,9 @@ if (new Set(schemaNames).size !== schemaNames.length) {
     throw new Error(`AssetSwapRealmSchemas has duplicate names: [${schemaNames}]`);
 }
 
-const operatorPubkey = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
+const operatorPubkey = hex.decode(
+    "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+);
 const offer = {
     swapPkScript: new Uint8Array(0),
     wantAmount: 50_000n,
@@ -200,6 +208,16 @@ const offer = {
 };
 
 const contract = offerContract(offer, operatorPubkey);
+const removed = (() => {
+    try {
+        offerContract(offer, operatorPubkey, "asset-swap-v3");
+    } catch (error) {
+        return String(error);
+    }
+})();
+if (!removed?.includes("unknown contract version asset-swap-v3")) {
+    throw new Error(`asset-swap-v3 still compiles: ${removed}`);
+}
 offer.swapPkScript = contract.pkScript;
 const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
 

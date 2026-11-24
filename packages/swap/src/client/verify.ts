@@ -9,6 +9,7 @@
  * and an expired or expiring quote is `QuoteExpired` (the remedy is a fresh quote, not a
  * different solver).
  */
+import { hex } from "@scure/base";
 import {
     AddressMismatch,
     assertFundable,
@@ -107,6 +108,31 @@ export const verifyResponder = (input: {
 };
 
 /**
+ * A directed covenant binds `solver_pubkey` into `fulfill`, so it must be the key the transport
+ * proved answered: a key nobody behind this quote holds would strand the deposit until cancelled.
+ * Folded into the `responder` check. Returns the key, decoded.
+ */
+export const verifyTaker = (input: {
+    readonly attested?: Pubkey;
+    readonly solverPubkey: unknown;
+}): Uint8Array => {
+    const xOnly = (key: unknown) =>
+        typeof key === "string" && /^[0-9a-f]{64}$/i.test(key)
+            ? hex.decode(key.toLowerCase())
+            : undefined;
+    const taker = xOnly(input.solverPubkey);
+    const attested = xOnly(input.attested);
+    if (
+        taker === undefined ||
+        attested === undefined ||
+        hex.encode(taker) !== hex.encode(attested)
+    ) {
+        throw new QuoteVerificationFailed("responder", input.attested, String(input.solverPubkey));
+    }
+    return taker;
+};
+
+/**
  * The pair check, run here as well as in the transport's `expectQuote`, so a transport that skips
  * it (or one a caller injected) cannot make the quote path skip it too.
  */
@@ -156,7 +182,6 @@ export const verifySendWindow = (input: {
     readonly onchain?: {
         htlcLocktime: number;
         minConfirmations: number;
-        direction: "send" | "receive";
     };
 }): void => {
     gated(
@@ -381,14 +406,14 @@ export const verifyCrossAssetAmount = (input: {
  * The solver's carrier for an asset deposit, well-formed. Reported as the `pair` check, like the
  * amounts: it is sats the trader funds on top of the quoted give leg.
  */
-export const verifiedCarrierSats = (quote: RfqQuote): bigint => {
+export const verifiedCarrierSats = (quote: RfqQuote, dust: bigint): bigint => {
     try {
-        return quoteCarrierSats(quote);
+        return quoteCarrierSats(quote, dust);
     } catch (error) {
         if (reasonOf(error) !== "carrier_malformed") throw error;
         throw new QuoteVerificationFailed(
             "pair",
-            "carrier_sats a non-negative integer",
+            "carrier_sats a non-negative integer, at most the operator's dust",
             String(quote.carrier_sats),
             { cause: error },
         );

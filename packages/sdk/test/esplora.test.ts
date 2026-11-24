@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EsploraProvider, Coin, type ExplorerTransaction } from "../src";
+import { hex } from "@scure/base";
+import { Transaction } from "@scure/btc-signer";
+import { EsploraProvider, Coin, HttpResponseError, type ExplorerTransaction } from "../src";
 import { jsonResponse, textResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
@@ -41,6 +43,15 @@ describe("EsploraProvider", () => {
             expect(utxos).toEqual(mockUTXOs);
         });
 
+        it.each([{ value: -1 }, { value: 0.5 }, { value: 2_100_000_000_000_001 }, { vout: -1 }])(
+            "rejects a UTXO entry with %o",
+            async (bad) => {
+                mockFetch.mockResolvedValueOnce(jsonResponse([{ ...mockUTXOs[0], ...bad }]));
+                const provider = new EsploraProvider("http://localhost:3000");
+                await expect(provider.getCoins("bc1qtest")).rejects.toThrow(/Invalid UTXO/);
+            },
+        );
+
         it("should throw error on failed fetch", async () => {
             mockFetch.mockResolvedValueOnce({
                 ok: false,
@@ -52,9 +63,62 @@ describe("EsploraProvider", () => {
                 "Failed to fetch UTXOs: Not Found",
             );
         });
+
+        it("carries the status and Retry-After of a rate-limited response", async () => {
+            mockFetch.mockResolvedValueOnce(
+                new Response("rate limited", { status: 429, headers: { "retry-after": "30" } }),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getCoins("bc1qtest").catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(429);
+            expect(error.retryAfterMs).toBe(30_000);
+            // HTTP/2 leaves statusText empty, so the number has to be in the message.
+            expect(error.message).toBe("Failed to fetch UTXOs: (429)");
+        });
+
+        it("carries a server error with no Retry-After", async () => {
+            mockFetch.mockResolvedValueOnce(
+                new Response("boom", { status: 500, statusText: "Internal Server Error" }),
+            );
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getCoins("bc1qtest").catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(500);
+            expect(error.retryAfterMs).toBeUndefined();
+            expect(error.message).toBe("Failed to fetch UTXOs: Internal Server Error (500)");
+        });
+
+        it("keeps the status when the error body cannot be read", async () => {
+            const refused = new Response("", {
+                status: 429,
+                statusText: "Too Many Requests",
+                headers: { "retry-after": "5" },
+            });
+            vi.spyOn(refused, "text").mockRejectedValue(new TypeError("body stream errored"));
+            mockFetch.mockResolvedValueOnce(refused);
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getTransactions("bc1qtest").catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(429);
+            expect(error.retryAfterMs).toBe(5_000);
+            expect(error.message).toBe("Failed to get transactions: Too Many Requests (429)");
+        });
     });
 
     describe("getTransactions", () => {
+        const confirmed = (txid: string): ExplorerTransaction => ({
+            txid,
+            vout: [],
+            status: { confirmed: true, block_time: 1600000000 },
+        });
+
         it("preserves Esplora's numeric satoshi output values", async () => {
             const tx: ExplorerTransaction = {
                 txid: "deposit",
@@ -62,25 +126,68 @@ describe("EsploraProvider", () => {
                 status: { confirmed: true, block_time: 1600000000 },
             };
             mockFetch.mockResolvedValueOnce(jsonResponse([tx]));
+            mockFetch.mockResolvedValueOnce(jsonResponse([]));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const txs = await provider.getTransactions("bc1qtest");
 
             expect(txs[0].vout[0].value).toBe(10000);
         });
+
+        it("pages confirmed history past the first page", async () => {
+            mockFetch
+                .mockResolvedValueOnce(jsonResponse([confirmed("newest")]))
+                .mockResolvedValueOnce(jsonResponse([confirmed("older")]))
+                .mockResolvedValueOnce(jsonResponse([]));
+
+            const txs = await new EsploraProvider("http://localhost:3000").getTransactions(
+                "bc1qtest",
+            );
+
+            expect(txs.map((tx) => tx.txid)).toEqual(["newest", "older"]);
+            expect(mockFetch.mock.calls[1][0]).toBe(
+                "http://localhost:3000/address/bc1qtest/txs/chain/newest",
+            );
+        });
+
+        it("keeps the first page when the explorer has no paging route", async () => {
+            mockFetch
+                .mockResolvedValueOnce(jsonResponse([confirmed("newest")]))
+                .mockResolvedValueOnce(textResponse("Not Found", { status: 404 }));
+
+            const txs = await new EsploraProvider("http://localhost:3000").getTransactions(
+                "bc1qtest",
+            );
+
+            expect(txs.map((tx) => tx.txid)).toEqual(["newest"]);
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
     });
 
     describe("getRawTransaction", () => {
+        const tx = new Transaction({ allowUnknownOutputs: true });
+        tx.addInput({ txid: new Uint8Array(32).fill(1), index: 0 });
+        tx.addOutput({ script: new Uint8Array([0x6a]), amount: 0n });
+
         it("decodes the /hex endpoint into wire bytes", async () => {
             // Esplora's plain-text response is newline-terminated on some
             // deployments; hex.decode rejects the stray byte.
-            mockFetch.mockResolvedValueOnce(textResponse("0200000001ab\n"));
+            mockFetch.mockResolvedValueOnce(textResponse(`${hex.encode(tx.unsignedTx)}\n`));
 
             const provider = new EsploraProvider("http://localhost:3000");
-            const raw = await provider.getRawTransaction("deadbeef");
+            const raw = await provider.getRawTransaction(tx.id);
 
-            expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/tx/deadbeef/hex");
-            expect(Array.from(raw)).toEqual([0x02, 0x00, 0x00, 0x00, 0x01, 0xab]);
+            expect(mockFetch).toHaveBeenCalledWith(`http://localhost:3000/tx/${tx.id}/hex`);
+            expect(raw).toEqual(tx.unsignedTx);
+        });
+
+        it("rejects bytes that hash to another txid", async () => {
+            mockFetch.mockResolvedValueOnce(textResponse(hex.encode(tx.unsignedTx)));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await expect(provider.getRawTransaction("00".repeat(32))).rejects.toThrow(
+                /another transaction/,
+            );
         });
 
         it("throws with the txid on a failed fetch", async () => {
@@ -121,6 +228,23 @@ describe("EsploraProvider", () => {
             await expect(provider.getFeeRate()).rejects.toThrow(
                 "Failed to fetch fee rate: Service Unavailable",
             );
+        });
+
+        it("keeps the status when cancelling the error body fails", async () => {
+            const refused = new Response("", {
+                status: 429,
+                statusText: "Too Many Requests",
+                headers: { "retry-after": "5" },
+            });
+            vi.spyOn(refused.body!, "cancel").mockRejectedValue(new TypeError("body errored"));
+            mockFetch.mockResolvedValueOnce(refused);
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const error = await provider.getFeeRate().catch((e) => e);
+
+            expect(error).toBeInstanceOf(HttpResponseError);
+            expect(error.status).toBe(429);
+            expect(error.retryAfterMs).toBe(5_000);
         });
     });
 

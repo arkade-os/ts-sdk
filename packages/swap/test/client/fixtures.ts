@@ -29,10 +29,11 @@ import {
     type TransportCard,
 } from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
+import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "../../src/program";
+import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../../src/protocol";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
-    ONCHAIN_RECEIVE_PAIR,
     ONCHAIN_SEND_PAIR,
     lightningReceiveContract,
     lightningSendContract,
@@ -57,9 +58,6 @@ export const SOLVER_DISCOVERY_KEY = hex.encode(key(4));
 export const RECEIVER_PK_SCRIPT = p2tr(key(6));
 export const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 export const HTLC_REFUND_PUBKEY = key(7);
-/** The solver's L1 claim key on `onchain -> arkade`. */
-export const HTLC_CLAIM_PUBKEY = key(10);
-/** The wallet's boarding address: where an `onchain -> arkade` refund pays. */
 export const BOARDING_ADDRESS = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 
 export const NETWORK = getNetwork("regtest");
@@ -484,54 +482,6 @@ export const onchainSendAnswer = (
     } as RfqQuote;
 };
 
-/** The solver's answer to `onchain:BTC->arkade:BTC`: its lockup and the L1 HTLC the trader funds. */
-export const onchainReceiveAnswer = (
-    payload: Payload,
-    clock: SolverClock,
-    over: { quote?: Partial<RfqQuote>; profile?: Profile } = {},
-): RfqQuote => {
-    const profile = profileOf(payload);
-    const paymentHash = profile.payment_hash as string;
-    const script = lightningReceiveContract({
-        solverPubkey: SOLVER_PUBKEY,
-        refundLocktime: clock.refundLocktime,
-        operatorPubkey: OPERATOR_PUBKEY,
-        paymentHash,
-        claimDelay: CLAIM_DELAY,
-        emulatorPubkey: EMULATOR_PUBKEY,
-        solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
-        payoutPubkey: hex.decode(profile.payout_pubkey as string),
-        payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
-    });
-    const htlc = onchainHtlcScript(
-        {
-            paymentHash,
-            claimKey: HTLC_CLAIM_PUBKEY,
-            refundKey: hex.decode(profile.refund_pubkey as string),
-            refundLocktime: clock.htlcLocktime,
-        },
-        "regtest",
-    );
-    // The pinned side echoes the request, the other carries a 1% spread.
-    const requested = Number(payload.amount);
-    const toPinned = payload.amount_side === "to";
-    return {
-        ...baseQuote(payload, clock),
-        from_amount: toPinned ? Math.ceil(requested * 1.01) : requested,
-        to_amount: toPinned ? requested : Math.floor(requested * 0.99),
-        profile: {
-            lockup_address: script.address(NETWORK.hrp, OPERATOR_PUBKEY).encode(),
-            solver_refund_pk_script: hex.encode(SOLVER_REFUND_PK_SCRIPT),
-            claim_pubkey: hex.encode(HTLC_CLAIM_PUBKEY),
-            htlc_locktime: clock.htlcLocktime,
-            htlc_address: htlc.address,
-            min_confirmations: 2,
-            ...over.profile,
-        },
-        ...over.quote,
-    } as RfqQuote;
-};
-
 /**
  * The solver's answer on a negotiated asset market.
  *
@@ -551,6 +501,9 @@ export const arkadeAssetAnswer = (
         price?: number;
         /** Override the payout, to price the double off its own card. */
         toAmount?: bigint;
+        /** Quotes and derives `asset-swap-directed` under this key; default, the one the transport attests. */
+        taker?: Uint8Array;
+        supportsNonce?: boolean;
     } = {},
 ): RfqQuote => {
     const profile = profileOf(payload);
@@ -565,6 +518,17 @@ export const arkadeAssetAnswer = (
     });
     const to = over.toAmount ?? plan.receive.atomic;
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
+    // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
+    const version = (payload.contract_versions as string[] | undefined)?.find(
+        (v) =>
+            v === ASSET_SWAP_DIRECTED ||
+            v === ASSET_SWAP_V2 ||
+            (over.supportsNonce && v === ASSET_SWAP_DIRECTED_NONCE),
+    );
+    const taker =
+        version === ASSET_SWAP_DIRECTED || version === ASSET_SWAP_DIRECTED_NONCE
+            ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY))
+            : undefined;
     const script = offerContract(
         {
             // The covenant binds what the fill must DELIVER, so the wanted
@@ -575,8 +539,15 @@ export const arkadeAssetAnswer = (
             makerPublicKey: hex.decode(profile.maker_public_key as string),
             emulatorPubkey: EMULATOR_PUBKEY,
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
+            ...(taker && { taker }),
+            ...(version === ASSET_SWAP_DIRECTED_NONCE && {
+                nonce: assetRfqNonce(payload.rfq_id as string),
+            }),
         },
         OPERATOR_PUBKEY,
+        version === ASSET_SWAP_DIRECTED || version === ASSET_SWAP_DIRECTED_NONCE
+            ? version
+            : ASSET_SWAP_V2,
     );
     return {
         v: 1,
@@ -587,8 +558,9 @@ export const arkadeAssetAnswer = (
         // knowable client-side, so this wire carries no JSON numbers.
         from_amount: from.toString(),
         to_amount: to.toString(),
-        solver_pubkey: hex.encode(SOLVER_PUBKEY),
+        solver_pubkey: hex.encode(taker ?? SOLVER_PUBKEY),
         valid_until: clock.validUntil,
+        ...(version === undefined ? {} : { contract_version: version }),
         // No `refund_locktime`: an offer covenant carries no timelock, so
         // `valid_until` is this route's only clock.
         profile: {
@@ -644,8 +616,6 @@ export const solverFor = (clock: SolverClock): SolverAnswer => {
                 return lightningReceiveAnswer(payload, clock);
             case ONCHAIN_SEND_PAIR:
                 return onchainSendAnswer(payload, clock);
-            case ONCHAIN_RECEIVE_PAIR:
-                return onchainReceiveAnswer(payload, clock);
             case ASSET_BUY_PAIR:
             case ASSET_SELL_PAIR:
                 return arkadeAssetAnswer(payload, clock);

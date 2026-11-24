@@ -38,6 +38,14 @@ import {
     type RfqQuote,
 } from "../src/rfq";
 import { CHF_ID, USD_ID } from "./fixtures";
+import {
+    ASSET_SWAP_CONTRACTS,
+    ASSET_SWAP_CONTRACT_VERSIONS,
+    ASSET_SWAP_DERIVABLE_VERSIONS,
+    ASSET_SWAP_V2,
+    ASSET_SWAP_DIRECTED,
+    assetSwapContractVersion,
+} from "../src/program";
 import { asset } from "@arkade-os/sdk";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
@@ -519,6 +527,44 @@ describe("requests", () => {
             maker_pk_script: hex.encode(makerPkScript),
             maker_public_key: hex.encode(makerPublicKey),
         });
+    });
+
+    it("adds contract_versions only when the trader advertises them", () => {
+        const base = {
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID),
+            amount: 5000,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
+        };
+        const plain = arkadeSwapRequest(base) as Record<string, unknown>;
+        expect("contract_versions" in plain).toBe(false);
+        const advertised = arkadeSwapRequest({
+            ...base,
+            contractVersions: [ASSET_SWAP_DIRECTED, ASSET_SWAP_V2],
+        }) as Record<string, unknown>;
+        expect(advertised.contract_versions).toEqual([ASSET_SWAP_DIRECTED, ASSET_SWAP_V2]);
+        expect(advertised.profile).toEqual(plain.profile);
+    });
+
+    it("resolves a contract version, defaulting to asset-swap-v2", () => {
+        expect(assetSwapContractVersion(ASSET_SWAP_V2)).toBe(ASSET_SWAP_V2);
+        expect(assetSwapContractVersion(undefined)).toBe(ASSET_SWAP_V2);
+        for (const unknown of ["asset-swap-v3", "asset-swap-v999"]) {
+            expect(() => assetSwapContractVersion(unknown)).toThrow(
+                `unknown contract version ${unknown}`,
+            );
+        }
+    });
+
+    it("derives exactly the registered contract versions, and advertises a subset", () => {
+        expect([...ASSET_SWAP_DERIVABLE_VERSIONS].sort()).toEqual(
+            Object.keys(ASSET_SWAP_CONTRACTS).sort(),
+        );
+        for (const version of ASSET_SWAP_CONTRACT_VERSIONS) {
+            expect(ASSET_SWAP_DERIVABLE_VERSIONS).toContain(version);
+        }
+        expect(assetSwapContractVersion(ASSET_SWAP_DIRECTED)).toBe(ASSET_SWAP_DIRECTED);
     });
 
     it("mirrors the wire's pair-length cap for asset-to-asset", () => {

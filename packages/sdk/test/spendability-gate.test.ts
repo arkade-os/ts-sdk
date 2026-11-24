@@ -23,7 +23,8 @@ import {
     type OnchainProvider,
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
+import { scopedWalletRequest, testWalletBinding } from "./helpers/walletRequest";
 import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
@@ -39,10 +40,13 @@ import {
 
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+const operatorUrl = "https://ark.test";
 
 const ESCROW_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000001";
 const MARKED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000002";
 const UNKNOWN_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000003";
+const RECOVERY_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000004";
+const RECOVERY_COMMITMENT = "d4".repeat(32);
 const ASSET_ID = "aa".repeat(32);
 
 const arkInfo = (): ArkadeInfo => ({
@@ -116,10 +120,11 @@ const vtxo = (script: string, value: number, assets?: { assetId: string; amount:
  * no handler at all.
  */
 async function seededWallet(opts?: {
-    intents?: InMemoryIntentRepository;
+    intents?: InMemoryBatchRegistrationRepository;
     signing?: boolean;
     indexerProvider?: IndexerProvider;
     minimal?: boolean;
+    recoveryHeld?: boolean;
 }) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
@@ -138,8 +143,41 @@ async function seededWallet(opts?: {
         ]);
     }
 
+    if (opts?.recoveryHeld) {
+        // A claimed, server-swept voucher: its contract is held for recovery, one coin is
+        // already settled into the wallet's own address (below), and one is still swept.
+        const held = {
+            ...contract(RECOVERY_SCRIPT, "default"),
+            metadata: { recoveryOnly: true },
+        };
+        await contractRepository.saveContract(held);
+        await walletRepository.saveVtxos(held.address, [
+            createMockExtendedVtxo({
+                txid: "c1".repeat(32),
+                vout: 0,
+                value: 4_000,
+                script: RECOVERY_SCRIPT,
+                isSwept: true,
+                isPreconfirmed: true,
+                createdAt: new Date(1_000),
+            }),
+            createMockExtendedVtxo({
+                txid: "c2".repeat(32),
+                vout: 0,
+                value: 4_000,
+                script: RECOVERY_SCRIPT,
+                isSpent: true,
+                isSwept: true,
+                isPreconfirmed: true,
+                settledBy: RECOVERY_COMMITMENT,
+                createdAt: new Date(1_000),
+            }),
+        ]);
+    }
+
     const config = {
         arkProvider: {
+            serverUrl: operatorUrl,
             getInfo: async () => arkInfo(),
         } as Partial<OperatorProvider> as OperatorProvider,
         indexerProvider: opts?.indexerProvider ?? offlineIndexer(),
@@ -169,7 +207,28 @@ async function seededWallet(opts?: {
         vtxo(defaultScript, 40_000, [{ assetId: ASSET_ID, amount: 7n }]),
     ]);
 
-    return { wallet, defaultScript, walletRepository, contractRepository };
+    if (opts?.recoveryHeld) {
+        // The recovery settlement's output: one batch coin at the wallet's own address.
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: RECOVERY_COMMITMENT,
+                vout: 0,
+                value: 4_000,
+                script: defaultScript,
+                commitmentTxIds: [RECOVERY_COMMITMENT],
+                status: { confirmed: true, isLeaf: true },
+                createdAt: new Date(2_000),
+            }),
+        ]);
+    }
+
+    return {
+        wallet,
+        defaultScript,
+        walletRepository,
+        contractRepository,
+        arkProvider: config.arkProvider,
+    };
 }
 
 const amountsOf = (txs: { amount: number }[]) => txs.map((t) => t.amount).sort((a, b) => a - b);
@@ -409,9 +468,9 @@ describe("getSpendableVtxos", () => {
     });
 
     it("excludes intent-locked outpoints", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
-        await intents.saveIntent({
+        await intents.saveBatchRegistration({
             proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
@@ -499,8 +558,8 @@ describe("getBalance", () => {
         );
     };
 
-    const lockOutpoint = async (intents: InMemoryIntentRepository, txid: string) =>
-        intents.saveIntent({
+    const lockOutpoint = async (intents: InMemoryBatchRegistrationRepository, txid: string) =>
+        intents.saveBatchRegistration({
             proofTxId: `i-${txid.slice(0, 4)}`,
             createdAt: 1,
             updatedAt: 1,
@@ -625,7 +684,7 @@ describe("getBalance", () => {
     });
 
     it("counts a gated-and-locked VTXO once, as contractLocked", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet } = await seededWallet({ intents });
         const escrowTxid = ESCROW_SCRIPT.slice(-2).repeat(32);
         await lockOutpoint(intents, escrowTxid);
@@ -645,7 +704,7 @@ describe("getBalance", () => {
     });
 
     it("reports an ungated intent-locked VTXO as pendingSettlement", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
 
@@ -657,7 +716,7 @@ describe("getBalance", () => {
     });
 
     it("mirrors each bucket into its deprecated alias", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
 
@@ -907,7 +966,7 @@ describe("logUngatedInputs", () => {
     const EXPIRED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000004";
 
     it("reports all three exclusions, not just the contract gate", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, contractRepository, defaultScript } = await seededWallet({ intents });
 
         // A contract on a deprecated signer whose cutoff has passed: the
@@ -921,7 +980,7 @@ describe("logUngatedInputs", () => {
         });
 
         const lockedTxid = "e3".repeat(32);
-        await intents.saveIntent({
+        await intents.saveBatchRegistration({
             proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
@@ -1150,16 +1209,29 @@ describe("main-thread / worker balance parity", () => {
         type: "GET_BALANCE" | "GET_TRANSACTION_HISTORY",
     ) => {
         const handler = new WalletMessageHandler();
-        (handler as any).readonlyWallet = seeded.wallet;
-        (handler as any).walletRepository = seeded.walletRepository;
-        (handler as any).indexerProvider = offlineIndexer();
-        (handler as any).arkProvider = {};
-
-        const response = await handler.handleMessage({
-            id: "1",
-            tag: DEFAULT_MESSAGE_TAG,
-            type,
-        } as any);
+        const binding = testWalletBinding(
+            await seeded.wallet.identity.xOnlyPublicKey(),
+            operatorUrl,
+            seeded.wallet.network.name,
+        );
+        await handler.start(
+            {
+                readonlyWallet: seeded.wallet,
+                arkProvider: seeded.arkProvider,
+                walletRequestBinding: binding,
+            },
+            { walletRepository: seeded.walletRepository },
+        );
+        const response = await handler.handleMessage(
+            scopedWalletRequest(
+                {
+                    id: "1",
+                    tag: DEFAULT_MESSAGE_TAG,
+                    type,
+                } as any,
+                binding,
+            ),
+        );
         expect(response.error).toBeUndefined();
         return (response as any).payload;
     };
@@ -1222,5 +1294,30 @@ describe("main-thread / worker balance parity", () => {
         // two the gate removes.
         expect(amountsOf(main)).toEqual([10_000, 40_000]);
         expect(amountsOf(worker)).toEqual(amountsOf(main));
+    });
+
+    /**
+     * Recovery-only coins are escrowed for their own isolated settlement, so the balance leaves
+     * them out. History has to as well: counted as the wallet's own, the swept coins read as
+     * received before any sats arrive, and the settlement that recovers them nets to a refresh
+     * and leaves no row at all.
+     */
+    it("keeps recovery-only coins out of the history, so the settlement is the received row", async () => {
+        const seeded = await seededWallet({ recoveryHeld: true });
+
+        const main = await seeded.wallet.getTransactionHistory();
+        const worker = (await workerRequest(seeded, "GET_TRANSACTION_HISTORY"))
+            .transactions as typeof main;
+
+        for (const history of [main, worker]) {
+            // The settlement output is the one 4_000 row. The two voucher coins (one swept, one
+            // settled away) would otherwise add two more, under their funding txids.
+            expect(history.map((tx) => [tx.amount, tx.key.commitmentTxid])).toEqual(
+                expect.arrayContaining([[4_000, RECOVERY_COMMITMENT]]),
+            );
+            expect(history.filter((tx) => tx.key.arkTxid === "c1".repeat(32))).toEqual([]);
+            expect(history.filter((tx) => tx.key.arkTxid === "c2".repeat(32))).toEqual([]);
+            expect(history.filter((tx) => tx.amount === 4_000)).toHaveLength(1);
+        }
     });
 });

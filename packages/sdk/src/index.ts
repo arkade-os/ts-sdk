@@ -10,7 +10,7 @@ export {
     PasskeyCancelled,
     PasskeyUnconfirmed,
 } from "./identity/passkey";
-export type { WebAuthnClient } from "./identity/passkey";
+export type { WebAuthnClient, PrfUnavailableReason } from "./identity/passkey";
 export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
 export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
@@ -234,7 +234,11 @@ import {
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
 } from "./wallet/serviceWorker/wallet";
-import type { MessageTimeouts, ServiceWorkerWalletMode } from "./wallet/serviceWorker/wallet";
+import type {
+    MessageTimeouts,
+    ServiceWorkerWalletMode,
+    WalletUpdate,
+} from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./worker/browser/utils";
 import {
@@ -291,6 +295,16 @@ import {
     DelegateOptions,
     RestDelegateProvider,
 } from "./providers/delegate";
+import {
+    DelegatedOutput,
+    ExecutorDelegation,
+    ExecutorDelegationDetails,
+    ExecutorInfo,
+    ExecutorProvider,
+    ExecutorRequestError,
+    ExecutorTemplate,
+    RestExecutorProvider,
+} from "./providers/executor";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -349,6 +363,17 @@ import { Intent, Proof, type IntentCoin, type ProofInput } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
+export type { ArkadeCashRequest, ArkadeCashResponse } from "./arkadeCash/messages";
+export type { ArkadeCashRecord, ArkadeCashAction, ArkadeCashTx } from "./arkadeCash/tracker";
+export type { ArkadeCashStatus, ArkadeCashStatusReport } from "./arkadeCash/status";
+export {
+    addArkadeCashRecord,
+    arkadeCashId,
+    arkadeCashResolver,
+    createArkadeCashTracker,
+    mergeArkadeCashRecord,
+} from "./arkadeCash/tracker";
+export { readArkadeCash } from "./arkadeCash/status";
 import {
     getNetwork,
     networkFromOperatorInfo,
@@ -441,6 +466,7 @@ import type {
 import {
     ArkError,
     ArkErrorName,
+    HttpResponseError,
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
@@ -520,6 +546,20 @@ import type {
 } from "./repositories/walletRepository";
 import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
 import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
+import {
+    DELEGATION_EXPIRES_KEY,
+    DELEGATION_LOCAL_STATUS,
+    DELEGATION_REGISTERED_KEY,
+    DELEGATION_STATUS_KEY,
+    DelegatedWallet,
+    DelegationOptions,
+    ExecutorManagerImpl,
+    ExecutorWatchMetadata,
+    ExecutorWatchRegistration,
+    IExecutorManager,
+    RegistrationOptions,
+    watchExecutorContracts,
+} from "./wallet/executor";
 
 export * from "./arkfee";
 export {
@@ -538,6 +578,16 @@ export {
 } from "./repositories/walletRepository";
 export { collectContracts } from "./repositories/contractRepository";
 export { collectBatchRegistrations, collectIntents } from "./repositories/intentRepository";
+export {
+    classifyBoardingExpiry,
+    decodeBoardingExit,
+    type BoardingExpiry,
+} from "./utils/arkTransaction";
+export type {
+    StoredVtxoReservation,
+    VtxoReservationRepository,
+} from "./repositories/vtxoReservationRepository";
+export { IndexedDBVtxoReservationRepository } from "./repositories/indexedDB/vtxoReservationRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
@@ -588,6 +638,8 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
+import { ExecutorContractHandler } from "./contracts/handlers/executor";
+import type { ExecutorContractParams } from "./contracts/handlers/executor";
 import type { ArkadeService } from "./arkade/service";
 import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
@@ -722,6 +774,14 @@ export {
     KeyringDescriptorProvider,
     DelegateManagerImpl,
     RestDelegateProvider,
+    ExecutorManagerImpl,
+    watchExecutorContracts,
+    DELEGATION_EXPIRES_KEY,
+    DELEGATION_LOCAL_STATUS,
+    DELEGATION_REGISTERED_KEY,
+    DELEGATION_STATUS_KEY,
+    ExecutorRequestError,
+    RestExecutorProvider,
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -903,6 +963,7 @@ export {
     maybeArkError,
     OnchainCosignPreflightError,
     isCosignFallback,
+    HttpResponseError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
@@ -944,6 +1005,7 @@ export {
     VHTLCV2ContractHandler,
     BoardingContractHandler,
     ArkadeContractHandler,
+    ExecutorContractHandler,
     isContractGenericallySpendable,
     gatedContracts,
     gateExclusion,
@@ -1203,6 +1265,7 @@ export type {
     VHTLCContractParams,
     VHTLCV2ContractParams,
     BoardingContractParams,
+    ExecutorContractParams,
     ArkadeContractParams,
     Discoverable,
     DiscoveryDeps,
@@ -1217,6 +1280,7 @@ export type {
     ResponseEnvelope,
     MessageTimeouts,
     ServiceWorkerWalletMode,
+    WalletUpdate,
     // Arkade types
     ArkadeBatchInput,
     ArkadeExtendedCoin,
@@ -1226,6 +1290,18 @@ export type {
     DelegateProvider,
     DelegateInfo,
     DelegateOptions,
+    IExecutorManager,
+    ExecutorProvider,
+    ExecutorInfo,
+    ExecutorDelegation,
+    ExecutorDelegationDetails,
+    ExecutorTemplate,
+    DelegatedOutput,
+    DelegatedWallet,
+    DelegationOptions,
+    ExecutorWatchMetadata,
+    ExecutorWatchRegistration,
+    RegistrationOptions,
     // Repositories
     ManagedConnection,
     WalletRepository,
@@ -1251,3 +1327,9 @@ export type {
     VirtualTx,
     VtxoBranch,
 };
+
+export type {
+    DelegationParams,
+    ExecutorContractKeys,
+    ExecutorDefault,
+} from "./script/executor/executorTemplate";

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
 import { Extension } from "../src/extension";
 import { AssetGroup, AssetRef, AssetOutput, Packet } from "../src/extension/asset";
+import { BufferReader } from "../src/extension/utils";
 import { Transaction } from "../src/utils/transaction";
 import extensionFixtures from "./fixtures/extension_fixtures.json";
 
@@ -197,5 +198,15 @@ describe("Extension.create packet-type validation", () => {
     it("accepts the full single-byte range", () => {
         expect(() => Extension.create([packet(0)])).not.toThrow();
         expect(() => Extension.create([packet(255)])).not.toThrow();
+    });
+});
+
+describe("BufferReader.readVarUint", () => {
+    const read = (encoded: string) => new BufferReader(hex.decode(encoded)).readVarUint();
+
+    it("reads at most 64 bits, as Go's binary.ReadUvarint does", () => {
+        expect(read(`${"ff".repeat(9)}01`)).toBe(2n ** 64n - 1n);
+        expect(() => read(`${"ff".repeat(9)}02`)).toThrow(/overflows 64 bits/);
+        expect(() => read(`${"ff".repeat(10)}01`)).toThrow(/overflows 64 bits/);
     });
 });

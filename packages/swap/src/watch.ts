@@ -11,7 +11,7 @@
  * swap is skipped by every later scan, so a guess written here would be permanent.
  * A persisted terminal status retires the contract ({@link retireOfferContract}).
  */
-import { base64, hex } from "@scure/base";
+import { base64 } from "@scure/base";
 import {
     ArkAddress,
     isContractVtxoEvent,
@@ -21,7 +21,7 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 import { RETIRABLE, retireOfferContract } from "./coverage";
-import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
+import { OFFER_CONTRACT_KIND, storedOffer, type RecordedOfferBinding } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { classifyDepositSpend, spendTxidsOf, type SpendKind } from "./restore";
 import {
@@ -46,8 +46,9 @@ const TERMINAL: readonly AssetSwapStatus[] = ["fulfilled", "cancelled", "recover
 export interface OfferSwapFacts {
     readonly id: string;
     readonly status: AssetSwapStatus;
-    /** The TLV offer, hex — what {@link classifyDepositSpend} needs. */
-    readonly offerHex: string;
+    /** What {@link classifyDepositSpend} rebuilds the covenant from: the binding, else the TLV. */
+    readonly offerHex?: string;
+    readonly binding?: RecordedOfferBinding;
     readonly swapPkScript: string;
     readonly fundingTxid?: string;
     readonly spentTxid?: string;
@@ -174,7 +175,7 @@ export async function watchOfferSwaps<S extends OfferSwapFacts>({
             if (candidates.length === 0) return "indeterminate";
             const { txs } = await indexer.getVirtualTxs(candidates);
             return classifyDepositSpend(
-                decodeOffer(hex.decode(swap.offerHex)),
+                storedOffer(swap),
                 operatorPubkey,
                 txs.map((psbt) => Transaction.fromPSBT(base64.decode(psbt))),
                 { txid: vtxo.txid, vout: vtxo.vout },

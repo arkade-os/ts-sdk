@@ -72,8 +72,7 @@ export type Route =
     | { give: Ep<"arkade">; take: Ep<"arkade"> }
     | { give: Ep<"arkade">; take: Ep<"lightning"> }
     | { give: Ep<"lightning">; take: Ep<"arkade"> }
-    | { give: Ep<"arkade">; take: Ep<"onchain"> }
-    | { give: Ep<"onchain">; take: Ep<"arkade"> };
+    | { give: Ep<"arkade">; take: Ep<"onchain"> };
 
 /**
  * The one thing a counterparty must see, when a route has one.

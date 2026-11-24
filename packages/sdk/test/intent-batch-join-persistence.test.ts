@@ -1,9 +1,9 @@
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
 import { Batch } from "../src/wallet/batch";
 import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 import { SettlementEventType, type SettlementEvent } from "../src/providers/ark";
 
 // Batch.join drives persistence from the awaited handler hooks, so the outcome
@@ -37,9 +37,9 @@ const failed: SettlementEvent = {
     reason: "boom",
 };
 
-function seededRepo(): InMemoryIntentRepository {
-    const repo = new InMemoryIntentRepository();
-    const intent: ArkIntent = {
+function seededRepo(): InMemoryBatchRegistrationRepository {
+    const repo = new InMemoryBatchRegistrationRepository();
+    const intent: BatchRegistration = {
         proofTxId: intentTxId,
         state: "waiting_for_batch",
         createdAt: 1,
@@ -55,7 +55,7 @@ function seededRepo(): InMemoryIntentRepository {
     return repo;
 }
 
-const wrappedHandler = (repo: InMemoryIntentRepository) =>
+const wrappedHandler = (repo: InMemoryBatchRegistrationRepository) =>
     wrapHandlerWithIntentPersistence(
         {
             onBatchStarted: async () => ({ skip: false }),
@@ -66,8 +66,8 @@ const wrappedHandler = (repo: InMemoryIntentRepository) =>
         { intentRepository: repo, intentTxId },
     );
 
-const stateOf = (repo: InMemoryIntentRepository) =>
-    collectIntents(repo, { proofTxIds: [intentTxId] }).then((r) => r[0].state);
+const stateOf = (repo: InMemoryBatchRegistrationRepository) =>
+    collectBatchRegistrations(repo, { proofTxIds: [intentTxId] }).then((r) => r[0].state);
 
 describe("Batch.join intent persistence", () => {
     it("persists batch_succeeded when the eventCallback throws", async () => {

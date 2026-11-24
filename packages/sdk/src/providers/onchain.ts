@@ -1,7 +1,9 @@
 import { DEFAULT_NETWORK_NAME, type NetworkName } from "../networks";
 import { Coin } from "../wallet";
 import { hex } from "@scure/base";
+import { Transaction } from "@scure/btc-signer";
 import { baseFetch } from "../utils/fetch";
+import { HttpResponseError } from "./errors";
 
 /**
  * The default base URLs for esplora API providers: Ark Labs–operated mempool deployments, except
@@ -207,9 +209,16 @@ export class EsploraProvider implements OnchainProvider {
     async getCoins(address: string): Promise<Coin[]> {
         const response = await baseFetch(`${this.baseUrl}/address/${address}/utxo`);
         if (!response.ok) {
-            throw new Error(`Failed to fetch UTXOs: ${response.statusText}`);
+            throw new HttpResponseError("Failed to fetch UTXOs", response);
         }
-        return response.json();
+        const coins: Coin[] = await response.json();
+        const bad = coins.find(
+            (c) =>
+                !(c.value >= 0 && c.value <= 2_100_000_000_000_000 && c.vout >= 0) ||
+                ![c.value, c.vout].every(Number.isSafeInteger),
+        );
+        if (bad) throw new Error(`Invalid UTXO entry: ${JSON.stringify(bad)}`);
+        return coins;
     }
 
     async getFeeRate(): Promise<number | undefined> {
@@ -221,18 +230,18 @@ export class EsploraProvider implements OnchainProvider {
         // transport and service errors must still reach the caller.
         if (response.status === 404) {
             // Release the connection before issuing another request to this host.
-            await response.body?.cancel();
+            await response.body?.cancel().catch(() => {});
             url = `${this.baseUrl}/v1/fees/recommended`;
             key = "fastestFee";
             response = await baseFetch(url);
         }
         if (response.status === 404) {
-            await response.body?.cancel();
+            await response.body?.cancel().catch(() => {});
             return undefined;
         }
         if (!response.ok) {
-            await response.body?.cancel();
-            throw new Error(`Failed to fetch fee rate: ${response.statusText}`);
+            await response.body?.cancel().catch(() => {});
+            throw new HttpResponseError("Failed to fetch fee rate", response);
         }
         const mediaType = response.headers
             .get("content-type")
@@ -240,7 +249,7 @@ export class EsploraProvider implements OnchainProvider {
             .trim()
             .toLowerCase();
         if (mediaType === "text/html") {
-            await response.body?.cancel();
+            await response.body?.cancel().catch(() => {});
             throw new Error(`Invalid fee estimate from ${url}: received HTML`);
         }
         const fees: unknown = await response.json();
@@ -269,18 +278,40 @@ export class EsploraProvider implements OnchainProvider {
     async getTxOutspends(txid: string): Promise<{ spent: boolean; txid?: string }[]> {
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/outspends`);
         if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Failed to get transaction outspends: ${error}`);
+            const error = await response.text().catch(() => undefined);
+            throw new HttpResponseError("Failed to get transaction outspends", response, error);
         }
 
         return response.json();
     }
 
     async getTransactions(address: string): Promise<ExplorerTransaction[]> {
-        const response = await baseFetch(`${this.baseUrl}/address/${address}/txs`);
+        const txs = await this.getAddressTxs(`${this.baseUrl}/address/${address}/txs`);
+        // `/txs` holds only the newest confirmed page; older history is behind `/txs/chain/:last`.
+        const seen = new Set(txs.map((tx) => tx.txid));
+        let last = txs.filter((tx) => tx.status.confirmed).at(-1)?.txid;
+        for (let pages = 1; last !== undefined; pages++) {
+            if (pages > MAX_HISTORY_PAGES) throw new Error("Esplora history paging does not end");
+            const page = await this.getAddressTxs(
+                `${this.baseUrl}/address/${address}/txs/chain/${last}`,
+            ).catch((error): ExplorerTransaction[] => {
+                // An explorer without the paging route keeps the first-page answer.
+                if (error instanceof HttpResponseError && error.status === 404) return [];
+                throw error;
+            });
+            const fresh = page.filter((tx) => !seen.has(tx.txid));
+            for (const tx of fresh) seen.add(tx.txid);
+            txs.push(...fresh);
+            last = fresh.at(-1)?.txid;
+        }
+        return txs;
+    }
+
+    private async getAddressTxs(url: string): Promise<ExplorerTransaction[]> {
+        const response = await baseFetch(url);
         if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Failed to get transactions: ${error}`);
+            const error = await response.text().catch(() => undefined);
+            throw new HttpResponseError("Failed to get transactions", response, error);
         }
 
         return response.json();
@@ -290,7 +321,7 @@ export class EsploraProvider implements OnchainProvider {
     private async getAddressStats(address: string): Promise<AddressStats> {
         const response = await baseFetch(`${this.baseUrl}/address/${address}`);
         if (!response.ok) {
-            throw new Error(`Failed to get address stats: ${response.statusText}`);
+            throw new HttpResponseError("Failed to get address stats", response);
         }
 
         return response.json();
@@ -299,10 +330,20 @@ export class EsploraProvider implements OnchainProvider {
     async getRawTransaction(txid: string): Promise<Uint8Array> {
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/hex`);
         if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Failed to get raw transaction ${txid}: ${error}`);
+            const error = await response.text().catch(() => undefined);
+            throw new HttpResponseError(`Failed to get raw transaction ${txid}`, response, error);
         }
-        return hex.decode((await response.text()).trim());
+        const raw = hex.decode((await response.text()).trim());
+        const { id } = Transaction.fromRaw(raw, {
+            allowUnknownInputs: true,
+            allowUnknownOutputs: true,
+            allowUnknownVersion: true,
+            disableScriptCheck: true,
+        });
+        if (id !== txid.toLowerCase()) {
+            throw new Error(`Esplora returned another transaction for ${txid}`);
+        }
+        return raw;
     }
 
     async getTxStatus(txid: string): Promise<
@@ -318,7 +359,7 @@ export class EsploraProvider implements OnchainProvider {
         // make sure tx exists in mempool or in block
         const txresponse = await baseFetch(`${this.baseUrl}/tx/${txid}`);
         if (!txresponse.ok) {
-            throw new Error(txresponse.statusText);
+            throw new HttpResponseError(`Failed to get transaction ${txid}`, txresponse);
         }
 
         const tx = await txresponse.json();
@@ -328,7 +369,7 @@ export class EsploraProvider implements OnchainProvider {
 
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/status`);
         if (!response.ok) {
-            throw new Error(`Failed to get transaction status: ${response.statusText}`);
+            throw new HttpResponseError("Failed to get transaction status", response);
         }
 
         const data = await response.json();
@@ -446,15 +487,24 @@ export class EsploraProvider implements OnchainProvider {
          */
         const baseline = (async () => {
             const [history, tip] = await Promise.allSettled([getAllTxs(), this.getChainTip()]);
+            let failure: unknown;
             if (history.status === "fulfilled") {
-                for (const tx of history.value) seen.add(txKey(tx));
-                baselined = true;
-                return;
+                try {
+                    // Collect first so a malformed entry doesn't leave `seen` half-seeded.
+                    const keys = history.value.map(txKey);
+                    for (const key of keys) seen.add(key);
+                    baselined = true;
+                    return;
+                } catch (error) {
+                    failure = error;
+                }
+            } else {
+                failure = history.reason;
             }
 
             console.warn(
                 "Could not baseline watched addresses; the first poll pass will establish it instead:",
-                history.reason,
+                failure,
             );
             if (tip.status === "fulfilled") anchorHeight = tip.value.height;
         })();
@@ -748,7 +798,7 @@ export class EsploraProvider implements OnchainProvider {
             tipBlocks = await baseFetch(`${this.baseUrl}/v1/blocks`);
         }
         if (!tipBlocks.ok) {
-            throw new Error(`Failed to get chain tip: ${tipBlocks.statusText}`);
+            throw new HttpResponseError("Failed to get chain tip", tipBlocks);
         }
 
         const tip = await tipBlocks.json();
@@ -775,8 +825,9 @@ export class EsploraProvider implements OnchainProvider {
         }
         const hashResponse = await baseFetch(`${this.baseUrl}/block-height/${height}`);
         if (!hashResponse.ok) {
-            throw new Error(
-                `Failed to get block hash at height ${height}: ${hashResponse.statusText}`,
+            throw new HttpResponseError(
+                `Failed to get block hash at height ${height}`,
+                hashResponse,
             );
         }
         const hash = (await hashResponse.text()).trim();
@@ -784,7 +835,7 @@ export class EsploraProvider implements OnchainProvider {
 
         const blockResponse = await baseFetch(`${this.baseUrl}/block/${hash}`);
         if (!blockResponse.ok) {
-            throw new Error(`Failed to get block ${hash}: ${blockResponse.statusText}`);
+            throw new HttpResponseError(`Failed to get block ${hash}`, blockResponse);
         }
         const block = await blockResponse.json();
         if (
@@ -808,8 +859,8 @@ export class EsploraProvider implements OnchainProvider {
         });
 
         if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Failed to broadcast package: ${error}`);
+            const error = await response.text().catch(() => undefined);
+            throw new HttpResponseError("Failed to broadcast package", response, error);
         }
 
         // `/txs/package` proxies Core's `submitpackage`, which answers 200 even when every tx was
@@ -831,8 +882,8 @@ export class EsploraProvider implements OnchainProvider {
         });
 
         if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Failed to broadcast transaction: ${error}`);
+            const error = await response.text().catch(() => undefined);
+            throw new HttpResponseError("Failed to broadcast transaction", response, error);
         }
 
         return response.text();
@@ -911,6 +962,8 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
  * while still cutting a failing explorer's load 16x.
  */
 const MAX_POLL_BACKOFF_EXPONENT = 4;
+
+const MAX_HISTORY_PAGES = 1000;
 
 /**
  * First socket reconnect delay; short because the socket is far cheaper than the polling that

@@ -12,13 +12,16 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 import {
+    bindingFromOffer,
     encodeOffer,
     offerContract,
+    recordOfferBinding,
     restoreOfferCoverage,
     OFFER_CONTRACT_KIND,
     OFFER_CONTRACT_LABEL,
     type Offer,
 } from "../src/offer";
+import { ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../src/protocol";
 import { retireSettledOfferContracts } from "../src/coverage";
 import type { AssetSwap, AssetSwapStatus } from "../src/store";
 import v0Wallet from "./fixtures/program-v0-offer.json";
@@ -158,6 +161,28 @@ describe("restoreOfferCoverage", () => {
         expect(row.label).toBe(OFFER_CONTRACT_LABEL);
         expect(row.metadata).toEqual({ genericallySpendable: false, kind: OFFER_CONTRACT_KIND });
     });
+
+    it.each([ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE] as const)(
+        "registers %s from the record's binding alone",
+        async (version) => {
+            const { swapPkScript: _, ...terms } = makeOffer();
+            const directed = {
+                ...terms,
+                taker: EMULATOR_KEY,
+                ...(version === ASSET_SWAP_DIRECTED_NONCE && {
+                    nonce: assetRfqNonce("ab".repeat(32)),
+                }),
+            };
+            const swapPkScript = offerContract(directed, SERVER_KEY, version).pkScript;
+            const offer = { ...directed, swapPkScript };
+            const binding = recordOfferBinding(bindingFromOffer(offer, SERVER_KEY));
+            const record = restored(offer, { offerHex: undefined, binding });
+
+            await restoreOfferCoverage(wallet, [record]);
+
+            expect(state.created.map((row) => row.script)).toEqual([record.swapPkScript]);
+        },
+    );
 
     it("puts the restored script back in the watched set", async () => {
         const offer = makeOffer();

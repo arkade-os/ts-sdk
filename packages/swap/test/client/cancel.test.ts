@@ -21,11 +21,19 @@ import { cancelSwap } from "../../src/client/cancel";
 import { createSwapDrive, type SwapDrive } from "../../src/client/drive";
 import type { SwapUpdate } from "../../src/client/outcome";
 import type { OfferSwapRecord } from "../../src/client/record";
-import { OfferCovenantMismatchError, encodeOffer, offerContract } from "../../src/offer";
+import {
+    OfferCovenantMismatchError,
+    bindingFromOffer,
+    encodeOffer,
+    offerContract,
+    recordOfferBinding,
+    type Offer,
+} from "../../src/offer";
 import { InMemoryAssetSwapRepository } from "../../src/repository";
 import {
     HRP,
     OFFER,
+    OFFER_ADDRESS,
     OFFER_SCRIPT,
     OPERATOR,
     PAYOUT,
@@ -256,6 +264,33 @@ describe("cancel() — the ordering", () => {
     });
 });
 
+describe("cancel() — a record that carries only its binding", () => {
+    const bound = (): OfferSwapRecord =>
+        offerRecord({
+            offerHex: undefined,
+            binding: recordOfferBinding(bindingFromOffer(OFFER, OPERATOR)),
+            swapAddress: OFFER_ADDRESS,
+            fundingTxid: FUNDING_TXID,
+        });
+
+    it("cancels from the binding's own operator key across a rotation", async () => {
+        const h = await build({ record: bound() });
+        state.serverKey = key(4);
+        await expect(h.cancel()).resolves.toEqual({ outcome: "cancelled" });
+        expect(state.sends).toBe(1);
+        await h.drive.dispose();
+    });
+
+    it("reads a fill that won the race off the binding's leaves", async () => {
+        const spend = spendPsbt("fulfill");
+        const h = await build({ record: bound(), vtxos: [spentDeposit(spend.txid)], txs: [spend] });
+        state.utxos = [];
+        await expect(h.cancel()).resolves.toEqual({ outcome: "filled" });
+        expect((await h.stored()).status).toBe("fulfilled");
+        await h.drive.dispose();
+    });
+});
+
 describe("cancel() — the fill race", () => {
     // The deposit is gone from the spendable set: `prepareOfferCancel` throws
     // the v1 missing-VTXO error, which is where v1's trap was.
@@ -389,6 +424,154 @@ describe("cancel() — the pinned operator key", () => {
         expect(state.sends).toBe(0);
         expect((await h.stored()).status).toBe("pending");
         await h.drive.dispose();
+    });
+});
+
+describe("cancel() — a deposit funded on the removed asset-swap-v3", () => {
+    // OFFER's terms as a 0.1.8 client stored them on v3, which this build no longer compiles.
+    const v3 = {
+        offerHex:
+            "0100225120ef465a053b7f0ad8e1c6f7099cccbf0f3853274d6949775e6d7c7d37a98971860200080000000000001388030022f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1050022512062c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7070020a8397a935f0dfceba6ba9618f6451ef4d80637abf4e6af2669fbc9de6a8fd2ac08002056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+        swapAddress:
+            "tark1qpf3lesxsy69q0f8yvfnyf7gv7kglfkg83fhaxjyc0zmm0wtrl3n0m6xtgznklc2mrsudacfnnxt7rec2vn5662fwa0x6lrax75cjuvxqqnp78",
+        swapPkScript: "5120ef465a053b7f0ad8e1c6f7099cccbf0f3853274d6949775e6d7c7d37a9897186",
+    };
+
+    it("still lists it, and names the mismatch before any broadcast", async () => {
+        const h = await build({ record: record(v3) });
+        expect(h.drive.swap("o1")?.outcome).toBe("open");
+
+        await expect(h.cancel()).rejects.toBeInstanceOf(OfferCovenantMismatchError);
+        expect(state.sends).toBe(0);
+        expect((await h.stored()).status).toBe("pending");
+        await h.drive.dispose();
+    });
+});
+
+describe("the drive cancels a directed deposit its quote let lapse", () => {
+    const { swapPkScript: _, ...terms } = OFFER;
+    const taker = key(30);
+    const DIRECTED: Offer = {
+        ...terms,
+        taker,
+        swapPkScript: offerContract({ ...terms, taker }, OPERATOR).pkScript,
+    };
+    const lapsed = (over: Partial<OfferSwapRecord> = {}): OfferSwapRecord =>
+        offerRecord({
+            offerHex: undefined,
+            binding: recordOfferBinding(bindingFromOffer(DIRECTED, OPERATOR)),
+            swapAddress: offerContract(DIRECTED, OPERATOR).address(HRP, OPERATOR).encode(),
+            swapPkScript: hex.encode(DIRECTED.swapPkScript),
+            fundingTxid: FUNDING_TXID,
+            expiresAt: NOW - 61,
+            ...over,
+        });
+
+    /** Restored without arming, so a test can stage the chain before `start()` sweeps. */
+    const drive = async (records: OfferSwapRecord[], mode: "manual" | "readonly" = "manual") => {
+        state.serverKey = OPERATOR;
+        state.utxos = [{ txid: FUNDING_TXID, vout: 0, value: 100_000 }];
+        state.sends = 0;
+        state.sendError = undefined;
+        const repository = new InMemoryAssetSwapRepository();
+        for (const record of records) await repository.saveSwapRecord(record);
+        const contracts = fakeContracts([]);
+        const wallet = {
+            ...(fakeWallet({ contracts, identity: {} }).wallet as unknown as object),
+            getArkadeInfo: async () => ({}),
+            getArkadeBroadcaster: async () => ({
+                submitTx: async () => ({}),
+                finalizeTx: async () => {},
+            }),
+        } as unknown as IWallet;
+        const chain: { vtxos: FakeVtxo[]; txs: { txid: string; psbt: string }[] } = {
+            vtxos: [],
+            txs: [],
+        };
+        const swapDrive = createSwapDrive({
+            wallet,
+            repository,
+            contracts,
+            corridors: fakeCorridors(),
+            network: async () => "regtest",
+            operator: fakeOperator(),
+            indexer: fakeIndexer(chain),
+            mode,
+            now: () => NOW,
+            pollIntervalMs: 20,
+        });
+        await swapDrive.ready;
+        const status = async (id: string) =>
+            ((await repository.getSwapRecord(id)) as OfferSwapRecord).status;
+        return { swapDrive, chain, status };
+    };
+
+    it("cancels a funded directed deposit once the grace past its quote is over", async () => {
+        const h = await drive([lapsed()]);
+        await h.swapDrive.start();
+        await h.swapDrive.idle();
+        expect(await h.status("o1")).toBe("cancelled");
+        expect(state.sends).toBe(1);
+        await h.swapDrive.dispose();
+    });
+
+    it("leaves one inside the grace, an undirected one and a restored one alone", async () => {
+        const h = await drive([
+            lapsed({ id: "inside", expiresAt: NOW - 59 }),
+            offerRecord({
+                id: "undirected",
+                offerHex: OFFER_HEX,
+                fundingTxid: "cd".repeat(32),
+                expiresAt: 0,
+            }),
+            lapsed({ id: "restored", market: { kind: "restored", backend: "feed" } }),
+        ]);
+        await h.swapDrive.start();
+        await h.swapDrive.idle();
+        expect(state.sends).toBe(0);
+        for (const id of ["inside", "undirected", "restored"])
+            expect(await h.status(id)).toBe("pending");
+        await h.swapDrive.dispose();
+    });
+
+    it("resolves a cancel that lost to the solver's fill as filled", async () => {
+        const h = await drive([lapsed()]);
+        const leaf = offerContract(DIRECTED, OPERATOR).functionByName("fulfill")!.tapLeafScript;
+        const fill = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
+        fill.addInput({ txid: hex.decode(FUNDING_TXID), index: 0, tapLeafScript: [leaf] });
+        fill.addOutput({ script: PAYOUT, amount: 9_000n });
+        h.chain.txs.push({ txid: fill.id, psbt: base64.encode(fill.toPSBT()) });
+        h.chain.vtxos.push(spentDeposit(fill.id));
+        state.utxos = [];
+        await h.swapDrive.start();
+        await h.swapDrive.idle();
+        expect(await h.status("o1")).toBe("fulfilled");
+        expect(state.sends).toBe(0);
+        await h.swapDrive.dispose();
+    });
+
+    it("tries again on the next sweep when a cancel fails", async () => {
+        const h = await drive([lapsed()]);
+        state.sendError = new Error("operator busy");
+        await h.swapDrive.start();
+        await h.swapDrive.idle();
+        expect(await h.status("o1")).toBe("cancelling");
+        state.sendError = undefined;
+        const deadline = Date.now() + 2_000;
+        while ((await h.status("o1")) !== "cancelled" && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await h.swapDrive.idle();
+        }
+        expect(await h.status("o1")).toBe("cancelled");
+        expect(state.sends).toBe(2);
+        await h.swapDrive.dispose();
+    });
+
+    it("cancels nothing on a readonly drive", async () => {
+        const h = await drive([lapsed()], "readonly");
+        await h.swapDrive.idle();
+        expect(state.sends).toBe(0);
+        await h.swapDrive.dispose();
     });
 });
 

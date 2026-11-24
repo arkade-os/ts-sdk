@@ -13,7 +13,14 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 import { digestJointGraph } from "../src/jointGraph";
-import { encodeOffer, fillOffer, offerContract as offerVtxoScript, type Offer } from "../src/offer";
+import {
+    bindingFromOffer,
+    decodeOffer,
+    encodeOffer,
+    fillOffer,
+    offerContract as offerVtxoScript,
+    type Offer,
+} from "../src/offer";
 import { OFFER_FILL_TEMPLATE, buildOfferFillPlan, verifyOfferFillPlan } from "../src/offerFillPlan";
 
 type FundCoin = {
@@ -40,6 +47,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
                 return {
                     signerPubkey: `02${hex.encode(SERVER_KEY)}`,
                     checkpointTapscript: CHECKPOINT,
+                    network: "regtest",
                 };
             }
         },
@@ -192,8 +200,9 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
             changeScript?: Uint8Array;
             fund?: FundCoin[];
         } = {},
+        offer: Parameters<typeof buildOfferFillPlan>[2] = planOfferHex,
     ) =>
-        buildOfferFillPlan(wallet, "http://ark", planOfferHex, {
+        buildOfferFillPlan(wallet, "http://ark", offer, {
             fund: [solver] as never,
             payoutScript: SOLVER_PAYOUT,
             assetCarrierSats: BigInt(330),
@@ -257,6 +266,32 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         });
         expect(plan.graphId).toMatch(/^[0-9a-f]{64}$/);
         expect(verifyOfferFillPlan(plan)).toBe(true);
+    });
+
+    it("builds the same joint graph from the offer's binding", async () => {
+        reset();
+        const [deposit, solver, taxi] = [satsDeposit(), solverCoin(), taxiCoin()];
+        state.vtxos = [deposit];
+        const binding = bindingFromOffer(decodeOffer(hex.decode(planOfferHex)), SERVER_KEY);
+        const fromBinding = await sponsored(deposit, solver, taxi, {}, binding);
+        expect(fromBinding).toEqual(await sponsored(deposit, solver, taxi));
+    });
+
+    it("submits the same fill from the offer's binding", async () => {
+        reset();
+        state.vtxos = [satsDeposit()];
+        const solver = solverCoin();
+        const fill = (offer: Parameters<typeof fillOffer>[2]) =>
+            fillOffer(wallet, "http://ark", offer, {
+                fund: [solver] as never,
+                payoutScript: SOLVER_PAYOUT,
+                assetCarrierSats: BigInt(330),
+                emulator: "http://emulator.test",
+            });
+        await fill(planOfferHex);
+        const fromHex = state.arkTx;
+        await fill(bindingFromOffer(decodeOffer(hex.decode(planOfferHex)), SERVER_KEY));
+        expect(state.arkTx).toBe(fromHex);
     });
 
     it("signs nothing and submits nothing", async () => {

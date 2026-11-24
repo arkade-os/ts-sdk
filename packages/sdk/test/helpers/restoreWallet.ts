@@ -9,7 +9,7 @@ import {
 } from "../../src";
 import type { IndexerProvider } from "../../src/providers/indexer";
 import type { OnchainProvider } from "../../src/providers/onchain";
-import type { VirtualCoin } from "../../src";
+import type { ExecutorProvider, VirtualCoin } from "../../src";
 import { HDDescriptorProvider } from "../../src/wallet/hdDescriptorProvider";
 import { jsonResponse } from "./response";
 import {
@@ -59,9 +59,14 @@ export const mockArkInfo = {
  * `afterEach`.
  */
 export function installRestoreHarness(): void {
+    installRestoreHarnessWithInfo(mockArkInfo);
+}
+
+/** {@link installRestoreHarness} answering `/info` with `info`. */
+export function installRestoreHarnessWithInfo(info: object): void {
     const mockFetch = vi.fn().mockImplementation((url: string) => {
         const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
-        if (url.includes("/info")) return reply(mockArkInfo);
+        if (url.includes("/info")) return reply(info);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
         return reply([]);
@@ -255,6 +260,17 @@ export function makeMockOnchain(fundedOnchain: Set<string> = new Set()): Onchain
     } as unknown as OnchainProvider;
 }
 
+/** An Executor that is configured and never reached: every call fails. */
+export function makeUnreachableExecutor(): ExecutorProvider {
+    const unreachable = () => Promise.reject(new Error("Executor unreachable"));
+    return {
+        getInfo: vi.fn(unreachable),
+        listTemplates: vi.fn(unreachable),
+        registerDelegation: vi.fn(unreachable),
+        getDelegation: vi.fn(unreachable),
+    };
+}
+
 export interface RestoreWalletHandle {
     wallet: Wallet;
     indexer: MockIndexer;
@@ -273,6 +289,7 @@ export interface RestoreWalletHandle {
 export async function makeStaticWalletForTest(
     usedScripts: Set<string> = new Set(),
     fundedOnchain: Set<string> = new Set(),
+    opts?: { executorProvider?: ExecutorProvider },
 ): Promise<RestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
@@ -284,6 +301,7 @@ export async function makeStaticWalletForTest(
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
+        executorProvider: opts?.executorProvider,
     });
     return { wallet, indexer, fundedOnchain, walletRepository, contractRepository };
 }
@@ -318,6 +336,7 @@ export async function makeHdWalletForTest(
          * consumer holding imported keys would use.
          */
         wrapInKeyring?: boolean;
+        executorProvider?: ExecutorProvider;
     },
 ): Promise<HdRestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
@@ -338,6 +357,7 @@ export async function makeHdWalletForTest(
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
+        executorProvider: opts?.executorProvider,
         ...(opts?.delegatePubKey && {
             delegateProvider: {
                 async getDelegateInfo() {

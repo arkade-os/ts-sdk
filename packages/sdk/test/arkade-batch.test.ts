@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 import { sha256 } from "@scure/btc-signer/utils.js";
-import { Address, OutScript, Script } from "@scure/btc-signer";
+import { Address, OutScript, Script, SigHash } from "@scure/btc-signer";
 
 // The handler must delegate graph/recipient validation to the shared
 // validators; mock both so the test drives only the wiring.
@@ -461,5 +461,48 @@ describe("createArkadeBatchHandler forfeits", () => {
             getArkPsbtFields(Transaction.fromPSBT(base64.decode(f)), 0, ConditionWitness),
         );
         expect(fields).toEqual([[[preimage]], []]);
+    });
+});
+
+describe("createArkadeBatchHandler boarding inputs", () => {
+    it("signs a boarding input under SIGHASH_DEFAULT whatever sighash the server declared", async () => {
+        const script = new VtxoScript([new Uint8Array([0x51])]);
+        const boarding = {
+            txid: "aa".repeat(32),
+            vout: 0,
+            value: 1000,
+            status: { confirmed: true },
+            tapTree: script.encode(),
+            forfeitTapLeafScript: script.leaves[0],
+            intentTapLeafScript: script.leaves[0],
+            arkadeScriptBytes: new Uint8Array([1]),
+        } as unknown as ArkadeBatchInput;
+        const signer = { sign: vi.fn(async (tx: Transaction) => tx) };
+        const handler = createArkadeBatchHandler(
+            INTENT_ID,
+            [boarding],
+            signer as unknown as Identity,
+            proofDeclaring(),
+            { onchain_output_indexes: [] } as unknown as Proof.RegisterMessage,
+            makeSession(),
+            makeArkProvider(),
+            makeEmulator(),
+            networks.regtest,
+        );
+        const served = new Transaction({ allowUnknownOutputs: true });
+        served.addInput({
+            txid: hex.decode(boarding.txid),
+            index: boarding.vout,
+            sighashType: SigHash.ALL_ANYONECANPAY,
+        });
+        served.addOutput({ script: new Uint8Array([0x51]), amount: 1000n });
+
+        await handler.onBatchStarted(makeEvents().batchStarted);
+        await handler.onBatchFinalization({
+            commitmentTx: base64.encode(served.toPSBT()),
+        } as never);
+
+        const [signed] = signer.sign.mock.calls[0];
+        expect(signed.getInput(0).sighashType).toBe(SigHash.DEFAULT);
     });
 });

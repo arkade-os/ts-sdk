@@ -83,7 +83,8 @@ const createMockWallet = (
     const canonicalVtxos = vtxos.map(canonicalizeVtxoForTest);
     // Provide a default no-op refreshOutpoints stub when the caller-supplied
     // mock omits one — the pre-flight `revalidateBeforeSettle` invokes it
-    // before every settle attempt.
+    // before every settle attempt. `getContracts` backs the renewal pass's
+    // Executor watch read; an empty repository has no watches.
     const contractManager = options.contractManager ?? {
         onContractEvent: vi.fn().mockReturnValue(() => {}),
         refreshOutpoints: vi.fn().mockResolvedValue(undefined),
@@ -92,6 +93,9 @@ const createMockWallet = (
         (contractManager as Record<string, unknown>).refreshOutpoints = vi
             .fn()
             .mockResolvedValue(undefined);
+    }
+    if (contractManager && !(contractManager as Record<string, unknown>).getContracts) {
+        (contractManager as Record<string, unknown>).getContracts = vi.fn().mockResolvedValue([]);
     }
 
     return {
@@ -102,6 +106,17 @@ const createMockWallet = (
         getContractManager: vi.fn().mockResolvedValue(contractManager),
         settle: vi.fn().mockResolvedValue("mock-txid"),
         dustAmount: 1000n,
+        // The renewal pass reads the wallet's Executor renewal watches through the contract
+        // manager, so the mocks carry an identity and an empty watch list rather than
+        // failing the read.
+        identity: {
+            xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32).fill(1)),
+            compressedPublicKey: vi.fn().mockResolvedValue(new Uint8Array(33).fill(2)),
+        },
+        getOperatorInfo: vi.fn().mockResolvedValue({
+            network: "regtest",
+            signerPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        }),
         // Recovery/renewal read `vtxoMaxAmount` from here (without requiring full
         // sweep capability). Only `arkProvider` is set, so the wallet stays
         // non-sweep-capable and the boarding-poll paths are untouched.
@@ -119,8 +134,9 @@ const flushMicrotasks = async () => {
     // VtxoManager: getExpiringVtxos (which fetches the chain tip) →
     // revalidateBeforeSettle (which itself does getContractManager +
     // refreshOutpoints + getExpiringVtxos) → settle. Two awaits used to
-    // be sufficient before pre-flight was added.
-    for (let i = 0; i < 16; i++) {
+    // be sufficient before pre-flight was added; the Executor watch read
+    // (a paged repository walk and the operator info) added a few more.
+    for (let i = 0; i < 48; i++) {
         await Promise.resolve();
     }
 };
@@ -748,6 +764,7 @@ describe("VtxoManager - Lifecycle", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+            getContracts: vi.fn().mockResolvedValue([]),
         };
         const wallet = createMockWallet(
             [],
@@ -1899,6 +1916,7 @@ describe("SettlementConfig", () => {
             const contractManagerDispose = vi.fn();
             const wallet = Object.create(Wallet.prototype) as Wallet;
             Object.assign(wallet, {
+                reservationWrites: new Set(),
                 _vtxoManager: { dispose: managerDispose },
                 _contractManager: { dispose: contractManagerDispose },
             });
@@ -1965,6 +1983,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+            getContracts: vi.fn().mockResolvedValue([]),
         };
 
         return {
@@ -2179,6 +2198,25 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 "Boarding UTXO sweep requires a Wallet instance",
             );
         });
+
+        it("signs a provider fee rate above 1000 sat/vB at 1000", async () => {
+            const sweptFee = async (feeRate: number) => {
+                const coin = createMockBoardingUtxo(
+                    1_000_000,
+                    Math.floor(Date.now() / 1000) - 700_000,
+                );
+                const wallet = createMockWalletWithBoarding([coin], {
+                    feeRate,
+                    boardingAddress: boardingScript().onchainAddress(regtest),
+                });
+                const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+                await manager.sweepExpiredBoardingUtxos();
+                await manager.dispose();
+                const tx: Transaction = wallet.signOnchainBoardingTx.mock.calls[0][0];
+                return 1_000_000n - tx.getOutput(0).amount!;
+            };
+            expect(await sweptFee(1e6)).toBe(1000n * (await sweptFee(1)));
+        });
     });
 
     describe("getExpiredBoardingUtxos with block-based timelocks", () => {
@@ -2368,6 +2406,66 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
             expect(wallet.settle).toHaveBeenCalledTimes(1);
             expect(wallet.settle.mock.calls[0][0].inputs).toEqual([mine]);
+            await manager.dispose();
+        });
+
+        it("asks the wallet to refresh its Executor watches on each poll", async () => {
+            const wallet = createMockWalletWithBoarding([], { groups: [] });
+            wallet.refreshExecutorWatches = vi.fn().mockResolvedValue(undefined);
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+            await (manager as any).pollBoardingUtxos();
+
+            // the wallet throttles it; the poll only asks
+            expect(wallet.refreshExecutorWatches).toHaveBeenCalledTimes(2);
+            await manager.dispose();
+        });
+
+        it("refreshes the Executor watches outside the boarding lock, under its own", async () => {
+            const held: string[] = [];
+            const request = vi.fn(
+                async (name: string, _opts: unknown, cb: (lock: unknown) => Promise<void>) => {
+                    held.push(name);
+                    try {
+                        return await cb({ name });
+                    } finally {
+                        held.splice(held.indexOf(name), 1);
+                    }
+                },
+            );
+            vi.stubGlobal("navigator", { locks: { request } });
+            try {
+                const wallet = createMockWalletWithBoarding([], { groups: [] });
+                let during: string[] = [];
+                wallet.refreshExecutorWatches = vi.fn(async () => {
+                    during = [...held];
+                });
+                const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+                await (manager as any).pollBoardingUtxos();
+
+                expect(during).toEqual(["arkade-executor-refresh"]);
+                await manager.dispose();
+            } finally {
+                vi.unstubAllGlobals();
+            }
+        });
+
+        it("does not back off when the Executor refresh fails", async () => {
+            const wallet = createMockWalletWithBoarding([], { groups: [] });
+            wallet.refreshExecutorWatches = vi.fn().mockRejectedValue(new Error("offline"));
+            const error = vi.spyOn(console, "error").mockImplementation(() => {});
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+
+            expect(error).toHaveBeenCalledWith(
+                "Error refreshing the Executor watches:",
+                expect.any(Error),
+            );
+            error.mockRestore();
+            expect((manager as any).consecutivePollFailures).toBe(0);
             await manager.dispose();
         });
 
@@ -2716,6 +2814,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+            getContracts: vi.fn().mockResolvedValue([]),
         };
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
@@ -2748,6 +2847,11 @@ describe("VtxoManager - Periodic settle cooldown", () => {
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
+            // the renewal pass reads the active operator signer for the watch check
+            getOperatorInfo: vi.fn().mockResolvedValue({
+                network: "regtest",
+                signerPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            }),
             network: {
                 bech32: "bcrt",
                 pubKeyHash: 0x6f,
@@ -3001,6 +3105,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+            getContracts: vi.fn().mockResolvedValue([]),
         };
         return {
             getVtxos: vi.fn().mockResolvedValue(canonicalVtxos),
@@ -3033,6 +3138,11 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
+            // the renewal pass reads the active operator signer for the watch check
+            getOperatorInfo: vi.fn().mockResolvedValue({
+                network: "regtest",
+                signerPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            }),
             network: {
                 bech32: "bcrt",
                 pubKeyHash: 0x6f,
@@ -3429,6 +3539,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+            getContracts: vi.fn().mockResolvedValue([]),
         };
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
@@ -3460,6 +3571,11 @@ describe("VtxoManager - Cross-instance poll guard", () => {
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
+            // the renewal pass reads the active operator signer for the watch check
+            getOperatorInfo: vi.fn().mockResolvedValue({
+                network: "regtest",
+                signerPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            }),
             network: {
                 bech32: "bcrt",
                 pubKeyHash: 0x6f,
@@ -3569,6 +3685,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshVtxos: vi.fn().mockResolvedValue(undefined),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+            getContracts: vi.fn().mockResolvedValue([]),
         };
         return {
             wallet: {
@@ -3612,6 +3729,12 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                     sign: vi.fn().mockImplementation((tx: any) => tx),
                     xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
                 },
+                // the renewal pass reads the active operator signer for the watch check
+                getOperatorInfo: vi.fn().mockResolvedValue({
+                    network: "regtest",
+                    signerPubkey:
+                        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                }),
                 signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
             } as any,
             contractManager,

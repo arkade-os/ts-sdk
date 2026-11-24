@@ -684,9 +684,12 @@ function assertServerSignedLeaf(
             `${context}: input ${inputIndex} spend leaf names no signer key the server advertises`,
         );
     }
+    const probe = localTx.clone();
+    const { tapScriptSig } = serverTx.getInput(inputIndex);
+    probe.updateInput(inputIndex, { tapScriptSig }, true);
     try {
         verifyTapscriptSignatures(
-            serverTx,
+            probe,
             inputIndex,
             [signer],
             undefined,
@@ -713,14 +716,17 @@ function assertServerSignedLeaf(
  * `unrollCandidates` accepts more than one script because the checkpoint output
  * commits to the server key that was current when it was built — a tx submitted
  * before a signer rotation and finalized after it must still match.
+ *
+ * @returns The locally built ark-tx input per checkpoint, in order.
  */
 export function assertCheckpointsMatchInputs(
     checkpoints: Transaction[],
     inputs: ArkTxInput[],
     unrollCandidates: CSVMultisigTapscript.Type[],
     context: string,
-): void {
+): ArkTxInput[] {
     const byOutpoint = new Map(inputs.map((input) => [`${input.txid}:${input.vout}`, input]));
+    const matched: ArkTxInput[] = [];
 
     for (const [index, checkpoint] of checkpoints.entries()) {
         if (checkpoint.inputsLength !== 1) {
@@ -744,15 +750,93 @@ export function assertCheckpointsMatchInputs(
             );
         }
 
-        const rebuilt = unrollCandidates.some(
-            (unroll) => buildCheckpointTx(input, unroll).tx.id === checkpoint.id,
-        );
+        let rebuilt: ArkTxInput | undefined;
+        for (const unroll of unrollCandidates) {
+            const candidate = buildCheckpointTx(input, unroll);
+            if (candidate.tx.id === checkpoint.id) {
+                rebuilt = candidate.input;
+                break;
+            }
+        }
         if (!rebuilt) {
             throw new ServerResponseMismatchError(
                 `${context}: checkpoint ${index} txid ${checkpoint.id} differs from the checkpoint built locally for ${outpoint}`,
             );
         }
+        matched.push(rebuilt);
     }
+
+    return matched;
+}
+
+/**
+ * Assert `arkTx` spends exactly `checkpoints` and carries a valid signature from
+ * every key named by each checkpoint's collaborative leaf — what ties a recovered
+ * checkpoint to a send this wallet took part in.
+ *
+ * `checkpoints` must come from {@link assertCheckpointsMatchInputs}: its txid match
+ * authenticates each prevout and leaf, which the id of `arkTx` commits to neither
+ * of. Both are substituted before verifying, and the sighash covers every prevout,
+ * so an input outside `checkpoints` is rejected rather than trusted.
+ */
+export function assertArkTxSignedOverCheckpoints(
+    arkTx: Transaction,
+    checkpoints: ArkTxInput[],
+    context: string,
+): void {
+    const byOutpoint = new Map(checkpoints.map((c) => [`${c.txid}:${c.vout}`, c]));
+    const probe = arkTx.clone();
+    const spent: ArkTxInput[] = [];
+
+    for (let index = 0; index < arkTx.inputsLength; index++) {
+        const input = arkTx.getInput(index);
+        const outpoint =
+            input.txid && input.index !== undefined
+                ? `${hex.encode(input.txid)}:${input.index}`
+                : undefined;
+        const local = outpoint ? byOutpoint.get(outpoint) : undefined;
+        if (!local) {
+            throw new ServerResponseMismatchError(
+                `${context}: ark tx input ${index} spends ${outpoint ?? "no outpoint"}, which is not a checkpoint of this tx`,
+            );
+        }
+        probe.updateInput(
+            index,
+            {
+                witnessUtxo: {
+                    script: VtxoScript.decode(local.tapTree).pkScript,
+                    amount: BigInt(local.value),
+                },
+                tapLeafScript: [local.tapLeafScript],
+            },
+            true,
+        );
+        spent.push(local);
+    }
+
+    const unspent = checkpoints.find((checkpoint) => !spent.includes(checkpoint));
+    if (unspent) {
+        throw new ServerResponseMismatchError(
+            `${context}: ark tx does not spend checkpoint ${unspent.txid}`,
+        );
+    }
+
+    // Every leaf key, not just the wallet's: an honest operator holds them all, and
+    // which one is the wallet's is unknowable from the identity once addresses rotate.
+    spent.forEach((local, index) => {
+        const leaf = scriptFromTapLeafScript(local.tapLeafScript);
+        const keys = decodeTapscript(leaf).params.pubkeys.map((key: Uint8Array) =>
+            hex.encode(toXOnly(key, "leaf key")),
+        );
+        try {
+            verifyTapscriptSignatures(probe, index, keys, undefined, undefined, tapLeafHash(leaf));
+        } catch (error) {
+            throw new ServerResponseMismatchError(
+                `${context}: ark tx input ${index} is not fully signed on the leaf spending ${local.txid} ` +
+                    `(${error instanceof Error ? error.message : String(error)})`,
+            );
+        }
+    });
 }
 
 /**
@@ -765,9 +849,9 @@ export function assertCheckpointsMatchInputs(
  * machinery. Optional {@link hooks} let the wallet mark/clear its pending-tx
  * recovery flag around the network round-trip; a stateless caller omits them.
  *
- * `options.verifyServerSignatures` is off by default, so every existing caller
- * is unchanged; see {@link VerifyServerSignatures} for what it does and does
- * not prove.
+ * `options.verifyServerSignatures` is off by default here; the wallet's send
+ * path and swap claims pass it. See {@link VerifyServerSignatures} for what it
+ * does and does not prove.
  *
  * `options.oneShot` (default on): see `WalletConfig.oneShotSubmit`.
  *
@@ -1045,6 +1129,7 @@ export async function submitViaEmulator(
     const res = await emulator.submitTx(encodedArkTx, checkpointTxs);
     const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
     assertSubmittedArkTxid({ arkTxid: txid }, submittedArkTx, "emulator submitTx");
+    matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "emulator submitTx");
     return { txid, signedArkTx: res.signedArkTx, signedCheckpointTxs: res.signedCheckpointTxs };
 }
 

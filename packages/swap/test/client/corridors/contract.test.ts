@@ -20,12 +20,7 @@ const arkade = arkadeCorridor(resolveCorridorDeps("arkade", undefined, base));
 const lightning = lightningCorridor(resolveCorridorDeps("lightning", undefined, base));
 const onchain = onchainCorridor(resolveCorridorDeps("onchain", undefined, base));
 
-const ALL_ACTIONS: readonly RfqSwapActionName[] = [
-    "claimOnchain",
-    "claimLockup",
-    "refundArkade",
-    "refundOnchain",
-];
+const ALL_ACTIONS: readonly RfqSwapActionName[] = ["claimOnchain", "claimLockup", "refundArkade"];
 const passes = (drive: Partial<Record<RouteSide, CorridorPass>>): CorridorPass[] =>
     Object.values(drive);
 
@@ -85,17 +80,6 @@ describe("what a corridor module declares", () => {
                 { covenant: "onchain_htlc", owner: "solver", deadline: "htlc_refund_locktime" },
             ]);
             expect(onchain.drive.take?.seams).toEqual(["indexer", "chain"]);
-        });
-
-        it("hands `onchain -> arkade`'s L1 refund leaf to the trader", () => {
-            // The key roles swap with the direction: the lockup is the solver's,
-            // the HTLC's refund leaf the trader's own.
-            expect(onchain.drive.give?.lockups).toEqual([
-                { covenant: "arkade_lockup", owner: "solver", deadline: "refund_locktime" },
-                { covenant: "onchain_htlc", owner: "trader", deadline: "htlc_refund_locktime" },
-            ]);
-            expect(onchain.drive.give?.actions).toEqual(["claimLockup", "refundOnchain"]);
-            expect(onchain.drive.give?.seams).toEqual(["indexer", "chain"]);
         });
     });
 

@@ -403,7 +403,9 @@ describe("EsploraProvider.watchAddresses", () => {
 
             expect(callback).not.toHaveBeenCalled();
             expect(
-                warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
+                warn.mock.calls.some((c: unknown[]) =>
+                    /may not have been reported/i.test(String(c[0])),
+                ),
             ).toBe(true);
         });
 
@@ -592,6 +594,7 @@ describe("EsploraProvider.watchAddresses", () => {
 
             mockFetch.mockImplementation((url: string) => {
                 if (isProbeUrl(url)) return Promise.resolve(okJson(summary));
+                if (url.includes("/txs/chain/")) return Promise.resolve(okJson([]));
                 if (url.includes("/txs")) {
                     if (historyFailures++ === 1) {
                         // Fail the first poll cycle's history fetch (index 1;
@@ -699,7 +702,9 @@ describe("EsploraProvider.watchAddresses", () => {
 
             expect(callback).not.toHaveBeenCalled();
             expect(
-                warn.mock.calls.some((c) => /may not have been reported/i.test(String(c[0]))),
+                warn.mock.calls.some((c: unknown[]) =>
+                    /may not have been reported/i.test(String(c[0])),
+                ),
             ).toBe(true);
         });
 

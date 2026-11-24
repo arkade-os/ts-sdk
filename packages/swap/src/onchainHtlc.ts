@@ -2,12 +2,8 @@
  * The Bitcoin-L1 side of the onchain corridor: a taproot HTLC as pure local
  * derivation, spend builders, and the injected chain-access seam.
  *
- * One HTLC shape serves both directions — only the key roles swap:
- *
- * | direction                             | claimKey            | refundKey          |
- * |---------------------------------------|---------------------|--------------------|
- * | arkade->onchain (solver funds L1)     | user's payout key   | solver's htlc key  |
- * | onchain->arkade (user funds L1)       | solver's htlc key   | user's refund key  |
+ * The solver funds the HTLC (`arkade->onchain`): `claimKey` is the user's payout key, `refundKey`
+ * the solver's htlc key.
  *
  * The hash-lock is `ripemd160(sha256(P))`, as in the lightning-send program, so ONE preimage
  * unlocks both the Arkade leaf and the L1 leaf. Solver-supplied addresses are compare-only; the
@@ -61,7 +57,7 @@ export const ONCHAIN_CLAIM_VSIZE = 152;
 
 // ── Preimage utilities ───────────────────────────────────────────────────────
 
-/** 32 random bytes. The user generates P for BOTH onchain directions. */
+/** 32 random bytes. The user generates P. */
 export const newPreimage = (): Uint8Array => crypto.getRandomValues(new Uint8Array(32));
 
 /** `sha256(P)`, hex — the wire `payment_hash`, same convention as BOLT11. */
@@ -167,9 +163,13 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
     if (params.claimKey.length !== 32 || params.refundKey.length !== 32) {
         throw new Error("claimKey and refundKey must be 32-byte x-only keys");
     }
-    if (!Number.isInteger(params.refundLocktime) || params.refundLocktime <= 0) {
+    if (
+        !Number.isInteger(params.refundLocktime) ||
+        params.refundLocktime <= 0 ||
+        params.refundLocktime > 0xffffffff
+    ) {
         throw new Error(
-            `refundLocktime must be a positive unix timestamp, got ${params.refundLocktime}`,
+            `refundLocktime must be a positive uint32 unix timestamp, got ${params.refundLocktime}`,
         );
     }
     // A height-shaped value (a dropped `/ 1000`, a solver quoting a height) would build a refund
@@ -504,26 +504,53 @@ export async function claimOnchainFill(
 
 /** Where an onchain HTLC stands, for crash recovery. Persisting the record BEFORE funding is what
  * makes this classification (and the claim) possible after a restart. Each phase names which leaf
- * moved, never whose turn it is: the key roles swap between the legs (module header). */
+ * moved, never whose turn it is. */
 export type OnchainHtlcPhase =
     | { phase: "unfunded" }
     | { phase: "awaiting_confirmations"; utxo: ChainUtxo }
     | { phase: "claimable"; utxo: ChainUtxo }
     /**
-     * The refund leaf has matured. On `arkade->onchain` it is the SOLVER's leaf: the CLAIM WINDOW
-     * IS CLOSED and `claimOnchainFill` throws, so do not claim; take the Arkade-side covenant
-     * refund instead (on a swap you expected to claim, the claim was missed). On
-     * `onchain->arkade` it is the TRADER's own leaf: the act-now signal to refund, and it stays
-     * spendable.
+     * The SOLVER's refund leaf has matured: the CLAIM WINDOW IS CLOSED and `claimOnchainFill`
+     * throws, so do not claim; take the Arkade-side covenant refund instead (on a swap you expected
+     * to claim, the claim was missed).
      */
     | { phase: "refundable"; utxo: ChainUtxo }
     | { phase: "claimed"; txid: string; preimage: Uint8Array }
     | { phase: "swept"; txid: string };
 
+export async function readOnchainHtlcSpend(
+    chain: ChainSource,
+    htlc: OnchainHtlc,
+    funding: { txid: string; vout: number; amount?: number },
+): Promise<
+    | (Extract<OnchainHtlcPhase, { phase: "claimed" }> & { feeRateSatVb?: number })
+    | Extract<OnchainHtlcPhase, { phase: "swept" }>
+    | null
+> {
+    const spend = await chain.getSpendingTx(funding.txid, funding.vout, htlc.pkScript);
+    if (!spend) return null;
+    const preimage = extractPreimage(spend.txHex, htlc.paymentHash);
+    const tx = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
+        allowUnknownInputs: true,
+        allowUnknownOutputs: true,
+    });
+    if (!preimage) return { phase: "swept", txid: tx.id };
+    // The stock claim has one input and one output. Its rate is recoverable from the spent value.
+    if (funding.amount !== undefined && tx.inputsLength === 1 && tx.outputsLength === 1) {
+        const fee = funding.amount - Number(tx.getOutput(0).amount);
+        if (fee > 0)
+            return { phase: "claimed", txid: tx.id, preimage, feeRateSatVb: fee / tx.vsize };
+    }
+    return { phase: "claimed", txid: tx.id, preimage };
+}
+
 /**
  * Classify an HTLC from chain state alone. `funding` (the known outpoint from
  * the stored record) is what distinguishes "never funded" from "funded and
- * already spent": without it a spent HTLC looks unfunded.
+ * already spent": without it a spent HTLC looks unfunded. Its spend is read
+ * before anything else at the script, so an output paid there later cannot hide it.
+ * After claim submission, prefer the recorded output. Otherwise, rank outputs
+ * that meet the confirmation threshold first, then by amount.
  *
  * `claimed` carries the preimage read from the spend's witness — the receipt;
  * `swept` is a spend that reveals no matching preimage.
@@ -534,25 +561,31 @@ export async function classifyOnchainHtlc(
         htlc: OnchainHtlc;
         minConfirmations: number;
         funding?: { txid: string; vout: number };
+        claimSubmitted?: boolean;
+        expectedAmount?: number;
     },
 ): Promise<OnchainHtlcPhase> {
     const utxos = await chain.getScriptUtxos(input.htlc.pkScript);
-    const best = utxos.sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
-    if (!best) {
-        if (!input.funding) return { phase: "unfunded" };
-        const spend = await chain.getSpendingTx(
-            input.funding.txid,
-            input.funding.vout,
-            input.htlc.pkScript,
-        );
-        if (!spend) return { phase: "unfunded" };
-        const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
-        const txid = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
-            allowUnknownInputs: true,
-            allowUnknownOutputs: true,
-        }).id;
-        return preimage ? { phase: "claimed", txid, preimage } : { phase: "swept", txid };
+    const deep = (u: ChainUtxo) => u.confirmations >= input.minConfirmations;
+    const { funding } = input;
+    const recorded =
+        funding && utxos.find((u) => u.txid === funding.txid && u.vout === funding.vout);
+    if (funding && !recorded) {
+        const spend = await readOnchainHtlcSpend(chain, input.htlc, {
+            txid: funding.txid,
+            vout: funding.vout,
+        });
+        if (spend) return spend;
     }
+    const best =
+        (input.claimSubmitted &&
+            recorded &&
+            (input.expectedAmount === undefined || recorded.amount >= input.expectedAmount) &&
+            recorded) ||
+        utxos.sort((a, b) =>
+            deep(a) !== deep(b) ? (deep(a) ? -1 : 1) : b.amount > a.amount ? 1 : -1,
+        )[0];
+    if (!best) return { phase: "unfunded" };
     if (best.confirmations < input.minConfirmations)
         return { phase: "awaiting_confirmations", utxo: best };
     const mtp = await chain.getMtp();

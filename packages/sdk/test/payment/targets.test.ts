@@ -29,6 +29,12 @@ describe("payment targets", () => {
         expect(invoiceTarget(`bitcoin:${btcAddr}?lightning=lightning:${invoice}`)).toBe(invoice);
     });
 
+    it("takes the URI's address, not an address= parameter", () => {
+        const other = "mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn";
+
+        expect(btcTarget(`bitcoin:${btcAddr}?address=${other}`)).toBe(btcAddr);
+    });
+
     it("rejects a URI whose field holds a target of the wrong kind", () => {
         expect(arkTarget(`bitcoin:${btcAddr}?ark=${invoice}`)).toBeUndefined();
         expect(invoiceTarget(`bitcoin:${btcAddr}?lightning=${arkAddr}`)).toBeUndefined();

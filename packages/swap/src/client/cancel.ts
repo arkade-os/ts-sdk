@@ -18,14 +18,14 @@
  * (chain fate, not the gate); `cancel()` retries from pending the same way. Arkade txs land in
  * <500ms, so the in-between is not a durable status.
  */
-import { base64, hex } from "@scure/base";
+import { base64 } from "@scure/base";
 import { ArkAddress, Transaction, type IWallet } from "@arkade-os/sdk";
 import { retireOfferContract } from "../coverage";
 import {
     NoSpendableDepositError,
     OfferCovenantMismatchError,
-    decodeOffer,
     prepareOfferCancel,
+    storedOffer,
 } from "../offer";
 import { classifyDepositSpend, spendTxidsOf } from "../restore";
 import { offerOutcome } from "./outcome";
@@ -46,7 +46,7 @@ export interface CancelInput {
      * read the call makes, and what the gate is written from. */
     readonly record: OfferSwapRecord;
     /** The delivery channel both edges emit through, armed or not. */
-    readonly drive: SwapDrive;
+    readonly drive: Pick<SwapDrive, "ingest">;
     readonly indexer: LockupSpendIndexer;
     /** Unix seconds. Injected for tests. */
     readonly now?: () => number;
@@ -70,6 +70,9 @@ export const cancelSwap = async (input: CancelInput): Promise<{ outcome: CancelO
         return { outcome };
     }
 
+    // Before the gate: a record that cannot be rebuilt must not be left `cancelling`.
+    const offer = storedOffer(record);
+
     // The gate, written BEFORE the broadcast, and allowed to throw: a failed write must not be
     // broadcast past. On a resumed `cancelling` record this rewrites an identical marker.
     const gated = withStatus(record, "cancelling", now());
@@ -78,7 +81,7 @@ export const cancelSwap = async (input: CancelInput): Promise<{ outcome: CancelO
 
     let prepared;
     try {
-        prepared = await prepareOfferCancel(wallet, record.offerHex, {
+        prepared = await prepareOfferCancel(wallet, offer, {
             swapAddress: record.swapAddress,
             ...(record.fundingTxid === undefined ? {} : { fundingTxid: record.fundingTxid }),
         });
@@ -142,7 +145,7 @@ const reconcileDepositSpend = async (
     record: OfferSwapRecord,
     indexer: LockupSpendIndexer,
 ): Promise<{ kind: "cancelled" | "fulfilled"; spentTxid: string } | undefined> => {
-    const offer = decodeOffer(hex.decode(record.offerHex));
+    const offer = storedOffer(record);
     const { vtxos } = await indexer.getVtxos({ scripts: [record.swapPkScript] });
     const all = vtxos ?? [];
     const deposit =

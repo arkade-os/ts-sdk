@@ -2,7 +2,7 @@ import { collectContracts } from "../../../repositories/contractRepository";
 import type { TaskItem, TaskResult } from "../taskQueue";
 import type { TaskProcessor, TaskDependencies } from "../taskRunner";
 import type { ExtendedVirtualCoin } from "../../../wallet";
-import { getNormalizedVtxos } from "../../../wallet/vtxo";
+import { getNormalizedVtxos, indexerPages } from "../../../wallet/vtxo";
 import {
     warnAndFilterVtxosForScript,
     saveVtxosForContract,
@@ -44,25 +44,17 @@ export const contractPollProcessor: TaskProcessor = {
         let vtxosSaved = 0;
 
         for (const contract of contracts) {
-            // Paginated fetch of spendable virtual outputs
-            const pageSize = 100;
-            let pageIndex = 0;
-            let hasMore = true;
             const allVtxos: ExtendedVirtualCoin[] = [];
-
-            while (hasMore) {
-                const { vtxos, page } = await getNormalizedVtxos(indexerProvider, {
+            for await (const { vtxos } of indexerPages((pageIndex) =>
+                getNormalizedVtxos(indexerProvider, {
                     scripts: [contract.script],
                     pageIndex,
-                    pageSize,
-                });
-
+                    pageSize: 100,
+                }),
+            )) {
                 for (const vtxo of vtxos) {
                     allVtxos.push(extendVtxo(vtxo, contract));
                 }
-
-                hasMore = page ? vtxos.length === pageSize : false;
-                pageIndex++;
             }
 
             // Skip wrong-script rows (legacy duplicates or indexer drift)

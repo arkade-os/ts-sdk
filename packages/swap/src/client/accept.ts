@@ -21,9 +21,8 @@
  * inert until funded, so a crash between the two leaves nothing at stake.
  *
  * **A funding route is one whose give instrument is the wallet's** — the instrument, never the
- * asset: a `lightning -> arkade` receive gives BTC via a third party's invoice (`onchain -> arkade`
- * via an L1 deposit made outside this wallet), and branching on the asset would refuse an
- * empty-wallet receive.
+ * asset: a `lightning -> arkade` receive gives BTC via a third party's invoice, and branching on
+ * the asset would refuse an empty-wallet receive.
  *
  * **Arming** via {@link AcceptInput.drive} happens after the record is durable and runs BEHIND
  * the return, so this call waits on no pass and no network read.
@@ -37,10 +36,18 @@ import {
     type IWallet,
     type Recipient,
 } from "@arkade-os/sdk";
-import { createOffer, OFFER_PACKET_TYPE, registerDerivedOffer } from "../offer";
+import {
+    createOffer,
+    encodeOffer,
+    OFFER_PACKET_TYPE,
+    offerFromBinding,
+    recordOfferBinding,
+    registerDerivedOffer,
+    storedOffer,
+} from "../offer";
 import { promoteOfferContract } from "../coverage";
 import { registerLockupContract } from "../lockupContract";
-import { onchainReceiveProfile, onchainSendProfile } from "../rfqCorridors";
+import { onchainSendProfile } from "../rfqCorridors";
 import { rfqSecretsProfile } from "../rfqProfileParts";
 import { BTC_ASSET_ID } from "../store";
 import type { AssetSwapRepository } from "../repository";
@@ -117,6 +124,8 @@ export interface AcceptInput {
     /** Unix seconds. */
     readonly now: number;
     readonly validUntil?: number;
+    /** `false` funds an offer without its packet. Written on the record before any funding. */
+    readonly attachOfferPacket?: boolean;
 }
 
 /**
@@ -258,6 +267,7 @@ const commonOf = (quote: Quote, now: number) => ({
     market: quote.market,
     ...(quote.solver === undefined ? {} : { solver: quote.solver }),
     expiresAt: quote.expiresAt,
+    ...(quote.auction === undefined ? {} : { fundingDeadline: quote.expiresAt }),
     ...(quote.artifact === undefined ? {} : { artifact: recordArtifact(quote.artifact) }),
     createdAt: now,
     updatedAt: now,
@@ -292,7 +302,6 @@ const KIND_OF = {
     "arkade->lightning": "lightning_send",
     "lightning->arkade": "lightning_receive",
     "arkade->onchain": "onchain_send",
-    "onchain->arkade": "onchain_receive",
 } as const satisfies Record<CorridorRfqPreparation["route"], CorridorSwapRecord["kind"]>;
 
 /**
@@ -323,20 +332,6 @@ const profileOf = (
                     minConfirmations: preparation.minConfirmations,
                     expectedAmount: toSafeNumber(preparation.expectedAmount, "expectedAmount"),
                     payoutPkScript: preparation.payoutPkScript,
-                }),
-            };
-        case "onchain->arkade":
-            return {
-                ...secrets,
-                expectedAmount: toSafeNumber(preparation.expectedAmount, "expectedAmount"),
-                payoutAddress: preparation.payoutAddress,
-                ...onchainReceiveProfile({
-                    htlc: preparation.htlc,
-                    htlcParams: preparation.htlcParams,
-                    l1Network: preparation.l1Network,
-                    minConfirmations: preparation.minConfirmations,
-                    refundPkScript: preparation.refundPkScript,
-                    refundDescriptor: preparation.refundKey.descriptor,
                 }),
             };
     }
@@ -405,12 +400,16 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
     const funds = fundsFromWallet(quote.route);
     if (funds) await assertFundable(wallet, quote);
 
-    const record =
+    const built =
         preparation.backend === "feed"
             ? await registeredOfferRecord(input, preparation)
             : preparation.route === "arkade->arkade"
               ? await registeredAssetRecord(input, preparation)
               : await registeredCorridorRecord(input, preparation);
+    const record: SwapRecord =
+        built.family === "offer" && input.attachOfferPacket === false
+            ? { ...built, attachOfferPacket: false }
+            : built;
 
     // Throwing, deliberately: nothing past this line may happen unless the record is durable.
     await repository.saveSwapRecord(record);
@@ -507,7 +506,11 @@ const registeredAssetRecord = async (
             : { assetPayment: recordAssetPayment(preparation.assetPayment) }),
         family: "offer",
         status: "pending",
-        offerHex: preparation.offer.offerHex,
+        // a directed covenant is kept as its binding alone, which an older reader drops whole
+        // rather than half-reads
+        ...(preparation.offer.offerBinding.taker === undefined
+            ? { offerHex: preparation.offer.offerHex }
+            : { binding: recordOfferBinding(preparation.offer.offerBinding) }),
         swapAddress: preparation.offer.address,
         swapPkScript: hex.encode(preparation.offer.swapPkScript),
         ...(preparation.carrierSats === undefined
@@ -552,11 +555,24 @@ const fundAndStamp = async (
     record: SwapRecord,
     repository: AssetSwapRepository,
 ): Promise<SwapRecord> => {
+    if (
+        record.fundingDeadline !== undefined &&
+        (!Number.isSafeInteger(record.fundingDeadline) ||
+            record.fundingDeadline <= 0 ||
+            record.fundingDeadline > record.expiresAt)
+    )
+        throw new Error("invalid stored funding deadline");
     const bounds = storedFundingBounds(record.assetPayment, record.expiresAt);
     const cap =
         input.validUntil === undefined
-            ? bounds.validUntil
-            : Math.min(input.validUntil, bounds.validUntil ?? record.expiresAt);
+            ? record.fundingDeadline === undefined
+                ? bounds.validUntil
+                : Math.min(record.fundingDeadline, bounds.validUntil ?? record.expiresAt)
+            : Math.min(
+                  input.validUntil,
+                  bounds.validUntil ?? record.expiresAt,
+                  record.fundingDeadline ?? record.expiresAt,
+              );
     const validUntil = cap === undefined ? undefined : Math.min(cap, record.expiresAt);
     if (
         input.firstFundingAttempt &&
@@ -649,10 +665,12 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
                           { assetId: toDiscoveryLeg(record.route.give.asset).assetId, amount },
                       ],
                   }),
-            extensions: [offerExtensionOf(record)],
+            ...(record.attachOfferPacket === false
+                ? {}
+                : { extensions: [offerExtensionOf(record)] }),
         });
     }
-    if (record.kind === "lightning_receive" || record.kind === "onchain_receive") {
+    if (record.kind === "lightning_receive") {
         // Unreachable (callers gate on `fundsFromWallet`); keeps the union exhaustive.
         throw new Error(`receive swap ${record.id} funds nothing from this wallet`);
     }
@@ -664,13 +682,19 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
 };
 
 /**
- * The offer packet, rebuilt from the record's own TLV, so a resumed funding attaches exactly
- * what the *stored* covenant commits to.
+ * The offer packet, rebuilt from the record's own TLV, or encoded from its binding when it keeps
+ * none, so a resumed funding attaches exactly what the *stored* covenant commits to.
  */
-const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uint8Array } => ({
-    type: OFFER_PACKET_TYPE,
-    payload: hex.decode(record.offerHex),
-});
+const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uint8Array } => {
+    const stored = storedOffer(record);
+    return {
+        type: OFFER_PACKET_TYPE,
+        payload:
+            record.offerHex !== undefined
+                ? hex.decode(record.offerHex)
+                : encodeOffer("version" in stored ? offerFromBinding(stored) : stored),
+    };
+};
 
 /**
  * The deposit a crashed accept may already have made (sent, then died before stamping the txid);

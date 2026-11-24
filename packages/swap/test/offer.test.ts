@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
 import { ArkAddress, arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
 import {
@@ -26,7 +25,6 @@ const keys = {
 };
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const EXIT_BLOCKS: RelativeTimelock = { type: "blocks", value: BigInt(144) };
-type ContractArtifact = Parameters<typeof arkade.programFromArtifact>[0];
 
 // hand-built TLV records: encodeOffer now rejects malformed offers, so the
 // decode-side coverage below assembles its foreign payloads from raw records
@@ -63,45 +61,6 @@ const goldens: [Omit<Offer, "swapPkScript">, string][] = [
 ];
 
 describe("swap offer", () => {
-    it("compiles an arkadec artifact byte-identically to the hand-written asset program", () => {
-        const compilerArtifact: ContractArtifact = JSON.parse(
-            readFileSync(
-                new URL("./fixtures/arkadec/banco-btc-to-asset.artifact.json", import.meta.url),
-                "utf8",
-            ),
-        );
-        expect(compilerArtifact.formatVersion).toBe(1);
-        expect(
-            compilerArtifact.functions.every((group) =>
-                group.leaves.every((leaf) => Array.isArray(leaf.witness)),
-            ),
-        ).toBe(true);
-        const binding = swapProgramBinding(
-            { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
-            operatorPubkey,
-        );
-        const generated = arkade.programFromArtifact(compilerArtifact);
-        expect(generated.params?.map((p) => p.name)).toEqual([
-            ...compilerArtifact.constructorInputs.map((input) => input.name),
-            "server",
-        ]);
-        for (const expected of generated.params ?? []) {
-            expect(binding.program.params?.find((param) => param.name === expected.name)).toEqual(
-                expected,
-            );
-        }
-        const packed = (script: InstanceType<typeof arkade.ArkadeProgramScript>) =>
-            [
-                script.compiled.map((fn) => hex.encode(fn.leafScript)),
-                script.compiled.map((fn) => (fn.arkadeScript ? hex.encode(fn.arkadeScript) : "")),
-                hex.encode(script.encode()),
-                hex.encode(script.pkScript),
-            ].join("|");
-        expect(packed(new arkade.ArkadeProgramScript(generated, binding.args, binding.keys))).toBe(
-            packed(new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys)),
-        );
-    });
-
     it("derives the golden swap addresses for both directions", () => {
         for (const [offer, golden] of goldens) {
             const contract = offerContract(offer, operatorPubkey);
@@ -113,6 +72,44 @@ describe("swap offer", () => {
             expect(address).toBe(golden);
         }
     });
+
+    it.each([
+        [
+            "asset-swap",
+            "asset-swap-v2",
+            0,
+            "5120380f74f6e40eb347c46294a601bc6edfff0d509beb513bac392e8bfc6dec1d84",
+        ],
+        [
+            "sats-swap",
+            "asset-swap-v2",
+            1,
+            "5120004739eb4ad3eab769b0c2278cd70cce628e20477e8b8c508bcf8519a5f451c9",
+        ],
+    ] as const)(
+        "pins the %s pkScript on the %s tree",
+        (_artifact, contractVersion, i, pkScript) => {
+            const [offer] = goldens[i];
+            expect(hex.encode(offerContract(offer, operatorPubkey, contractVersion).pkScript)).toBe(
+                pkScript,
+            );
+        },
+    );
+
+    it.each([["asset-swap-v2", "asset-swap-directed"]] as const)(
+        "rebinds an offer funded on %s from its swapPkScript alone",
+        (funded, asked) => {
+            const [offer] = goldens[0];
+            const swapPkScript = offerContract(offer, operatorPubkey, funded).pkScript;
+            const rebound = swapProgramBinding({ ...offer, swapPkScript }, operatorPubkey, asked);
+            const script = new arkade.ArkadeProgramScript(
+                rebound.program,
+                rebound.args,
+                rebound.keys,
+            );
+            expect(hex.encode(script.pkScript)).toBe(hex.encode(swapPkScript));
+        },
+    );
 
     it.each([31, 33])("rejects a %s-byte asset txid in the bundled v1 program", (length) => {
         const {
@@ -167,6 +164,12 @@ describe("swap offer", () => {
                 '"cancel":{"tapscript":{"signers":["$user","$server"]}},' +
                 '"exit":{"tapscript":{"signers":["$user"],"csv":{"type":"blocks","value":"$exitDelay"}}}}}',
         );
+    });
+
+    it("compiles a fresh offer from swapPrograms, the asset-swap-v2 programs", () => {
+        const [[wantAsset], [wantBtc]] = goldens;
+        expect(swapProgramBinding(wantAsset, operatorPubkey).program).toBe(swapPrograms.wantAsset);
+        expect(swapProgramBinding(wantBtc, operatorPubkey).program).toBe(swapPrograms.wantBtc);
     });
 
     it("leaves the base programs untouched when it appends the exit", () => {

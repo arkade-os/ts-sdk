@@ -10,6 +10,7 @@ import { assetPaymentOf, type RecordedAssetPayment, type AssetPaymentTerms } fro
  * **No `bigint` anywhere, at any depth**: SQLite and Realm `JSON.stringify` the record whole
  * (`test/client/record.types.ts` proves it structurally).
  */
+import type { RecordedOfferBinding } from "../offer";
 import type { AssetSwapStatus } from "../store";
 import type { RfqSwapState } from "../rfqSwapState";
 import type { PersistableRfqSwap } from "../rfqRecord";
@@ -114,6 +115,8 @@ export interface SwapRecordCommon {
     /** The quote's own deadline, unix seconds — what makes a stalled accept a
      * benign abandon rather than a live obligation. */
     readonly expiresAt: number;
+    /** Retained funding dispatch cap for an auction-origin quote. */
+    readonly fundingDeadline?: number;
     /** The one thing a counterparty must see, when the route has one. Durable because a duplicate
      * accept after a restart must return the SAME invoice, and the quote object is gone by then. */
     readonly artifact?: RecordedArtifact;
@@ -137,19 +140,26 @@ export interface SwapRecordCommon {
     readonly updatedAt: number;
 }
 
-/** `arkade <-> arkade`: the offer covenant. `offerHex` is the whole covenant, so no tree params. */
-export interface OfferSwapRecord extends SwapRecordCommon {
+/** What rebuilds an offer's covenant: the TLV hex, the binding (a directed swap's only form), or both. */
+export type OfferCovenant =
+    | { readonly offerHex: string; readonly binding?: RecordedOfferBinding }
+    | { readonly offerHex?: string; readonly binding: RecordedOfferBinding };
+
+/** `arkade <-> arkade`: the offer covenant, whole in `binding` or `offerHex`, so no tree params. */
+export type OfferSwapRecord = OfferSwapRecordFields & OfferCovenant;
+
+interface OfferSwapRecordFields extends SwapRecordCommon {
     readonly family: "offer";
     /** v1's raw status vocabulary, read verbatim by the drive's `RawState`. */
     readonly status: AssetSwapStatus;
-    /** The TLV offer, hex. The only input `cancelOffer` needs. */
-    readonly offerHex: string;
     readonly swapAddress: string;
     /** The covenant's scriptPubKey, hex — the indexer's monitoring key and the reconcile's match key. */
     readonly swapPkScript: string;
     /** Sats riding an asset deposit, decimal: the solver's published carrier, which the fill is
      * priced against. Absent for a BTC deposit and for feed-priced swaps (the SDK default). */
     readonly carrierSats?: string;
+    /** `false`: the funding carries no offer packet. Absent attaches it. */
+    readonly attachOfferPacket?: false;
     readonly spentTxid?: string;
     readonly completedAt?: number;
 }

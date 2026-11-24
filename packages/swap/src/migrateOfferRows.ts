@@ -26,7 +26,7 @@ function withExitV0(program: ProgramJson, exit: RelativeTimelock["type"] | undef
     };
 }
 
-/** v0 program string → the v1 string the record path writes for the same offer. */
+/** v0 program string → the v1 string that still compiles to that row's script. */
 const V0_TO_V1 = new Map<string, string>();
 for (const [v0, v1] of [
     [wantBtcV0, swapPrograms.wantBtc],

@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { sequenceToTimelock } from "../../utils/timelock";
+import { sequenceToTimelock, sequenceToCanonicalTimelock } from "../../utils/timelock";
 import {
     Contract,
     DerivedContractTapscripts,
@@ -15,7 +15,7 @@ import {
     deriveDescriptorLeafPubKey,
 } from "../../identity/descriptor";
 import type { IndexerProvider } from "../../providers/indexer";
-import { getNormalizedVtxos } from "../../wallet/vtxo";
+import { getNormalizedVtxos, indexerPages } from "../../wallet/vtxo";
 import { DefaultVtxo } from "../../script/default";
 import type { TapLeafScript } from "../../script/base";
 import type { RelativeTimelock } from "../../script/tapscript";
@@ -431,10 +431,27 @@ export interface ForfeitExitScript {
 }
 
 /**
- * BIP68 sequence for a contract's exit path, or `undefined` when the contract
- * carries no `csvTimelock` param (an exit with no relative timelock).
+ * BIP68 sequence for a contract's exit path, or `undefined` when it has no CSV param.
+ * Executor templates use `exitDelay` or `boardingExitDelay` instead of `csvTimelock`.
  */
 export function exitSequence(contract: Contract): number | undefined {
+    if (contract.type === "executor") {
+        const { template } = contract.params;
+        if (template !== "renewal" && template !== "boarding") {
+            throw new Error(`unknown Executor template ${template}`);
+        }
+        const name = template === "boarding" ? "boardingExitDelay" : "exitDelay";
+        const raw = contract.params[name];
+        const sequence = Number(raw);
+        if (!/^[0-9]+$/.test(raw ?? "") || !Number.isSafeInteger(sequence)) {
+            throw new Error(`${name} must be a non-negative integer`);
+        }
+        // Reserved bits would change the owner's leaf when decoded and re-encoded.
+        if (!sequenceToCanonicalTimelock(BigInt(sequence))) {
+            throw new Error(`${name} must be a canonical BIP68 sequence`);
+        }
+        return sequence;
+    }
     return contract.params.csvTimelock ? Number(contract.params.csvTimelock) : undefined;
 }
 
@@ -547,22 +564,17 @@ export async function detectUsedScripts(
         // `scripts` stays the full chunk across pages so the indexer's
         // pagination is consistent; `remaining` only drives the early stop.
         const remaining = new Set(scripts);
-        let pageIndex = 0;
-        let hasMore = true;
-        while (hasMore && remaining.size > 0) {
-            const { vtxos, page } = await getNormalizedVtxos(indexerProvider, {
+        for await (const { vtxos } of indexerPages((pageIndex) =>
+            getNormalizedVtxos(indexerProvider, {
                 scripts,
                 pageIndex,
                 pageSize: DEFAULT_PAGE_SIZE,
-            });
+            }),
+        )) {
             for (const vtxo of vtxos) {
                 if (remaining.delete(vtxo.script)) used.add(vtxo.script);
             }
-            // Same end-of-history heuristic as fetchContractVtxosBulk: a short
-            // page (or absent page metadata) means there is nothing left to
-            // fetch.
-            hasMore = page ? vtxos.length === DEFAULT_PAGE_SIZE : false;
-            pageIndex++;
+            if (remaining.size === 0) break;
         }
     }
     return used;

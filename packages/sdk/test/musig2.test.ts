@@ -7,6 +7,9 @@ import {
     partialSigVerify,
     PartialSig,
 } from "../src/musig2";
+import { TreeSignerSession } from "../src/tree/signingSession";
+import { TxTree } from "../src/tree/txTree";
+import { Transaction } from "../src/utils/transaction";
 import testData from "./fixtures/musig2.json";
 import { hex } from "@scure/base";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -181,6 +184,21 @@ describe("musig2", () => {
                     options,
                 ),
             ).toThrow(/same length/);
+        });
+    });
+
+    describe("TreeSignerSession", () => {
+        it("refuses to re-init a session that already produced nonces", async () => {
+            const tx = new Transaction();
+            tx.addInput({ txid: new Uint8Array(32), index: 0 });
+            const tree = new TxTree(tx);
+            const session = TreeSignerSession.random();
+            await session.init(tree, new Uint8Array(32), 1000n);
+            await session.getNonces();
+
+            await expect(session.init(tree, new Uint8Array(32), 1000n)).rejects.toThrow(
+                /already used/,
+            );
         });
     });
 });

@@ -7,18 +7,20 @@ const nativeProgram = {
     version: 1,
     functions: {
         spend: {
-            inputs: [
-                { name: "key", type: "pubkey" },
-                { name: "sig", type: "signature" },
-                { name: "data", type: "bytes" },
-                { name: "digest20", type: "bytes20" },
-                { name: "digest32", type: "bytes32" },
-                { name: "asset", type: "asset" },
-                { name: "amount", type: "int" },
-                { name: "flag", type: "bool" },
-                { name: "group", type: "AssetGroup" },
-            ] as const,
-            tapscript: { signers: [] },
+            tapscript: {
+                signers: [],
+                inputs: [
+                    { name: "key", type: "pubkey" },
+                    { name: "sig", type: "signature" },
+                    { name: "data", type: "bytes" },
+                    { name: "digest20", type: "bytes20" },
+                    { name: "digest32", type: "bytes32" },
+                    { name: "asset", type: "asset" },
+                    { name: "amount", type: "int" },
+                    { name: "flag", type: "bool" },
+                    { name: "group", type: "AssetGroup" },
+                ] as const,
+            },
         },
     },
 } satisfies Program;
@@ -35,8 +37,10 @@ it("uses native scalar names without changing JavaScript call values", () => {
         | "bool"
         | "AssetGroup"
     >();
-    expectTypeOf<Parameters<ContractFunctions<typeof nativeProgram>["spend"]>>().toEqualTypeOf<
-        [
+    expectTypeOf<
+        Parameters<ContractFunctions<typeof nativeProgram>["spend"]>[0]["tapscript"]
+    >().toEqualTypeOf<
+        readonly [
             Uint8Array,
             Uint8Array,
             Uint8Array,
@@ -85,17 +89,19 @@ it("keeps a function with dotted input names loose, since its fields bind as one
         version: 1,
         functions: {
             spend: {
-                inputs: [
-                    { name: "point.x", type: "int" },
-                    { name: "point.y", type: "int" },
-                ] as const,
-                tapscript: { signers: [] },
+                tapscript: {
+                    signers: [],
+                    inputs: [
+                        { name: "point.x", type: "int" },
+                        { name: "point.y", type: "int" },
+                    ] as const,
+                },
             },
         },
     } satisfies Program;
-    expectTypeOf<Parameters<ContractFunctions<typeof dotted>["spend"]>>().toEqualTypeOf<
-        ArkadeNestedValue[]
-    >();
+    expectTypeOf<
+        Parameters<ContractFunctions<typeof dotted>["spend"]>[0]["tapscript"]
+    >().toEqualTypeOf<ArkadeNestedValue[]>();
 });
 
 it("accepts nested values when satisfies Program widens input names", () => {
@@ -103,15 +109,41 @@ it("accepts nested values when satisfies Program widens input names", () => {
         version: 1,
         functions: {
             spend: {
-                inputs: [
-                    { name: "point.x", type: "int" },
-                    { name: "point.y", type: "int" },
-                ],
-                tapscript: { signers: [] },
+                tapscript: {
+                    signers: [],
+                    inputs: [
+                        { name: "point.x", type: "int" },
+                        { name: "point.y", type: "int" },
+                    ],
+                },
             },
         },
     } satisfies Program;
-    expectTypeOf<Parameters<ContractFunctions<typeof program>["spend"]>>().toEqualTypeOf<
-        ArkadeNestedValue[]
+    expectTypeOf<
+        Parameters<ContractFunctions<typeof program>["spend"]>[0]["tapscript"]
+    >().toEqualTypeOf<ArkadeNestedValue[]>();
+});
+
+it("keeps a function nullary when its segments declare empty inputs", () => {
+    const program = {
+        version: 1,
+        functions: {
+            refund: {
+                tapscript: { signers: [], inputs: [] as const },
+                arkadeScript: { asm: [], inputs: [] as const },
+            },
+        },
+    } satisfies Program;
+    expectTypeOf<Parameters<ContractFunctions<typeof program>["refund"]>>().toEqualTypeOf<[]>();
+});
+
+it("types a widened program's calls by segment, not positionally", () => {
+    expectTypeOf<Parameters<ContractFunctions<Program>[string]>>().toEqualTypeOf<
+        [
+            args?: {
+                tapscript?: readonly ArkadeNestedValue[];
+                arkadeScript?: readonly ArkadeNestedValue[];
+            },
+        ]
     >();
 });

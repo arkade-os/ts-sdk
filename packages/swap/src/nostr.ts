@@ -15,6 +15,7 @@ import {
 } from "@arkade-os/solver-discovery";
 import { expectQuote, pairOf, type RfqStatus, type RfqTransport } from "./rfq";
 import { sharedNostrPool } from "./nostrPool";
+import { SolverUnavailable } from "./transportErrors";
 import { assertTimerMs } from "@arkade-os/sdk";
 import {
     finalizeEvent,
@@ -52,7 +53,7 @@ export {
  * Every relay dropped the subscription, so no reply can arrive on it. Distinct from a timeout:
  * that says the solver did not respond, this says we could never have heard it.
  */
-export class RelayUnavailable extends Error {
+export class RelayUnavailable extends SolverUnavailable {
     readonly reasons: string[];
 
     constructor(reasons: string[]) {
@@ -130,6 +131,11 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
         { kinds: [RFQ_DIRECTED_KIND], "#p": [pubkey], authors: [solverPubkey] },
         {
             onevent(event: Event) {
+                // `pool` is the caller's to supply, so re-check what nostr-tools' own would. The
+                // author matters alone: the conversation key is symmetric, so a decrypt proves
+                // only "one of the two", and reflected client traffic passes it. Silent, not a
+                // rejection: an injection must not settle a still-live negotiation.
+                if (event.pubkey !== solverPubkey || !verifyEvent(event)) return;
                 let payload: unknown;
                 try {
                     payload = JSON.parse(nip44.v2.decrypt(event.content, conversationKey));
@@ -171,7 +177,8 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
         const accepted = results.some(
             (r) => r.status === "fulfilled" && !String(r.value).startsWith(CONNECTION_FAILURE),
         );
-        if (!accepted) throw new Error(`no relay accepted the RFQ message: ${reasons.join("; ")}`);
+        if (!accepted)
+            throw new SolverUnavailable(`no relay accepted the RFQ message: ${reasons.join("; ")}`);
     };
 
     /** Await the reply for one rfq_id, with a timeout and guaranteed cleanup. */
@@ -179,7 +186,7 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
         const reply = new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 waiters.delete(rfqId);
-                reject(new Error(`no solver reply within ${timeoutMs}ms`));
+                reject(new SolverUnavailable(`no solver reply within ${timeoutMs}ms`));
             }, timeoutMs);
             waiters.set(rfqId, {
                 resolve: (payload) => {
@@ -340,3 +347,13 @@ export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): Transpo
         },
     };
 };
+
+export { collectOpenRfqBids, type CollectOpenRfqOptions } from "./openRfqTransport";
+export {
+    openRfqPayload,
+    parseOpenRfqBid,
+    rankOpenRfqBids,
+    RFQ_BROADCAST_KIND,
+    type OpenRfqBid,
+    type OpenRfqRequest,
+} from "./openRfq";

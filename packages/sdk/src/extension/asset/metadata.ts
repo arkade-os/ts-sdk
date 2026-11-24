@@ -3,6 +3,8 @@ import { hex } from "@scure/base";
 import { Bytes, compareBytes } from "@scure/btc-signer/utils.js";
 import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 
+const MAX_METADATA_LIST_COUNT = 1000;
+
 /**
  * Metadata represents a key-value pair.
  * @param key - the key
@@ -118,6 +120,11 @@ export class MetadataList {
     /** Decode a metadata list from a buffer reader. */
     static fromReader(reader: BufferReader): MetadataList {
         const count = Number(reader.readVarUint());
+        if (count > MAX_METADATA_LIST_COUNT) {
+            throw new Error(
+                `invalid asset metadata list count, max=${MAX_METADATA_LIST_COUNT}, got=${count}`,
+            );
+        }
         const items = Array.from({ length: count }, () => Metadata.fromReader(reader));
         return new MetadataList(items);
     }

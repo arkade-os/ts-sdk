@@ -15,6 +15,64 @@ const client = createSwapClient({ wallet, repository: new IndexedDbAssetSwapRepo
 Construction is synchronous and inert: no network, no wallet read, no repository open. The first
 call that needs one does it.
 
+## Compare open RFQ offers
+
+`openRfq` is an explicit public search: it broadcasts the asset pair and atomic size.
+It never publishes an invoice, payout address or wallet identity. Replies carry signed
+solver cards and sealed indicative amounts; a discovered card stays local to this auction.
+Open RFQ uses one version-1 wire shape with exact atomic amounts and signed-card bids.
+Open offers require a usable directed Nostr rendezvous; feed-only routing remains separate.
+
+```ts
+import { generateSecretKey } from "nostr-tools";
+
+const auction = await client.openRfq(
+    { give, take, amount: 25_000n, amountOn: "give" },
+    { secretKey: generateSecretKey(), relays, signal },
+);
+// Present auction.bids and let the user choose an offer.
+const quote = await client.quoteBid(auction, auction.bids[selectedIndex]);
+// Present the verified terms before funding.
+const swap = await client.accept(quote);
+```
+
+The application supplies a fresh conversation key for each search. A selected offer is
+verified through the normal directed quote path. Paused solvers and registry restrictions
+still apply. Expired or worsened terms require a fresh selection; selection never fails
+over. Tokens trade on Arkade; external Lightning and Bitcoin routes exchange native BTC only. An EVM
+pair is refused before publication until that settlement corridor exists in the client.
+See [`OpenRfqOptions`](src/client/openRfq.ts) for progress, relay and timing controls.
+
+## Solver priority and failover
+
+Opt in with `policy: { solverRouting: {} }`. The
+[`SolverRoutingPolicy` API contract](src/client/solverRouting.ts) documents the defaults,
+quote-only failover boundary and explicit-selection precedence.
+
+```ts
+import { completedSolverUsage, createSolverHealth, createSwapClient } from "@arkade-os/swap";
+
+const client = createSwapClient({
+    wallet,
+    repository,
+    policy: {
+        solverRouting: {
+            health: createSolverHealth({ storage: healthStorage }),
+            preferences: async ({ network, direction }) => ({
+                mode: "usage", // "manual" | "usage" | "cost"
+                priority: savedPriorities[direction] ?? [],
+                preferFirst: preferredSolverIds[direction],
+                disabled: disabledSolverIds[direction] ?? [],
+                usage: completedSolverUsage(await client.swaps(), network, direction),
+            }),
+        },
+    },
+});
+const candidates = await client.candidates({ to: invoice });
+const quote = await client.quote({ to: invoice });
+await client.accept(quote);
+```
+
 Market discovery needs no configuration either: the client defaults to the reference solver
 registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
 registry instead with `discovery: { registryUrl }`, or opt out of registries entirely with
@@ -53,14 +111,6 @@ artifact is an invoice whose claim secret has to be durable before a payer can a
 `receive` returns only after `accept` has persisted. Reaching for `quote` and reading the invoice
 off it would show a payer an invoice this client could not yet claim; the verb removes the
 ordering from the caller.
-
-`onchain -> arkade` is a receive too: `client.receive({ via: "onchain", amount })` returns a
-`deposit` artifact naming the L1 HTLC to fund, for exactly its `amount`, from any bitcoin wallet.
-The client claims the solver's Arkade lockup once it is funded. If the solver never funds it, the
-client takes the L1 funding back itself once the HTLC's refund leaf matures, paying a boarding
-address of this wallet fixed at quote time and signing with the wallet key the HTLC was derived
-with. The refund is built at the same `claimFeeRateSatVb` as the `arkade -> onchain` claim; wire
-your own with `corridors: { onchain: { refund } }`.
 
 An `arkade -> onchain` withdrawal claims the solver's L1 HTLC itself, and that claim's miner fee
 comes out of the HTLC output — so the client grosses the take leg up by the claim's cost and the

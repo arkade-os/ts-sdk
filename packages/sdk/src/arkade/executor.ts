@@ -119,7 +119,8 @@ function nativeFunction(
         !fn?.arkadeScript ||
         fn.group !== name ||
         Object.values(program.functions).filter((f) => f.group === name).length !== 1 ||
-        fn.inputs?.length ||
+        fn.arkadeScript.inputs?.length ||
+        fn.tapscript.inputs?.length ||
         fn.arkadeScript.witness?.length ||
         fn.tapscript.witness?.length ||
         fn.tapscript.signatures?.length ||

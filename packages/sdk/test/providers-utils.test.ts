@@ -37,6 +37,21 @@ describe("eventSourceIterator", () => {
         });
     });
 
+    it("carries a refused stream's status and Retry-After onto the error", async () => {
+        const eventSource = new MockEventSource();
+        const iterator = eventSourceIterator(eventSource as unknown as EventSource);
+        const next = iterator.next();
+
+        eventSource.emitError(2, { status: 429, retryAfterMs: 20_000 });
+
+        await expect(next).rejects.toMatchObject({
+            name: "EventSourceError",
+            message: "EventSource error (429)",
+            status: 429,
+            retryAfterMs: 20_000,
+        });
+    });
+
     it("close wakes a pending next without relying on an EventSource error", async () => {
         const eventSource = new MockEventSource();
         const iterator = eventSourceIterator(eventSource as unknown as EventSource);

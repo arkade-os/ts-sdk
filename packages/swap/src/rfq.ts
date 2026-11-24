@@ -9,12 +9,12 @@
  *   ({@link lightningSendContract}). A failed swap refunds by the user's `sender` key, or, if that
  *   key is lost, via the `nonInteractiveRefund` leaf the emulator co-signs under a covenant paying
  *   only the user's pre-committed address.
- * - receive (`lightning|onchain:BTC -> arkade:BTC`): the user generates `P`, pays the hold invoice
- *   or funds the L1 HTLC, and may go offline once a request has sealed `P` to covclaimd; the
+ * - receive (`lightning:BTC -> arkade:BTC`): the user generates `P`, pays the hold invoice,
+ *   and may go offline once a request has sealed `P` to covclaimd; the
  *   solver funds a lockup pinned to the user's payout ({@link lightningReceiveContract}), and the
  *   claim reveals `P`, settling the user's side.
- * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; any
- *   filler may deliver, or the user cancels cooperatively.
+ * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; only
+ *   the quoting solver can fill it, or the user cancels cooperatively.
  *
  * Trust model: from a quote the user uses only the binding fields (`solver_pubkey`,
  * `refund_locktime`, `valid_until`, the amounts, and `profile.refund_without_receiver_delay` on
@@ -25,6 +25,7 @@
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 import { hex } from "@scure/base";
+import { SolverResponseInvalid } from "./transportErrors";
 import { isAmount } from "@arkade-os/solver-discovery";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
@@ -70,6 +71,21 @@ import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
+import {
+    ASSET_SWAP_CONTRACT_VERSIONS,
+    type AssetSwapContractVersion,
+    assetRfqNonce,
+    assetSwapContractVersion,
+} from "./program";
+import {
+    ASSET_SWAP_BASELINE,
+    ASSET_SWAP_DIRECTED,
+    ASSET_SWAP_DIRECTED_NONCE,
+    RFQ_CONTRACT_VERSION_KEY,
+    RFQ_CONTRACT_VERSION_UNSUPPORTED,
+    RFQ_CONTRACT_VERSIONS_KEY,
+} from "./rfq-contract";
+import type { AttestingRfqTransport } from "./client/transport";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -127,8 +143,6 @@ export const LIGHTNING_SEND_PAIR = rfqPair(ARKADE_BTC, LIGHTNING_BTC);
 /** On-board via Lightning: pay the solver's hold invoice, land on Arkade. */
 export const LIGHTNING_RECEIVE_PAIR = rfqPair(LIGHTNING_BTC, ARKADE_BTC);
 export const ONCHAIN_SEND_PAIR = rfqPair(ARKADE_BTC, ONCHAIN_BTC);
-/** On-board: a Bitcoin-L1 HTLC in, Arkade sats out. */
-export const ONCHAIN_RECEIVE_PAIR = rfqPair(ONCHAIN_BTC, ARKADE_BTC);
 // ── Errors and closed sets ───────────────────────────────────────────────────
 
 /** The closed refusal set. Treat any unknown reason as a generic decline. */
@@ -147,6 +161,7 @@ export const RFQ_TERMINAL_STATES = ["settled", "refused", "expired", "refunded",
 
 export const RFQ_REFUSAL_ERROR_CODES = [
     "amount_side_unsupported",
+    RFQ_CONTRACT_VERSION_UNSUPPORTED,
     "exact_out_unsupported",
     "invalid_amount",
     "invalid_payout_address",
@@ -290,6 +305,8 @@ export interface RfqQuote {
     carrier_sats?: number | string;
     solver_pubkey: string;
     valid_until: number;
+    /** Contract version the solver chose; echoed only when the request advertised `contract_versions`. */
+    [RFQ_CONTRACT_VERSION_KEY]?: string;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
     refund_locktime?: number;
     profile: {
@@ -361,7 +378,9 @@ export const arkadeSwapRequest = (input: {
     /** Trader's own x-only key (32 bytes), as bytes or lowercase hex. The
      * `cancel` path's `user` signer. */
     makerPublicKey: Uint8Array | string;
-}): Record<string, unknown> => {
+    /** Covenants the trader can settle, most preferred first; omit for the baseline. */
+    contractVersions?: readonly string[];
+}): Record<string, unknown> & { rfq_id: string } => {
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
             "set at least one of wantAsset or offerAsset — " +
@@ -380,6 +399,9 @@ export const arkadeSwapRequest = (input: {
         pair,
         amount_side: input.amountSide ?? "from",
         amount: canonicalAssetAmount(input.amount),
+        ...(input.contractVersions && input.contractVersions.length > 0
+            ? { [RFQ_CONTRACT_VERSIONS_KEY]: [...input.contractVersions] }
+            : {}),
         // The solver's `.strict()` schema refuses any undeclared key as `unsupported_payload`.
         profile: {
             maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
@@ -543,8 +565,7 @@ const matchQuotedLockup = (
  * stable `reason`. `onchain` adds the L1-HTLC gates and is required for the onchain pairs.
  *
  * The lightning-receive leg uses {@link assertReceivable} instead: `refund_locktime` is the
- * SOLVER's there and the hold invoice is the clock that runs out. Onchain-receive stays here,
- * where the headroom check is over-strict but never unsafe. EVM pairs fail closed: their
+ * SOLVER's there and the hold invoice is the clock that runs out. EVM pairs fail closed: their
  * contract, finality and deadline checks are not implemented yet. */
 export const assertFundable = (input: {
     quote: RfqQuote | EvmRfqQuote;
@@ -553,8 +574,6 @@ export const assertFundable = (input: {
     onchain?: {
         htlcLocktime: number;
         minConfirmations: number;
-        /** "send" = arkade->onchain (the L1 timelock-order gate applies). */
-        direction: "send" | "receive";
     };
     /**
      * The most this client will pay: the GREATER of the two bounds (a flat fee is a large share of
@@ -647,7 +666,7 @@ export const assertFundable = (input: {
         }
     }
     if (input.onchain) {
-        const { htlcLocktime, minConfirmations, direction } = input.onchain;
+        const { htlcLocktime, minConfirmations } = input.onchain;
         if (
             !Number.isInteger(minConfirmations) ||
             minConfirmations < 1 ||
@@ -664,18 +683,16 @@ export const assertFundable = (input: {
         if (htlcLocktime - input.now <= needed) {
             fail("claim_window_too_short", "L1 HTLC locktime leaves no safe claim window");
         }
-        if (direction === "send") {
-            // The solver claims Arkade with P AFTER the user's L1 claim; the
-            // user's Arkade refund must therefore open LAST, with reorg margin.
-            if (
-                input.quote.refund_locktime === undefined ||
-                htlcLocktime + ONCHAIN_ORDER_MARGIN_SECONDS > input.quote.refund_locktime
-            ) {
-                fail(
-                    "timelock_order",
-                    "L1 HTLC locktime + margin must fall before the Arkade refund locktime",
-                );
-            }
+        // The solver claims Arkade with P AFTER the user's L1 claim; the
+        // user's Arkade refund must therefore open LAST, with reorg margin.
+        if (
+            input.quote.refund_locktime === undefined ||
+            htlcLocktime + ONCHAIN_ORDER_MARGIN_SECONDS > input.quote.refund_locktime
+        ) {
+            fail(
+                "timelock_order",
+                "L1 HTLC locktime + margin must fall before the Arkade refund locktime",
+            );
         }
     }
 };
@@ -722,14 +739,67 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
         });
     }
     if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
-        throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
+        throw new SolverResponseInvalid(`unexpected reply: ${p?.type ?? "no payload"}`);
     }
     if (requestedPair !== undefined && p.pair !== requestedPair) {
-        throw new Error(
+        throw new SolverResponseInvalid(
             `solver quoted ${JSON.stringify(p.pair)}, not the requested ${requestedPair}`,
         );
     }
     return payload as RfqQuote;
+};
+
+/**
+ * Ask for an arkade↔arkade quote advertising `contract_versions`, and read the tree to derive.
+ * No `contract_version` in the quote means {@link ASSET_SWAP_BASELINE}, refused unless advertised.
+ * A pre-negotiation solver's strict schema refuses the list with a bare `unsupported_payload`;
+ * only when the baseline was advertised is it asked once more without it, under a fresh rfq_id.
+ */
+export const requestVersionedQuote = async (
+    transport: RfqTransport,
+    request: Record<string, unknown> & { rfq_id: string },
+    advertised: readonly string[],
+): Promise<{
+    quote: RfqQuote;
+    rfqId: string;
+    contractVersion: AssetSwapContractVersion;
+}> => {
+    if (advertised.length === 0) {
+        throw new Error("contractVersions is empty: advertise at least one contract version");
+    }
+    let sent: Record<string, unknown> & { rfq_id: string } = request;
+    let quote: RfqQuote;
+    try {
+        quote = await transport.requestQuote(request);
+    } catch (error) {
+        if (
+            !(error instanceof SwapRefusal) ||
+            error.reason !== "unsupported_payload" ||
+            error.errorCode !== undefined ||
+            !advertised.includes(ASSET_SWAP_BASELINE)
+        ) {
+            throw error;
+        }
+        const { [RFQ_CONTRACT_VERSIONS_KEY]: _, ...baseline } = request;
+        sent = { ...baseline, rfq_id: newRfqId() };
+        quote = await transport.requestQuote(sent);
+    }
+    const selected = quote[RFQ_CONTRACT_VERSION_KEY];
+    // A version this client cannot take condemns this solver's reply, not the swap: routing tries the next.
+    if (sent !== request && selected !== undefined) {
+        throw new SolverResponseInvalid(
+            `solver chose contract version ${selected}, but none was advertised`,
+        );
+    }
+    const version = selected ?? ASSET_SWAP_BASELINE;
+    if (!advertised.includes(version)) {
+        throw new SolverResponseInvalid(
+            selected === undefined
+                ? `solver negotiated no contract version; advertised ${advertised.join(", ")}`
+                : `solver chose contract version ${version}, not one of ${advertised.join(", ")}`,
+        );
+    }
+    return { quote, rfqId: sent.rfq_id, contractVersion: assetSwapContractVersion(version) };
 };
 
 /** The pair of a request we built, when it named one. */
@@ -1337,8 +1407,9 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
 };
 
 /** Falls back on absent AND zero: zero would fund an asset with no carrier. Throws a gate
- * error (`carrier_malformed`) on anything but a non-negative integer. */
-export const quoteCarrierSats = (quote: RfqQuote): bigint => {
+ * error (`carrier_malformed`) on anything but a non-negative integer up to the operator's
+ * `dust` (at least {@link ASSET_CARRIER_SATS}), the most an honest solver publishes. */
+export const quoteCarrierSats = (quote: RfqQuote, dust: bigint): bigint => {
     const raw = quote.carrier_sats;
     if (raw === undefined) return ASSET_CARRIER_SATS;
     const canonical =
@@ -1352,6 +1423,13 @@ export const quoteCarrierSats = (quote: RfqQuote): bigint => {
         );
     }
     const published = BigInt(raw);
+    const cap = dust > ASSET_CARRIER_SATS ? dust : ASSET_CARRIER_SATS;
+    if (published > cap) {
+        throw gateError(
+            "carrier_malformed",
+            `quote carrier_sats ${published} exceeds the ${cap}-sat dust carrier`,
+        );
+    }
     return published > 0n ? published : ASSET_CARRIER_SATS;
 };
 
@@ -1364,14 +1442,14 @@ export const quoteCarrierSats = (quote: RfqQuote): bigint => {
  * whatever it quotes.
  *
  * Maker keys are read once here so the request profile and the local `createOffer` derivation
- * cannot diverge. Throws {@link SwapRefusal}, {@link AddressMismatch} (never fund), or a gate error
- * with a stable `reason`.
+ * cannot diverge. Throws {@link SwapRefusal}, {@link AddressMismatch} (never fund),
+ * `QuoteVerificationFailed` (`responder`), or a gate error with a stable `reason`.
  *
  * `client.exchange()` now covers this route end to end — it opens the card's
  * Nostr rendezvous, sends this same request, runs the full verification set,
  * and registers, persists and funds in one step — so there is nothing left here
- * that it does not do. What it additionally refuses is a transport that cannot
- * say who answered, which this function, taking one from its caller, cannot.
+ * that it does not do. A transport that cannot say who answered is refused here
+ * too, but only once its quote is back; `exchange()` refuses it before asking.
  *
  * Funding (caller's job, immediately after, before `valid_until`):
  * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
@@ -1381,7 +1459,7 @@ export const quoteCarrierSats = (quote: RfqQuote): bigint => {
  */
 export async function requestArkadeSwap(
     wallet: IWallet,
-    transport: RfqTransport,
+    transport: AttestingRfqTransport,
     params: {
         /** Asset the trader deposits; omit when depositing BTC. */
         offerAsset?: asset.AssetId;
@@ -1423,7 +1501,6 @@ export async function requestArkadeSwap(
     if (!params.wantAsset && !params.offerAsset) {
         throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
     }
-    const rfqId = params.rfqId ?? newRfqId();
     const amountSide = params.amountSide ?? "from";
     const receiveAddress = params.receiveAddress;
     const [makerAddress, makerPublicKey] = await Promise.all([
@@ -1448,20 +1525,31 @@ export async function requestArkadeSwap(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
     );
-    const quote = await transport.requestQuote(
+    const { quote, rfqId, contractVersion } = await requestVersionedQuote(
+        transport,
         arkadeSwapRequest({
-            rfqId,
+            rfqId: params.rfqId ?? newRfqId(),
             ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
             ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
             amount: params.amount,
             amountSide,
             makerPkScript,
             makerPublicKey,
+            contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
         }),
+        ASSET_SWAP_CONTRACT_VERSIONS,
     );
     if (quote.pair !== pair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
     }
+    // Imported here: client/verify.ts imports this module, and a static cycle breaks the CJS build.
+    const taker =
+        contractVersion === ASSET_SWAP_DIRECTED || contractVersion === ASSET_SWAP_DIRECTED_NONCE
+            ? (await import("./client/verify")).verifyTaker({
+                  attested: transport.attestedResponder,
+                  solverPubkey: quote.solver_pubkey,
+              })
+            : undefined;
     assertArkadeFundable({ quote, ...(params.now !== undefined ? { now: params.now } : {}) });
     const terms = offerTermsFromQuote(quote, {
         ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
@@ -1491,14 +1579,20 @@ export async function requestArkadeSwap(
             );
         }
     }
+    const offerInfo = info ?? (await wallet.getArkadeInfo({ requireLive: true }));
+    const carrierSats =
+        params.offerAsset === undefined ? 0n : quoteCarrierSats(quote, offerInfo.dust);
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
-        ...(info === undefined ? {} : { info }),
+        info: offerInfo,
         ...(receiveAddress === undefined ? {} : { receiveAddress }),
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
+        contractVersion,
+        ...(taker === undefined ? {} : { taker }),
+        ...(contractVersion === ASSET_SWAP_DIRECTED_NONCE ? { nonce: assetRfqNonce(rfqId) } : {}),
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);
@@ -1508,7 +1602,7 @@ export async function requestArkadeSwap(
         pair,
         address: offer.address,
         fundAmount,
-        carrierSats: params.offerAsset !== undefined ? quoteCarrierSats(quote) : 0n,
+        carrierSats,
         swapPkScript: offer.swapPkScript,
         offerHex: offer.offerHex,
         extension: offer.extension,
@@ -1601,39 +1695,6 @@ export const lightningReceiveRequest = (input: {
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
         ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
-    },
-});
-
-/** The rfq_request for `onchain:BTC->arkade:BTC`. The user funds the L1 HTLC (holding its refund
- * role); when P travels sealed to covclaimd, the user can go offline. Only an exact-out request
- * is guaranteed to seal it. */
-export const onchainReceiveRequest = (input: {
-    rfqId: string;
-    paymentHash: string;
-    /** Trader's arkade address — where the swapped sats land. */
-    payoutAddress: string;
-    /** Trader's x-only arkade key — the covenant's `receiver` role. */
-    payoutPubkey: Uint8Array;
-    /** Trader's x-only L1 key for the HTLC's refund leaf. */
-    refundPubkey: Uint8Array;
-    /** `P` sealed to covclaimd, base64. Omitted when there is none to seal to —
-     * see {@link lightningReceiveRequest}. */
-    claimPacket?: string;
-    amount: number;
-    amountSide: "from" | "to";
-}): Record<string, unknown> => ({
-    v: 1,
-    type: "rfq_request",
-    rfq_id: input.rfqId,
-    pair: ONCHAIN_RECEIVE_PAIR,
-    amount_side: input.amountSide,
-    amount: input.amount,
-    profile: {
-        payment_hash: input.paymentHash,
-        ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
-        refund_pubkey: hex.encode(input.refundPubkey),
-        payout_address: input.payoutAddress,
-        payout_pubkey: hex.encode(input.payoutPubkey),
     },
 });
 
@@ -1856,7 +1917,6 @@ export async function requestOnchainSend(
         onchain: {
             htlcLocktime: derived.htlcLocktime,
             minConfirmations: derived.minConfirmations,
-            direction: "send",
         },
     });
 
@@ -1977,7 +2037,7 @@ export const verifyReceiveInvoice = (input: {
  * Optional because a bad price is visible to the caller before anything is published.
  *
  * Reasons: `quote_expired` | `missing_refund_locktime` | `claim_window_too_short` |
- * `price_too_high` | `quote_malformed` | `invalid_gate_input`.
+ * `price_too_high` | `quote_malformed` | `invalid_gate_input` | `non_positive_amount`.
  */
 export const assertReceivable = (input: {
     quote: RfqQuote;
@@ -1996,6 +2056,12 @@ export const assertReceivable = (input: {
     const minClaimWindow = input.minClaimWindowSeconds ?? MIN_CLAIM_WINDOW_SECONDS;
     if (input.now >= input.payDeadline) {
         throw gateError("quote_expired", "quote or invoice already expired — request a fresh one");
+    }
+    if (
+        quoteAmountSats(input.quote.from_amount, "from_amount") <= 0n ||
+        quoteAmountSats(input.quote.to_amount, "to_amount") <= 0n
+    ) {
+        throw gateError("non_positive_amount", "quote carries a non-positive amount");
     }
     if (input.quote.refund_locktime === undefined) {
         throw gateError("missing_refund_locktime", "receive quote carries no refund_locktime");
@@ -2021,14 +2087,13 @@ export const assertReceivable = (input: {
 /** Compile the RECEIVE-direction VHTLC: the same suite-carrying tree as {@link
  * lightningSendContract} with the roles inverted — the trader is the
  * `receiver` (it generated `P` and claims the lockup with it), the solver is
- * the `sender` (it funds the lockup and holds the refund recourse). Shared by both receive
- * corridors.
+ * the `sender` (it funds the lockup and holds the refund recourse).
  *
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export function lightningReceiveContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote — VHTLC's
-     * `sender` role on the receive corridors. */
+     * `sender` role on the receive corridor. */
     solverPubkey: Uint8Array;
     /** Binding field #2: the SOLVER's own refund deadline on these legs, from
      * the quote — after it the solver may reclaim an unclaimed lockup. */
@@ -2069,7 +2134,7 @@ export function lightningReceiveContract(params: {
  */
 export type LightningReceiveContractParams = Parameters<typeof lightningReceiveContract>[0];
 
-/** Both receive corridors' covenant: the inputs, and the quoted shape they match. */
+/** The receive corridor's covenant: the inputs, and the quoted shape they match. */
 const matchReceiveLockup = (
     input: {
         quote: RfqQuote;
@@ -2158,11 +2223,10 @@ export function deriveLightningReceive(input: {
     };
 }
 
-/** Both receive flows' setup; `persistBefore` names the step the warning is for. */
+/** The receive flow's setup. */
 const provisionReceive = async (
     wallet: IWallet,
     params: { covclaimdPubkey?: Uint8Array; amount: number; amountSide: "from" | "to" },
-    persistBefore: "paying" | "funding",
 ) => {
     const [secrets, info, payoutAddress] = await Promise.all([
         provisionClaimSecret(wallet),
@@ -2171,7 +2235,7 @@ const provisionReceive = async (
     ]);
     if (secrets.mustPersistPreimage) {
         console.warn(
-            `[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before ${persistBefore}`,
+            "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before paying",
         );
     }
     const preimage = secrets.preimage;
@@ -2200,11 +2264,10 @@ const quoteReceive = async (
     wallet: IWallet,
     transport: RfqTransport,
     params: Parameters<typeof provisionReceive>[1],
-    persistBefore: "paying" | "funding",
     request: (provisioned: Awaited<ReturnType<typeof provisionReceive>>) => Record<string, unknown>,
 ) => {
     for (let attempt = 0; ; attempt++) {
-        const provisioned = await provisionReceive(wallet, params, persistBefore);
+        const provisioned = await provisionReceive(wallet, params);
         try {
             return { ...provisioned, quote: await transport.requestQuote(request(provisioned)) };
         } catch (error) {
@@ -2284,7 +2347,6 @@ export async function requestLightningReceive(
         wallet,
         transport,
         params,
-        "paying",
         ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
             lightningReceiveRequest({
                 rfqId,
@@ -2336,189 +2398,5 @@ export async function requestLightningReceive(
         payoutPubkey,
         secrets,
         contractParams: derived.contractParams,
-    };
-}
-
-/**
- * The pure core of {@link requestOnchainReceive}: derive BOTH contracts
- * locally — the solver-funded Arkade covenant and the L1 HTLC the trader
- * funds — and refuse on any mismatch. Binding: `solver_pubkey`,
- * `refund_locktime`, `claim_pubkey`, `htlc_locktime`, `min_confirmations`;
- * `lockup_address` and `htlc_address` are compare-only.
- */
-export function deriveOnchainReceive(input: {
-    quote: RfqQuote;
-    paymentHash: string;
-    payoutPubkey: Uint8Array;
-    payoutAddress: string;
-    /** The trader's own x-only L1 key — the HTLC's refund role. */
-    refundPubkey: Uint8Array;
-    operatorPubkey: Uint8Array;
-    emulatorPubkey: Uint8Array;
-    claimDelay: number;
-    hrp: string;
-    l1Network: OnchainNetwork;
-}): {
-    address: string;
-    swapPkScript: Uint8Array;
-    script: InstanceType<typeof VHTLC.ScriptV2>;
-    /** The L1 HTLC the trader funds, derived locally — fund only this. */
-    htlc: OnchainHtlc;
-    /** The inputs {@link htlc} was derived from; a restore rebuilds it from these. */
-    htlcParams: OnchainHtlcParams;
-    refundLocktime: number;
-    htlcLocktime: number;
-    minConfirmations: number;
-} {
-    const { quote } = input;
-    const profile = quote.profile ?? {};
-    const refundLocktime = quote.refund_locktime;
-    const claimPubkey = profile.claim_pubkey as string | undefined;
-    const htlcLocktime = profile.htlc_locktime as number | undefined;
-    const htlcAddress = profile.htlc_address as string | undefined;
-    const minConfirmations = profile.min_confirmations as number | undefined;
-    const solverRefundPkScriptHex = profile.solver_refund_pk_script as string | undefined;
-    if (
-        refundLocktime === undefined ||
-        claimPubkey === undefined ||
-        htlcLocktime === undefined ||
-        minConfirmations === undefined ||
-        solverRefundPkScriptHex === undefined
-    ) {
-        throw new Error("onchain-receive quote is missing a binding field");
-    }
-
-    const { script, address } = matchReceiveLockup(
-        input,
-        refundLocktime,
-        solverRefundPkScriptHex,
-    ).matched;
-
-    const htlcParams: OnchainHtlcParams = {
-        paymentHash: input.paymentHash,
-        claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
-        refundKey: input.refundPubkey,
-        refundLocktime: htlcLocktime,
-    };
-    const htlc = onchainHtlcScript(htlcParams, input.l1Network);
-    if (htlc.address !== htlcAddress) throw new AddressMismatch(htlc.address, htlcAddress);
-
-    return {
-        address,
-        swapPkScript: script.pkScript,
-        script,
-        htlc,
-        htlcParams,
-        refundLocktime,
-        htlcLocktime,
-        minConfirmations,
-    };
-}
-
-/**
- * The `onchain:BTC->arkade:BTC` user flow: quote → derive BOTH contracts
- * locally → verify → gate. Returns the L1 HTLC for the trader's own L1 wallet to fund with
- * `fundAmount`. After `min_confirmations` the solver funds the Arkade lockup; the trader claims it
- * with `P`.
- *
- * Persist `secrets` BEFORE funding. If the swap never settles, the L1 refund leaf opens at
- * `htlc.refundLocktime` (see `buildHtlcRefund`).
- */
-export async function requestOnchainReceive(
-    wallet: IWallet,
-    transport: RfqTransport,
-    params: {
-        amount: number;
-        amountSide: "from" | "to";
-        /** Co-signer key override (33-byte compressed hex); see
-         * {@link resolveEmulatorPubkey}. */
-        emulatorPubkey?: string;
-        /** Trader's x-only L1 key for the HTLC's refund leaf. */
-        refundPubkey: Uint8Array;
-        /** covclaimd's 33-byte compressed pubkey. Only an exact-out request (`amountSide: "to"`)
-         * is guaranteed a claim packet; see {@link requestLightningReceive}. */
-        covclaimdPubkey?: Uint8Array;
-        rfqId?: string;
-    },
-): Promise<{
-    rfqId: string;
-    quote: RfqQuote;
-    /** The trader's OWN derivation of the lockup the solver must fund. */
-    address: string;
-    /** What the trader's L1 funding must carry: the quote's `from_amount`. */
-    fundAmount: number;
-    /** What the solver's lockup must carry: the quote's `to_amount`. Persist
-     * it with the record — see {@link requestLightningReceive}. */
-    expectedAmount: number;
-    swapPkScript: Uint8Array;
-    script: InstanceType<typeof VHTLC.ScriptV2>;
-    /** The EXPECTED L1 contract, derived locally — fund only this address. */
-    htlc: OnchainHtlc;
-    payoutAddress: string;
-    payoutPubkey: Uint8Array;
-    /** How the preimage and the payout key are recovered later — map it
-     * through `swapSecretsToRecord` and persist BEFORE funding. Public unless
-     * `mustPersistPreimage` says the wallet could not derive P. */
-    secrets: ProvisionedClaimSecret;
-}> {
-    const rfqId = params.rfqId ?? newRfqId();
-    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
-        wallet,
-        transport,
-        params,
-        "funding",
-        ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
-            onchainReceiveRequest({
-                rfqId,
-                paymentHash,
-                payoutAddress,
-                payoutPubkey,
-                refundPubkey: params.refundPubkey,
-                claimPacket: claimPacket?.packet,
-                amount: params.amount,
-                amountSide: params.amountSide,
-            }),
-    );
-    assertQuotedAmount(quote, params.amountSide, params.amount);
-
-    const derived = deriveOnchainReceive({
-        quote,
-        paymentHash,
-        payoutPubkey,
-        payoutAddress,
-        refundPubkey: params.refundPubkey,
-        ...operatorTerms(info, params.emulatorPubkey),
-        l1Network: l1NetworkFromArk(info.network),
-    });
-    assertFundable({
-        quote,
-        now: Math.floor(Date.now() / 1000),
-        onchain: {
-            htlcLocktime: derived.htlcLocktime,
-            minConfirmations: derived.minConfirmations,
-            direction: "receive",
-        },
-    });
-
-    // Watch the solver-funded lockup from the moment its address exists.
-    await registerLockupContract(
-        await wallet.getContractManager(),
-        derived.script,
-        derived.address,
-        { scope: wallet },
-    );
-
-    return {
-        rfqId,
-        quote,
-        address: derived.address,
-        fundAmount: quoteSats(quote.from_amount, "from_amount"),
-        expectedAmount: quoteSats(quote.to_amount, "to_amount"),
-        swapPkScript: derived.swapPkScript,
-        script: derived.script,
-        htlc: derived.htlc,
-        payoutAddress,
-        payoutPubkey,
-        secrets,
     };
 }

@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    InMemoryIntentRepository,
+    InMemoryBatchRegistrationRepository,
     ReadonlyWallet,
     Wallet,
-    type IntentRepository,
+    type BatchRegistrationRepository,
 } from "../../src";
 import {
     MessageBus,
@@ -1399,15 +1399,17 @@ describe("MessageBus default buildServices", () => {
         arkServer: { url: "https://ark.example.test" },
     } as never;
 
-    const buildServices = async (intentRepository?: IntentRepository) => {
+    const buildServices = async (intentRepository?: BatchRegistrationRepository) => {
         const bus = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
             { messageHandlers: [], ...(intentRepository ? { intentRepository } : {}) },
         );
-        const create = vi
-            .spyOn(Wallet, "create")
-            .mockResolvedValue({ dispose: vi.fn() } as unknown as Wallet);
+        const create = vi.spyOn(Wallet, "create").mockResolvedValue({
+            dispose: vi.fn(),
+            network: { name: "bitcoin" },
+            indexerProvider: {},
+        } as unknown as Wallet);
         await (bus as any).buildServices(config);
         const storage = create.mock.calls[0][0].storage;
         create.mockRestore();
@@ -1418,7 +1420,7 @@ describe("MessageBus default buildServices", () => {
         // Without this the worker builds an intent-repo-less wallet: no
         // persisted intents, no reconciliation on restart, and intent-locked
         // VTXOs counted as available — silently unlike a main-thread wallet.
-        const intentRepository = new InMemoryIntentRepository();
+        const intentRepository = new InMemoryBatchRegistrationRepository();
         expect(await buildServices(intentRepository)).toMatchObject({ intentRepository });
     });
 
@@ -1436,7 +1438,11 @@ describe("MessageBus default buildServices", () => {
                 onchainProvider,
             },
         );
-        const created = { dispose: vi.fn() } as unknown as Wallet;
+        const created = {
+            dispose: vi.fn(),
+            network: { name: "bitcoin" },
+            indexerProvider: {},
+        } as unknown as Wallet;
         const create = vi.spyOn(Wallet, "create").mockResolvedValue(created);
         const createReadonly = vi.spyOn(ReadonlyWallet, "create").mockResolvedValue(created);
         await (bus as any).buildServices(config);

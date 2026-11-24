@@ -162,15 +162,11 @@ describe("receive", () => {
         expect(wallet.sent).toEqual([]);
     });
 
-    it("receives over onchain into an L1 deposit, funded from outside the wallet", async () => {
-        const { client, wallet } = await harness();
-        const request = await client.receive({ amount: 99_000n, via: "onchain" });
-
-        expect(request.artifact).toMatchObject({ kind: "deposit", corridor: "onchain" });
-        expect(request.artifact.address).toMatch(/^bcrt1p/);
-        expect(request.route.give.corridor).toBe("onchain");
-        expect(request.take.amount).toBe(99_000n);
-        expect(wallet.sent).toEqual([]);
+    it("refuses a receive over onchain", async () => {
+        const { client } = await harness();
+        await expect(client.receive({ amount: 99_000n, via: "onchain" })).rejects.toThrow(
+            /onchain->arkade is not an implemented route/,
+        );
     });
 
     it("refuses a corridor no receive can arrive over", async () => {
@@ -272,7 +268,7 @@ describe("the fee ceiling", () => {
         ).resolves.toMatchObject({ kind: "swap" });
     });
 
-    it("guards receive and exchange the same way", async () => {
+    it("guards receive the same way, and refuses any ceiling on a cross-asset exchange", async () => {
         const { client } = await harness();
         await expect(
             client.receive({ amount: 4_950n, via: "lightning", maxFee: ceiling(1n) }),
@@ -285,7 +281,7 @@ describe("the fee ceiling", () => {
                 amountOn: "give",
                 maxFee: ceiling(1n, USD),
             }),
-        ).rejects.toBeInstanceOf(MaxFeeExceeded);
+        ).rejects.toThrow(/cannot gate a cross-asset swap/);
     });
 });
 

@@ -7,6 +7,7 @@ import type { RelativeTimelock } from "../script/tapscript";
 import type { IndexerProvider } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
+import type { ExecutorWatchTemplate } from "../script/executor/executorTemplate";
 
 /**
  * Contract lifecycle state. Governs receive-address selection only: `inactive` does **not**
@@ -283,6 +284,7 @@ export interface DiscoveredContract {
     address: string;
     metadata?: Record<string, unknown>;
     label?: string;
+    scope?: ContractScope;
 }
 
 /**
@@ -318,8 +320,12 @@ export interface DiscoveryDeps {
      * no-ops.
      */
     boardingTimelock?: RelativeTimelock;
-    /** Present only for delegate wallets. */
+    /** The configured delegator's key (x-only), the one new `delegate` contracts are minted with. */
     delegatePubKey?: Uint8Array;
+    /** Retired delegators' keys (x-only). Discovery only, never minted. */
+    retiredDelegatePubKeys?: Uint8Array[];
+    /** The wallet's Executor delegations, probed at every index; none when absent. */
+    executorWatches?: readonly ExecutorWatchTemplate[];
 }
 
 /**
@@ -328,7 +334,10 @@ export interface DiscoveryDeps {
  * {@link Discoverable.candidatesAt} serves the scan and the look-ahead band.
  */
 export type CandidateDeps = Pick<DiscoveryDeps, "network" | "serverPubKey" | "csvTimelocks"> &
-    Pick<Partial<DiscoveryDeps>, "deprecatedSignerPubKeys" | "delegatePubKey">;
+    Pick<
+        Partial<DiscoveryDeps>,
+        "deprecatedSignerPubKeys" | "delegatePubKey" | "retiredDelegatePubKeys"
+    >;
 
 /**
  * Optional {@link ContractHandler} capability for `wallet.restore()`'s gap-limit scan. The scanner

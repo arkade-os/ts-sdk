@@ -11,6 +11,7 @@ import { hex } from "@scure/base";
 import { VtxoScript } from "../src";
 import { TapTreeCoder } from "../src/script/base";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
+import { timelockToSequence } from "../src/utils/timelock";
 import fixtures from "./fixtures/vtxoscript.json";
 
 const exPubKey1 = Buffer.from(
@@ -113,6 +114,21 @@ describe("CSVMultisigTapscript", () => {
             "Invalid script: too short (expected at least 3)",
         );
     });
+
+    it.each([
+        { type: "blocks" as const, value: -1n },
+        { type: "seconds" as const, value: -512n },
+        { type: "blocks" as const, value: -200n },
+    ])("refuses a negative relative timelock ($value $type)", (timelock) => {
+        const params = { pubkeys: [exPubKey1], type: MultisigTapscript.MultisigType.CHECKSIG };
+        expect(() => timelockToSequence(timelock)).toThrow(/invalid (blocks|seconds) timelock/);
+        expect(() => CSVMultisigTapscript.encode({ ...params, timelock })).toThrow(
+            /invalid (blocks|seconds) timelock/,
+        );
+        expect(timelockToSequence({ type: timelock.type, value: 0n })).toBe(
+            timelock.type === "blocks" ? 0 : 0x400000,
+        );
+    });
 });
 
 describe("CLTVMultisigTapscript", () => {
@@ -128,6 +144,16 @@ describe("CLTVMultisigTapscript", () => {
 
         expect(decoded.params.absoluteTimelock).toBe(params.absoluteTimelock);
         expect(decoded.params.pubkeys.map(hex.encode)).toEqual(params.pubkeys.map(hex.encode));
+    });
+
+    it("refuses an absolute timelock outside 32 bits", () => {
+        const params = { pubkeys: [exPubKey1], type: MultisigTapscript.MultisigType.CHECKSIG };
+        expect(() =>
+            CLTVMultisigTapscript.encode({ ...params, absoluteTimelock: 2n ** 32n }),
+        ).toThrow(/32 bits/);
+        expect(() =>
+            CLTVMultisigTapscript.encode({ ...params, absoluteTimelock: 0xffffffffn }),
+        ).not.toThrow();
     });
 
     it("should encode and decode with number absolute timelock", () => {

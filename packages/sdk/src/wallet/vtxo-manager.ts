@@ -55,8 +55,15 @@ import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
-import { getDustAmount, getSelectableBoardingUtxoGroups, markSdkPicked } from "./utils";
-import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
+import {
+    getDustAmount,
+    getOwnBoardingAddress,
+    getSelectableBoardingUtxoGroups,
+    markSdkPicked,
+} from "./utils";
+import { providerFeeRate } from "./onchain";
+import { logExcludedVtxos, outpointExclusion, outpointReasons } from "../contracts/spendability";
+import { delegatedContracts } from "./executor";
 
 /**
  * Outpoints (`txid:vout`) of VTXOs whose contract signer is past its cutoff (`EXPIRED`) and that
@@ -154,6 +161,9 @@ class BoardingSignerChangedError extends Error {
  */
 const IMPORTED_RECOVERY_LOCK_NAME = "arkade-imported-recovery";
 
+/** Web Locks name for the Executor watch refresh: one context per origin asks the Executor. */
+const EXECUTOR_REFRESH_LOCK_NAME = "arkade-executor-refresh";
+
 /**
  * Run `fn` under an exclusive Web Lock when `navigator.locks` exists, else (Node, React Native)
  * uncoordinated. `ifAvailable`: if another context holds the lock, skip this cycle rather than
@@ -209,6 +219,12 @@ function heldVtxosOf(wallet: IWallet): Promise<NormalizedExtendedVirtualCoin[]> 
     const held = (wallet as { getHeldVtxos?: () => Promise<NormalizedExtendedVirtualCoin[]> })
         .getHeldVtxos;
     return typeof held === "function" ? held.call(wallet) : Promise.resolve([]);
+}
+
+const HELD_REASON = "is held by reserveVtxos";
+
+async function heldOutpointsOf(wallet: IWallet): Promise<Set<string>> {
+    return new Set((await heldVtxosOf(wallet)).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
 }
 
 /**
@@ -882,6 +898,8 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
  */
 interface RecoveryContractCapableWallet {
     removeRecoveryContract(script: string): Promise<void>;
+    /** Optional bookkeeping: its absence or failure never gates or aborts recovery. */
+    correlateArkadeCashRecovery?(script: string, txid: string, amount: number): Promise<void>;
 }
 
 /** Return whether a wallet can purge its imported recovery contracts. */
@@ -892,6 +910,46 @@ function isRecoveryContractCapable(
         typeof (wallet as Partial<RecoveryContractCapableWallet>).removeRecoveryContract ===
         "function"
     );
+}
+
+/**
+ * A wallet that registers its Executor watches again when the service lets them lapse. Duck-typed
+ * like {@link MigrationCapableWallet}: proxy wallets, and wallets without an Executor, have none.
+ */
+interface ExecutorRefreshCapableWallet {
+    /** Throttled and best-effort: safe to call on every poll. */
+    refreshExecutorWatches(): Promise<void>;
+}
+
+function isExecutorRefreshCapable(
+    wallet: IWallet,
+): wallet is IWallet & ExecutorRefreshCapableWallet {
+    return (
+        typeof (wallet as Partial<ExecutorRefreshCapableWallet>).refreshExecutorWatches ===
+        "function"
+    );
+}
+
+/** A wallet whose own renewals may pay into its Executor renewal contract; duck-typed likewise. */
+interface RenewalAddressWallet {
+    renewalAddress(amount: bigint, inputScripts?: readonly string[]): Promise<string>;
+}
+
+/** Where a renewal of `amount` pays: the wallet's choice, else its address. */
+function renewalAddressOf(
+    wallet: IWallet,
+    amount: bigint,
+    inputs: readonly (ExtendedCoin | ExtendedVirtualCoin)[],
+): Promise<string> {
+    // settle() puts assets only on an output at getAddress()
+    if (inputs.some((input) => "assets" in input && (input.assets?.length ?? 0) > 0)) {
+        return wallet.getAddress();
+    }
+    if (typeof (wallet as Partial<RenewalAddressWallet>).renewalAddress !== "function") {
+        return wallet.getAddress();
+    }
+    const scripts = inputs.flatMap((input) => ("script" in input ? [input.script] : []));
+    return (wallet as IWallet & RenewalAddressWallet).renewalAddress(amount, scripts);
 }
 
 /**
@@ -1136,15 +1194,21 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * fails its batch at submit. The key is a thunk so ordinary recovery never touches the
      * identity; full coins carry the confirmation a relative timelock counts from.
      */
+    /** Recovery inputs to skip: refused by their contract right now, or held by `reserveVtxos`. */
     private async unspendableNow(
         vtxos: readonly NormalizedExtendedVirtualCoin[],
     ): Promise<Map<string, string>> {
         const contractManager = await this.wallet.getContractManager();
-        return (
+        const refused =
             (await contractManager.unspendableNowReasons?.(vtxos, async () =>
                 hex.encode(await this.wallet.identity.xOnlyPublicKey()),
-            )) ?? new Map()
-        );
+            )) ?? new Map<string, string>();
+        const held = await heldOutpointsOf(this.wallet);
+        for (const vtxo of vtxos) {
+            const key = `${vtxo.txid}:${vtxo.vout}`;
+            if (held.has(key) && !refused.has(key)) refused.set(key, HELD_REASON);
+        }
+        return refused;
     }
 
     /**
@@ -1152,8 +1216,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      *
      * Includes preconfirmed subdust when the total reaches the dust threshold; settled outputs
      * with a long expiry are NOT recovered, to avoid locking liquidity. Inputs whose contract
-     * refuses a spend right now (an immature VHTLC refund path) are skipped rather than failing
-     * the batch, matching {@link getRecoverableBalance}.
+     * refuses a spend right now (an immature VHTLC refund path), or that `reserveVtxos` holds, are
+     * skipped rather than failing the batch, matching {@link getRecoverableBalance}.
      *
      * @param eventCallback - Optional callback to receive settlement events
      * @returns Settlement transaction ID
@@ -1192,7 +1256,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const refused = await this.unspendableNow(vtxosToRecover);
         if (refused.size > 0) {
             logExcludedVtxos("recoverVtxos", vtxosToRecover, [outpointReasons(refused)]);
-            const held = vtxosToRecover.length;
+            const found = vtxosToRecover.length;
             vtxosToRecover = vtxosToRecover.filter(
                 (vtxo) => !refused.has(`${vtxo.txid}:${vtxo.vout}`),
             );
@@ -1208,8 +1272,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                               .map(([outpoint, reason]) => `${outpoint}: ${reason}`)
                               .join("; ");
                 throw new Error(
-                    `All ${held} recoverable VTXO(s) are held by a contract that refuses a ` +
-                        `spend right now: ${why}`,
+                    `All ${found} recoverable VTXO(s) are held by reserveVtxos or by a ` +
+                        `contract that refuses a spend right now: ${why}`,
                 );
             }
             ({ vtxosToRecover } = getRecoverableWithSubdust(vtxosToRecover, dustAmount, now));
@@ -1539,10 +1603,24 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const totalAmount = deductOffchainOutputFee(subtotal, estimator, arkAddress);
             if (totalAmount < dustAmount) return;
 
-            await wallet.settle({
+            const settledTxid = await wallet.settle({
                 inputs: batch,
                 outputs: [{ address: arkAddress, amount: totalAmount }],
             });
+            // Bookkeeping only: the settle already succeeded, so a failed
+            // write must not skip the purge below.
+            try {
+                await wallet.correlateArkadeCashRecovery?.(
+                    contract.script,
+                    settledTxid,
+                    Number(totalAmount),
+                );
+            } catch (error) {
+                console.error(
+                    `Failed to record arkcash recovery ${settledTxid} for ${contract.script}:`,
+                    error,
+                );
+            }
         }
 
         // Purge only on AUTHORITATIVE evidence the funds are gone — never on an
@@ -1643,6 +1721,45 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet), tip);
     }
 
+    /**
+     * Keep Executor-renewable delegated coins out of wallet renewal, with a safety fallback:
+     * fail-open, so an unreadable watch renews as before rather than leaving coins to a dead
+     * Executor.
+     */
+    private async deferToExecutor(
+        vtxos: NormalizedExtendedVirtualCoin[],
+        now: TimeHeight,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        // The periodic pass calls this every poll; with nothing expiring there is nothing to defer.
+        if (vtxos.length === 0) return vtxos;
+        try {
+            const watches = await delegatedContracts(
+                this.wallet.identity,
+                // repository-backed: `getContracts` reads rows without the manager's indexer sync
+                async (filter) => (await this.wallet.getContractManager()).getContracts(filter),
+                "renewal",
+            );
+            // Without a live watch there is nothing to defer, and no operator lookup to make.
+            if (!watches.some((w) => w.live)) return vtxos;
+            const signer = toXOnlySignerHex((await this.wallet.getOperatorInfo()).signerPubkey);
+            const dust = getDustAmount(this.wallet);
+            const live = watches.filter((w) => w.live && w.signer === signer);
+            return vtxos.filter((vtxo) => {
+                const watch = live.find((w) => w.contract.script === vtxo.script);
+                if (!watch || canRecoverOnchain(vtxo, now) || isSubdust(vtxo, dust)) return true;
+                if (BigInt(vtxo.value) <= BigInt(watch.contract.params.maxFee) + dust) return true;
+                const expiresAt = vtxo.expiresAt?.getTime();
+                if (expiresAt === undefined) return true;
+                const remaining = expiresAt - now.timestamp.getTime();
+                // Half the window, in ms. delegatedContracts parsed the params: never NaN.
+                return remaining <= Number(watch.contract.params.renewalWindow) * 500;
+            });
+        } catch (e) {
+            console.warn("Unable to inspect Executor renewal watches", e);
+            return vtxos;
+        }
+    }
+
     /** Outpoints {@link warnHeldExpiring} last reported, so each is reported once while held. */
     private heldExpiringWarned = new Set<string>();
 
@@ -1676,7 +1793,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /**
      * Renew expiring virtual outputs (including recoverable ones) by settling them back to the
-     * wallet's address, refreshing their expiration time.
+     * wallet's address, refreshing their expiration time. Coins covered by a live Executor renewal
+     * watch are skipped, including for a manual call; use {@link IWallet.settle} to force them.
      *
      * @param eventCallback - Optional callback for settlement events
      * @param options - Optional per-call overrides; see {@link RenewVtxosOptions}
@@ -1744,6 +1862,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // One chain tip for the whole pass — see `selectExpiringVtxos`.
             const now = await fetchTimeHeight(this.wallet);
             let vtxos = await this.selectExpiringVtxos(threshold, now);
+            vtxos = await this.deferToExecutor(vtxos, now);
 
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
@@ -1810,11 +1929,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 await this.rotateForRecoverableInputs(vtxos, info);
             }
 
+            const subtotal = subtotalOf(vtxos, net);
             // Read AFTER any rotation above, so the output fee is priced against
             // the script the renewed VTXO actually lands on.
-            const arkAddress = await this.wallet.getAddress();
-
-            const subtotal = subtotalOf(vtxos, net);
+            const arkAddress = await renewalAddressOf(this.wallet, subtotal, vtxos);
 
             const amounts = options?.split
                 ? planSplitOutputs(options.split, {
@@ -1889,7 +2007,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         if (!isSweepCapable(this.wallet) || !this.wallet.sendOnchain) return undefined;
         const inputs = await this.wallet.getOnchainSweepInputs?.();
         if (!inputs?.length) return undefined;
-        const boarding = await this.wallet.getBoardingAddress();
+        const boarding = await getOwnBoardingAddress(this.wallet);
         try {
             const txid = await this.wallet.sendOnchain({ outputs: [], inputs, sweepTo: boarding });
             // Its one output renews boarding coins; like the CSV sweep's, the poll must not settle it.
@@ -1953,9 +2071,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             throw new Error("No expired boarding UTXOs to sweep");
         }
 
-        const boardingAddress = await this.wallet.getBoardingAddress();
+        const boardingAddress = await getOwnBoardingAddress(this.wallet);
 
-        const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
+        const feeRate = await providerFeeRate(this.getOnchainProvider());
 
         // Each coin spends through the exit leaf of the boarding address it sits on: rotation and
         // signer changes leave coins at addresses whose leaf differs from the current one.
@@ -2148,12 +2266,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Two independent legs (see MigrationLegReport), run sequentially: each acquires the
         // wallet tx lock itself.
 
-        // VTXO leg: no settlement events.
-        if (vtxoMigratable.length > 0) {
+        // VTXO leg: no settlement events. A held coin is not ours to move; it waits for release.
+        const held = await heldOutpointsOf(this.wallet);
+        const vtxoLeg = vtxoMigratable.filter((c) => !held.has(`${c.vtxo.txid}:${c.vtxo.vout}`));
+        logExcludedVtxos(
+            "migrateDeprecatedSignerVtxos",
+            vtxoMigratable.map((c) => c.vtxo),
+            [outpointExclusion(held, HELD_REASON)],
+        );
+        if (vtxoLeg.length > 0) {
             // One chain tip shared with the send path — see {@link canMigrateBySend}.
             const now = await fetchTimeHeight(this.wallet);
             report.vtxos = await this.runMigrationLeg(
-                vtxoMigratable,
+                vtxoLeg,
                 (c) => c.vtxo.value,
                 classifiedToRef,
                 vtxoMaxAmount,
@@ -2298,9 +2423,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Classify the wallet's `default`/`delegate` contracts against the fresh signer set, splitting
-     * spendable VTXOs into cooperatively-migratable and cutoff-expired sets and building the
-     * per-signer report. Current-signer contracts are skipped.
+     * Classify the wallet's `default`/`delegate`/`executor` contracts against the fresh signer
+     * set, splitting spendable VTXOs into cooperatively-migratable and cutoff-expired sets and
+     * building the per-signer report. Current-signer contracts are skipped.
      */
     private async classifyDeprecatedSignerContracts(info: OperatorInfo): Promise<{
         reports: DeprecatedSignerReport[];
@@ -2312,7 +2437,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const nowSeconds = Math.floor(Date.now() / 1000);
 
         const contractsWithVtxos = await cm.getContractsWithVtxos({
-            type: ["default", "delegate"],
+            type: ["default", "delegate", "executor"],
         });
 
         const reportsBySigner = new Map<string, DeprecatedSignerReport>();
@@ -2608,7 +2733,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const wanted = new Set(inputs.map((i) => `${i.txid}:${i.vout}`));
         const cm = await this.wallet.getContractManager();
         const contractsWithVtxos = await cm.getContractsWithVtxos({
-            type: ["default", "delegate"],
+            type: ["default", "delegate", "executor"],
         });
         for (const { contract, vtxos } of contractsWithVtxos) {
             const serverPubKey = contract.params.serverPubKey;
@@ -2876,7 +3001,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // The server rejects an input under a deprecated signer, so only the sweep takes
                 // those: a unilateral exit works for any signer.
                 const settleable = signerStable
-                    ? groups.filter((g) => g.serverPubKey === currentSigner).flatMap((g) => g.coins)
+                    ? groups
+                          .filter((g) => g.serverPubKey === currentSigner && !g.delegated)
+                          .flatMap((g) => g.coins)
                     : [];
                 const boardingUtxos = groups.flatMap((g) => g.coins);
 
@@ -2936,6 +3063,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // affects the wallet's own settle above.
                 await this.recoverImportedContracts();
             });
+
+            // Self-contained and throttled by the wallet, so a lapsed Executor watch is registered
+            // again without stacking the poll backoff. Under its own lock: it takes no boarding
+            // input, so other tabs' polls need not wait for its network calls.
+            const wallet = this.wallet;
+            if (isExecutorRefreshCapable(wallet)) {
+                await runWithCrossInstanceLock(EXECUTOR_REFRESH_LOCK_NAME, () =>
+                    wallet.refreshExecutorWatches().catch((e) => {
+                        console.error("Error refreshing the Executor watches:", e);
+                    }),
+                );
+            }
         } catch (e) {
             hadError = true;
             console.error("Error fetching boarding UTXOs:", e);
@@ -2981,6 +3120,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             try {
                 now = await fetchTimeHeight(this.wallet);
                 expiringVtxos = await this.selectExpiringVtxos(undefined, now);
+                expiringVtxos = await this.deferToExecutor(expiringVtxos, now);
                 expiringVtxos = await this.revalidateBeforeSettle(expiringVtxos, undefined, now);
             } catch (e) {
                 // Non-fatal: fall back to boarding-only settle.
@@ -3053,7 +3193,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             await this.rotateForRecoverableInputs([...filteredBoarding, ...filteredVtxos], info);
         }
 
-        const arkAddress = await this.wallet.getAddress();
+        const arkAddress = await renewalAddressOf(this.wallet, totalAmount, [
+            ...filteredBoarding,
+            ...filteredVtxos,
+        ]);
 
         const outputFee = estimator.evalOffchainOutput({
             amount: totalAmount,

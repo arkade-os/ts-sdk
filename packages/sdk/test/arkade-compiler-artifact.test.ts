@@ -102,7 +102,7 @@ describe("reading an arkadec artifact", () => {
                 }),
             );
             expect(program.params![0]).toEqual({ name: "value", type });
-            expect(program.functions.spend.inputs).toEqual([{ name: "input", type }]);
+            expect(program.functions.spend.arkadeScript?.inputs).toEqual([{ name: "input", type }]);
             const keys = { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY };
             const args = { value, server: SERVER_KEY };
             const script = new ArkadeProgramScript(program, args, keys);
@@ -392,9 +392,9 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
         ).functions.claim;
-        expect(hash.inputs).toEqual([{ name: "preimage", type: "bytes" }]);
         expect(hash.tapscript).toMatchObject({
             asm: ["SHA256", "$hash", "EQUAL"],
+            inputs: [{ name: "preimage", type: "bytes" }],
             witness: ["preimage"],
         });
 
@@ -641,6 +641,26 @@ describe("reading an arkadec artifact", () => {
                 structs: [{ name: "S", fields: [{ name: "s", type: "S[1]" }] }],
             }),
             /recursive struct/,
+        ],
+        [
+            demo({
+                constructorInputs: [{ name: "x", type: "S[64]" }],
+                structs: [{ name: "S", fields: [{ name: "a", type: "int[512]" }] }],
+            }),
+            /name characters/,
+        ],
+        [
+            demo({
+                constructorInputs: [{ name: "x", type: "S0" }],
+                structs: Array.from({ length: 13 }, (_, i) => ({
+                    name: `S${i}`,
+                    fields: ["a", "b"].map((name) => ({
+                        name,
+                        type: i < 12 ? `S${i + 1}` : "int",
+                    })),
+                })),
+            }),
+            /name characters/,
         ],
     ])("validates artifact boundaries %#", (artifact, error) => {
         expect(() => programFromArtifact(artifact as ContractArtifact)).toThrow(error as RegExp);
@@ -910,7 +930,7 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
         );
-        expect(program.functions.spend.inputs).toBeUndefined();
+        expect(program.functions.spend.tapscript.inputs).toBeUndefined();
         expect(program.functions.spend.tapscript.signatures).toEqual([
             { name: "userSig", type: "signature" },
         ]);

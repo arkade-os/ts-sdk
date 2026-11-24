@@ -11,9 +11,11 @@
  * handler: pass a `contractManager` to {@link Arkade.connect} and call
  * {@link ArkadeContract.register} to persist and watch a contract.
  *
- * Functions are typed from the program's literal shape (`inputs: [{ name: "preimage", type:
- * "bytes" }]` → `functions.claim(preimage: Uint8Array)`). For a program stored in a variable use
- * `satisfies Program`; a `: Program` annotation widens the literal type away. Typed `params`
+ * Functions are typed from the program's literal shape (`tapscript.inputs: [{ name: "preimage",
+ * type: "bytes" }]` → `functions.claim({ tapscript: [preimage: Uint8Array] })`). Each segment's
+ * `witness` names its own `inputs`, and the call passes them under that segment's key. For a
+ * program stored in a variable use `satisfies Program`; a `: Program` annotation widens the
+ * literal type away. Typed `params`
  * descriptors `{ name, type }` make the list authoritative (every param bound, every `$name`
  * declared, values type-checked).
  *
@@ -33,8 +35,12 @@
  *     ],
  *     functions: {
  *         claim: {
- *             inputs: [{ name: "preimage", type: "bytes" }],
- *             tapscript: { signers: ["$server"], asm: ["HASH160", "$hash", "EQUAL"], witness: ["preimage"] },
+ *             tapscript: {
+ *                 signers: ["$server"],
+ *                 asm: ["HASH160", "$hash", "EQUAL"],
+ *                 inputs: [{ name: "preimage", type: "bytes" }],
+ *                 witness: ["preimage"],
+ *             },
  *             arkadeScript: { asm: payTo, witness: [0] },
  *         },
  *     },
@@ -44,7 +50,7 @@
  * // `server` is declared in `params`, so it defaults to the client's operator key.
  * const htlc = arkade.contract(htlcProgram, { hash, receiver, amount: 10_000n });
  * // `preimage` is typed Uint8Array; calling `claim()` with no args is a type error.
- * const { txid } = await htlc.functions.claim(preimage).to(receiver, 10_000n).send();
+ * const { txid } = await htlc.functions.claim({ tapscript: [preimage] }).to(receiver, 10_000n).send();
  * ```
  *
  * @module arkade/contract
@@ -74,6 +80,7 @@ import type { TapLeafScript } from "../script/base";
 import { toXOnly } from "../utils/keys";
 import { timelockToSequence } from "../utils/timelock";
 import { toTimelock } from "../wallet/timelockPolicy";
+import { assertValidServerUnrollScript } from "../wallet/checkpointExitDelay";
 import {
     buildOffchainTx,
     submitOffchainTx,
@@ -166,12 +173,11 @@ type ArgsTuple<I extends readonly InputDef[]> = {
 };
 
 /**
- * The call signature arguments for one function (nullary when `inputs` is absent). Dotted input
- * names group into one struct or array argument at runtime; dotted or widened names stay loose.
+ * One segment's call arguments, one per source parameter (none when it declares no `inputs`).
+ * Dotted input names group into one struct or array argument at runtime; dotted or widened names
+ * stay loose.
  */
-type FnArgs<F extends ArkadeFunction> = F extends {
-    inputs: infer I extends readonly InputDef[];
-}
+type SegmentArgs<S> = S extends { inputs: infer I extends readonly InputDef[] }
     ? string extends I[number]["name"]
         ? ArkadeNestedValue[]
         : Extract<I[number]["name"], `${string}.${string}`> extends never
@@ -179,9 +185,22 @@ type FnArgs<F extends ArkadeFunction> = F extends {
           : ArkadeNestedValue[]
     : [];
 
+type WitnessSegment = "tapscript" | "arkadeScript";
+
+/** A function's call argument: one key for each segment that declares non-empty `inputs`. */
+type CallArgs<F extends ArkadeFunction> = {
+    [K in WitnessSegment as SegmentArgs<F[K]> extends readonly [] ? never : K]: SegmentArgs<F[K]>;
+};
+
+/** The call argument of a function of a widened {@link Program}. */
+type LooseCallArgs = Partial<Record<WitnessSegment, readonly ArkadeNestedValue[]>>;
+
+/** The call signature arguments for one function: nullary when no segment declares inputs. */
+type FnArgs<F extends ArkadeFunction> = keyof CallArgs<F> extends never ? [] : [args: CallArgs<F>];
+
 /** A contract's functions returning `R`: typed per function for a literal program, else loose. */
 type FunctionMap<P extends Program, R> = string extends keyof P["functions"]
-    ? Record<string, (...args: ArkadeNestedValue[]) => R>
+    ? Record<string, (args?: LooseCallArgs) => R>
     : {
           [K in keyof P["functions"]]: (...args: FnArgs<P["functions"][K]>) => R;
       };
@@ -240,7 +259,8 @@ export interface ArkadeUnlocker {
     // `<any>`: a concrete `P` would not assign here.
     readonly contract: ArkadeContract<any>;
     readonly fn: CompiledProgramFunction;
-    readonly args: Record<string, ArkadeArgValue>;
+    /** Bound call inputs, by the segment whose witness names them. */
+    readonly args: Readonly<Record<WitnessSegment, Record<string, ArkadeArgValue>>>;
 }
 
 /**
@@ -267,10 +287,7 @@ export interface ArkadeSpendResult {
 }
 
 /** The callable spending paths of a contract. */
-export type CallableFunctions = Record<
-    string,
-    (...args: ArkadeNestedValue[]) => ArkadeTransactionBuilder
->;
+export type CallableFunctions = Record<string, (args?: LooseCallArgs) => ArkadeTransactionBuilder>;
 
 // --- Arkade client ---------------------------------------------------------
 
@@ -478,13 +495,17 @@ export class Arkade {
         }
 
         const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
-        const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         // The network the operator reports, so a test network doesn't yield mainnet addresses.
         const network =
             opts.network ??
             (Object.hasOwn(networks, info.network)
                 ? getNetwork(info.network as NetworkName)
                 : DEFAULT_NETWORK);
+        const checkpoint = assertValidServerUnrollScript(
+            info.checkpointTapscript,
+            network,
+            info.forfeitPubkey ? toXOnly(hex.decode(info.forfeitPubkey), "forfeit key") : undefined,
+        );
 
         // Pinned key, NOT the emulator's own /v1/info: otherwise whatever answers that URL picks
         // the key covenants commit to. A rotation is invisible until the pin ships;
@@ -724,15 +745,18 @@ export class ArkadeContract<P extends Program = Program> {
         return this.vtxoScript.pkScript;
     }
 
-    /** Callable spending paths: `functions.<name>(...args)` (see {@link ContractFunctions}). */
+    /**
+     * Callable spending paths: `functions.<name>({ tapscript: [...], arkadeScript: [...] })`
+     * (see {@link ContractFunctions}).
+     */
     get functions(): ContractFunctions<P> {
         const out: CallableFunctions = Object.create(null);
         for (const fn of this.compiled) {
-            out[fn.name] = (...callArgs: ArkadeNestedValue[]) =>
+            out[fn.name] = (...callArgs: unknown[]) =>
                 new ArkadeTransactionBuilder(this.client, {
                     contract: this,
                     fn,
-                    args: bindInputs(fn, callArgs),
+                    args: bindCall(fn, callArgs),
                 });
         }
         return out as unknown as ContractFunctions<P>;
@@ -740,13 +764,12 @@ export class ArkadeContract<P extends Program = Program> {
 
     /** Spending paths bound to their arguments, for `.from(coins, contract.unlock.<name>(...))`. */
     get unlock(): ContractUnlockers<P> {
-        const out: Record<string, (...args: ArkadeNestedValue[]) => ArkadeUnlocker> =
-            Object.create(null);
+        const out: Record<string, (...args: unknown[]) => ArkadeUnlocker> = Object.create(null);
         for (const fn of this.compiled) {
-            out[fn.name] = (...callArgs: ArkadeNestedValue[]) => ({
+            out[fn.name] = (...callArgs: unknown[]) => ({
                 contract: this,
                 fn,
-                args: bindInputs(fn, callArgs),
+                args: bindCall(fn, callArgs),
             });
         }
         return out as unknown as ContractUnlockers<P>;
@@ -1095,7 +1118,7 @@ export class ArkadeTransactionBuilder {
 
         inputs.forEach(({ unlocker }, i) => {
             const condition = (unlocker.fn.def.tapscript.witness ?? []).map((w) =>
-                witnessBytes(unlocker, w),
+                witnessBytes(unlocker, "tapscript", w),
             );
             if (condition.length === 0) return;
             setArkPsbtField(arkTx, i, ConditionWitness, condition);
@@ -1110,7 +1133,9 @@ export class ArkadeTransactionBuilder {
         const entries = inputs.flatMap(({ unlocker }, vin) => {
             const { arkadeScript, def } = unlocker.fn;
             if (!arkadeScript) return [];
-            const stack = (def.arkadeScript?.witness ?? []).map((w) => witnessBytes(unlocker, w));
+            const stack = (def.arkadeScript?.witness ?? []).map((w) =>
+                witnessBytes(unlocker, "arkadeScript", w),
+            );
             return [{ vin, script: arkadeScript, witness: RawWitness.encode(stack) }];
         });
         if (entries.length > 0) {
@@ -1171,7 +1196,9 @@ export class ArkadeTransactionBuilder {
         tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout, sequence });
         for (const o of outputs) tx.addOutput(o);
 
-        const condition = (fn.def.tapscript.witness ?? []).map((w) => witnessBytes(unlocker, w));
+        const condition = (fn.def.tapscript.witness ?? []).map((w) =>
+            witnessBytes(unlocker, "tapscript", w),
+        );
         prepareOwnedInput(tx, {
             index: 0,
             coin: { value: coin.value, script: hex.encode(contract.pkScript) },
@@ -1180,7 +1207,7 @@ export class ArkadeTransactionBuilder {
         });
         if (fn.arkadeScript) {
             const stack = (fn.def.arkadeScript?.witness ?? []).map((w) =>
-                witnessBytes(unlocker, w),
+                witnessBytes(unlocker, "arkadeScript", w),
             );
             attachExtension(tx, [
                 EmulatorPacket.create([
@@ -1405,8 +1432,12 @@ function unspendable(coin: Utxo, now: number): string | undefined {
     return undefined;
 }
 
-function witnessBytes({ contract, args }: ArkadeUnlocker, ref: WitnessRef): Uint8Array {
-    return witnessRefToBytes(ref, args, contract.args);
+function witnessBytes(
+    { contract, args }: ArkadeUnlocker,
+    segment: WitnessSegment,
+    ref: WitnessRef,
+): Uint8Array {
+    return witnessRefToBytes(ref, args[segment], contract.args);
 }
 
 /**
@@ -1444,42 +1475,62 @@ function flattenValue(
     ancestors.delete(value);
 }
 
+/** Bind a call's `{ tapscript, arkadeScript }` arguments to each segment's declared inputs. */
+function bindCall(
+    { name, def }: CompiledProgramFunction,
+    callArgs: unknown[],
+): ArkadeUnlocker["args"] {
+    const [args = {}] = callArgs;
+    const proto = typeof args === "object" && args !== null && Object.getPrototypeOf(args);
+    if (
+        callArgs.length > 1 ||
+        (proto !== Object.prototype && proto !== null) ||
+        Object.entries(args as object).some(
+            ([key, value]) =>
+                (key !== "tapscript" && key !== "arkadeScript") ||
+                (value !== undefined && !Array.isArray(value)),
+        )
+    ) {
+        throw new Error(
+            `${name}: expected one { arkadeScript?: [...], tapscript?: [...] } argument`,
+        );
+    }
+    const { tapscript = [], arkadeScript = [] } = args as LooseCallArgs;
+    return {
+        arkadeScript: bindInputs(
+            `${name} arkadeScript`,
+            def.arkadeScript?.inputs ?? [],
+            arkadeScript,
+        ),
+        tapscript: bindInputs(`${name} tapscript`, def.tapscript.inputs ?? [], tapscript),
+    };
+}
+
 /**
- * Bind positional call arguments to a function's declared inputs: one argument per source
- * parameter, with a struct or array passed whole and flattened to its dotted input names.
+ * Bind positional call arguments to declared inputs: one argument per source parameter, with a
+ * struct or array passed whole and flattened to its dotted input names.
  */
 function bindInputs(
-    fn: CompiledProgramFunction,
-    callArgs: ArkadeNestedValue[],
+    label: string,
+    inputs: readonly InputDef[],
+    callArgs: readonly ArkadeNestedValue[],
 ): Record<string, ArkadeArgValue> {
-    const inputs = fn.def.inputs ?? [];
     const declared = new Set<string>();
     for (const def of inputs) {
-        if (declared.has(def.name)) throw new Error(`${fn.name}: duplicate input '${def.name}'`);
+        if (declared.has(def.name)) throw new Error(`${label}: duplicate input '${def.name}'`);
         declared.add(def.name);
     }
-    // ponytail: Scalar/struct collisions need separate slots until covenant/tapscript params split.
-    const params = [
-        ...new Map(
-            inputs.map(({ name }) => {
-                const root = name.split(".")[0];
-                return [name.includes(".") ? `${root}.` : root, root];
-            }),
-        ).values(),
-    ];
+    const params = [...new Set(inputs.map(({ name }) => name.split(".")[0]))];
     if (callArgs.length !== params.length) {
-        throw new Error(
-            `${fn.name}: expected ${params.length} argument(s), got ${callArgs.length}`,
-        );
+        throw new Error(`${label}: expected ${params.length} argument(s), got ${callArgs.length}`);
     }
     const bound: Record<string, ArkadeArgValue> = Object.create(null);
     params.forEach((param, i) => flattenValue(param, callArgs[i], bound));
     for (const name of Object.keys(bound)) {
-        if (!declared.has(name)) throw new Error(`${fn.name}: unexpected input '${name}'`);
+        if (!declared.has(name)) throw new Error(`${label}: unexpected input '${name}'`);
     }
     for (const def of inputs) {
-        if (bound[def.name] === undefined)
-            throw new Error(`${fn.name}: missing input '${def.name}'`);
+        if (bound[def.name] === undefined) throw new Error(`${label}: missing input '${def.name}'`);
         validateParamValue(def, bound[def.name]);
     }
     return bound;

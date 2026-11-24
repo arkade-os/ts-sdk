@@ -1,8 +1,11 @@
 import { collectVtxos } from "../src/repositories/walletRepository";
 import { collectContracts } from "../src/repositories/contractRepository";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import { collectIntents } from "../src/repositories/intentRepository";
-import type { ArkIntent, IntentRepository } from "../src/repositories/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/intentRepository";
+import type {
+    BatchRegistration,
+    BatchRegistrationRepository,
+} from "../src/repositories/intentRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
@@ -231,6 +234,9 @@ describe("Wallet", () => {
                 }
                 if (target.includes("subscribe")) {
                     return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
+                }
+                if (target.includes("/address/") && target.endsWith("/txs")) {
+                    return Promise.resolve(jsonResponse([]));
                 }
                 if (target.includes("/address/")) {
                     return Promise.resolve(jsonResponse(mockUTXOs));
@@ -537,6 +543,7 @@ describe("Wallet", () => {
                 }),
                 arkProvider: { getInfo: vi.fn().mockResolvedValue({ vtxoMinAmount: minimum }) },
                 getSpendableVtxos: vi.fn().mockResolvedValue(coins),
+                changeTapscriptFor: vi.fn().mockResolvedValue(tapscript),
                 _submitOffchainSpend: submit,
             };
             return { thisArg, submit, coins };
@@ -836,6 +843,9 @@ describe("Wallet", () => {
                 if (url.includes("/script/subscribe")) {
                     return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
                 }
+                if (url.includes("/address/") && url.endsWith("/txs")) {
+                    return Promise.resolve(jsonResponse([]));
+                }
                 if (url.includes("/address/") && url.includes("/utxo")) {
                     return Promise.resolve(jsonResponse(mockUTXOs));
                 }
@@ -1116,7 +1126,9 @@ describe("Wallet", () => {
             };
         }
 
-        async function createReadonlyTestWallet(storage?: { intentRepository?: IntentRepository }) {
+        async function createReadonlyTestWallet(storage?: {
+            intentRepository?: BatchRegistrationRepository;
+        }) {
             let walletScript = "";
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
@@ -1163,7 +1175,7 @@ describe("Wallet", () => {
             expect(await collectContracts(contractRepository)).toEqual([]);
         });
 
-        const storedIntent = (over: Partial<ArkIntent> = {}): ArkIntent => ({
+        const storedIntent = (over: Partial<BatchRegistration> = {}): BatchRegistration => ({
             proofTxId: "i1",
             state: "waiting_for_batch",
             createdAt: 1,
@@ -1176,11 +1188,11 @@ describe("Wallet", () => {
             proofInputs: [{ txid: "v", vout: 0 }],
             ...over,
         });
-        const intentIds = async (repo: IntentRepository) =>
-            (await collectIntents(repo)).map((i) => i.proofTxId);
+        const intentIds = async (repo: BatchRegistrationRepository) =>
+            (await collectBatchRegistrations(repo)).map((i) => i.proofTxId);
 
         it("wipes intents once none is pending", async () => {
-            const intentRepository = new InMemoryIntentRepository();
+            const intentRepository = new InMemoryBatchRegistrationRepository();
             const { wallet } = await createReadonlyTestWallet({ intentRepository });
             await intentRepository.saveBatchRegistration(
                 storedIntent({ state: "batch_succeeded" }),
@@ -1192,7 +1204,7 @@ describe("Wallet", () => {
         });
 
         it("keeps pending intents a readonly wallet cannot release", async () => {
-            const intentRepository = new InMemoryIntentRepository();
+            const intentRepository = new InMemoryBatchRegistrationRepository();
             const { wallet } = await createReadonlyTestWallet({ intentRepository });
             await intentRepository.saveBatchRegistration(storedIntent());
 
@@ -1202,14 +1214,17 @@ describe("Wallet", () => {
         });
 
         describe("clearIntents with a release-capable wallet", () => {
-            const clearIntents = (intentRepository: IntentRepository, deleteIntent: any) =>
+            const clearIntents = (
+                intentRepository: BatchRegistrationRepository,
+                deleteIntent: any,
+            ) =>
                 (ReadonlyWallet.prototype as any).clearIntents.call({
                     intentRepository,
                     intentReconciliationConfig: () => ({ deleteIntent }),
                 });
 
             it("releases pending intents from the server, then wipes them", async () => {
-                const intentRepository = new InMemoryIntentRepository();
+                const intentRepository = new InMemoryBatchRegistrationRepository();
                 await intentRepository.saveBatchRegistration(storedIntent());
                 const deleteIntent = vi.fn().mockResolvedValue(undefined);
 
@@ -1223,9 +1238,9 @@ describe("Wallet", () => {
             });
 
             it("keeps every intent when one release fails", async () => {
-                const intentRepository = new InMemoryIntentRepository();
+                const intentRepository = new InMemoryBatchRegistrationRepository();
                 await intentRepository.saveBatchRegistration(storedIntent());
-                await intentRepository.saveIntent(
+                await intentRepository.saveBatchRegistration(
                     storedIntent({ proofTxId: "i2", proofInputs: [{ txid: "w", vout: 0 }] }),
                 );
                 const deleteIntent = vi
@@ -1959,6 +1974,9 @@ describe("ReadonlyWallet", () => {
             }
             if (url.includes("/script/subscribe")) {
                 return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
+            }
+            if (url.includes("/address/") && url.endsWith("/txs")) {
+                return Promise.resolve(jsonResponse([]));
             }
             if (url.includes("/address/") && url.includes("/utxo")) {
                 return Promise.resolve(jsonResponse(mockUTXOs));
