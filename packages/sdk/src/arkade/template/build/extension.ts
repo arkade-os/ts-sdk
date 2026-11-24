@@ -20,6 +20,8 @@ import { type Draft, messageOf, type Src } from "./draft";
 import type { Instance } from "./instance";
 import type { Allocation } from "./output";
 
+type Routing = Pick<Allocation, "assets" | "minted">;
+
 export interface Entry {
     vin: number;
     script: Uint8Array;
@@ -50,7 +52,7 @@ export function extension(
     i: Instance,
     d: Draft,
     sources: readonly Src[],
-    a: Allocation,
+    a: Routing,
     entries: readonly Entry[],
 ): ExtensionPacket[] {
     const t = i.tmpl;
@@ -154,7 +156,7 @@ function assetPacket(
     i: Instance,
     d: Draft,
     sources: readonly Src[],
-    a: Allocation,
+    a: Routing,
 ): Packet | undefined {
     const t = i.tmpl;
     const ids = new Set<string>();
@@ -185,7 +187,7 @@ function assetPacket(
 function issueGroup(
     i: Instance,
     d: Draft,
-    a: Allocation,
+    a: Routing,
     j: number,
     fresh: ReadonlyMap<number, number>,
 ): AssetGroup {
@@ -212,7 +214,7 @@ function issueGroup(
     );
 }
 
-function assetGroup(t: Template, sources: readonly Src[], a: Allocation, id: string): AssetGroup {
+function assetGroup(t: Template, sources: readonly Src[], a: Routing, id: string): AssetGroup {
     const ins: AssetInput[] = [];
     sources.forEach((s, slot) => {
         const held = s.assets
