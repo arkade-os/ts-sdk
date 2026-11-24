@@ -2,12 +2,12 @@
  * `accept()`: where value moves, and the one ordering it moves in.
  *
  * ```
- * QuoteExpired
- *   -> the record by quote id: return | resume | AcceptConflict
+ * the record by quote id: return | adopt its deposit | AcceptConflict
+ *   -> QuoteExpired
  *   -> InsufficientFunds                     [funding routes]
  *   -> derive the covenant and REGISTER its row
- *   -> persist the record and its secrets    <- throwing; nothing past here
- *                                               happens without it
+ *   -> create the record and its secrets     <- throwing and atomic; nothing past
+ *                                               here happens without it
  *   -> fund                                  [funding routes]
  *   -> write the funding txid                [funding routes, best effort]
  * ```
@@ -56,7 +56,7 @@ import { toDiscoveryLeg } from "./aliases";
 import type { CorridorSet } from "./corridors/registry";
 import type { SwapDrive } from "./drive";
 import { assetPaymentFacts, recordAssetPayment, storedFundingBounds } from "./assetPayment";
-import { retireUnsubmittedFunding } from "./fundingNotSubmitted";
+import { refusedBeforeSubmission, retireUnsubmittedFunding } from "./fundingNotSubmitted";
 import { recordOutcome } from "./outcome";
 import { AcceptConflict, InsufficientFunds, MissingCorridorDep, QuoteExpired } from "./errors";
 import { fromAtomicDecimal } from "./amount";
@@ -88,7 +88,7 @@ export type QuotePreparation = RfqPreparation | OfferPreparation;
  *
  * A keyed promise chain: later calls wait rather than refuse, and the entry deletes itself when
  * the chain drains. Process-local; across clients sharing a repository, never-fund-twice rests
- * on reading the record *after* acquiring the lock.
+ * on `createSwapRecordIfAbsent`.
  */
 const acceptLocks = new Map<QuoteId, Promise<void>>();
 
@@ -341,9 +341,9 @@ const profileOf = (
  * Accept a quote: make it durable, then move the value.
  *
  * Idempotent by quote id and only by quote id. A second call with the same
- * quote returns the stored swap when the funding txid is already known, resumes
- * the record when it is not, and refuses as `AcceptConflict` only when the
- * durable evidence contradicts the quote on a material field.
+ * quote returns the stored swap, adopting a deposit found for it, but never
+ * funds it again; it refuses as `AcceptConflict` only when the durable evidence
+ * contradicts the quote on a material field.
  */
 export const acceptQuote = async (input: AcceptInput): Promise<Swap> =>
     runSerialized(input.quote.id, () => acceptQuoteBody(input));
@@ -354,10 +354,7 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
     const answer = (record: SwapRecord): Swap =>
         input.drive ? input.drive.adopt(record) : swapOf(record, recordOutcome(record));
 
-    const expired = now > quote.expiresAt;
-
-    const stored = await repository.getSwapRecord(quote.id);
-    if (stored !== undefined) {
+    const resume = async (stored: SwapRecord): Promise<Swap> => {
         const fields = conflictingFields(stored, quote);
         if (fields.length > 0) {
             throw new AcceptConflict(quote.id, stored.id, fields);
@@ -367,26 +364,20 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
         if (fundingWasNotSubmitted(stored)) return answer(stored);
         if (stored.fundingTxid !== undefined) return answer(stored);
         if (!fundsFromWallet(stored.route)) return answer(stored);
-        // Persisted but unfunded: look for a crashed first attempt's deposit before sending
-        // again. Uses the stored record only, so it survives a restart.
+        // Its one funding attempt may have landed without its txid, so adopt a deposit found
+        // for it and never send again: an empty read does not prove that attempt failed.
         const found = await reconcileFunding({ wallet }, stored);
-        if (found !== undefined) {
-            return answer(await stampFunding(repository, stored, found, now));
-        }
-        // No funding evidence: retrying moves new value, so the deadline still applies.
-        if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
         return answer(
-            await fundAndStamp(
-                { wallet, now, validUntil: input.validUntil, drive: input.drive },
-                stored,
-                repository,
-            ),
+            found === undefined ? stored : await stampFunding(repository, stored, found, now),
         );
-    }
+    };
+
+    const stored = await repository.getSwapRecord(quote.id);
+    if (stored !== undefined) return resume(stored);
 
     // Its own deadline only, not `policy.quoteTtlFloorSeconds`: that floor is the quote path's
     // question, and would refuse a quote §3.2 still accepts.
-    if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
+    if (now > quote.expiresAt) throw new QuoteExpired(quote.id, quote.expiresAt, now);
 
     const preparation = input.preparation;
     if (preparation === undefined) {
@@ -412,18 +403,17 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
             : built;
 
     // Throwing, deliberately: nothing past this line may happen unless the record is durable.
-    await repository.saveSwapRecord(record);
+    // Only the client whose insert created it funds; any other answers off the stored record.
+    if (!(await repository.createSwapRecordIfAbsent(record))) {
+        const winner = await repository.getSwapRecord(quote.id);
+        if (winner === undefined) throw new Error(`swap record ${quote.id} was not created`);
+        return resume(winner);
+    }
 
     if (!funds) return answer(record);
     return answer(
         await fundAndStamp(
-            {
-                wallet,
-                now,
-                validUntil: input.validUntil,
-                drive: input.drive,
-                firstFundingAttempt: true,
-            },
+            { wallet, now, validUntil: input.validUntil, drive: input.drive },
             record,
             repository,
         ),
@@ -546,7 +536,6 @@ const registeredCorridorRecord = async (
  * failing would misreport a broadcast swap. `reconcileFunding` recovers a lost stamp.
  */
 type FundingInput = Pick<AcceptInput, "wallet" | "now" | "validUntil" | "drive"> & {
-    firstFundingAttempt?: boolean;
     inputExpiryFloor?: import("@arkade-os/sdk").InputExpiryFloor;
 };
 
@@ -575,7 +564,6 @@ const fundAndStamp = async (
               );
     const validUntil = cap === undefined ? undefined : Math.min(cap, record.expiresAt);
     if (
-        input.firstFundingAttempt &&
         record.assetPayment !== undefined &&
         validUntil !== undefined &&
         validUntil < record.assetPayment.validUntil
@@ -587,17 +575,19 @@ const fundAndStamp = async (
         const txid = await fund({ ...input, ...bounds, validUntil }, record);
         return stampFunding(repository, record, txid, input.now);
     } catch (error) {
-        if (
-            input.firstFundingAttempt &&
-            validUntil !== undefined &&
-            error instanceof SendDeadlineExceededError
-        ) {
+        const proof =
+            validUntil !== undefined && error instanceof SendDeadlineExceededError
+                ? { reason: "send_deadline" as const, validUntil }
+                : refusedBeforeSubmission(error)
+                  ? { reason: "send_refused" as const }
+                  : undefined;
+        if (proof !== undefined) {
             const stopped = {
                 ...record,
                 ...(record.family === "offer"
                     ? { status: "cancelled" as const }
                     : { state: "failed" as const }),
-                fundingNotSubmitted: { reason: "send_deadline" as const, validUntil },
+                fundingNotSubmitted: proof,
                 updatedAt: Math.floor(Date.now() / 1000),
             } as SwapRecord;
             try {
@@ -631,21 +621,20 @@ const stampFunding = async (
 };
 
 /**
- * Funding keeps the recipient object intact, including its offer extension.
- * An explicit deadline wraps that same object in SendParams.
+ * Funding keeps the recipient object intact, including its offer extension. `maxChangeFee: 0`
+ * pays exactly the quote: change the wallet cannot return is refused rather than donated.
  */
 const fund = async (input: FundingInput, record: SwapRecord): Promise<string> => {
     const { wallet } = input;
     const send = (recipient: Recipient): Promise<string> =>
-        input.validUntil === undefined && input.inputExpiryFloor === undefined
-            ? wallet.send(recipient)
-            : wallet.send({
-                  recipients: [recipient],
-                  ...(input.validUntil === undefined ? {} : { validUntil: input.validUntil }),
-                  ...(input.inputExpiryFloor === undefined
-                      ? {}
-                      : { inputExpiryFloor: input.inputExpiryFloor }),
-              });
+        wallet.send({
+            recipients: [recipient],
+            maxChangeFee: 0,
+            ...(input.validUntil === undefined ? {} : { validUntil: input.validUntil }),
+            ...(input.inputExpiryFloor === undefined
+                ? {}
+                : { inputExpiryFloor: input.inputExpiryFloor }),
+        });
     if (record.family === "offer") {
         const amount = fromAtomicDecimal(record.give.amount);
         // Lenient: a record written before BTC's asset part depended on the network still names

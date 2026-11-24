@@ -14,6 +14,8 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`@arkade-os/swap`: `AssetSwapRepository` is version 6, and a quote is funded at most once.** Version 6 adds the required `createSwapRecordIfAbsent(record)`: it inserts only when no record has that quote id, atomically across every client sharing the store, and resolves `true` only once committed. `accept()` creates the record through it and funds only when it returns `true`, so two runtimes sharing one store can no longer both fund a quote. A second `accept()` of a stored record without a funding txid no longer sends again, because an empty indexer read does not prove the first attempt failed: it adopts a deposit found at the covenant, or returns the swap still `accepted`, and no longer throws `QuoteExpired` for it. The four built-in repositories implement the method without a data migration. A custom repository fails to compile until it adds the method; an untyped one throws before anything is funded. `SwapRecordCommon.fundingNotSubmitted` gains a second proof, `{ reason: "send_refused" }` (see Bug Fixes), so narrow on `reason` before reading `validUntil`.
+
 - **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
 
 - **`@arkade-os/swap`: a fee ceiling on a cross-asset swap is refused.** The fee of a cross-asset swap is measured against the solver's own price feed, so `maxFee` or `policy.maxFee` cannot bound it. Setting either on such a swap now throws before anything is funded; same-asset ceilings are unchanged. `policy.maxFee` applies to every call, so a client that sets one for `pay` or `receive` can no longer `exchange` across assets.
@@ -528,6 +530,10 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **`@arkade-os/swap`: a funding refused before submission cancels the swap instead of leaving it pending.** With one funding attempt per quote, a record whose only send was refused would stay `accepted` with no txid for good: `accept()` no longer retries it, and the drive retired only an expired send deadline. When `send` refuses during coin selection (`Insufficient funds`, `Insufficient asset balance`, `Cannot form minimum change`, also as the service-worker client's `Send failed: Error: …`) or with `VtxoReservedError`, the offer is `cancelled` or the corridor swap `failed`, with `fundingNotSubmitted: { reason: "send_refused" }`, and its contract stops being watched, as an expired send deadline already did. Any other funding error still leaves the swap pending.
+
+- **`@arkade-os/swap`: quoted funding never pays change as a fee.** Funding passes `maxChangeFee: 0`, so change below the operator's VTXO minimum that the wallet cannot return is refused before submission, and the swap cancelled as above, instead of being paid as an offchain fee on top of the quote.
 
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
