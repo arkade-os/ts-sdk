@@ -78,8 +78,7 @@ Run `git submodule update --init` after cloning.
 
 Package-scoped release orchestrator. Target is any package key, or `all`:
 
-`sdk` · `swap` · `wallet-providers` · `sats-connect` · `sats-connect-react` · `checkout` · `snap` ·
-`all`
+`sdk` · `swap` · `wallet-providers` · `sats-connect` · `sats-connect-react` · `snap` · `all`
 
 ```bash
 pnpm run release -- swap patch                # Swap bugfix only
@@ -104,7 +103,7 @@ Releasing SDK implies a dependent release of every package that depends on it vi
 unreleased stays pinned to the previous SDK. Override an individual dependent's bump with
 `--swap-bump <bump-or-version>`.
 
-The five web packages are deliberately **not** fan-out dependents. They depend on the SDK through
+The four web packages are deliberately **not** fan-out dependents. They depend on the SDK through
 peer ranges or `workspace:^`, both of which publish as caret ranges and stay satisfied across an SDK
 patch or minor. An SDK release does not bump them — release them individually as needed.
 

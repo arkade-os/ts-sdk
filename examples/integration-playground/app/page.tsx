@@ -1,4 +1,3 @@
-import { CheckoutPanel } from "../components/CheckoutPanel";
 import { SatsConnectPanel } from "../components/SatsConnectPanel";
 import { SnapPanel } from "../components/SnapPanel";
 import { WalletProvidersPanel } from "../components/WalletProvidersPanel";
@@ -18,7 +17,6 @@ export default function Page() {
             <WalletProvidersPanel />
             <SatsConnectPanel />
             <SnapPanel />
-            <CheckoutPanel />
         </main>
     );
 }

@@ -12,7 +12,6 @@
         "format": "biome format --write app components"
     },
     "dependencies": {
-        "@arkade-os/checkout": "workspace:^",
         "@arkade-os/sats-connect": "workspace:^",
         "@arkade-os/sats-connect-react": "workspace:^",
         "@arkade-os/sdk": "workspace:^",

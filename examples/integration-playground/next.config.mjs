@@ -8,7 +8,6 @@ const nextConfig = {
         "@arkade-os/sats-connect-react",
         "@arkade-os/sats-connect",
         "@arkade-os/wallet-providers",
-        "@arkade-os/checkout",
     ],
 };
 

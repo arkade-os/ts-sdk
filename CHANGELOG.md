@@ -184,12 +184,13 @@ style and have not been backfilled.
 ### Features
 
 - **The web packages move into this repository.** `@arkade-os/wallet-providers`,
-  `@arkade-os/sats-connect`, `@arkade-os/sats-connect-react`, `@arkade-os/checkout`
-  and `@arkade-os/snap` are ported from `arkade-os/packages` and release from here.
-  They take the SDK as a peer range or `workspace:^`, so an SDK release does not
-  bump them. `@arkade-os/sats-connect` now builds its wallet from
-  `RestOperatorProvider`, `RestIndexerProvider` and `EsploraProvider` and pays with
-  `send`, which raises its SDK peer floor to 0.5.4.
+  `@arkade-os/sats-connect`, `@arkade-os/sats-connect-react` and `@arkade-os/snap`
+  are ported from `arkade-os/packages` and release from here. They take the SDK as
+  a peer range or `workspace:^`, so an SDK release does not bump them.
+  `@arkade-os/sats-connect` now builds its wallet from `RestOperatorProvider`,
+  `RestIndexerProvider` and `EsploraProvider` and pays with `send`, which raises its
+  SDK peer floor to 0.5.4. `@arkade-os/checkout` stays in `arkade-os/packages`: its
+  server needs durable swap storage, and no mainnet solver serves Lightning yet.
 
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service

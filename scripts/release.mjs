@@ -65,20 +65,12 @@ const PACKAGES = [
         order: 5,
     },
     {
-        key: "checkout",
-        name: "@arkade-os/checkout",
-        dir: path.join(ROOT_DIR, "packages/checkout"),
-        pkgJson: path.join(ROOT_DIR, "packages/checkout/package.json"),
-        tagPrefix: "@arkade-os/checkout/",
-        order: 6,
-    },
-    {
         key: "snap",
         name: "@arkade-os/snap",
         dir: path.join(ROOT_DIR, "packages/snap"),
         pkgJson: path.join(ROOT_DIR, "packages/snap/package.json"),
         tagPrefix: "@arkade-os/snap/",
-        order: 7,
+        order: 6,
         // snap.manifest.json carries its own version and shasum and must be
         // committed alongside package.json.
         extraFiles: [path.join(ROOT_DIR, "packages/snap/snap.manifest.json")],
@@ -298,7 +290,7 @@ because they depend on SDK via workspace:* (pnpm rewrites this to an exact
 version on pack/publish).
 
 swap is the ONLY fan-out dependent. wallet-providers, sats-connect,
-sats-connect-react, checkout and snap depend on the SDK via peer ranges or
+sats-connect-react and snap depend on the SDK via peer ranges or
 workspace:^, both of which publish as caret ranges and survive an SDK
 patch/minor untouched. Releasing the SDK does not bump them; release them
 individually as needed.
