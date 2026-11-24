@@ -69,3 +69,31 @@ describe("SatsConnectIdentity.signMultiple response validation", () => {
         );
     });
 });
+
+describe("SatsConnectIdentity.signMultiple on a configured transport", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("signs one by one through the transport instead of the standalone batch API", async () => {
+        const identity = new SatsConnectIdentity(
+            PUBKEY,
+            "bc1qexampleaddress",
+            connectedRequest as never,
+            undefined,
+            false,
+        );
+        const [first, second] = [fakeTx(), fakeTx()];
+        const sign = vi.spyOn(identity, "sign").mockImplementation(async (tx) => tx as never);
+
+        const signed = await identity.signMultiple([
+            { tx: first, inputIndexes: [0] },
+            { tx: second },
+        ] as never);
+
+        expect(signed).toEqual([first, second]);
+        expect(sign.mock.calls).toEqual([
+            [first, [0]],
+            [second, undefined],
+        ]);
+        expect(signMultipleTransactions).not.toHaveBeenCalled();
+    });
+});

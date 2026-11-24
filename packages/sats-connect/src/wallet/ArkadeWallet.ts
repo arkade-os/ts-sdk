@@ -22,6 +22,8 @@ export class ArkadeWallet {
     private identity: SatsConnectIdentity | null = null;
     private config: ArkadeWalletConfig;
     private satsConnectRequest: SatsConnectRequest;
+    /** Bumped by reset() and updateConfig(), so a connect() they overtake publishes nothing. */
+    private attempt = 0;
 
     constructor(config: ArkadeWalletConfig) {
         this.config = config;
@@ -30,11 +32,14 @@ export class ArkadeWallet {
     }
 
     updateConfig(config: ArkadeWalletConfig) {
+        this.attempt++;
         this.config = config;
         this.satsConnectRequest = this.buildSatsConnectRequest(config);
     }
 
     reset() {
+        this.attempt++;
+        disposeQuietly(this.wallet);
         this.connected = false;
         this.ordinalAddress = null;
         this.paymentAddress = null;
@@ -53,8 +58,18 @@ export class ArkadeWallet {
     }
 
     async connect(): Promise<ArkadeWalletInfo> {
+        // One configuration and transport for the whole attempt, whatever changes meanwhile.
+        const attempt = ++this.attempt;
+        const config = this.config;
+        const request = this.satsConnectRequest;
+        const stillCurrent = () => {
+            if (attempt !== this.attempt) {
+                throw new Error("Connection superseded by a reset or a new configuration");
+            }
+        };
+        let wallet: Wallet | null = null;
         try {
-            if (this.config.checkProvider !== false) {
+            if (config.checkProvider !== false) {
                 const providers = getProviders();
                 if (!providers || providers.length === 0) {
                     throw new Error(
@@ -65,15 +80,16 @@ export class ArkadeWallet {
 
             const requestParams: Record<string, any> = {
                 message:
-                    this.config.connectMessage ||
+                    config.connectMessage ||
                     "Connect to Arkade wallet to create and manage Ark transactions",
                 addresses: ["payment", "ordinals"],
             };
-            if (this.config.satsConnectNetwork) {
-                requestParams.network = this.config.satsConnectNetwork;
+            if (config.satsConnectNetwork) {
+                requestParams.network = config.satsConnectNetwork;
             }
 
-            const response = await this.satsConnectRequest("wallet_connect", requestParams);
+            const response = await request("wallet_connect", requestParams);
+            stillCurrent();
 
             if (response.status !== "success") {
                 throw new Error(response.error?.message || "Connection failed");
@@ -103,7 +119,6 @@ export class ArkadeWallet {
 
             const fullPubkey = scureBase.hex.decode(publicKeyHex);
             const userPubKey = fullPubkey.length === 33 ? fullPubkey.slice(1) : fullPubkey;
-            this.userPubKey = userPubKey;
 
             if (userPubKey.length !== 32) {
                 throw new Error(`Invalid public key length: ${userPubKey.length}`);
@@ -111,25 +126,32 @@ export class ArkadeWallet {
 
             const ordinalAddress = ordinalsAccount.address;
             const paymentAddress = paymentAccount.address;
-            this.ordinalAddress = ordinalAddress;
-            this.paymentAddress = paymentAddress;
 
-            this.identity = new SatsConnectIdentity(
+            const identity = new SatsConnectIdentity(
                 fullPubkey,
                 signingAccount.address,
-                this.satsConnectRequest,
-                this.config.satsConnectNetwork,
+                request,
+                config.satsConnectNetwork,
+                // The batch API reaches the default wallet only, not a configured transport.
+                config.satsConnectRequest === undefined && config.providerId === undefined,
             );
 
-            this.wallet = await Wallet.create({
-                identity: this.identity,
-                operatorProvider: new RestOperatorProvider(this.config.arkServerUrl),
-                indexerProvider: new RestIndexerProvider(this.config.arkServerUrl),
-                onchainProvider: new EsploraProvider(this.config.esploraUrl),
+            wallet = await Wallet.create({
+                identity,
+                operatorProvider: new RestOperatorProvider(config.arkServerUrl),
+                indexerProvider: new RestIndexerProvider(config.arkServerUrl),
+                onchainProvider: new EsploraProvider(config.esploraUrl),
             });
 
-            const arkAddress = await this.wallet.getAddress();
-            const boardingAddress = await this.wallet.getBoardingAddress();
+            const arkAddress = await wallet.getAddress();
+            const boardingAddress = await wallet.getBoardingAddress();
+            stillCurrent();
+
+            this.userPubKey = userPubKey;
+            this.ordinalAddress = ordinalAddress;
+            this.paymentAddress = paymentAddress;
+            this.identity = identity;
+            this.wallet = wallet;
             this.arkAddress = arkAddress;
             this.connected = true;
 
@@ -141,7 +163,8 @@ export class ArkadeWallet {
                 userPubKey: scureBase.hex.encode(userPubKey),
             };
         } catch (error) {
-            this.reset();
+            if (wallet !== this.wallet) disposeQuietly(wallet);
+            if (attempt === this.attempt) this.reset();
             throw error;
         }
     }
@@ -156,10 +179,7 @@ export class ArkadeWallet {
                 throw new Error("Invalid Ark address format");
             }
 
-            const normalizedAmount = parseInt(String(amount), 10);
-            if (Number.isNaN(normalizedAmount) || normalizedAmount <= 0) {
-                throw new Error("Amount must be a positive number");
-            }
+            const normalizedAmount = wholeSats(amount);
 
             return await wallet.send({ address: recipient, amount: normalizedAmount });
         } catch (error: any) {
@@ -187,10 +207,7 @@ export class ArkadeWallet {
             throw new Error("Invalid Ark address format");
         }
 
-        const normalizedAmount = parseInt(String(amount), 10);
-        if (Number.isNaN(normalizedAmount) || normalizedAmount <= 0) {
-            throw new Error("Amount must be a positive number");
-        }
+        const normalizedAmount = wholeSats(amount);
 
         const vtxos = await wallet.getVtxos({ withRecoverable: false });
         const selected = selectVirtualCoins(vtxos, normalizedAmount);
@@ -423,4 +440,15 @@ function selectVirtualCoins<T extends VirtualCoinLike>(coins: T[], targetAmount:
         inputs: selectedCoins,
         changeAmount: BigInt(selectedAmount - targetAmount),
     };
+}
+
+function wholeSats(amount: number): number {
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+        throw new Error("Amount must be a positive whole number of sats");
+    }
+    return amount;
+}
+
+function disposeQuietly(wallet: Wallet | null): void {
+    wallet?.dispose().catch((error) => console.warn("Failed to dispose the Arkade wallet", error));
 }

@@ -203,8 +203,13 @@ style and have not been backfilled.
   a peer range or `workspace:^`, so an SDK release does not bump them.
   `@arkade-os/sats-connect` now builds its wallet from `RestOperatorProvider`,
   `RestIndexerProvider` and `EsploraProvider` and pays with `send`, which raises its
-  SDK peer floor to 0.5.4. `@arkade-os/checkout` stays in `arkade-os/packages`: its
-  server needs durable swap storage, and no mainnet solver serves Lightning yet.
+  SDK peer floor to 0.5.4. Its sends refuse an amount that is not a positive whole
+  number of sats. `reset()` disposes the SDK wallet, and a `reset()` or
+  `updateConfig()` during the connect prompt makes that `connect()` reject instead of
+  publishing a wallet. With a custom `satsConnectRequest` or a `providerId`, batch
+  signing signs each transaction through that transport. `@arkade-os/checkout` stays
+  in `arkade-os/packages`: its server needs durable swap storage, and no mainnet
+  solver serves Lightning yet.
 
 - **`@arkade-os/sats-connect-react`: Lightning goes through `@arkade-os/swap`.**
   `payLightningInvoice` and `createLightningInvoice` use the swap client's `pay` and

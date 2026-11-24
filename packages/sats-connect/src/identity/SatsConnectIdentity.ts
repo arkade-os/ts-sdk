@@ -38,12 +38,19 @@ export class SatsConnectIdentity implements Identity {
     private address: string;
     private satsConnectRequest: SatsConnectRequest;
     private networkType: BitcoinNetworkType;
+    private batchSigning: boolean;
 
+    /**
+     * @param batchSigning - Whether `signMultiple` may use sats-connect's standalone
+     *   `signMultipleTransactions`, which reaches the default wallet rather than
+     *   `satsConnectRequest`. Off, it signs each transaction through `satsConnectRequest`.
+     */
     constructor(
         publicKey: Uint8Array,
         address: string,
         satsConnectRequest: SatsConnectRequest,
         network?: SatsConnectNetwork,
+        batchSigning = true,
     ) {
         if (publicKey.length !== 33 && publicKey.length !== 32) {
             throw new Error(
@@ -54,6 +61,7 @@ export class SatsConnectIdentity implements Identity {
         this.address = address;
         this.satsConnectRequest = satsConnectRequest;
         this.networkType = toBitcoinNetworkType(network);
+        this.batchSigning = batchSigning;
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
@@ -195,6 +203,14 @@ export class SatsConnectIdentity implements Identity {
      * same order as the input requests.
      */
     async signMultiple(requests: SignRequest[]): Promise<Transaction[]> {
+        if (!this.batchSigning) {
+            const signed: Transaction[] = [];
+            for (const { tx, inputIndexes } of requests) {
+                signed.push(await this.sign(tx, inputIndexes));
+            }
+            return signed;
+        }
+
         await this.ensureConnected();
 
         const psbts = requests.map((req) => {
