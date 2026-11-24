@@ -48,35 +48,16 @@ export class OnchainCosignUnsupportedError extends Error {
     }
 }
 
-/** The tx a cosign request put in arkd's hands: its unsigned id and the coins it spends. */
-export type SignedCosign = { txid: string; outpoints: Outpoint[] };
-
-/**
- * What the service-worker bus carries beside an error the structured clone would flatten:
- * `error.wireData`, stamped on the envelope at egress and restored on the page.
- */
-function signedWireData(signed?: SignedCosign): { signed: SignedCosign } | undefined {
-    return signed && { signed };
-}
-
 /** arkd's structured error name is carried in the message as `[NAME] ` so it survives structured clone. */
 export class OnchainCosignRejectedError extends Error {
-    /** Set by the wallet once the tx was signed and sent; absent for errors raised before that. */
-    signed?: SignedCosign;
     constructor(
         readonly serverMessage: string,
         readonly arkErrorName?: string,
-        signed?: SignedCosign,
     ) {
         super(
             `${ONCHAIN_COSIGN_REJECTED_PREFIX}${arkErrorName ? `[${arkErrorName}] ` : ""}${serverMessage}`,
         );
         this.name = "OnchainCosignRejectedError";
-        this.signed = signed;
-    }
-
-    get wireData() {
-        return signedWireData(this.signed);
     }
 }
 
@@ -85,22 +66,12 @@ export const ONCHAIN_COSIGN_AMBIGUOUS_PREFIX =
 
 /** The cosign request may have broadcast the tx: never retry the payment with other coins. */
 export class OnchainCosignAmbiguousError extends Error {
-    /** Set by the wallet once the tx was signed and sent; absent when the caller cannot know the coin set. */
-    signed?: SignedCosign;
     constructor(
         readonly detail: string,
-        options?: { cause?: unknown; signed?: SignedCosign },
+        options?: { cause?: unknown },
     ) {
-        super(
-            `${ONCHAIN_COSIGN_AMBIGUOUS_PREFIX}${detail}`,
-            options && "cause" in options ? { cause: options.cause } : undefined,
-        );
+        super(`${ONCHAIN_COSIGN_AMBIGUOUS_PREFIX}${detail}`, options);
         this.name = "OnchainCosignAmbiguousError";
-        this.signed = options?.signed;
-    }
-
-    get wireData() {
-        return signedWireData(this.signed);
     }
 }
 

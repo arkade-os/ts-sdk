@@ -22,8 +22,7 @@ import type {
     SendParams,
     SendOnchainParams,
 } from "..";
-import type { OperatorInfo, SettlementEvent, SignedCosign } from "../../providers/ark";
-import type { CosignedSpend } from "../../contracts/onchainSpend";
+import type { OperatorInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type {
     AddressAllocationCapable,
@@ -428,11 +427,6 @@ export class ExpoWallet
 
     sendOnchain(params: SendOnchainParams): Promise<string> {
         return this.wallet.sendOnchain(params);
-    }
-
-    /** @internal @see Wallet.resolveCosignedSpend */
-    resolveCosignedSpend(signed: SignedCosign): Promise<CosignedSpend> {
-        return this.wallet.resolveCosignedSpend(signed);
     }
 
     get assetManager(): IAssetManager {

@@ -4,9 +4,7 @@ import {
     OperatorInfo,
     FeeInfo,
     SettlementEvent,
-    OnchainCosignAmbiguousError,
     OnchainCosignRejectedError,
-    type SignedCosign,
 } from "../providers/ark";
 import { Estimator } from "../arkfee";
 import { Address, OutScript } from "@scure/btc-signer";
@@ -16,7 +14,7 @@ import { ArkAddress } from "../script/address";
 import { getDustAmount, getSelectableBoardingUtxos, markSdkPicked } from "./utils";
 import { MAX_VTXOS_PER_SETTLEMENT } from "./vtxo-manager";
 import { bySelectionOrder } from "./wallet";
-import { isCosignFallback, type CosignedSpend } from "../contracts/onchainSpend";
+import { isCosignFallback } from "../contracts/onchainSpend";
 
 /**
  * Thrown when a collaborative-exit / offboard would leave a change VTXO below
@@ -130,25 +128,6 @@ function reportUngatedInputs(wallet: IWallet, inputs: readonly ExtendedCoin[]): 
     };
     void logger.logUngatedInputs("Ramps.offboard({ vtxos })", inputs);
 }
-
-/** `resolveCosignedSpend` is on the concrete wallets, not `IWallet` — probed like `logUngatedInputs`. */
-async function resolveCosignedSpend(
-    wallet: IWallet,
-    signed: SignedCosign,
-): Promise<CosignedSpend | undefined> {
-    if (!("resolveCosignedSpend" in wallet)) return undefined;
-    return (
-        wallet as { resolveCosignedSpend(signed: SignedCosign): Promise<CosignedSpend> }
-    ).resolveCosignedSpend(signed);
-}
-
-/** A cosign that failed after the client signed: the tx may still confirm, so the exit must conflict with it. */
-type FailedCosign = {
-    error: OnchainCosignRejectedError | OnchainCosignAmbiguousError;
-    signed: SignedCosign;
-    /** The signed coins as boarding inputs. */
-    coins: ExtendedCoin[];
-};
 
 const MAX_EXIT_PICKS = 3;
 
@@ -425,14 +404,13 @@ export class Ramps {
      * a program charging the whole output.
      *
      * Returns the onchain txid instead when onchain coins alone cover `amount`
-     * and were spent via arkd cosigning, or when a cosign that failed after the client
-     * signed turns out to have been broadcast.
+     * and were spent via arkd cosigning.
      *
-     * A cosign that fails after the client signed leaves arkd holding a signed tx, so the batch
-     * that replaces it spends those same coins: only one of the two can confirm. It rethrows the
-     * cosign error when those coins cannot join a batch (unconfirmed, unrolled), when the
-     * wallet cannot name them (a service-worker timeout), or when the batch fails without the
-     * cosign having been broadcast — the caller must not pay again from other coins.
+     * Rethrows a cosign that failed after the client signed (`OnchainCosignRejectedError`,
+     * `OnchainCosignAmbiguousError`): the operator may still hold that signed tx and complete it,
+     * so paying from other coins can pay twice. No batch here can conflict with it, as arkd
+     * refuses an intent mixing onchain inputs and outputs. See "Onchain cosigning" in the README for
+     * the caller's options.
      */
     async offboardExact(params: {
         destinationAddress: string;
@@ -447,109 +425,56 @@ export class Ramps {
             throw new Error(`offboard amount must be positive, got ${amount}`);
         }
 
-        let cosign: FailedCosign | undefined;
         if (vtxos === undefined) {
-            const attempt = await this.tryCosign(destinationAddress, amount);
-            if (typeof attempt === "string") return attempt;
-            cosign = attempt;
+            const txid = await this.tryCosign(destinationAddress, amount);
+            if (txid) return txid;
         }
-        try {
-            return await this.withRepick(vtxos !== undefined, async () => {
-                const estimator = new Estimator(feeInfo?.intentFee ?? {});
-                const outputFee = BigInt(
-                    estimator.evalOnchainOutput({
-                        amount,
-                        script: hex.encode(offboardDestinationScript(destinationAddress)),
-                    }).satoshis,
-                );
-                const needed = amount + outputFee;
-                // The signed coins are spent first: the batch must conflict with the cosign.
-                const coins = cosign?.coins ?? [];
-                const coinsNet = coins.reduce(
-                    (net, coin) =>
-                        net +
-                        BigInt(coin.value) -
-                        BigInt(estimator.evalOnchainInput({ amount: BigInt(coin.value) }).satoshis),
-                    0n,
-                );
-                const rest = needed - coinsNet;
+        return this.withRepick(vtxos !== undefined, async () => {
+            const {
+                estimator,
+                inputs: candidates,
+                subtotal,
+            } = await this.offboardInputs(feeInfo, vtxos);
 
-                let inputs: ExtendedCoin[] = coins;
-                let funded: { change: bigint; changeAddress?: string };
-                if (coins.length > 0 && rest <= 0n) {
-                    funded = await this.fundChange(-rest, estimator, true);
-                } else {
-                    const { inputs: candidates, subtotal } = await this.offboardInputs(
-                        feeInfo,
-                        vtxos,
-                    );
-                    if (rest > subtotal) {
-                        throw new Error(
-                            `${coins.length > 0 ? "signed coins and selected vtxos" : "selected vtxos"} ` +
-                                `net ${subtotal + coinsNet} sats, ${needed} needed to deliver ${amount} ` +
-                                `exactly (${amount} + a ${outputFee} sat exit fee)`,
-                        );
-                    }
-                    const exit = await this.fundExit(
-                        candidates,
-                        subtotal,
-                        rest,
-                        estimator,
-                        vtxos === undefined,
-                        // Fallback only: a dust refusal here would end in the cosign error.
-                        coins.length > 0,
-                    );
-                    inputs = [...coins, ...exit.inputs];
-                    funded = exit;
-                }
-
-                const outputs = [{ address: destinationAddress, amount }];
-                if (funded.change > 0n) {
-                    outputs.push({ address: funded.changeAddress!, amount: funded.change });
-                }
-                const params = { inputs, outputs };
-                return this.wallet.settle(vtxos ? params : markSdkPicked(params), eventCallback);
-            });
-        } catch (e) {
-            if (!cosign) throw e;
-            console.warn("offboardExact: settling the cosigned coins failed", e);
-            // The batch lost to the cosign if arkd broadcast it: the destination is paid once.
-            const spend = await resolveCosignedSpend(this.wallet, cosign.signed).catch(
-                () => undefined,
+            const outputFee = BigInt(
+                estimator.evalOnchainOutput({
+                    amount,
+                    script: hex.encode(offboardDestinationScript(destinationAddress)),
+                }).satoshis,
             );
-            if (spend?.paid) return cosign.signed.txid;
-            throw cosign.error;
-        }
+            const needed = amount + outputFee;
+            if (needed > subtotal) {
+                throw new Error(
+                    `selected vtxos net ${subtotal} sats, ${needed} needed to deliver ${amount} ` +
+                        `exactly (${amount} + a ${outputFee} sat exit fee)`,
+                );
+            }
+
+            const { inputs, change, changeAddress } = await this.fundExit(
+                candidates,
+                subtotal,
+                needed,
+                estimator,
+                vtxos === undefined,
+            );
+
+            const outputs = [{ address: destinationAddress, amount }];
+            if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
+            const params = { inputs, outputs };
+            return this.wallet.settle(vtxos ? params : markSdkPicked(params), eventCallback);
+        });
     }
 
-    /**
-     * The cosign's txid; undefined when it never got as far as signing, so a batch is the
-     * only payment. After the client signed, {@link FailedCosign} when the coins can be
-     * settled in its place, the txid when it was broadcast anyway, else the error is rethrown.
-     */
-    private async tryCosign(
-        address: string,
-        amount: bigint,
-    ): Promise<string | FailedCosign | undefined> {
+    private async tryCosign(address: string, amount: bigint): Promise<string | undefined> {
         if (!("sendOnchain" in this.wallet)) return undefined;
         try {
             return await this.wallet.sendOnchain({
                 outputs: [{ address, amount: Number(amount) }],
             });
         } catch (e) {
-            if (isCosignFallback(e) && !(e instanceof OnchainCosignRejectedError)) return undefined;
-            if (
-                !(e instanceof OnchainCosignRejectedError) &&
-                !(e instanceof OnchainCosignAmbiguousError)
-            ) {
-                throw e;
-            }
-            const { signed } = e;
-            if (!signed) throw e;
-            const spend = await resolveCosignedSpend(this.wallet, signed).catch(() => undefined);
-            if (spend?.paid) return signed.txid;
-            if (!spend?.coins) throw e;
-            return { error: e, signed, coins: spend.coins };
+            // arkd answers only once it holds the signed tx, so settling as well could pay twice.
+            if (!isCosignFallback(e) || e instanceof OnchainCosignRejectedError) throw e;
+            return undefined;
         }
     }
 
@@ -575,17 +500,13 @@ export class Ramps {
         needed: bigint,
         estimator: Estimator,
         cover: boolean,
-        absorbDust = false,
     ): Promise<{
         inputs: NormalizedExtendedVirtualCoin[];
         change: bigint;
         changeAddress?: string;
     }> {
         if (!cover || !picksCovering(this.wallet)) {
-            return {
-                inputs: candidates,
-                ...(await this.fundChange(subtotal - needed, estimator, absorbDust)),
-            };
+            return { inputs: candidates, ...(await this.fundChange(subtotal - needed, estimator)) };
         }
         const ordered = [...candidates].sort(bySelectionOrder);
         let covered = 0n;
@@ -596,7 +517,7 @@ export class Ramps {
             try {
                 return {
                     inputs: ordered.slice(0, i + 1),
-                    ...(await this.fundChange(covered - needed, estimator, absorbDust)),
+                    ...(await this.fundChange(covered - needed, estimator)),
                 };
             } catch (error) {
                 if (!(error instanceof DustChangeError) || i + 1 === ordered.length) throw error;
@@ -627,13 +548,10 @@ export class Ramps {
     }
 
     /** Fund the change output: pay its own fee, then judge it against both
-     *  server-side bounds. `0n` in is `0n` out — no change output at all.
-     *  `absorbDust` leaves a sub-dust change to the fee, which arkd accepts
-     *  (it refuses only a fee below its minimum), instead of refusing the exit. */
+     *  server-side bounds. `0n` in is `0n` out — no change output at all. */
     private async fundChange(
         left: bigint,
         estimator: Estimator,
-        absorbDust = false,
     ): Promise<{ change: bigint; changeAddress?: string }> {
         if (left <= 0n) return { change: 0n };
 
@@ -642,7 +560,6 @@ export class Ramps {
         const { change } = changeAfterOutputFee(left, (amount) =>
             BigInt(estimator.evalOffchainOutput({ amount, script: changeScript }).satoshis),
         );
-        if (absorbDust && change > 0n && change < getDustAmount(this.wallet)) return { change: 0n };
 
         assertChangeSettleable(
             change,

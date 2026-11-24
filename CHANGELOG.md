@@ -14,7 +14,7 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
-- **`Ramps.offboardExact` no longer leaves the signed coins out of its fallback.** 0.5.12 and 0.5.13 rethrow every arkd rejection of a cosign the client already signed, and an operator that kept the signed transaction could still complete it after a retry paid from VTXOs. The fallback now settles through a batch that spends the signed boarding coins too, so the batch and the signed transaction conflict and one confirms. If arkd had broadcast it, `offboardExact` returns the cosign txid; it rethrows when a signed coin is unconfirmed or an unrolled VTXO, when the wallet cannot name the coins (a service-worker timeout), or when the batch fails with the cosign unseen. A change below dust is left to the fee. `OnchainCosignRejectedError` and `OnchainCosignAmbiguousError` carry `signed: { txid, outpoints }`, and `isCosignFallback` means only that arkd did not sign.
+- **`Ramps.offboardExact` documents what a cosign that failed after signing leaves open.** The error is rethrown and the boarding coins stay held, but an operator that kept the signed transaction can still complete it. A batch offboard cannot spend those coins to conflict with it: arkd refuses an intent with onchain inputs and onchain outputs (`INVALID_INTENT_PROOF`). The README and the method's doc now describe the options, so the caller picks the strategy.
 
 ## [0.5.13] - 2026-11-23
 

@@ -417,36 +417,33 @@ await wallet.cosignOnchainTx(psbt) // base64 string or Transaction
 
 For `cosignOnchainTx`, foreign inputs must already be signed but not finalized: the wallet signs only its own inputs, and arkd refuses a finalized input and finalizes the transaction itself.
 
-Preflight: a confirmed wallet input must be more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity; an unconfirmed one is accepted, since its exit cannot have matured. arkd cosigns at most 64 inputs, so a sweep takes the 64 largest coins and leaves the rest for the next one. Failures surface as `OnchainCosignPreflightError` (nothing was submitted), `OnchainCosignRejectedError` (server refused; `arkErrorName` holds its error code) or `OnchainCosignUnsupportedError` (server lacks the endpoint). `isCosignFallback(e)` is true when arkd did not sign. That is not enough to pay another way: once the client has signed, `OnchainCosignRejectedError` and `OnchainCosignAmbiguousError` carry `signed: { txid, outpoints }`, and an operator may still complete that transaction. A fallback must then spend those coins too, so the two payments conflict and only one confirms; the automatic paths below do exactly that:
+Preflight: a confirmed wallet input must be more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity; an unconfirmed one is accepted, since its exit cannot have matured. arkd cosigns at most 64 inputs, so a sweep takes the 64 largest coins and leaves the rest for the next one. Failures surface as `OnchainCosignPreflightError` (nothing was submitted), `OnchainCosignRejectedError` (server refused; `arkErrorName` holds its error code) or `OnchainCosignUnsupportedError` (server lacks the endpoint). Use `isCosignFallback(e)` to decide whether paying another way is safe; the automatic paths below do exactly that:
 
 ```typescript
-import {
-  isCosignFallback,
-  OnchainCosignAmbiguousError,
-  OnchainCosignRejectedError,
-} from '@arkade-os/sdk'
+import { isCosignFallback, OnchainCosignAmbiguousError } from '@arkade-os/sdk'
 
 try {
   await wallet.sendOnchain({ outputs: [{ address, amount }] })
 } catch (e) {
-  const signed =
-    e instanceof OnchainCosignRejectedError || e instanceof OnchainCosignAmbiguousError
-      ? e.signed
-      : undefined
-  // Signed: arkd may still complete that tx, so settle signed.outpoints as boarding inputs, or do not pay again.
-  if (!isCosignFallback(e) || signed) throw e
+  if (!isCosignFallback(e)) throw e // includes OnchainCosignAmbiguousError
   await payThroughABatch()
 }
 ```
 
 `OnchainCosignAmbiguousError` means the transaction may have been broadcast (a transport failure, or a server error after submission): do not retry with other coins. The inputs stay pending until the chain resolves.
 
+Even `isCosignFallback(e)` only says arkd did not sign. The wallet already did, and an operator that kept the signed transaction can complete it later, so `Ramps.offboardExact` rethrows every `OnchainCosignRejectedError` after signing instead of paying through a batch. Paying from other coins could pay twice, and a batch offboard cannot be made to conflict with the kept transaction: arkd refuses an intent that has onchain (boarding) inputs and onchain outputs (`INVALID_INTENT_PROOF`). The caller picks the strategy:
+
+- Wait for the held inputs to resolve (the transaction confirms, or the hold lapses after 6 blocks) and retry.
+- Settle the boarding coins into VTXOs first (no onchain output), then offboard from those. That spends the coins, so the kept transaction can no longer confirm, but it joins a batch before the coins expire, which costs the user a fee and a fresh VTXO lifetime.
+- Accept the risk and pay again, if the operator is trusted not to complete the transaction.
+
 Contracts carry a `scope`: `"offchain"`, `"onchain"` or `"both"`. It controls whether the contract's onchain coins are watched and spent through cosigning; boarding contracts default to `"onchain"`.
 
 Automatic behaviour:
 
 - `VtxoManager` renews boarding coins that are near expiry via cosign, falling back to the CSV path. It never sweeps unrolled outputs (that would undo the exit); spend those with `sendOnchain` or `cosignOnchainTx`.
-- `Ramps.offboardExact` and the payment router's onchain rail spend onchain coins directly when they alone cover the amount; otherwise they use the batch path. `Ramps.offboard` always uses the batch path. When a cosign fails after the client signed, `offboardExact` settles a batch that spends the signed coins too, returns the cosign txid if arkd had broadcast it, and rethrows the cosign error when those coins cannot join a batch (unconfirmed, or an unrolled VTXO).
+- `Ramps.offboardExact` and the payment router's onchain rail spend onchain coins directly when they alone cover the amount; otherwise they use the batch path. `Ramps.offboard` always uses the batch path.
 
 #### Arkade contracts
 

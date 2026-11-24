@@ -1435,23 +1435,6 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(updater.isLongRunning(send as any)).toBe(true);
     });
 
-    it("answers RESOLVE_COSIGNED_SPEND from the wallet", async () => {
-        const spend = { paid: false, coins: [{ txid: "bb".repeat(32), vout: 1, value: 5_000 }] };
-        const wallet = { resolveCosignedSpend: vi.fn().mockResolvedValue(spend) };
-        (updater as any).readonlyWallet = {};
-        (updater as any).wallet = wallet;
-        const signed = { txid: "aa".repeat(32), outpoints: [{ txid: "bb".repeat(32), vout: 1 }] };
-
-        const response = await dispatch(updater, {
-            ...baseMessage(),
-            type: "RESOLVE_COSIGNED_SPEND",
-            payload: { signed },
-        } as any);
-
-        expect(wallet.resolveCosignedSpend).toHaveBeenCalledWith(signed);
-        expect(response).toMatchObject({ type: "COSIGNED_SPEND", payload: { spend } });
-    });
-
     it("returns a SEND_ONCHAIN failure as the response error", async () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {

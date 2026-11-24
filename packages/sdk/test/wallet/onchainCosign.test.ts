@@ -307,228 +307,62 @@ describe("cosign outcomes through Ramps.offboardExact", () => {
         return fetch;
     };
 
-    const offboard = (
-        wallet: Wallet,
-        opts: { amount?: bigint; feeInfo?: any; settle?: () => Promise<string> } = {},
-    ) => {
+    const offboard = (wallet: Wallet) => {
         const vtxo = { txid: "11".repeat(32), vout: 0, value: 50_000, createdAt: new Date() };
         vi.spyOn(wallet, "getSpendableVtxos").mockResolvedValue([vtxo] as any);
-        const settle = vi
-            .spyOn(wallet, "settle")
-            .mockImplementation(opts.settle ?? (async () => "txSETTLE"));
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("txSETTLE");
         const result = new Ramps(wallet)
             .offboardExact({
                 destinationAddress: externalAddress,
-                feeInfo: opts.feeInfo ?? ({ intentFee: {}, txFeeRate: "1" } as any),
-                amount: opts.amount ?? 5_000n,
+                feeInfo: { intentFee: {}, txFeeRate: "1" } as any,
+                amount: 5_000n,
             })
             .catch((e) => e);
         return { settle, result };
     };
 
-    const settledInputs = (settle: { mock: { calls: any[][] } }, call = 0) =>
-        (settle.mock.calls[call][0].inputs as any[]).map((i) => `${i.txid}:${i.vout}`);
-
-    it("an arkd INTERNAL_ERROR settles the signed coin and leaves it pending", async () => {
-        const { wallet, arkProvider, walletRepository, boardingScriptHex, boardingCoin } =
-            await makeWallet();
+    it("an arkd INTERNAL_ERROR rethrows, skips settle and leaves the coins pending", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
         arkdReplies(arkProvider, 500, "INTERNAL_ERROR");
         const { settle, result } = offboard(wallet);
-        expect(await result).toBe("txSETTLE");
-        expect(settle).toHaveBeenCalledTimes(1);
-        expect(settledInputs(settle)).toEqual([`${boardingCoin.txid}:${boardingCoin.vout}`]);
+        expect(await result).toBeInstanceOf(OnchainCosignAmbiguousError);
+        expect(settle).not.toHaveBeenCalled();
         const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
         expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
     });
 
-    it("an arkd error it raises after signing settles the signed coin and leaves it pending", async () => {
-        const { wallet, arkProvider, walletRepository, boardingScriptHex, boardingCoin } =
-            await makeWallet();
+    it("an arkd error it raises after signing rethrows and leaves the coins pending", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
         arkdReplies(arkProvider, 400, "SOMETHING_NEW");
         const { settle, result } = offboard(wallet);
-        expect(await result).toBe("txSETTLE");
-        expect(settledInputs(settle)).toEqual([`${boardingCoin.txid}:${boardingCoin.vout}`]);
+        expect(await result).toBeInstanceOf(OnchainCosignRejectedError);
+        expect(settle).not.toHaveBeenCalled();
         const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
         expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
     });
 
-    it("an arkd INVALID_ARK_PSBT settles the signed coin, which stays free", async () => {
-        const { wallet, arkProvider, walletRepository, boardingScriptHex, boardingCoin } =
-            await makeWallet();
+    it("an arkd INVALID_ARK_PSBT rethrows and skips settle, leaving the coins free", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
         arkdReplies(arkProvider, 400, "INVALID_ARK_PSBT");
         const { settle, result } = offboard(wallet);
-        expect(await result).toBe("txSETTLE");
-        expect(settledInputs(settle)).toEqual([`${boardingCoin.txid}:${boardingCoin.vout}`]);
+        expect(await result).toBeInstanceOf(OnchainCosignRejectedError);
+        expect(settle).not.toHaveBeenCalled();
         const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
         expect(row.spentBy).toBeFalsy();
     });
 
-    it("pays the destination exactly and sends the rest back offchain", async () => {
-        const { wallet, arkProvider } = await makeWallet();
-        arkdReplies(arkProvider, 400, "INVALID_ARK_PSBT");
-        const { settle, result } = offboard(wallet);
-        expect(await result).toBe("txSETTLE");
-        const outputs = settle.mock.calls[0][0]!.outputs as { address: string; amount: bigint }[];
-        expect(outputs.map((o) => o.amount)).toEqual([5_000n, 45_000n]);
-        expect(outputs[0].address).toBe(externalAddress);
-    });
-
-    it("an arkd without the endpoint settles the signed coin; later ones settle unsent", async () => {
-        const { wallet, arkProvider, walletRepository, boardingScriptHex, boardingCoin } =
-            await makeWallet();
+    it("an arkd without the endpoint fails the first offboard; later ones settle unsent", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
         const fetch = arkdReplies(arkProvider, 404);
         const first = offboard(wallet);
-        expect(await first.result).toBe("txSETTLE");
-        expect(settledInputs(first.settle)).toEqual([`${boardingCoin.txid}:${boardingCoin.vout}`]);
+        expect(await first.result).toBeInstanceOf(OnchainCosignAmbiguousError);
+        expect(first.settle).not.toHaveBeenCalled();
         const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
         expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
 
         const second = offboard(wallet);
         expect(await second.result).toBe("txSETTLE");
-        expect(settledInputs(second.settle, 1)).toEqual([`${"11".repeat(32)}:0`]);
         expect(fetch).toHaveBeenCalledTimes(1);
-    });
-
-    it("TX_TOO_LARGE on every call still completes each exit", async () => {
-        const { wallet, arkProvider, boardingCoin } = await makeWallet();
-        const fetch = arkdReplies(arkProvider, 400, "TX_TOO_LARGE");
-        const outpoint = `${boardingCoin.txid}:${boardingCoin.vout}`;
-        for (const call of [0, 1]) {
-            const { settle, result } = offboard(wallet);
-            expect(await result).toBe("txSETTLE");
-            expect(settledInputs(settle, call)).toEqual([outpoint]);
-        }
-        expect(fetch).toHaveBeenCalledTimes(2);
-    });
-
-    it("tops the signed coins up with VTXOs when they cannot cover the exit fee", async () => {
-        const cosignFee = estimateOnchainCosignFee(1, 2, 2);
-        const { wallet, arkProvider, boardingCoin } = await makeWallet({
-            value: 5_000 + cosignFee + 100,
-        });
-        arkdReplies(arkProvider, 400, "INVALID_ARK_PSBT");
-        const feeInfo = { intentFee: { onchainOutput: "1000.0" }, txFeeRate: "1" };
-        const { settle, result } = offboard(wallet, { feeInfo });
-        expect(await result).toBe("txSETTLE");
-        expect(settledInputs(settle)).toEqual([
-            `${boardingCoin.txid}:${boardingCoin.vout}`,
-            `${"11".repeat(32)}:0`,
-        ]);
-        const outputs = settle.mock.calls[0][0]!.outputs as { amount: bigint }[];
-        expect(outputs[0].amount).toBe(5_000n);
-    });
-
-    it("returns the cosign txid when the batch loses to a tx arkd broadcast", async () => {
-        const { wallet, arkProvider, onchainProvider, boardingCoin } = await makeWallet();
-        arkdReplies(arkProvider, 500, "INTERNAL_ERROR");
-        const { settle, result } = offboard(wallet, {
-            settle: async () => {
-                // arkd broadcast the signed tx after all: the coin is gone and the intent refused.
-                const cosigned = sentPsbt(arkProvider).id;
-                onchainProvider.getCoins.mockResolvedValue([]);
-                onchainProvider.getTxOutspends.mockImplementation(async (txid: string) =>
-                    txid === boardingCoin.txid
-                        ? [
-                              { spent: false, txid: "" },
-                              { spent: true, txid: cosigned },
-                          ]
-                        : [{ spent: false, txid: "" }],
-                );
-                throw new Error("already cosigned onchain");
-            },
-        });
-        expect(await result).toBe(sentPsbt(arkProvider).id);
-        expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("rethrows the cosign error, not the settle's, when the coin was not spent", async () => {
-        const { wallet, arkProvider, boardingCoin } = await makeWallet();
-        arkdReplies(arkProvider, 500, "INTERNAL_ERROR");
-        const { result } = offboard(wallet, {
-            settle: async () => {
-                throw new Error("registration failed");
-            },
-        });
-        const err = await result;
-        expect(err).toBeInstanceOf(OnchainCosignAmbiguousError);
-        expect(err.signed).toEqual({
-            txid: sentPsbt(arkProvider).id,
-            outpoints: [{ txid: boardingCoin.txid, vout: boardingCoin.vout }],
-        });
-    });
-
-    it("names the signed tx on the very error the provider raised, stack and cause intact", async () => {
-        const { wallet, arkProvider, boardingCoin } = await makeWallet();
-        const refused = new OnchainCosignRejectedError("kept", "INVALID_ARK_PSBT");
-        const stack = refused.stack;
-        arkProvider.cosignOnchainTx.mockRejectedValue(refused);
-        const caught = await wallet
-            .sendOnchain({ outputs: [{ address: externalAddress, amount: 5_000 }] })
-            .catch((e) => e);
-        expect(caught).toBe(refused);
-        expect(caught.stack).toBe(stack);
-        expect(caught.signed).toEqual({
-            txid: sentPsbt(arkProvider).id,
-            outpoints: [{ txid: boardingCoin.txid, vout: boardingCoin.vout }],
-        });
-
-        const cause = new Error("socket hang up");
-        const dropped = new OnchainCosignAmbiguousError("500", { cause });
-        arkProvider.cosignOnchainTx.mockRejectedValue(dropped);
-        const again = await wallet
-            .sendOnchain({ outputs: [{ address: externalAddress, amount: 5_000 }] })
-            .catch((e) => e);
-        expect(again).toBe(dropped);
-        expect(again.cause).toBe(cause);
-        expect(again.signed?.outpoints).toEqual([
-            { txid: boardingCoin.txid, vout: boardingCoin.vout },
-        ]);
-    });
-
-    it("rethrows without settling when a signed coin is unconfirmed", async () => {
-        const { wallet, arkProvider } = await makeWallet({ status: { confirmed: false } });
-        arkdReplies(arkProvider, 400, "INVALID_ARK_PSBT");
-        const { settle, result } = offboard(wallet);
-        expect(await result).toBeInstanceOf(OnchainCosignRejectedError);
-        expect(settle).not.toHaveBeenCalled();
-    });
-
-    it("rethrows without settling when a signed coin is an unrolled VTXO", async () => {
-        const { wallet, arkProvider, onchainProvider, walletRepository } = await makeWallet({
-            value: 1_000,
-        });
-        const manager = await wallet.getContractManager();
-        const script = hex.encode(wallet.offchainTapscript.pkScript);
-        const [contract] = await manager.getContracts({ script });
-        const outpoint = { txid: "cd".repeat(32), vout: 0 };
-        const indexed = convertVtxo({
-            outpoint,
-            createdAt: "1700000000",
-            expiresAt: null,
-            amount: "50000",
-            script,
-            isPreconfirmed: false,
-            isSwept: false,
-            isUnrolled: true,
-            isSpent: false,
-            spentBy: null,
-            commitmentTxids: ["ee".repeat(32)],
-        });
-        await saveVtxosForContract(walletRepository, contract, [
-            extendVirtualCoinForContract(indexed, contract),
-        ]);
-        const unrolledAddress = wallet.offchainTapscript.onchainAddress(wallet.network);
-        const boardingGetCoins = onchainProvider.getCoins.getMockImplementation();
-        onchainProvider.getCoins.mockImplementation(async (a: string) =>
-            a === unrolledAddress
-                ? [{ ...outpoint, value: 50_000, status: { confirmed: true, block_height: 105 } }]
-                : boardingGetCoins(a),
-        );
-        arkdReplies(arkProvider, 400, "INVALID_ARK_PSBT");
-        const { settle, result } = offboard(wallet);
-        expect(await result).toBeInstanceOf(OnchainCosignRejectedError);
-        expect(hex.encode(sentPsbt(arkProvider).getInput(0).txid!)).toBe(outpoint.txid);
-        expect(settle).not.toHaveBeenCalled();
     });
 
     it("an arkd older than v0.9.22 is never sent the signed tx, so offboardExact settles", async () => {

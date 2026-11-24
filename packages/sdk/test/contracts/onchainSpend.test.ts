@@ -182,7 +182,7 @@ describe("assertCosignable", () => {
 });
 
 describe("isCosignFallback", () => {
-    it("falls back only when arkd definitely did not sign", () => {
+    it("falls back only when the coins were definitely not spent", () => {
         expect(isCosignFallback(new OnchainCosignUnsupportedError())).toBe(true);
         expect(isCosignFallback(new OnchainCosignRejectedError("x", "INVALID_ARK_PSBT"))).toBe(
             true,
@@ -235,100 +235,6 @@ describe("rehydrateCosignError", () => {
         expect(rehydrateCosignError(cloned(new OnchainCosignUnsupportedError()))).toBeInstanceOf(
             OnchainCosignUnsupportedError,
         );
-    });
-
-    describe("with the tx the client signed", () => {
-        const signed = {
-            txid: "aa".repeat(32),
-            outpoints: [
-                { txid: "bb".repeat(32), vout: 1 },
-                { txid: "cc".repeat(32), vout: 0 },
-            ],
-        };
-        // What the bus delivers: the message and name survive the clone, `wireData` rides beside it.
-        const onTheWire = (e: Error) =>
-            Object.assign(new Error(e.message), { wireData: (e as any).wireData });
-
-        it("carries it through the bus, on both classes, without growing the message", () => {
-            const rejected = new OnchainCosignRejectedError("too late", "INVALID_ARK_PSBT", signed);
-            const restored = rehydrateCosignError(
-                onTheWire(rejected),
-            ) as OnchainCosignRejectedError;
-            expect(restored).toEqual(rejected);
-            expect(restored.signed).toEqual(signed);
-            expect(restored.serverMessage).toBe("too late");
-            expect(restored.arkErrorName).toBe("INVALID_ARK_PSBT");
-            expect(rejected.message).not.toContain(signed.txid);
-
-            const unnamed = new OnchainCosignRejectedError("multi\nline", undefined, signed);
-            expect(rehydrateCosignError(onTheWire(unnamed))).toEqual(unnamed);
-
-            const ambiguous = new OnchainCosignAmbiguousError("500", { signed });
-            const back = rehydrateCosignError(onTheWire(ambiguous)) as OnchainCosignAmbiguousError;
-            expect(back).toEqual(ambiguous);
-            expect(back.signed).toEqual(signed);
-            expect(back.detail).toBe("500");
-            expect(ambiguous.message).toBe(new OnchainCosignAmbiguousError("500").message);
-        });
-
-        it("leaves it absent when the error was raised before signing, or by an older worker", () => {
-            expect(new OnchainCosignRejectedError("m", "X").signed).toBeUndefined();
-            expect(new OnchainCosignAmbiguousError("m").signed).toBeUndefined();
-            const back = rehydrateCosignError(onTheWire(new OnchainCosignAmbiguousError("m")));
-            expect((back as OnchainCosignAmbiguousError).signed).toBeUndefined();
-            const signedButOld = new OnchainCosignRejectedError("m", "X", signed);
-            expect((rehydrateCosignError(cloned(signedButOld)) as any).signed).toBeUndefined();
-        });
-
-        it("takes it from wire data only, never from server text", () => {
-            const lookalike = `oops\n[signed ${"dd".repeat(32)} ${"ee".repeat(32)}:7]`;
-            const err = new OnchainCosignRejectedError(lookalike, "X");
-            const back = rehydrateCosignError(onTheWire(err)) as OnchainCosignRejectedError;
-            expect(back.signed).toBeUndefined();
-            expect(back.serverMessage).toBe(lookalike);
-        });
-
-        it.each([
-            ["a short txid", { txid: "aa", outpoints: signed.outpoints }],
-            ["no outpoints", { txid: signed.txid, outpoints: [] }],
-            ["outpoints that are not a list", { txid: signed.txid, outpoints: "bb:1" }],
-            [
-                "a fractional vout",
-                { txid: signed.txid, outpoints: [{ txid: "bb".repeat(32), vout: 1.5 }] },
-            ],
-            [
-                "a negative vout",
-                { txid: signed.txid, outpoints: [{ txid: "bb".repeat(32), vout: -1 }] },
-            ],
-            [
-                "a non-hex outpoint txid",
-                { txid: signed.txid, outpoints: [{ txid: "zz", vout: 0 }] },
-            ],
-        ])("ignores malformed wire data: %s", (_name, bad) => {
-            const err = Object.assign(new Error(new OnchainCosignAmbiguousError("x").message), {
-                wireData: { signed: bad },
-            });
-            expect(
-                (rehydrateCosignError(err) as OnchainCosignAmbiguousError).signed,
-            ).toBeUndefined();
-        });
-
-        it("exposes it as wire data once the wallet sets it, on the same instance", () => {
-            const e = new OnchainCosignRejectedError("m", "INVALID_ARK_PSBT");
-            const stack = e.stack;
-            expect(e.wireData).toBeUndefined();
-            e.signed = signed;
-            expect(e.wireData).toEqual({ signed });
-            expect(e.stack).toBe(stack);
-            expect(isCosignFallback(e)).toBe(true);
-
-            const cause = new Error("socket hang up");
-            const a = new OnchainCosignAmbiguousError("x", { cause });
-            a.signed = signed;
-            expect(a.wireData).toEqual({ signed });
-            expect(a.cause).toBe(cause);
-            expect(isCosignFallback(a)).toBe(false);
-        });
     });
 
     it("passes other errors through unchanged", () => {

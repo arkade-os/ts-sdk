@@ -194,7 +194,6 @@ describe("wallet request scope", () => {
         "SWEEP_EXPIRED_BOARDING_UTXOS",
         "COSIGN_ONCHAIN_TX",
         "SEND_ONCHAIN",
-        "RESOLVE_COSIGNED_SPEND",
         "MIGRATE_DEPRECATED_SIGNER_VTXOS",
         "RESTORE_WALLET",
         "CLEAR",
