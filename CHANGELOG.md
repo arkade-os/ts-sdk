@@ -183,6 +183,16 @@ style and have not been backfilled.
 
 ### Features
 
+- **`ExecutorProvider` can register and read the Executor's templates and
+  artifacts.** The SDK's Executor client covered only delegations, so a caller
+  delegating its own template needed a second client to upload it.
+  `RestExecutorProvider` adds `registerArtifact`, `getArtifact`,
+  `registerTemplate` and `getTemplate`, optional on the `ExecutorProvider`
+  interface so existing implementations still conform. A 404 from these calls
+  counts as the Executor's only when its body is the gRPC NOT_FOUND status.
+  `ExecutorInfo` reports the service's `encryptionPubkey` when it advertises
+  one, validated as a compressed key.
+
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
