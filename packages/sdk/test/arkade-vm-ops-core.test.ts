@@ -38,7 +38,7 @@ describe("vm hash constants", () => {
         }
     });
 
-    it("refuses to load when noble's sha256 set() stops restoring a midstate", async () => {
+    it("loads, then refuses the first midstate op, when noble's set() stops restoring", async () => {
         vi.resetModules();
         vi.doMock("@noble/hashes/sha2.js", async (importOriginal) => {
             const real = await importOriginal<typeof import("@noble/hashes/sha2.js")>();
@@ -63,7 +63,8 @@ describe("vm hash constants", () => {
                 sha256: Object.assign((m: Uint8Array) => real.sha256(m), { create }),
             };
         });
-        await expect(import("../src/arkade/vm/hash")).rejects.toThrow(/sha256 internals/);
+        const hash = await import("../src/arkade/vm/hash");
+        expect(() => hash.sha256Initialize(new Uint8Array(3))).toThrow(/sha256 internals/);
         vi.doUnmock("@noble/hashes/sha2.js");
     });
 });

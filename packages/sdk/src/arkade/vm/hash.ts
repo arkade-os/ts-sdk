@@ -79,24 +79,38 @@ function sum(s: Sha256State): Uint8Array {
     return out;
 }
 
-export const sha256Initialize = (data: Uint8Array): Uint8Array => encode(write(fresh(), data));
-
-export const sha256Update = (state: Uint8Array, data: Uint8Array): Uint8Array =>
+const initialize = (data: Uint8Array): Uint8Array => encode(write(fresh(), data));
+const update = (state: Uint8Array, data: Uint8Array): Uint8Array =>
     encode(write(decode(state), data));
-
-export const sha256Finalize = (state: Uint8Array, data: Uint8Array): Uint8Array =>
+const finalize = (state: Uint8Array, data: Uint8Array): Uint8Array =>
     sum(write(decode(state), data));
 
-// The probe compresses a block before the first set(), so a no-op set() cannot pass on the IV.
-const PROBE = new TextEncoder().encode("abc".repeat(30));
-try {
-    const state = sha256Update(sha256Initialize(PROBE.subarray(0, 70)), PROBE.subarray(70, 80));
-    if (!equalBytes(sha256Finalize(state, PROBE.subarray(80)), sha256(PROBE))) {
-        throw new Error("midstate round trip gave a wrong digest");
+// Checked on first use, not at import, so the SDK still loads if an upgrade breaks it.
+let verified = false;
+function verify(): void {
+    if (verified) return;
+    // The probe compresses a block before the first set(), so a no-op set() cannot pass on the IV.
+    const probe = new TextEncoder().encode("abc".repeat(30));
+    try {
+        const state = update(initialize(probe.subarray(0, 70)), probe.subarray(70, 80));
+        if (!equalBytes(finalize(state, probe.subarray(80)), sha256(probe))) {
+            throw new Error("midstate round trip gave a wrong digest");
+        }
+    } catch (cause) {
+        throw new Error(
+            "vm/hash.ts: the @noble/hashes sha256 internals it drives (buffer, pos, get, set) changed",
+            { cause },
+        );
     }
-} catch (cause) {
-    throw new Error(
-        "vm/hash.ts: the @noble/hashes sha256 internals it drives (buffer, pos, get, set) changed",
-        { cause },
-    );
+    verified = true;
 }
+
+export const sha256Initialize = (data: Uint8Array): Uint8Array => (verify(), initialize(data));
+
+export const sha256Update = (state: Uint8Array, data: Uint8Array): Uint8Array => (
+    verify(), update(state, data)
+);
+
+export const sha256Finalize = (state: Uint8Array, data: Uint8Array): Uint8Array => (
+    verify(), finalize(state, data)
+);
