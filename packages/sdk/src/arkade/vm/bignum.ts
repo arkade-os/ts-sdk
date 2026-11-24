@@ -78,7 +78,7 @@ export class BigNum {
         if (encoded.length === 0) return out;
         const last = encoded.length - 1;
         const sign = encoded[last] & 0x80;
-        const magnitude = encoded.slice();
+        const magnitude = Uint8Array.from(encoded);
         magnitude[last] &= 0x7f;
         out.set(magnitude[last] === 0 ? magnitude.subarray(0, last) : magnitude);
         out[size - 1] |= sign;
@@ -175,7 +175,7 @@ export class BigNum {
 /** BIN2NUM's normaliser: strips padding and maps every negative zero to the empty string. */
 export function minimallyEncode(v: Uint8Array): Uint8Array {
     if (v.length === 0) return new Uint8Array(0);
-    const out = v.slice();
+    const out = Uint8Array.from(v);
     const sign = out[out.length - 1] & 0x80;
     out[out.length - 1] &= 0x7f;
     let n = out.length;

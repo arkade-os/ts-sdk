@@ -2071,6 +2071,18 @@ style and have not been backfilled.
   audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
   high` and fails on any new high or critical advisory.
 
+- **An Arkade script VM, ported from the emulator.** The SDK could build an
+  Arkade spend but not run the covenant script that decides whether the
+  emulator co-signs it. `src/arkade/vm/` ports the emulator's `pkg/arkade`
+  v0.2.0, a taproot-only fork of btcd's `txscript` that carries the Arkade
+  opcodes, together with its offchain, batch-registration and onchain emulate
+  entry points. It is not exported yet, and `pnpm run check:vm`, part of
+  `lint`, keeps it free of imports from the rest of the SDK. A Go oracle pinned
+  to the emulator module (`packages/sdk/test/arkade-vm-oracle`) generates its
+  conformance fixtures; CI runs only the TypeScript side. `@noble/hashes`
+  2.4.0, already installed through other dependencies, is now a direct
+  dependency.
+
 ## [0.1.13] - 2026-11-21
 
 ### Bug Fixes

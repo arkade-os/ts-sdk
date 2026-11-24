@@ -77,8 +77,12 @@ class Writer {
 /** Fails as io.ReadFull and wire.ReadVarInt do. */
 export class Reader {
     offset = 0;
+    private readonly buf: Uint8Array;
 
-    constructor(private readonly buf: Uint8Array) {}
+    // A Node Buffer's slice() is a view into shared memory; read from an owned plain copy.
+    constructor(buf: Uint8Array) {
+        this.buf = Uint8Array.from(buf);
+    }
 
     bytes(n: number): Uint8Array {
         const left = this.buf.length - this.offset;

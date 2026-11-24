@@ -868,3 +868,27 @@ describe("tx", () => {
         expect(f.fetchPrevOutput(PREV)).toBeUndefined();
     });
 });
+
+describe("Node Buffer inputs", () => {
+    // Buffer.slice is a view, so an op that copies with slice() and mutates would change its source
+    const run = (script: string, seed: Uint8Array) => {
+        const vm = engineFor(h(script));
+        vm.setStack([seed]);
+        for (let done = false; !done; ) done = vm.step();
+        return vm.getStack().map((e) => hex.encode(e));
+    };
+
+    it("OP_BIN2NUM leaves its Buffer operand untouched", () => {
+        expect(run("76d887", Buffer.from([0x80, 0x80]))).toEqual(["01"]);
+    });
+
+    it("OP_REVERSEBYTES leaves its Buffer operand untouched", () => {
+        expect(run("76d987", Buffer.from([1, 2]))).toEqual([""]);
+    });
+
+    it("parseTx reads a pooled Buffer, whose view starts past its ArrayBuffer's start", () => {
+        const raw = Buffer.from(COUNTER_SOURCE.tx, "hex");
+        expect(raw.byteOffset).toBeGreaterThan(0);
+        expect(parseTx(raw)).toEqual(parseTx(h(COUNTER_SOURCE.tx)));
+    });
+});
