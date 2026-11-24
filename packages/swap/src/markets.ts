@@ -27,6 +27,7 @@ import { assertNonNegativeMs, assertTimerMs, isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
 import { marketAssetId } from "./marketShape";
 import { BTC_ASSET_ID } from "./store";
+import { isAssetId, isBtcAsset } from "./client/assetId";
 
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
@@ -455,9 +456,10 @@ export const validatePlan = (
     if (plan.deposit.atomic > giveLimits.max) return "above-max";
     if (!withinLimits) return plan.receive.atomic < min.atomic ? "below-min" : "above-max";
     // A BTC side must survive as a VTXO; picked by asset id since BTC may be base or
-    // quote. Asset↔asset plans ride the SDK's own dust-sat carriers.
-    const depositIsBtc = plan.deposit.asset.id === BTC_ASSET_ID;
-    const receiveIsBtc = plan.receive.asset.id === BTC_ASSET_ID;
+    // quote, and spelled `btc` or in CAIP-19. Asset↔asset plans ride the SDK's own carriers.
+    const isBtc = (id: string): boolean => id === BTC_ASSET_ID || (isAssetId(id) && isBtcAsset(id));
+    const depositIsBtc = isBtc(plan.deposit.asset.id);
+    const receiveIsBtc = isBtc(plan.receive.asset.id);
     if (depositIsBtc || receiveIsBtc) {
         const btcSide = depositIsBtc ? plan.deposit.atomic : plan.receive.atomic;
         if (isSubdust(btcSide, dust)) return "below-dust";
