@@ -2809,6 +2809,116 @@ describe("WalletMessageHandler repo-backed reads", () => {
         );
     });
 
+    describe("deferred recovery at INIT", () => {
+        const initWith = (wallet: any) => {
+            setupHandler();
+            (updater as any).wallet = wallet;
+            return fixtureContext(updater);
+        };
+        const makeWallet = (overrides: Record<string, unknown> = {}) => {
+            const wallet: any = {
+                serverInfoSource: "cache",
+                hasDeferredPendingTxRecovery: false,
+                deferPendingTxRecovery: vi.fn().mockImplementation(async () => {
+                    wallet.hasDeferredPendingTxRecovery = true;
+                    return true;
+                }),
+                resumeDeferredPendingTxs: vi.fn().mockResolvedValue(undefined),
+                finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+                getVtxoManager: vi.fn().mockResolvedValue({}),
+                ...overrides,
+            };
+            return wallet;
+        };
+
+        it("keeps the retry scheduled when INIT fails on the boarding fetch", async () => {
+            const wallet = makeWallet({ hasDeferredPendingTxRecovery: true });
+            const context = initWith(wallet);
+            (updater as any).lazyBoardingInit = false;
+            (context.readonlyWallet as any).getBoardingUtxosForSigners = vi
+                .fn()
+                .mockRejectedValue(new Error("address fetch failed"));
+
+            await expect((updater as any).onWalletInitialized(context)).rejects.toThrow(
+                "address fetch failed",
+            );
+            expect((updater as any).retryPendingTxs).toBeDefined();
+
+            await updater.tick(0);
+            await vi.waitFor(() => expect(wallet.resumeDeferredPendingTxs).toHaveBeenCalledOnce());
+        });
+
+        it("defers at INIT when the source flipped to cache after boot", async () => {
+            const wallet = makeWallet();
+            await (updater as any).onWalletInitialized(initWith(wallet));
+
+            expect(wallet.deferPendingTxRecovery).toHaveBeenCalledOnce();
+            expect(wallet.finalizePendingTxs).not.toHaveBeenCalled();
+            expect((updater as any).retryPendingTxs).toBeDefined();
+        });
+
+        it("defers when the live branch cannot reach the operator", async () => {
+            const wallet = makeWallet({
+                serverInfoSource: "live",
+                finalizePendingTxs: vi
+                    .fn()
+                    .mockRejectedValue(new ProviderUnavailableError("operator down")),
+            });
+            await (updater as any).onWalletInitialized(initWith(wallet));
+
+            expect(wallet.finalizePendingTxs).toHaveBeenCalledOnce();
+            expect(wallet.deferPendingTxRecovery).toHaveBeenCalledOnce();
+            expect((updater as any).retryPendingTxs).toBeDefined();
+        });
+
+        it("logs a non-availability failure of the live branch without deferring", async () => {
+            const error = vi.spyOn(console, "error").mockImplementation(() => {});
+            const wallet = makeWallet({
+                serverInfoSource: "live",
+                finalizePendingTxs: vi.fn().mockRejectedValue(new Error("boom")),
+            });
+            await (updater as any).onWalletInitialized(initWith(wallet));
+
+            expect(wallet.deferPendingTxRecovery).not.toHaveBeenCalled();
+            expect((updater as any).retryPendingTxs).toBeUndefined();
+            expect(error).toHaveBeenCalledWith(
+                "Error recovering pending transactions:",
+                expect.any(Error),
+            );
+        });
+
+        it("leaves only the newest INIT's retry in place", async () => {
+            const wallet = makeWallet({ hasDeferredPendingTxRecovery: true });
+            const context = initWith(wallet);
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            (context.readonlyWallet as any).getBoardingUtxosForSigners = vi
+                .fn()
+                .mockImplementationOnce(async () => {
+                    await gate;
+                    return [];
+                })
+                .mockResolvedValue([]);
+            (updater as any).lazyBoardingInit = false;
+
+            const first = (updater as any).onWalletInitialized(context);
+            await until(() => (updater as any).retryPendingTxs !== undefined);
+            const firstRetry = (updater as any).retryPendingTxs;
+
+            const second = (updater as any).onWalletInitialized(context);
+            await until(() => (updater as any).retryPendingTxs !== firstRetry);
+            const secondRetry = (updater as any).retryPendingTxs;
+            expect(secondRetry).not.toBe(firstRetry);
+
+            release();
+            await Promise.all([first, second]);
+            expect((updater as any).retryPendingTxs).toBe(secondRetry);
+
+            await firstRetry();
+            expect(wallet.resumeDeferredPendingTxs).not.toHaveBeenCalled();
+        });
+    });
+
     it.each([false, true])(
         "GET_BALANCE uses stored boarding only when lazyBoarding=%s",
         async (lazyBoarding) => {

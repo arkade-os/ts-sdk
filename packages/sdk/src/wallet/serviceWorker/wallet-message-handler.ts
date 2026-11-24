@@ -2458,6 +2458,19 @@ export class WalletMessageHandler
         this.retryPendingTxs = undefined;
         const init = this.newGeneration("init");
 
+        // Scheduled before the awaits below, so a failing INIT still lifts the block.
+        if (
+            signingWallet?.serverInfoSource === "cache" &&
+            !signingWallet.hasDeferredPendingTxRecovery
+        ) {
+            await signingWallet.deferPendingTxRecovery();
+            if (init.stale) return;
+        }
+        const deferred = signingWallet?.hasDeferredPendingTxRecovery === true;
+        if (signingWallet && deferred) {
+            this.schedulePendingTxRecovery(signingWallet, context, init);
+        }
+
         // Initialize contract manager FIRST — this populates the repository
         // with full virtual output history for all contracts (one indexer call per contract)
         await this.ensureContractEventBroadcasting(context);
@@ -2466,9 +2479,7 @@ export class WalletMessageHandler
         await this.refreshCachedData({ lazyBoarding }, context, init);
         if (init.stale) return;
 
-        if (signingWallet?.hasDeferredPendingTxRecovery) {
-            this.schedulePendingTxRecovery(signingWallet, context, init);
-        } else if (signingWallet && signingWallet.serverInfoSource !== "cache") {
+        if (signingWallet && !deferred) {
             try {
                 const vtxos = await this.getVtxosFromRepo(undefined, context);
                 if (init.stale) return;
@@ -2483,7 +2494,12 @@ export class WalletMessageHandler
                     `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`,
                 );
             } catch (error: unknown) {
-                console.error("Error recovering pending transactions:", error);
+                if (init.stale) return;
+                if (isTransientOperatorError(error) && (await signingWallet.deferPendingTxRecovery())) {
+                    this.schedulePendingTxRecovery(signingWallet, context, init);
+                } else {
+                    console.error("Error recovering pending transactions:", error);
+                }
             }
             if (init.stale) return;
         }

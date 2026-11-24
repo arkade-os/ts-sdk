@@ -368,6 +368,8 @@ style and have not been backfilled.
   retry. Until a pass does reach the operator — while it is unreachable, reports
   another network, or answers unusably — sends stay refused and the tick keeps
   retrying, so recovery self-heals once the operator is fixed.
+  Recovery is also deferred when the operator becomes unreachable between boot and
+  wallet initialization.
 
 - **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
 
