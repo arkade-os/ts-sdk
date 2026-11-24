@@ -222,6 +222,13 @@ style and have not been backfilled.
   are ignored, and the payment is claimed while the provider stays mounted; a later
   connect resumes the claim before the refund time. A swap store that cannot open sets
   `error`, and a claim that ends after a disconnect no longer reports into the next session.
+  The balance takes every figure from one SDK reading, so boarding funds count once and
+  `settled`, `preconfirmed` and `recoverable` keep the SDK's meaning. History shows
+  outgoing transactions as sends, keeps the SDK's millisecond timestamps and puts
+  boarding and exit rows onchain. A send, a paid invoice or an onboarding resolves with
+  its result even if the balance refresh after it fails. A disconnect or network switch
+  cancels a connect still in progress and ends a pending payment wait without calling it
+  failed. A declined auto-connect is not retried until the provider mounts again.
 
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service

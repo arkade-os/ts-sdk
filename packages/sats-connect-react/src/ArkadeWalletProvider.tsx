@@ -7,7 +7,7 @@ import {
     useRef,
     type ReactNode,
 } from "react";
-import { Wallet, Ramps } from "@arkade-os/sdk";
+import { Wallet, Ramps, TxType, type ArkTransaction, type WalletBalance } from "@arkade-os/sdk";
 import {
     createSwapClient,
     IndexedDbAssetSwapRepository,
@@ -29,6 +29,47 @@ const ArkadeWalletContext = createContext<ArkadeWalletContextType<string> | unde
 interface LightningSession {
     client: SwapClient;
     repository: IndexedDbAssetSwapRepository;
+    /** Resolves when the provider closes this session. */
+    closed: Promise<void>;
+    close: () => void;
+}
+
+/** Every figure from one SDK reading: `total` already holds boarding, so nothing is added to it. */
+export const toBalance = (bal: WalletBalance, vtxos: unknown[]): Balance => ({
+    total: bal.total,
+    onchain: bal.boarding.total,
+    offchain: bal.available,
+    settled: bal.settled,
+    preconfirmed: bal.preconfirmed,
+    recoverable: bal.recoverable,
+    vtxoList: vtxos.map((vtxo: any) => ({
+        id: vtxo.txid ? `${vtxo.txid}:${vtxo.vout}` : vtxo.id,
+        amount: Number(vtxo.value || vtxo.amount),
+        expiry: vtxo.expiry?.median || 0,
+        status: vtxo.virtualStatus?.state || "pending",
+    })),
+});
+
+export const toTransaction = (tx: ArkTransaction): Transaction => ({
+    txid: tx.key.arkTxid || tx.key.boardingTxid || tx.key.commitmentTxid || "",
+    amount: Number(tx.amount),
+    type: tx.type === TxType.TxSent ? "send" : "receive",
+    timestamp: tx.createdAt,
+    layer: tx.tag === "boarding" || tx.tag === "exit" ? "onchain" : "offchain",
+    status: tx.settled ? "settled" : "pending",
+});
+
+/** A refresh after an operation that went through: its failure is reported, never thrown, so the
+ * caller still gets the result and does not send again. */
+export async function refreshAfter(
+    refresh: () => Promise<unknown>,
+    report: (message: string) => void,
+): Promise<void> {
+    try {
+        await refresh();
+    } catch (err: any) {
+        report(`Done, but the balance did not refresh: ${err?.message ?? String(err)}`);
+    }
 }
 
 const PAY_ENDS: readonly Outcome[] = ["paid", "refunding", "refunded", "failed", "needs_recovery"];
@@ -47,6 +88,15 @@ const outcomeIn = (client: SwapClient, swapId: string, ends: readonly Outcome[])
         });
         if (done) off();
     });
+
+/** The swap's first outcome in `ends`, or `undefined` once `closed` settles first. */
+export const outcomeUntil = (
+    client: SwapClient,
+    swapId: string,
+    ends: readonly Outcome[],
+    closed: Promise<void>,
+): Promise<Outcome | undefined> =>
+    Promise.race([outcomeIn(client, swapId, ends), closed.then(() => undefined)]);
 
 /** Reports how a receive ends, unless the session that issued it has closed since. */
 export const followReceive = (
@@ -92,10 +142,16 @@ export function ArkadeWalletProvider<TNetwork extends string>({
     const [error, setError] = useState<string | null>(null);
     const [currentNetwork, setCurrentNetwork] = useState<TNetwork>(defaultNetwork);
     const lightningRef = useRef<LightningSession | null>(null);
+    // A connect publishes only while it is the newest; disconnect and network switch bump it too.
+    const connectAttempt = useRef(0);
+    // Only the newest balance read publishes; a disconnect drops any read still in flight.
+    const balanceRead = useRef(0);
+    const autoConnectTried = useRef(false);
 
     const closeLightning = useCallback(() => {
         const session = lightningRef.current;
         lightningRef.current = null;
+        session?.close();
         void session?.client[Symbol.asyncDispose]();
     }, []);
 
@@ -107,47 +163,30 @@ export function ArkadeWalletProvider<TNetwork extends string>({
     );
 
     const fetchBalance = useCallback(async (arkWalletInstance: ArkadeWallet): Promise<Balance> => {
-        const bal = await arkWalletInstance.getBalance();
-        const vtxos = await arkWalletInstance.getVtxos();
-        const boardingUtxos = await arkWalletInstance.getBoardingUtxos();
-
-        let onchainBalance = 0;
-        for (const utxo of boardingUtxos) {
-            onchainBalance += Number(utxo.value);
-        }
-
-        const vtxoList = vtxos.map((vtxo: any) => ({
-            id: vtxo.txid ? `${vtxo.txid}:${vtxo.vout}` : vtxo.id,
-            amount: Number(vtxo.value || vtxo.amount),
-            expiry: vtxo.expiry?.median || 0,
-            status: vtxo.virtualStatus?.state || "pending",
-        }));
-
-        const balanceData: Balance = {
-            total: Number(bal.total) + onchainBalance,
-            onchain: onchainBalance,
-            offchain: Number(bal.available),
-            settled: Number(bal.available),
-            preconfirmed: 0,
-            recoverable: Number(bal.total) - Number(bal.available),
-            vtxoList,
-        };
-
-        setBalance(balanceData);
+        const read = ++balanceRead.current;
+        const [bal, vtxos] = await Promise.all([
+            arkWalletInstance.getBalance(),
+            arkWalletInstance.getVtxos(),
+        ]);
+        const balanceData = toBalance(bal, vtxos);
+        if (read === balanceRead.current) setBalance(balanceData);
         return balanceData;
     }, []);
 
     const connectWallet = useCallback(
         async (options?: { silent?: boolean }) => {
             const silent = options?.silent ?? false;
+            const attempt = ++connectAttempt.current;
+            const current = () => attempt === connectAttempt.current;
             setIsConnecting(true);
             if (!silent) {
                 setError(null);
             }
 
+            let arkWalletInstance: ArkadeWallet | undefined;
             try {
                 const networkConfig = networks[currentNetwork];
-                const arkWalletInstance = new ArkadeWallet({
+                arkWalletInstance = new ArkadeWallet({
                     arkServerUrl: networkConfig.arkServerUrl,
                     esploraUrl: networkConfig.esploraUrl,
                     satsConnectNetwork: networkConfig.satsConnectNetwork,
@@ -155,6 +194,10 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 });
 
                 const info = await arkWalletInstance.connect();
+                if (!current()) {
+                    arkWalletInstance.reset();
+                    return;
+                }
                 const walletInstance = arkWalletInstance.getWallet();
 
                 if (!walletInstance) {
@@ -168,7 +211,11 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                         `arkade-swaps:${networkConfig.networkName}:${info.userPubKey}`,
                     );
                     const client = createSwapClient({ wallet: walletInstance, repository });
-                    lightningRef.current = { client, repository };
+                    let close = () => {};
+                    const closed = new Promise<void>((resolve) => {
+                        close = resolve;
+                    });
+                    lightningRef.current = { client, repository, closed, close };
                     // Resumes claiming invoices a previous session issued.
                     client.ready.catch((err) => {
                         if (lightningRef.current?.client !== client) return;
@@ -189,10 +236,16 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 });
 
                 await fetchBalance(arkWalletInstance);
+                if (!current()) {
+                    arkWalletInstance.reset();
+                    return;
+                }
                 if (typeof window !== "undefined") {
                     window.localStorage.setItem(autoConnectKey, "1");
                 }
             } catch (err: any) {
+                arkWalletInstance?.reset();
+                if (!current()) return;
                 if (!silent) {
                     setError(err.message || "Failed to connect wallet");
                 }
@@ -202,13 +255,15 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 setWalletInfo(null);
                 setBalance(null);
             } finally {
-                setIsConnecting(false);
+                if (current()) setIsConnecting(false);
             }
         },
         [currentNetwork, networks, autoConnectKey, connectMessage, closeLightning, fetchBalance],
     );
 
     const disconnectWallet = useCallback(() => {
+        connectAttempt.current++;
+        balanceRead.current++;
         closeLightning();
         arkWallet?.reset();
         setArkWallet(null);
@@ -217,6 +272,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         setBalance(null);
         setTransactions([]);
         setError(null);
+        setIsConnecting(false);
         if (typeof window !== "undefined") {
             window.localStorage.removeItem(autoConnectKey);
         }
@@ -226,12 +282,14 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         if (typeof window === "undefined") {
             return;
         }
-        if (wallet || isConnecting) {
+        // Once per mount: a declined prompt must not reopen itself.
+        if (autoConnectTried.current || wallet || isConnecting) {
             return;
         }
         if (window.localStorage.getItem(autoConnectKey) !== "1") {
             return;
         }
+        autoConnectTried.current = true;
         connectWallet({ silent: true }).catch(() => {});
     }, [wallet, isConnecting, connectWallet, autoConnectKey]);
 
@@ -274,7 +332,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
 
             try {
                 const txid = await arkWallet.sendBitcoin(toAddress, amount);
-                await fetchBalance(arkWallet);
+                await refreshAfter(() => fetchBalance(arkWallet), setError);
                 return txid;
             } catch (err: any) {
                 setError(err.message || "Failed to send Bitcoin");
@@ -296,20 +354,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
 
         try {
             const history = await wallet.getTransactionHistory();
-
-            const txList: Transaction[] = history.map((tx: any) => ({
-                txid: tx.key?.arkTxid || tx.key?.boardingTxid || tx.key?.commitmentTxid || "",
-                amount: Number(tx.amount),
-                type: tx.type === "sent" ? ("send" as const) : ("receive" as const),
-                timestamp: tx.createdAt ? tx.createdAt * 1000 : Date.now(),
-                layer:
-                    tx.type === "boarding" || tx.type === "exit"
-                        ? ("onchain" as const)
-                        : ("offchain" as const),
-                status: tx.settled ? "settled" : "pending",
-            }));
-
-            setTransactions(txList);
+            setTransactions(history.map(toTransaction));
         } catch (err: any) {
             setError(err.message || "Failed to fetch transaction history");
             throw err;
@@ -330,7 +375,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
 
     const payLightningInvoice = useCallback(
         async (invoice: string): Promise<string> => {
-            const { client, repository } = lightningSession();
+            const { client, repository, closed } = lightningSession();
             // `pay` also takes Arkade and onchain addresses, which would move funds here.
             if (!/^ln/i.test(invoice)) {
                 throw new Error("Not a Lightning invoice");
@@ -344,14 +389,19 @@ export function ArkadeWalletProvider<TNetwork extends string>({
                 if (result.kind !== "swap") {
                     throw new Error("Not a Lightning invoice");
                 }
-                const outcome = await outcomeIn(client, result.swap.id, PAY_ENDS);
+                const outcome = await outcomeUntil(client, result.swap.id, PAY_ENDS, closed);
+                if (outcome === undefined) {
+                    throw new Error(
+                        "Stopped following this Lightning payment: the wallet disconnected. Reconnect to see how it ended.",
+                    );
+                }
                 if (outcome !== "paid") {
                     throw new Error(`Lightning payment ${outcome}`);
                 }
                 const record = await repository.getSwapRecord(quoteIdOfSwapId(result.swap.id));
 
                 if (arkWallet) {
-                    await fetchBalance(arkWallet);
+                    await refreshAfter(() => fetchBalance(arkWallet), setError);
                 }
 
                 return record?.family === "rfq" ? (record.settlementPreimageHex ?? "") : "";
@@ -410,7 +460,7 @@ export function ArkadeWalletProvider<TNetwork extends string>({
             const txid = await ramps.onboard(info.fees);
 
             if (arkWallet) {
-                await fetchBalance(arkWallet);
+                await refreshAfter(() => fetchBalance(arkWallet), setError);
             }
 
             return txid;
@@ -426,11 +476,11 @@ export function ArkadeWalletProvider<TNetwork extends string>({
         async (network: TNetwork) => {
             setCurrentNetwork(network);
 
-            if (wallet) {
+            if (wallet || isConnecting) {
                 disconnectWallet();
             }
         },
-        [wallet, disconnectWallet],
+        [wallet, isConnecting, disconnectWallet],
     );
 
     const value = useMemo<ArkadeWalletContextType<TNetwork>>(
