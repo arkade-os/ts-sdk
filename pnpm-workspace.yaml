@@ -1,7 +1,15 @@
 packages:
   - packages/*
+  - examples/*
 
 overrides:
+  # react and react-dom must resolve to the EXACT same version or React throws
+  # "Incompatible React versions" at render time. With node-linker=hoisted plus
+  # auto-install-peers, Next's peer auto-install and the example's own dependency
+  # otherwise land on different patches (seen: react 19.2.4 vs react-dom 19.2.8).
+  # Pinning both here is the only place that binds every resolution path.
+  react: "19.2.8"
+  react-dom: "19.2.8"
   esbuild: ">=0.28.1"
   minimatch: ">=11.0.1"
   "typedoc>minimatch": "^10.2.5"
@@ -27,6 +35,9 @@ overrides:
   "@expo/cli>zod": ">=4.6.6"
   nanoid: ">=3.3.18 <4.0.0"
   source-map-js: ">=1.2.2"
+  # sats-connect 4.2.1 (latest) pins both exactly.
+  axios: ">=1.16.0 <2.0.0"
+  valibot: ">=1.2.0 <2.0.0"
 
 onlyBuiltDependencies:
   - canvas

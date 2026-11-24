@@ -14,6 +14,20 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`@arkade-os/snap`: the snap reads the operator itself, and its sign prompt lists every
+  output.** `arkade_getAddress` used the `signerPubkey` and `unilateralExitDelay` that the
+  calling page passed, so a hostile page could get an address bound to a server key of its
+  choosing. The snap ignores both now. It takes `{ network, operatorUrl? }` and reads the key
+  and delay from the operator's `/v1/info`, refusing an operator that reports another network.
+  `bitcoin` uses `https://arkade.computer` and `mutinynet` `https://mutinynet.arkade.sh` by
+  default; any other operator must use https (or loopback http), and the user approves it once
+  per site and operator key. `arkade_signPsbt` needs the same `network`/`operatorUrl`, and its
+  prompt now shows each output's amount and destination, marks change, checkpoints, the fee
+  anchor and OP_RETURN data, and totals what leaves the wallet. Only a checkpoint built from an
+  input at the snap's own address counts as staying in the wallet; one built from any other
+  input counts as leaving. The snap uses its cached operator info only when the operator
+  cannot be reached. Release as `snap minor` (0.2.0).
+
 - **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
 
 - **`@arkade-os/swap`: a fee ceiling on a cross-asset swap is refused.** The fee of a cross-asset swap is measured against the solver's own price feed, so `maxFee` or `policy.maxFee` cannot bound it. Setting either on such a swap now throws before anything is funded; same-asset ceilings are unchanged. `policy.maxFee` applies to every call, so a client that sets one for `pay` or `receive` can no longer `exchange` across assets.
@@ -182,6 +196,48 @@ style and have not been backfilled.
   `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
 ### Features
+
+- **The web packages move into this repository.** `@arkade-os/wallet-providers`,
+  `@arkade-os/sats-connect`, `@arkade-os/sats-connect-react` and `@arkade-os/snap`
+  are ported from `arkade-os/packages` and release from here. They take the SDK as
+  a peer range or `workspace:^`, so an SDK release does not bump them.
+  `@arkade-os/sats-connect` now builds its wallet from `RestOperatorProvider`,
+  `RestIndexerProvider` and `EsploraProvider` and pays with `send`, which raises its
+  SDK peer floor to 0.5.4. `sendBitcoin` refuses an amount that is not a positive whole
+  number of sats. `sendBitcoinAdvanced` is gone: it built and submitted the transaction
+  by hand, outside the SDK's coin holds, pending-transaction record and recipient
+  operator check. Use `sendBitcoin`, or the SDK's `send({ recipients })` for several
+  outputs. `reset()` disposes the SDK wallet, and so does a second `connect()` for the
+  wallet it replaces. A `reset()` or `updateConfig()` during the connect prompt makes that
+  `connect()` reject instead of publishing a wallet. `SatsConnectIdentity` signs a batch
+  one transaction at a time through its `satsConnectRequest` unless constructed with
+  `batchSigning`; `ArkadeWallet` sets that only for the default transport with no
+  `providerId`. `@arkade-os/checkout` stays
+  in `arkade-os/packages`: its server needs durable swap storage, and no mainnet
+  solver serves Lightning yet.
+
+- **`@arkade-os/sats-connect-react`: Lightning goes through `@arkade-os/swap`.**
+  `payLightningInvoice` and `createLightningInvoice` use the swap client's `pay` and
+  `receive({ via: "lightning" })` over an IndexedDB swap store, replacing
+  `@arkade-os/boltz-swap`, which this repository no longer ships; the peer
+  dependencies trade it for `@arkade-os/swap` and `nostr-tools`. Lightning needs a
+  solver listed for the wallet's network in the solver registry: mutinynet lists one,
+  mainnet none yet. A received invoice asks the payer for the amount plus the
+  solver's fee, `createLightningInvoice`'s `description` and `NetworkConfig.boltzUrl`
+  are ignored, and the payment is claimed while the provider stays mounted; a later
+  connect resumes the claim before the refund time. A swap store that cannot open sets
+  `error`, and a claim that ends after a disconnect no longer reports into the next session.
+  The balance takes every figure from one SDK reading, so boarding funds count once and
+  `settled`, `preconfirmed` and `recoverable` keep the SDK's meaning. History shows
+  outgoing transactions as sends, keeps the SDK's millisecond timestamps and puts
+  boarding and exit rows onchain. A send, a paid invoice or an onboarding resolves with
+  its result even if the balance refresh after it fails. A paid invoice resolves with an
+  empty preimage when the swap record cannot be read back. A disconnect, a network switch
+  or an unmount cancels a connect still in progress, even one started in the same tick,
+  and ends a pending payment, including one still being funded, as "stopped following"
+  rather than failed; the swap stays stored. History read for a connection that has since
+  been replaced is dropped. A declined auto-connect is not retried until the provider
+  mounts again.
 
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service

@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { syncSnapManifestVersion, verifySnapManifest } from "./snap-release-hook.mjs";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -32,6 +34,46 @@ const PACKAGES = [
         order: 2,
         dependsOnSdk: true,
         bumpFlag: "--swap-bump",
+    },
+    // Ported web packages. Unlike swap these are NOT fan-out dependents of
+    // the SDK: they declare it as a peer range or via workspace:^, both of which
+    // survive an SDK patch/minor untouched. Releasing the SDK must not bump them.
+    {
+        key: "wallet-providers",
+        name: "@arkade-os/wallet-providers",
+        dir: path.join(ROOT_DIR, "packages/wallet-providers"),
+        pkgJson: path.join(ROOT_DIR, "packages/wallet-providers/package.json"),
+        tagPrefix: "@arkade-os/wallet-providers/",
+        order: 3,
+    },
+    {
+        key: "sats-connect",
+        name: "@arkade-os/sats-connect",
+        dir: path.join(ROOT_DIR, "packages/sats-connect"),
+        pkgJson: path.join(ROOT_DIR, "packages/sats-connect/package.json"),
+        tagPrefix: "@arkade-os/sats-connect/",
+        order: 4,
+    },
+    {
+        // Depends on @arkade-os/sats-connect via workspace:^, so it must publish
+        // after it when both are selected.
+        key: "sats-connect-react",
+        name: "@arkade-os/sats-connect-react",
+        dir: path.join(ROOT_DIR, "packages/sats-connect-react"),
+        pkgJson: path.join(ROOT_DIR, "packages/sats-connect-react/package.json"),
+        tagPrefix: "@arkade-os/sats-connect-react/",
+        order: 5,
+    },
+    {
+        key: "snap",
+        name: "@arkade-os/snap",
+        dir: path.join(ROOT_DIR, "packages/snap"),
+        pkgJson: path.join(ROOT_DIR, "packages/snap/package.json"),
+        tagPrefix: "@arkade-os/snap/",
+        order: 6,
+        // snap.manifest.json carries its own version and shasum and must be
+        // committed alongside package.json.
+        extraFiles: [path.join(ROOT_DIR, "packages/snap/snap.manifest.json")],
     },
 ];
 
@@ -247,6 +289,19 @@ Releasing SDK implies a dependent release of ${DEPENDENT_PACKAGES.map((p) => p.n
 because they depend on SDK via workspace:* (pnpm rewrites this to an exact
 version on pack/publish).
 
+swap is the ONLY fan-out dependent. wallet-providers, sats-connect,
+sats-connect-react and snap depend on the SDK via peer ranges or
+workspace:^, both of which publish as caret ranges and survive an SDK
+patch/minor untouched. Releasing the SDK does not bump them; release them
+individually as needed.
+
+'all' means every package, not just sdk + swap.
+
+Releasing snap also syncs snap.manifest.json's version, regenerates its
+source.shasum via 'mm-snap build', and aborts the release if the built
+bundle and manifest disagree. Note that snap 0.1.2 as published to npm no
+longer matches this source tree, so snap releases must always move forward.
+
 Stable releases (patch/minor/major or a literal non-prerelease version) must
 be run from master, unless --allow-any-branch is passed. Prerelease releases
 (prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next
@@ -333,10 +388,15 @@ function validatePreid(preid) {
 }
 
 function primarySelection(target) {
-    // Releasing the SDK drags its dependents along, because each would otherwise
-    // stay published against the previous SDK version — except those opted out,
-    // which are deliberately left pinned to the SDK they last shipped with.
-    if (target === "sdk") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
+    // Releasing the SDK drags every `workspace:*` dependent along, because each
+    // would otherwise stay published against the previous SDK version — except
+    // those opted out, which are deliberately left pinned to the SDK they last
+    // shipped with. The web packages consume the SDK through peer ranges or
+    // `workspace:^`, which publish as caret ranges and stay satisfied across a
+    // patch or minor — so they are NOT dependents here.
+    if (target === "sdk") {
+        return ["sdk", ...DEPENDENT_PACKAGES.filter((p) => !p.excludeFromAll).map((p) => p.key)];
+    }
     // `all` is a bulk convenience, not an implication of the SDK bump; packages
     // marked `excludeFromAll` opt out of it but remain releasable directly.
     if (target === "all") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
@@ -647,6 +707,14 @@ function cleanup({ target }) {
             run("git", ["checkout", "HEAD", "--", pkg.pkgJson]);
             console.log(`Restored ${pkg.name} manifest to ${head}`);
         }
+        // Not tied to package.json: a cleanup that stopped between the two left these behind.
+        for (const file of pkg.extraFiles ?? []) {
+            const diff = spawnSync("git", ["diff", "--quiet", "HEAD", "--", file], { cwd: ROOT_DIR });
+            if (diff.status !== 0) {
+                run("git", ["checkout", "HEAD", "--", file]);
+                console.log(`Restored ${path.relative(ROOT_DIR, file)} to HEAD`);
+            }
+        }
         const candidates = new Set();
         if (state?.tags?.[key]) candidates.add(state.tags[key]);
         candidates.add(`${pkg.tagPrefix}${current}`);
@@ -705,7 +773,28 @@ function release(args) {
             console.log(`Set ${pkg.name} to ${plan.get(key).next}`);
         }
 
-        if (!selectedKeys.includes("sdk")) {
+        // Must run before the build: `mm-snap build` reads the manifest version
+        // and recomputes source.shasum from the bundle it emits.
+        if (plan.has("snap")) {
+            const snapVersion = plan.get("snap").next;
+            syncSnapManifestVersion(ROOT_DIR, snapVersion);
+            console.log(`Set snap.manifest.json to ${snapVersion}`);
+        }
+
+        // sdk and swap build in their own `prepack`. A package without one builds
+        // here with its workspace dependencies — the snap must, since its shasum
+        // has to be final before the release commit.
+        const unbuilt = selectedKeys.filter(
+            (k) => !JSON.parse(fs.readFileSync(PACKAGE_BY_KEY[k].pkgJson, "utf8")).scripts?.prepack,
+        );
+        if (unbuilt.length > 0) {
+            console.log(`Building ${unbuilt.join(", ")} and their workspace dependencies...`);
+            run("pnpm", [
+                ...unbuilt.flatMap((k) => ["--filter", `${PACKAGE_BY_KEY[k].name}...`]),
+                "run",
+                "build",
+            ]);
+        } else if (!selectedKeys.includes("sdk")) {
             // Dependents resolve @arkade-os/sdk to its built dist via the workspace
             // link, so it must be fresh even when SDK isn't part of this release.
             // When SDK *is* selected, its own publish below builds it (via `prepack`)
@@ -714,7 +803,22 @@ function release(args) {
             run("pnpm", ["run", "build"], { cwd: PACKAGE_BY_KEY.sdk.dir });
         }
 
-        const manifestPaths = selectedKeys.map((k) => PACKAGE_BY_KEY[k].pkgJson);
+        // Abort before anything is committed, tagged or published if the built
+        // snap and its manifest disagree. A bad shasum bricks install for every
+        // already-installed MetaMask user.
+        if (plan.has("snap")) {
+            try {
+                const { version, shasum } = verifySnapManifest(ROOT_DIR, plan.get("snap").next);
+                console.log(`Verified snap manifest: ${version} shasum ${shasum}`);
+            } catch (error) {
+                die(error.message);
+            }
+        }
+
+        const manifestPaths = selectedKeys.flatMap((k) => [
+            PACKAGE_BY_KEY[k].pkgJson,
+            ...(PACKAGE_BY_KEY[k].extraFiles ?? []),
+        ]);
         run("git", ["add", ...manifestPaths]);
         const stagedCheck = spawnSync("git", ["diff", "--cached", "--quiet"], { cwd: ROOT_DIR });
         if (stagedCheck.status === 0) {

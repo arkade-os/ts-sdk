@@ -1,0 +1,9 @@
+{
+    "extends": "../../config/tsconfig.base.json",
+    "compilerOptions": {
+        "lib": ["es2022", "dom"],
+        "noEmit": true
+    },
+    "include": ["src", "test", "tsup.config.ts"],
+    "exclude": ["node_modules", "dist"]
+}
