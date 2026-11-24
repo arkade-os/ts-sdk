@@ -696,6 +696,33 @@ describe("NativeExecutionJournal observation", () => {
         await expect(f.journal.admit(source, f.request)).rejects.toThrow("occupied");
     });
 
+    it.each([new TypeError("fetch failed"), new RangeError("socket")])(
+        "keeps an indexer failure of any class unknown: %s",
+        async (failure) => {
+            const f = await observationFixture();
+            f.indexer.getVirtualTxs.mockRejectedValueOnce(failure);
+            expect((await f.journal.reconcile(source, f.indexer))?.state).toBe("unknown");
+            expect(await f.journal.getReceipt(source)).toBeUndefined();
+        },
+    );
+
+    it("surfaces a local TypeError while checking a reply instead of reporting unknown", async () => {
+        const f = await observationFixture();
+        const bug = new TypeError("local bug");
+        const real = Number.isSafeInteger;
+        const check = vi.spyOn(Number, "isSafeInteger").mockImplementation((n) => {
+            if (n === f.coins[0].value) throw bug;
+            return real(n);
+        });
+        try {
+            await expect(f.journal.reconcile(source, f.indexer)).rejects.toBe(bug);
+        } finally {
+            check.mockRestore();
+        }
+        expect(await f.journal.getReceipt(source)).toBeUndefined();
+        expect(await f.journal.get(source)).toEqual(f.record);
+    });
+
     it.each([63, 64, 65, 66])(
         "rejects malformed %i-byte signatures without verifier truncation",
         async (size) => {
@@ -723,10 +750,18 @@ describe("NativeExecutionJournal observation", () => {
         expect((await f.journal.observe(source, f.indexer))?.state).toBe("unknown");
     });
 
-    it("leaves an unsupported conditional policy unknown even with all signatures", async () => {
+    it("reconciles a condition leaf, such as a claim, once every signer has signed", async () => {
         const f = await observationFixture(true);
         expect(f.tx.arkTx.getInput(0).tapScriptSig).toHaveLength(2);
         expect(f.tx.checkpoints[0].getInput(0).tapScriptSig).toHaveLength(2);
+        expect((await f.journal.observe(source, f.indexer))?.state).toBe("reconciled");
+    });
+
+    it("leaves a condition leaf unknown while a signer is missing", async () => {
+        const f = await observationFixture(true);
+        const tx = Transaction.fromPSBT(base64.decode(f.request.arkTx));
+        tx.signIdx(new Uint8Array(32).fill(7), 0);
+        f.txs[0] = base64.encode(tx.toPSBT());
         expect((await f.journal.observe(source, f.indexer))?.state).toBe("unknown");
     });
 

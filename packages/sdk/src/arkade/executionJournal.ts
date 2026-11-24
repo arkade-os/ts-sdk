@@ -48,6 +48,11 @@ export type NativeExecutionReceipt = Readonly<{
  * Occupied slots always reject. This is not shared Wallet coin ownership or proof of acceptance.
  * Requires asserted persistent atomic storage; no release, replay or downgrade policy.
  * The 4 MiB JSON request budget is journal policy, not a universal protocol limit.
+ *
+ * Lifecycle: `admit()` the proposal in `beforeEmulatorSubmit`, then dispatch it. Once `admit()` has
+ * succeeded a retry must not call it again: `get(source)` first, and when it returns a record the
+ * earlier attempt was admitted and may have been dispatched, so dispatch that record's `proposal`
+ * unchanged. `reconcile()` is the recovery entry point that settles the outcome.
  */
 export class NativeExecutionJournal {
     private readonly atomic: AtomicWalletState;
@@ -140,13 +145,13 @@ async function observeRecord(
     record: NativeExecutionRecord,
     { getVtxos, getVirtualTxs }: ReturnType<typeof bindObserver>,
 ): Promise<NativeExecutionObservation> {
-    let state: NativeExecutionObservation["state"] = "unknown";
+    const unknown = Object.freeze({ state: "unknown" as const, record });
+    const localArk = Transaction.fromPSBT(base64.decode(record.proposal.arkTx));
+    const localCheckpoint = Transaction.fromPSBT(base64.decode(record.proposal.checkpointTxs[0]));
+    let coins: Awaited<ReturnType<typeof getVtxos>>;
+    let transactions: Awaited<ReturnType<typeof getVirtualTxs>>;
     try {
-        const localArk = Transaction.fromPSBT(base64.decode(record.proposal.arkTx));
-        const localCheckpoint = Transaction.fromPSBT(
-            base64.decode(record.proposal.checkpointTxs[0]),
-        );
-        const [coins, transactions] = await Promise.all([
+        [coins, transactions] = await Promise.all([
             Promise.resolve().then(() =>
                 getVtxos({
                     outpoints: [
@@ -166,6 +171,11 @@ async function observeRecord(
                 }),
             ),
         ]);
+    } catch {
+        // a fetch TypeError too: remote uncertainty never releases a prepared execution
+        return unknown;
+    }
+    try {
         assertCompleteReply(coins, "vtxos");
         assertCompleteReply(transactions, "txs");
         const byOutpoint = new Map<string, VirtualCoin>();
@@ -203,7 +213,12 @@ async function observeRecord(
         });
         const byTxid = new Map<string, { tx: Transaction; encoded: string }>();
         for (const encoded of transactions.txs) {
-            const tx = Transaction.fromPSBT(base64.decode(encoded));
+            let tx: Transaction;
+            try {
+                tx = Transaction.fromPSBT(base64.decode(encoded));
+            } catch {
+                throw new Error("undecodable observed transaction");
+            }
             if (byTxid.has(tx.id) || (tx.id !== localCheckpoint.id && tx.id !== record.operationId))
                 throw new Error("unexpected observed transaction");
             byTxid.set(tx.id, { tx, encoded });
@@ -224,20 +239,28 @@ async function observeRecord(
             throw new Error("observed witness metadata mismatch");
         verifyObservedSignatures(ark.tx, localArk);
         verifyObservedSignatures(checkpoint.tx, localCheckpoint);
-        state = "reconciled";
-    } catch {
-        // Remote uncertainty never releases a prepared execution.
+    } catch (error) {
+        // replies fail as plain Errors, so a TypeError or RangeError here is a local bug
+        if (error instanceof TypeError || error instanceof RangeError) throw error;
+        return unknown;
     }
-    return Object.freeze({ state, record });
+    return Object.freeze({ state: "reconciled", record });
 }
 
 function assertCompleteReply(reply: unknown, field: "vtxos" | "txs"): void {
     const value = reply as Record<string, any> | null;
+    let json: string | undefined;
+    try {
+        json = JSON.stringify(value);
+    } catch {
+        json = undefined;
+    }
     if (
         !value ||
         !Array.isArray(value[field]) ||
         value[field].length !== 2 ||
-        utf8.decode(JSON.stringify(value)).length > MAX_REQUEST_BYTES
+        typeof json !== "string" ||
+        utf8.decode(json).length > MAX_REQUEST_BYTES
     )
         throw new Error("invalid or oversized observation reply");
     // The indexer pages from 1; a terminal page reports next as 0 or its own index.
@@ -258,10 +281,14 @@ function verifyObservedSignatures(remote: Transaction, local: Transaction): void
         throw new Error("unsupported local leaf version");
     const script = scriptFromTapLeafScript(leaf);
     const policy = decodeTapscript(script);
+    // A condition leaf's preimage is enforced by the script; its signers are checked as any other.
     if (
-        ![TapscriptType.Multisig, TapscriptType.CSVMultisig, TapscriptType.CLTVMultisig].includes(
-            policy.type,
-        )
+        ![
+            TapscriptType.Multisig,
+            TapscriptType.CSVMultisig,
+            TapscriptType.CLTVMultisig,
+            TapscriptType.ConditionMultisig,
+        ].includes(policy.type)
     )
         throw new Error("unsupported local spend policy");
     const signers: string[] = policy.params.pubkeys.map((key: Uint8Array) => hex.encode(key));

@@ -778,18 +778,21 @@ style and have not been backfilled.
   reconciliation or for a retry of the same proposal, so a wallet repository
   journals exactly one native execution. That limit is intentional for now.
 
-- **Opt-in SDK-native execution for a bounded delegatee template subset.**
-  NativeExecutor imports, funds and restores one-input, full-principal offchain
-  covenant plans through the existing wallet, builder and ContractManager. Locked
-  contracts stay outside generic payment selection and unsupported template
-  features reject before funding, including hash-conditioned leaves and
-  covenants that check a transaction version, locktime or input/output count
-  the executor's one-input, three-output transaction does not meet. A
-  position funded from asset-bearing coins stays spendable when the funding
-  transaction's asset packet assigns nothing to it. `delegate()` registers the
-  template and variables captured at import and watches under the ID the
-  delegatee returns. RestDelegateeProvider adds generic template and
-  watch endpoints beside the unchanged legacy DelegateProvider.
+- **Opt-in SDK-native execution of Executor `template/v1` templates.**
+  NativeExecutor imports a one-input, full-principal `virtual` template that the
+  server and the emulator sign alone, builds its spend with the SDK's port of
+  the Executor's template engine, and dry-runs the covenant through its port of
+  the emulator VM before funding and before each emulator submission, which
+  carries no wallet signature. Hash-conditioned leaves, such as a VHTLC's
+  non-interactive claim, are supported; `proof` and `onchain` templates, a
+  cosigner key and a supplied taptree are refused at import. Funding, restore
+  and the locked contract go through the existing wallet, builder and
+  ContractManager. A position funded from asset-bearing coins stays spendable
+  when the funding transaction's asset packet assigns nothing to it.
+  `delegate()` seals the template's sealed variables to the Executor's
+  encryption key and registers its artifacts, the template and a delegation.
+  RestExecutorProvider adds artifact and template registration and lookup, and
+  reports the Executor's `encryptionPubkey`.
 - **Native execution can await persistence before emulator dispatch.** The
   optional beforeEmulatorSubmit callback receives immutable exact proposal bytes;
   rejection prevents submission. It does not establish server acceptance or retry

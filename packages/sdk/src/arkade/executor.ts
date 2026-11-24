@@ -1,181 +1,326 @@
 import { hex } from "@scure/base";
-import { ScriptNum } from "@scure/btc-signer";
-import { canSpendOffchain, type IWallet } from "../wallet";
+import { equalBytes } from "@scure/btc-signer/utils.js";
+import { canSpendOffchain, type IWallet, normalizeVtxo } from "../wallet";
 import { toXOnly } from "../utils/keys";
 import { resolvePrevTxs } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
+import {
+    buildOffchainTx,
+    submitViaEmulator,
+    type EmulatorSubmitOptions,
+    type OffchainTx,
+} from "../utils/arkTransaction";
+import {
+    ConditionWitness,
+    getArkPsbtFields,
+    PrevArkTxField,
+    setArkPsbtField,
+    VtxoTaprootTree,
+} from "../utils/unknownFields";
+import type { CSVMultisigTapscript } from "../script/tapscript";
 import { Extension } from "../extension";
-import { Packet as AssetPacket } from "../extension/asset";
-import type { DelegateeProvider, DelegateeDelegation } from "../providers/delegatee";
+import { vmExtensionCodec } from "../extension/vmCodec";
+import { evenOwnerKey } from "../contracts/handlers/executor";
+import {
+    type ExecutorDelegation,
+    type ExecutorProvider,
+    ExecutorRequestError,
+} from "../providers/executor";
 import { programFromArtifact, type ContractArtifact } from "./artifact";
 import { Arkade, ArkadeContract, type ArkadeParamValue, type ArkadeSpendResult } from "./contract";
-import { resolveAsm, resolveTimelockValue, type ArkadeFunction, type Program } from "./program";
-import { ArkadeScript, type ArkadeScriptOP } from "./script";
+import { ARKADE_TYPE_ENCODINGS } from "./program";
 import * as BigNum from "./bignum";
-import type { EmulatorSubmitOptions } from "../utils/arkTransaction";
+import {
+    type Action,
+    compile,
+    type ContractKeys,
+    decode,
+    decodeArtifact,
+    type Document,
+    type Instance,
+    instantiate,
+    type Template,
+} from "./template";
+import { seal } from "./template/ecies";
+import { emulateOffchainTx, ExecutionError } from "./vm";
 
-type ObjectValue = Record<string, unknown>;
-type DelegationBinding = {
+/** What a contract row persists to rebuild its template offline and delegate it. */
+interface Saved {
+    version: 2;
+    /** The canonical template/v1 text. */
     document: string;
-    artifact: string;
-    artifactReference: boolean;
-    variables: Readonly<Record<string, string>>;
-};
-const scriptNum = ScriptNum(undefined, true);
+    /** The artifacts the document references, by id, as JSON text. */
+    artifacts: Record<string, string>;
+    /** Lowercase hex; a sealed variable holds its plaintext. */
+    variables: Record<string, string>;
+    templateId: string;
+    spendId: string;
+}
+
+interface Prepared {
+    doc: Document;
+    template: Template;
+    instance: Instance;
+}
+
+/** A coin a template spends; `tx` is the raw transaction that created it. */
+export interface NativeCoin {
+    txid: string;
+    vout: number;
+    value: number;
+    tx: Uint8Array;
+}
+
 const executionTails = new WeakMap<IWallet, Promise<unknown>>();
+const utf8 = new TextEncoder();
+const text = new TextDecoder();
+const HEX = /^(?:[0-9a-f]{2})*$/;
+const ID = /^[0-9a-f]{64}$/;
+const FUTURE = 2 ** 40;
+const SAVED_KEYS = "artifacts,document,spendId,templateId,variables,version";
 
-function object(value: unknown, allowed: string[], required: string[] = []): ObjectValue {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new Error("NativeExecutor: expected an object");
-    }
-    const result = value as ObjectValue;
-    for (const key of Object.keys(result)) {
-        if (!allowed.includes(key)) throw new Error(`NativeExecutor: unsupported field '${key}'`);
-    }
-    for (const key of required) {
-        if (!Object.hasOwn(result, key)) throw new Error(`NativeExecutor: missing '${key}'`);
-    }
-    return result;
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === "object" && !Array.isArray(v);
+
+const strings = (v: unknown): v is Record<string, string> =>
+    isRecord(v) && Object.values(v).every((s) => typeof s === "string");
+
+const isLegacy = (v: unknown): boolean => isRecord(v) && isRecord(v.plan) && v.plan.version === 1;
+
+function jsonText(value: unknown, what: string): string {
+    if (typeof value === "string") return value;
+    const encoded = JSON.stringify(value);
+    if (typeof encoded !== "string") throw new Error(`NativeExecutor: ${what} is not JSON`);
+    return encoded;
 }
 
-function bytes(value: unknown, variables: Record<string, string>): Uint8Array {
-    if (typeof value !== "string") throw new Error("NativeExecutor: expected a hex binding");
-    const match = /^<([a-zA-Z_][a-zA-Z0-9_]*)>$/.exec(value);
-    const encoded = match ? variables[match[1]] : value;
-    if (encoded === undefined || !/^(?:[0-9a-f]{2})*$/.test(encoded)) {
-        throw new Error(`NativeExecutor: invalid or unbound hex '${value}'`);
-    }
-    return hex.decode(encoded);
-}
-
-function taproot(destination: Uint8Array): Uint8Array {
-    if (destination.length !== 34 || destination[0] !== 0x51 || destination[1] !== 0x20) {
-        throw new Error("NativeExecutor: destination must be a Taproot output script");
-    }
-    return destination;
-}
-
-const comparisons: Record<string, (actual: bigint, bound: bigint) => boolean> = {
-    NUMEQUAL: (a, b) => a === b,
-    NUMEQUALVERIFY: (a, b) => a === b,
-    NUMNOTEQUAL: (a, b) => a !== b,
-    LESSTHAN: (a, b) => a < b,
-    LESSTHANOREQUAL: (a, b) => a <= b,
-    GREATERTHAN: (a, b) => a > b,
-    GREATERTHANOREQUAL: (a, b) => a >= b,
-};
-
-function scriptNumber(op: ArkadeScriptOP | undefined): bigint | undefined {
-    if (typeof op === "number") return BigInt(op);
-    if (!(op instanceof Uint8Array)) return undefined;
-    try {
-        return BigNum.decode(op);
-    } catch {
-        return undefined;
-    }
-}
-
-/**
- * The SDK cannot evaluate a covenant, so a check on a transaction field the executor fixes is
- * accepted only as `<field> <number> <comparison>` whose result must hold; any other use rejects.
- */
-function covenantShape(fn: ArkadeFunction, args: Record<string, ArkadeParamValue>): void {
-    // What buildOffchainTx produces for one input paying payout + extension + anchor.
-    const fields: Record<string, bigint> = {
-        INSPECTVERSION: 3n,
-        INSPECTLOCKTIME:
-            fn.tapscript.cltv === undefined ? 0n : resolveTimelockValue(fn.tapscript.cltv, args),
-        INSPECTNUMINPUTS: 1n,
-        INSPECTNUMOUTPUTS: 3n,
-    };
-    const ops = ArkadeScript.decode(resolveAsm(fn.arkadeScript!.asm, args));
-    for (const [i, op] of ops.entries()) {
-        if (typeof op !== "string" || !Object.hasOwn(fields, op)) continue;
-        const bound = scriptNumber(ops[i + 1]);
-        const compare = ops[i + 2];
-        const enforced =
-            compare === "NUMEQUALVERIFY" || ops[i + 3] === "VERIFY" || i + 3 === ops.length;
-        if (
-            bound === undefined ||
-            typeof compare !== "string" ||
-            !Object.hasOwn(comparisons, compare) ||
-            !enforced ||
-            !comparisons[compare](fields[op], bound)
-        ) {
-            throw new Error(
-                "NativeExecutor: the covenant checks the transaction version, locktime or input/output count in a form the executor cannot satisfy",
-            );
-        }
-    }
-}
-
-function nativeFunction(
-    program: Program,
-    name: string,
-    args: Record<string, ArkadeParamValue>,
-): void {
-    const fn = Object.hasOwn(program.functions, name) ? program.functions[name] : undefined;
-    if (
-        !fn?.arkadeScript ||
-        fn.group !== name ||
-        Object.values(program.functions).filter((f) => f.group === name).length !== 1 ||
-        fn.arkadeScript.inputs?.length ||
-        fn.tapscript.inputs?.length ||
-        fn.arkadeScript.witness?.length ||
-        fn.tapscript.witness?.length ||
-        fn.tapscript.signatures?.length ||
-        fn.tapscript.asm?.length ||
-        fn.tapscript.csv ||
-        fn.tapscript.emulator !== name ||
-        fn.tapscript.signers.some((s) => s !== "$server")
-    ) {
+function readSaved(value: unknown): Saved {
+    if (value === undefined) throw new Error("NativeExecutor: no persisted native execution plan");
+    if (isLegacy(value)) {
         throw new Error(
-            "NativeExecutor: the selected leaf requires unsupported conditions, witnesses, signers or CSV",
+            "NativeExecutor: this contract holds a native execution plan in the unreleased pre-release format; re-import the template",
         );
     }
-    covenantShape(fn, args);
-}
-
-function hasPlan(saved: unknown): saved is { plan: unknown } {
-    return !!saved && typeof saved === "object" && Object.hasOwn(saved, "plan");
-}
-
-function readPlan(value: unknown): { functionName: string; destination: Uint8Array } {
-    const plan = object(
-        value,
-        ["version", "functionName", "destinationHex"],
-        ["version", "functionName", "destinationHex"],
-    );
-    if (plan.version !== 1)
-        throw new Error("NativeExecutor: unsupported native execution plan version");
-    if (typeof plan.functionName !== "string" || !plan.functionName) {
-        throw new Error("NativeExecutor: invalid native execution function");
+    if (
+        !isRecord(value) ||
+        Object.keys(value).sort().join() !== SAVED_KEYS ||
+        value.version !== 2 ||
+        typeof value.document !== "string" ||
+        typeof value.templateId !== "string" ||
+        !ID.test(value.templateId) ||
+        typeof value.spendId !== "string" ||
+        !ID.test(value.spendId) ||
+        !strings(value.artifacts) ||
+        !strings(value.variables)
+    ) {
+        throw new Error("NativeExecutor: unsupported native execution plan");
     }
+    return value as unknown as Saved;
+}
+
+const sameVariables = (a: Record<string, string>, b: Record<string, string>) =>
+    JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
+
+/** decode → compile → instantiate the watch, refusing what the wallet cannot spend alone. */
+function prepare(saved: Saved, keys: ContractKeys): Prepared {
+    const doc = decode(utf8.encode(saved.document));
+    const given = doc.artifactIds.filter((id) => Object.hasOwn(saved.artifacts, id));
+    const template = compile(
+        doc,
+        new Map(given.map((id) => [id, decodeArtifact(utf8.encode(saved.artifacts[id]))])),
+    );
+    if (template.type !== "virtual") {
+        throw new Error(
+            `NativeExecutor: ${template.type} templates are built by the template engine but not proven natively yet`,
+        );
+    }
+    if (template.inputs.length !== 1) {
+        throw new Error("NativeExecutor: exactly one input is supported");
+    }
+    const [input] = template.inputs;
+    if (
+        !input.selected.arkade ||
+        !input.selectedLeaf.asm.some((token) => token.startsWith("<EMULATOR_KEY:"))
+    ) {
+        throw new Error(
+            "NativeExecutor: the spent leaf has no covenant for the emulator to co-sign",
+        );
+    }
+    if (template.requiredKeys.cosigner) {
+        throw new Error("NativeExecutor: the template needs the Executor's cosigner key");
+    }
+    if (input.contract.taptree !== undefined) {
+        throw new Error(
+            "NativeExecutor: a supplied taptree cannot be stored as an arkade contract",
+        );
+    }
+    const variables: Record<string, Uint8Array> = {};
+    for (const [name, value] of Object.entries(saved.variables)) {
+        if (typeof value !== "string" || !HEX.test(value)) {
+            throw new Error(`NativeExecutor: variable '${name}' is not lowercase hex`);
+        }
+        variables[name] = hex.decode(value);
+    }
+    const instance = instantiate(template, { keys, variables });
+    instance.offlineSpend(false);
+    return { doc, template, instance };
+}
+
+// programFromArtifact wants each witness item's per-type encoding (raw-32 for bytes32) where
+// template/v1 also allows raw; witness metadata never reaches the taproot tree.
+function withoutEncodings(artifact: ContractArtifact): ContractArtifact {
     return {
-        functionName: plan.functionName,
-        destination: taproot(bytes(plan.destinationHex, {})),
+        ...artifact,
+        functions: artifact.functions.map((fn) => ({
+            ...fn,
+            leaves: fn.leaves.map((leaf) => ({
+                ...leaf,
+                witness: leaf.witness?.map(({ encoding: _, ...item }) => item),
+            })),
+        })),
     };
 }
 
-/** An imported template, persisted with its existing Arkade contract. */
-export interface NativeExecution {
-    readonly contract: ArkadeContract;
-    readonly functionName: string;
-    readonly destination: Uint8Array;
+/** The input contract as the "arkade" handler re-derives it; it must lock the engine's script. */
+function arkadeContract(arkade: Arkade, saved: Saved, { template, instance }: Prepared) {
+    const name = template.inputs[0].name;
+    const inputs = JSON.parse(saved.document).inputs as {
+        name: string;
+        contract: { definition: Record<string, unknown> };
+    }[];
+    const definition = inputs.find((i) => i.name === name)!.contract.definition;
+    const artifact = Object.hasOwn(definition, "artifact")
+        ? JSON.parse(saved.artifacts[definition.artifact as string])
+        : definition;
+    const bound: Record<string, ArkadeParamValue> = {};
+    for (const { value: raw, ...field } of instance.contractArguments(0)) {
+        const encoding = ARKADE_TYPE_ENCODINGS[field.type as keyof typeof ARKADE_TYPE_ENCODINGS];
+        bound[field.name] =
+            encoding === "scriptnum"
+                ? BigNum.decode(raw)
+                : field.type === "pubkey"
+                  ? toXOnly(raw, field.name)
+                  : raw;
+    }
+    const contract = arkade.contract(programFromArtifact(withoutEncodings(artifact)), bound);
+    if (!equalBytes(contract.pkScript, instance.pkScript(0))) {
+        throw new Error(
+            "NativeExecutor: the template's contract does not derive as an arkade contract",
+        );
+    }
+    return contract;
 }
 
 /**
- * SDK-native execution of a deliberately bounded delegateed-template/v1 subset:
- * one offchain input, a zero-argument covenant, and one full-value output.
- * Unsupported schedules, secrets, asset routes, expressions and packet policies
- * fail closed. Batch intents continue to use Wallet.settle/Batch and its durable
- * intent repository. No second wallet, repository, scheduler or daemon is created.
+ * The executor's BuildOffchain + forEmulator: `action`'s outputs as they are, each input's leaf,
+ * taptree and condition witness from the logical PSBT, and the transaction that created its coin.
+ */
+export function nativeOffchainTx(
+    action: Action,
+    coins: readonly NativeCoin[],
+    checkpoint: CSVMultisigTapscript.Type,
+): OffchainTx {
+    const logical = Transaction.fromPSBT(action.psbt);
+    const inputs = coins.map((coin, i) => {
+        const leaf = logical.getInput(i).tapLeafScript?.[0];
+        const [tapTree] = getArkPsbtFields(logical, i, VtxoTaprootTree);
+        if (!leaf || !tapTree) {
+            throw new Error(`NativeExecutor: template input ${i} lacks its leaf or taptree`);
+        }
+        return {
+            txid: coin.txid,
+            vout: coin.vout,
+            value: coin.value,
+            tapLeafScript: leaf,
+            tapTree,
+        };
+    });
+    const outputs = Array.from({ length: logical.outputsLength }, (_, k) => logical.getOutput(k));
+    const spent = coins.reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+    const paid = outputs.reduce((sum, output) => sum + (output.amount ?? 0n), 0n);
+    // offchain.BuildTxs, not BuildTxsWithFee
+    if (paid !== spent) throw new Error(`NativeExecutor: the template pays ${paid} of ${spent}`);
+    const offchain = buildOffchainTx(inputs, outputs, checkpoint);
+    coins.forEach((coin, i) => {
+        const [witness] = getArkPsbtFields(logical, i, ConditionWitness);
+        if (witness) {
+            setArkPsbtField(offchain.arkTx, i, ConditionWitness, witness);
+            setArkPsbtField(offchain.checkpoints[i], 0, ConditionWitness, witness);
+        }
+        setArkPsbtField(offchain.arkTx, i, PrevArkTxField, coin.tx);
+    });
+    return offchain;
+}
+
+/** Builds the spend of `coin` and runs it as the emulator's EmulateOffchainTx would. */
+function dryRun(
+    { instance }: Prepared,
+    coin: NativeCoin & { expiry?: number; createdAt?: number },
+    dust: bigint,
+    checkpoint: CSVMultisigTapscript.Type,
+    now?: number,
+): OffchainTx {
+    const { txid, vout, tx, expiry, createdAt } = coin;
+    const action = instance.build(
+        [{ txid, vout, tx, amount: BigInt(coin.value), expiry, createdAt }],
+        { dust },
+    );
+    const offchain = nativeOffchainTx(action, [coin], checkpoint);
+    const requests = emulateOffchainTx({
+        arkPsbt: offchain.arkTx.toPSBT(),
+        checkpoints: offchain.checkpoints.map((c) => c.toPSBT()),
+        vtxoExpiries: new Map(
+            coin.expiry === undefined ? [] : [[`${coin.txid}:${coin.vout}`, BigInt(coin.expiry)]],
+        ),
+        codec: vmExtensionCodec,
+        now: now === undefined ? undefined : BigInt(now),
+    });
+    if (requests.length === 0) throw new Error("the emulator has nothing to sign");
+    return offchain;
+}
+
+function reason(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    for (let e: unknown = error; e instanceof Error; e = e.cause) {
+        if (e instanceof ExecutionError) return `${e.opcode} at position ${e.position}: ${message}`;
+    }
+    return message;
+}
+
+/** Whether the Executor already holds the template, active; a template id names one document. */
+async function installed(remote: Required<ExecutorProvider>, id: string): Promise<boolean> {
+    try {
+        const found = await remote.getTemplate(id);
+        if (found.id !== id) {
+            throw new Error(`NativeExecutor: the Executor returned template ${found.id} for ${id}`);
+        }
+        if (found.status !== "active") {
+            throw new Error(`NativeExecutor: template ${id} is ${found.status} on the Executor`);
+        }
+        return true;
+    } catch (error) {
+        if (error instanceof ExecutorRequestError && error.status === 404) return false;
+        throw error;
+    }
+}
+
+/** An imported template, persisted with its Arkade contract. */
+export interface NativeExecution {
+    readonly contract: ArkadeContract;
+    /** The function whose leaf the template spends. */
+    readonly functionName: string;
+    readonly templateId: string;
+    readonly spendId: string;
+    readonly type: "virtual";
+}
+
+/**
+ * Runs a template/v1 `virtual` spend of one coin in the wallet, as the Executor would build it,
+ * after a dry run of its covenant; or hands the same template to an Executor. Funding goes through
+ * the wallet and the contract through its existing contract manager.
  */
 export class NativeExecutor {
-    private readonly imported = new WeakMap<
-        NativeExecution,
-        { destination: Uint8Array; delegation?: DelegationBinding }
-    >();
+    private readonly imported = new WeakMap<NativeExecution, Prepared & { saved: Saved }>();
 
     constructor(
         readonly arkade: Arkade,
@@ -192,127 +337,43 @@ export class NativeExecutor {
         return manager;
     }
 
+    /**
+     * `document` is template/v1 JSON, as an object or text; `variables` are lowercase hex, a sealed
+     * one as its plaintext. Refuses anything but a one-input `virtual` spend the server and the
+     * emulator sign alone.
+     */
     async importTemplate(
         document: unknown,
-        artifacts: Readonly<Record<string, ContractArtifact>> = {},
-        variables: Record<string, string> = {},
+        opts: {
+            artifacts?: Readonly<Record<string, string | object>>;
+            variables: Readonly<Record<string, string>>;
+        },
     ): Promise<NativeExecution> {
         if (!this.arkade.indexer) throw new Error("NativeExecutor: an indexer is required");
-        const t = object(
-            document,
-            ["format", "type", "variables", "inputs", "outputs", "fees", "packets"],
-            ["format", "type", "inputs", "outputs", "packets"],
-        );
-        if (t.format !== "delegateed-template/v1" || t.type !== "offchain") {
-            throw new Error(
-                "NativeExecutor: only delegateed-template/v1 offchain templates are supported",
-            );
-        }
-        const declarations = object(t.variables ?? {}, Object.keys((t.variables ?? {}) as object));
-        for (const [name, type] of Object.entries(declarations)) {
-            if (!["pubkey", "bytes", "bytes20", "bytes32", "int", "bool"].includes(String(type))) {
-                throw new Error(`NativeExecutor: unsupported variable type '${type}'`);
-            }
-            bytes(`<${name}>`, variables);
-        }
-        for (const name of Object.keys(variables)) {
-            if (!Object.hasOwn(declarations, name))
-                throw new Error(`NativeExecutor: undeclared variable '${name}'`);
-        }
-        if (
-            !Array.isArray(t.inputs) ||
-            t.inputs.length !== 1 ||
-            !Array.isArray(t.outputs) ||
-            t.outputs.length !== 1
-        ) {
-            throw new Error("NativeExecutor: exactly one input and one output are supported");
-        }
-        const input = object(
-            t.inputs[0],
-            ["name", "contract", "spend", "schedule"],
-            ["name", "contract", "spend"],
-        );
-        if (typeof input.name !== "string" || !input.name)
-            throw new Error("NativeExecutor: invalid input name");
-        if (input.schedule !== undefined) {
-            const schedule = object(input.schedule, ["immediate"], ["immediate"]);
-            if (schedule.immediate !== true)
-                throw new Error("NativeExecutor: only immediate execution is supported");
-        }
-        const construction = object(input.contract, ["definition", "arguments"], ["definition"]);
-        const definition = construction.definition as ObjectValue;
-        const artifact =
-            definition && Object.hasOwn(definition, "artifact")
-                ? artifacts[String(object(definition, ["artifact"], ["artifact"]).artifact)]
-                : (construction.definition as ContractArtifact);
-        if (!artifact) throw new Error("NativeExecutor: missing compiler artifact");
-        const program = programFromArtifact(artifact);
-        const bindings = object(
-            construction.arguments ?? {},
-            artifact.constructorInputs.map((p) => p.name),
-        );
-        const args: Record<string, ArkadeParamValue> = {};
-        for (const param of artifact.constructorInputs) {
-            const raw = bytes(bindings[param.name], variables);
-            if (param.type === "int" || param.type === "bool")
-                args[param.name] = scriptNum.decode(raw);
-            else if (param.type === "pubkey") args[param.name] = toXOnly(raw, param.name);
-            else if (["bytes", "bytes20", "bytes32"].includes(param.type)) args[param.name] = raw;
-            else throw new Error(`NativeExecutor: unsupported constructor type '${param.type}'`);
-        }
-        const spend = object(input.spend, ["function", "leaf"], ["function", "leaf"]);
-        const group = artifact.functions.find((f) => f.name === spend.function);
-        if (
-            !group?.arkade ||
-            group.arkade.inputs.length ||
-            group.leaves.length !== 1 ||
-            group.leaves[0].name !== spend.leaf
-        ) {
-            throw new Error("NativeExecutor: expected one zero-argument covenant leaf");
-        }
-        const functionName = String(spend.function);
-        nativeFunction(program, functionName, args);
-        const contract = this.arkade.contract(program, args);
-        const output = object(
-            t.outputs[0],
-            ["name", "index", "value", "locking"],
-            ["name", "index", "value", "locking"],
-        );
-        if (typeof output.name !== "string" || output.index !== 0)
-            throw new Error("NativeExecutor: expected output index 0");
-        const value = object(output.value, ["from"], ["from"]);
-        if (value.from !== input.name)
-            throw new Error("NativeExecutor: output must preserve the input's full value");
-        let destination: Uint8Array;
-        if (typeof output.locking === "string") destination = bytes(output.locking, variables);
-        else {
-            const locking = object(output.locking, ["from"], ["from"]);
-            if (locking.from !== input.name)
-                throw new Error("NativeExecutor: unknown locking source");
-            destination = contract.pkScript;
-        }
-        taproot(destination);
-        if (t.fees !== undefined) {
-            const fees = object(t.fees, ["from", "max"], ["from", "max"]);
-            if (fees.from !== input.name || fees.max !== 0)
-                throw new Error("NativeExecutor: only zero-fee offchain execution is supported");
-        }
-        const packets = object(t.packets, ["output_index"], ["output_index"]);
-        if (packets.output_index !== 1)
-            throw new Error("NativeExecutor: emulator extension must be output 1");
-        const delegation: DelegationBinding = {
-            document: JSON.stringify(document),
-            artifact: JSON.stringify(artifact),
-            artifactReference: Object.hasOwn(definition, "artifact"),
-            variables: Object.freeze({ ...variables }),
+        const emulator = this.arkade.emulatorKey;
+        if (!emulator) throw new Error("NativeExecutor: an emulator is required");
+        const doc = decode(utf8.encode(jsonText(document, "the template")));
+        const given = opts?.artifacts ?? {};
+        const saved: Saved = {
+            version: 2,
+            document: text.decode(doc.canonical),
+            artifacts: Object.fromEntries(
+                doc.artifactIds
+                    .filter((id) => Object.hasOwn(given, id))
+                    .map((id) => [id, jsonText(given[id], `artifact ${id}`)]),
+            ),
+            variables: { ...opts?.variables },
+            templateId: doc.id,
+            spendId: doc.spendId,
         };
-        destination = destination.slice();
+        const prepared = prepare(saved, { server: evenOwnerKey(this.arkade.serverKey), emulator });
+        const contract = arkadeContract(this.arkade, saved, prepared);
         const metadata = () => ({
             genericallySpendable: false,
             nativeExecution: {
-                document: JSON.parse(delegation.document),
-                variables: { ...delegation.variables },
-                plan: { version: 1, functionName, destinationHex: hex.encode(destination) },
+                ...saved,
+                artifacts: { ...saved.artifacts },
+                variables: { ...saved.variables },
             },
         });
         return this.serialize(async () => {
@@ -329,122 +390,198 @@ export class NativeExecutor {
             if (registered.metadata?.genericallySpendable === true) {
                 throw new Error("NativeExecutor: existing contract permits generic spending");
             }
-            if (!hasPlan(registered.metadata?.nativeExecution)) {
-                // An earlier register() or on() saved the row without a plan; restore() needs one.
+            const stored = registered.metadata?.nativeExecution;
+            if (stored === undefined || isLegacy(stored)) {
+                // A row from register() or on() has no plan; a pre-release one restore() refuses.
                 registered = await manager.updateContract(registered.script, {
                     metadata: { ...registered.metadata, ...metadata() },
                 });
             }
-            const saved = registered.metadata?.nativeExecution;
-            if (!hasPlan(saved)) {
-                throw new Error("NativeExecutor: native execution plan was not persisted");
-            }
-            const plan = readPlan(saved.plan);
+            const plan = readSaved(registered.metadata?.nativeExecution);
             if (
-                plan.functionName !== functionName ||
-                hex.encode(plan.destination) !== hex.encode(destination)
+                plan.templateId !== saved.templateId ||
+                !sameVariables(plan.variables, saved.variables)
             ) {
                 throw new Error(
                     "NativeExecutor: conflicting native execution plan for existing contract",
                 );
             }
-            return this.own(contract, functionName, destination, delegation);
+            return this.own(contract, saved, prepared);
         });
     }
 
-    /**
-     * Restore the authoritative versioned plan using the contract's stored keys.
-     * The original template is inspection data; no registration or refresh occurs.
-     * Re-import the original template, artifacts and variables before remote delegation.
-     */
+    /** Rebuild an imported template from its contract row, under the keys stored with it. */
     async restore(script: string): Promise<NativeExecution> {
         const manager = await this.manager();
-        const lookup = hex.encode(taproot(bytes(script, {})));
-        const [stored] = await manager.getContracts({ script: lookup });
-        if (!stored || stored.script !== lookup)
+        if (typeof script !== "string" || !/^5120[0-9a-f]{64}$/.test(script)) {
+            throw new Error("NativeExecutor: expected a Taproot output script");
+        }
+        const [stored] = await manager.getContracts({ script });
+        if (!stored || stored.script !== script) {
             throw new Error("NativeExecutor: contract not found");
-        if (stored.type !== "arkade")
+        }
+        if (stored.type !== "arkade") {
             throw new Error("NativeExecutor: expected an arkade contract");
+        }
         if (stored.metadata?.genericallySpendable === true) {
             throw new Error("NativeExecutor: existing contract permits generic spending");
         }
-        const saved = stored.metadata?.nativeExecution;
-        if (!hasPlan(saved)) throw new Error("NativeExecutor: no persisted native execution plan");
-        const { functionName, destination } = readPlan(saved.plan);
+        const saved = readSaved(stored.metadata?.nativeExecution);
         const contract = ArkadeContract.fromContract(this.arkade, stored);
-        if (hex.encode(contract.pkScript) !== lookup || contract.address !== stored.address) {
+        if (hex.encode(contract.pkScript) !== script || contract.address !== stored.address) {
             throw new Error(
                 "NativeExecutor: restored contract does not match stored script or address",
             );
         }
-        nativeFunction(contract.program, functionName, contract.args);
-        return this.own(contract, functionName, destination);
+        const { serverKey, emulatorKey } = contract.keys;
+        if (!emulatorKey)
+            throw new Error("NativeExecutor: the stored contract has no emulator key");
+        const prepared = prepare(saved, { server: evenOwnerKey(serverKey), emulator: emulatorKey });
+        if (
+            prepared.doc.id !== saved.templateId ||
+            prepared.doc.spendId !== saved.spendId ||
+            hex.encode(prepared.instance.pkScript(0)) !== script
+        ) {
+            throw new Error(
+                "NativeExecutor: the stored template does not derive the stored contract",
+            );
+        }
+        return this.own(contract, saved, prepared);
     }
 
-    private own(
-        contract: ArkadeContract,
-        functionName: string,
-        destination: Uint8Array,
-        delegation?: DelegationBinding,
-    ): NativeExecution {
-        const execution = Object.freeze({
+    private own(contract: ArkadeContract, saved: Saved, prepared: Prepared): NativeExecution {
+        const execution: NativeExecution = Object.freeze({
             contract,
-            functionName,
-            destination: destination.slice(),
+            functionName: prepared.template.inputs[0].function,
+            templateId: saved.templateId,
+            spendId: saved.spendId,
+            type: "virtual",
         });
-        this.imported.set(execution, { destination: destination.slice(), delegation });
+        this.imported.set(execution, { ...prepared, saved });
         return execution;
     }
 
-    /** Preserve Wallet.send's coin selection, reservations, signing and recovery. */
+    /**
+     * Dry-runs the covenant against a coin of exactly `amount` at the current time and at 2^40, each
+     * with a near and a far expiry, and refuses when every probe fails; then pays through the wallet.
+     */
     async fund(execution: NativeExecution, amount: number): Promise<string> {
         await this.manager();
-        this.check(execution);
-        return this.wallet.send({ address: execution.contract.address, amount });
+        const prepared = this.check(execution);
+        if (!Number.isSafeInteger(amount) || amount <= 0) {
+            throw new Error("NativeExecutor: invalid amount");
+        }
+        const { dust } = await this.arkade.arkProvider.getInfo();
+        const source = new Transaction({ version: 3 });
+        source.addInput({ txid: new Uint8Array(32), index: 0 });
+        source.addOutput({ script: prepared.instance.pkScript(0), amount: BigInt(amount) });
+        const coin = { txid: source.id, vout: 0, value: amount, tx: source.toBytes() };
+        const now = Math.floor(Date.now() / 1000);
+        let failure: unknown;
+        for (const clock of [now, FUTURE]) {
+            for (const expiry of [now, FUTURE]) {
+                try {
+                    dryRun(
+                        prepared,
+                        { ...coin, expiry, createdAt: now },
+                        dust,
+                        this.arkade.checkpoint,
+                        clock,
+                    );
+                } catch (error) {
+                    failure ??= error;
+                    continue;
+                }
+                return this.wallet.send({ address: execution.contract.address, amount });
+            }
+        }
+        throw new Error(
+            `NativeExecutor: no probed time or expiry lets the covenant pass: ${reason(failure)}`,
+            { cause: failure },
+        );
     }
 
-    /** Delegate the template and variables captured at import; restored handles require re-import. */
+    /** Registers the template's artifacts, the template and a delegation of it with `provider`. */
     async delegate(
         execution: NativeExecution,
-        provider: DelegateeProvider,
-        expiresAt = 0,
-    ): Promise<DelegateeDelegation> {
-        if (!Number.isSafeInteger(expiresAt) || expiresAt < 0)
+        provider: ExecutorProvider,
+        expiresAt?: number,
+    ): Promise<ExecutorDelegation> {
+        if (expiresAt !== undefined && (!Number.isSafeInteger(expiresAt) || expiresAt < 0)) {
             throw new Error("NativeExecutor: invalid expiry");
-        this.check(execution);
-        const binding = this.imported.get(execution)!.delegation;
-        if (!binding) throw new Error("NativeExecutor: re-import the template before delegation");
+        }
+        const { saved, doc, template } = this.check(execution);
+        if (!provider.getTemplate) {
+            throw new Error("NativeExecutor: the Executor provider cannot look up templates");
+        }
+        const remote = provider as Required<ExecutorProvider>;
         await this.manager();
-        const info = await provider.getInfo();
-        const key = (encoded: string) => hex.encode(toXOnly(hex.decode(encoded), "delegatee key"));
+        const info = await remote.getInfo();
+        const xOnly = (key: string | Uint8Array, label: string) =>
+            hex.encode(toXOnly(typeof key === "string" ? hex.decode(key) : key, label));
         const { serverKey, emulatorKey } = execution.contract.keys;
         if (
-            key(info.serverPubkey) !== hex.encode(toXOnly(serverKey, "contract server key")) ||
             !emulatorKey ||
-            key(info.emulatorPubkey) !== hex.encode(toXOnly(emulatorKey, "contract emulator key"))
+            xOnly(info.serverPubkey, "Executor server key") !== xOnly(serverKey, "server key") ||
+            xOnly(info.emulatorPubkey, "Executor emulator key") !==
+                xOnly(emulatorKey, "emulator key")
+        ) {
+            throw new Error("NativeExecutor: the Executor's keys differ from the contract's");
+        }
+        const variables = { ...saved.variables };
+        if (template.sealed.size > 0) {
+            if (!info.encryptionPubkey) {
+                throw new Error("NativeExecutor: the Executor cannot receive sealed variables");
+            }
+            const recipient = hex.decode(info.encryptionPubkey);
+            for (const name of template.sealed) {
+                const plaintext = hex.decode(variables[name]);
+                variables[name] = hex.encode(seal(recipient, plaintext, saved.templateId));
+            }
+        }
+        if (!(await installed(remote, saved.templateId))) {
+            if (!provider.registerArtifact || !provider.registerTemplate) {
+                throw new Error("NativeExecutor: the Executor provider cannot register templates");
+            }
+            try {
+                for (const id of doc.artifactIds) {
+                    const artifact = await remote.registerArtifact(saved.artifacts[id]);
+                    if (artifact.id !== id) {
+                        throw new Error(
+                            `NativeExecutor: the Executor registered artifact ${id} as ${artifact.id}`,
+                        );
+                    }
+                }
+                const registered = await remote.registerTemplate(saved.document);
+                if (registered.id !== saved.templateId) {
+                    throw new Error(
+                        `NativeExecutor: the Executor registered template ${saved.templateId} as ${registered.id}`,
+                    );
+                }
+            } catch (error) {
+                // Executors from v0.0.5 register templates on their admin port only by default.
+                if (error instanceof ExecutorRequestError && error.status === 403) {
+                    throw new Error(
+                        `NativeExecutor: template ${saved.templateId} is not installed on the Executor, which does not accept uploads; its operator must install it`,
+                        { cause: error },
+                    );
+                }
+                throw error;
+            }
+        }
+        const delegation = await remote.registerDelegation(saved.templateId, variables, {
+            expiresAt,
+        });
+        const [input, ...more] = delegation.inputs;
+        if (
+            delegation.templateId !== saved.templateId ||
+            more.length > 0 ||
+            input?.script !== hex.encode(execution.contract.pkScript) ||
+            input.address !== execution.contract.address ||
+            delegation.status !== "active"
         ) {
             throw new Error(
-                "NativeExecutor: delegatee keys differ from the contract's stored keys",
-            );
-        }
-        const document = JSON.parse(binding.document);
-        if (binding.artifactReference) {
-            const artifact = await provider.registerArtifact(JSON.parse(binding.artifact));
-            if (typeof artifact.id !== "string" || !artifact.id)
-                throw new Error("NativeExecutor: invalid registered artifact ID");
-            document.inputs[0].contract.definition = { artifact: artifact.id };
-        }
-        const template = await provider.registerTemplate(document);
-        if (typeof template.id !== "string" || !template.id)
-            throw new Error("NativeExecutor: invalid registered template ID");
-        const delegation = await provider.registerDelegation(
-            template.id,
-            { ...binding.variables },
-            expiresAt,
-        );
-        if (delegation.address !== execution.contract.address || delegation.status !== "active") {
-            throw new Error(
-                "NativeExecutor: delegatee returned a different address or an inactive watch",
+                "NativeExecutor: the Executor returned another template, script or address, or an inactive delegation",
             );
         }
         return delegation;
@@ -469,7 +606,7 @@ export class NativeExecutor {
         const beforeEmulatorSubmit = options?.beforeEmulatorSubmit;
         return this.serialize(async () => {
             const manager = await this.manager();
-            this.check(execution);
+            const prepared = this.check(execution);
             await manager.refreshOutpoints([sourceOutpoint]);
             const coin = (await execution.contract.getUtxos()).find(
                 (v) => v.txid === sourceOutpoint.txid && v.vout === sourceOutpoint.vout,
@@ -483,8 +620,9 @@ export class NativeExecutor {
                     "NativeExecutor: position is missing, spent, expired, swept, unrolled or contains assets",
                 );
             }
-            const indexer = this.arkade.indexer;
+            const { indexer, emulator } = this.arkade;
             if (!indexer) throw new Error("NativeExecutor: an indexer is required");
+            if (!emulator) throw new Error("NativeExecutor: an emulator is required");
             const sourceTx = (await resolvePrevTxs([coin.txid], indexer)).get(coin.txid)!;
             const source = Transaction.fromRaw(sourceTx);
             const output = source.getOutput(coin.vout);
@@ -503,26 +641,40 @@ export class NativeExecutor {
                 const script = source.getOutput(i).script;
                 if (!script || !Extension.isExtension(script)) continue;
                 if (++extensions > 1) throw new Error("NativeExecutor: multiple source extensions");
-                for (const packet of Extension.fromBytes(script).getPackets()) {
-                    // Wallet.send may put asset change beside a BTC-only position.
-                    if (packet instanceof AssetPacket) {
-                        if (packet.groups.some((g) => g.outputs.some((o) => o.vout === coin.vout)))
-                            throw new Error("NativeExecutor: position carries assets");
-                        continue;
-                    }
-                    // Delegatee regenerates emulator (1) and consumes advertisement (5).
-                    // This subset cannot route assets or application packets.
-                    if (packet.type() !== 1 && packet.type() !== 5) {
-                        throw new Error(
-                            `NativeExecutor: source carries unsupported packet ${packet.type()}`,
-                        );
-                    }
+                const assets = Extension.fromBytes(script).getAssetPacket();
+                if (assets?.groups.some((g) => g.outputs.some((o) => o.vout === coin.vout))) {
+                    throw new Error("NativeExecutor: position carries assets");
                 }
             }
-            const result = await execution.contract.functions[execution.functionName]()
-                .from({ ...coin, sourceTx })
-                .to(this.imported.get(execution)!.destination.slice(), BigInt(coin.value))
-                .send({ beforeEmulatorSubmit });
+            const { dust } = await this.arkade.arkProvider.getInfo();
+            const { expiresAt, expiresAtHeight, createdAt } = normalizeVtxo(coin);
+            // the indexer's one expiry scalar, as the emulator reads it: seconds, else a height
+            const expiry = expiresAt ? Math.floor(expiresAt.getTime() / 1000) : expiresAtHeight;
+            const born = new Date(createdAt).getTime();
+            let offchain: OffchainTx;
+            try {
+                offchain = dryRun(
+                    prepared,
+                    {
+                        txid: coin.txid,
+                        vout: coin.vout,
+                        value: coin.value,
+                        tx: sourceTx,
+                        expiry,
+                        createdAt: Number.isNaN(born) ? undefined : Math.floor(born / 1000),
+                    },
+                    dust,
+                    this.arkade.checkpoint,
+                );
+            } catch (error) {
+                throw new Error(`NativeExecutor: the spend fails its dry run: ${reason(error)}`, {
+                    cause: error,
+                });
+            }
+            const result = await submitViaEmulator(emulator, offchain, undefined, {
+                inputIndexes: [],
+                beforeEmulatorSubmit,
+            });
             try {
                 await manager.refreshOutpoints([sourceOutpoint]);
                 await manager.refreshVtxos();
@@ -543,8 +695,9 @@ export class NativeExecutor {
         return run;
     }
 
-    private check(execution: NativeExecution): void {
-        if (!this.imported.has(execution))
-            throw new Error("NativeExecutor: template belongs to another executor");
+    private check(execution: NativeExecution): Prepared & { saved: Saved } {
+        const state = this.imported.get(execution);
+        if (!state) throw new Error("NativeExecutor: template belongs to another executor");
+        return state;
     }
 }

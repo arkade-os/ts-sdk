@@ -1,283 +1,429 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { base64, hex } from "@scure/base";
 import {
-    SingleKey,
-    Transaction,
+    ContractManager,
+    CSVMultisigTapscript,
     Extension,
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
+    networks,
+    Transaction,
     UnknownPacket,
-    type Contract,
+    type ArkadeInfo,
     type IWallet,
+    type VirtualCoin,
 } from "../src";
 import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../src/extension/asset";
-import {
-    BigNum,
-    NativeExecutor,
-    type Arkade,
-    type ArkadeContract,
-    type ContractArtifact,
-} from "../src/arkade";
-import escrowJson from "./fixtures/arkadec/escrow.artifact.json";
-import savingsJson from "./proof/native-executor/timed-savings.json";
+import { Arkade, NativeExecutor, type NativeExecution } from "../src/arkade";
+import { decode } from "../src/arkade/template";
+import { decodeArtifact } from "../src/arkade/template/abi";
+import { ExecutorRequestError, type ExecutorTemplateDetails } from "../src/providers/executor";
+import { open } from "../src/arkade/template/ecies";
+import { createMockIndexerProvider } from "./contracts/helpers";
+import locktime from "./fixtures/template-v1/locktime.json";
+import onchainVector from "./fixtures/template-v1/onchain.json";
+import plainLeaf from "./fixtures/template-v1/virtual-plain-leaf.json";
+import proofVector from "./fixtures/template-v1/proof-plain-leaf.json";
+import suppliedTaptree from "./fixtures/template-v1/supplied-taptree-undelegated.json";
+import vhtlc from "./fixtures/template-v1/vhtlc-claim-plaintext.json";
+import witnessOrder from "./fixtures/template-v1/witness-order.json";
 
-const artifact: ContractArtifact = {
-    contractName: "Return",
-    constructorInputs: [{ name: "payout", type: "bytes32" }],
-    functions: [
-        {
-            name: "release",
-            arkade: { inputs: [], asm: ["OP_1"] },
-            leaves: [
-                {
-                    name: "release",
-                    asm: [
-                        "<SERVER_KEY>",
-                        "OP_CHECKSIGVERIFY",
-                        "<EMULATOR_KEY:release>",
-                        "OP_CHECKSIG",
-                    ],
-                },
-            ],
-        },
-    ],
-};
-const payout = "11".repeat(32);
-const template = () => ({
-    format: "delegateed-template/v1",
-    type: "offchain",
-    inputs: [
-        {
-            name: "funds",
-            contract: { definition: { artifact: "artifact-id" }, arguments: { payout } },
-            spend: { function: "release", leaf: "release" },
-        },
-    ],
-    outputs: [{ name: "payout", index: 0, value: { from: "funds" }, locking: `5120${payout}` }],
-    packets: { output_index: 1 },
+const { keys, variables } = locktime.bindings;
+const utf8 = new TextEncoder();
+const DEADLINE = "4102444800"; // 2100-01-01
+const managers: ContractManager[] = [];
+
+afterEach(async () => {
+    for (const manager of managers.splice(0)) await manager.dispose();
+    vi.restoreAllMocks();
 });
 
+/** The locktime vector's template with the spent covenant replaced. */
+function document(covenant = ["1"], edit?: (doc: any) => void) {
+    const doc: any = structuredClone(locktime.template);
+    doc.inputs[0].contract.definition.functions[1].arkade.asm = covenant;
+    edit?.(doc);
+    return doc;
+}
+
 async function setup() {
-    const manager = {
-        refreshOutpoints: vi.fn(),
-        refreshVtxos: vi.fn(),
-        updateContract: vi.fn(async (_script: string, updates: Partial<Contract>) =>
-            Object.assign(registered, updates),
-        ),
-    };
-    const coin = { txid: "aa".repeat(32), vout: 0, value: 50_000, isSpent: false, assets: [] };
-    const source = new Transaction();
-    source.addInput({ txid: "99".repeat(32), index: 0 });
-    source.addOutput({ script: hex.decode(`5120${payout}`), amount: 50_000n });
-    coin.txid = source.id;
-    const indexer = {
-        getVirtualTxs: vi.fn(async () => ({ txs: [base64.encode(source.toPSBT())] })),
-    };
-    let unspent = true;
-    const send = vi.fn(async () => {
-        unspent = false;
-        return { txid: "bb".repeat(32) };
+    const indexer = createMockIndexerProvider();
+    const manager = await ContractManager.create({
+        indexerProvider: indexer,
+        contractRepository: new InMemoryContractRepository(),
+        walletRepository: new InMemoryWalletRepository(),
     });
-    const builder = { from: vi.fn().mockReturnThis(), to: vi.fn().mockReturnThis(), send };
-    const registered: Contract = {
-        script: `5120${payout}`,
-        address: "independent-address",
-        type: "arkade",
-        params: {},
-        state: "active",
-        createdAt: 1,
-        metadata: { genericallySpendable: false },
-    };
-    const key = await SingleKey.fromHex("01".repeat(32)).compressedPublicKey();
-    const contract = {
-        address: "independent-address",
-        pkScript: hex.decode(`5120${payout}`),
-        keys: { serverKey: key.slice(1), emulatorKey: key },
-        register: vi.fn(async () => registered),
-        getUtxos: vi.fn(async () => (unspent ? [coin] : [])),
-        functions: { release: vi.fn(() => builder) },
-    };
-    const arkade = {
-        contractManager: manager,
-        contract: vi.fn(() => contract as unknown as ArkadeContract),
-        serverKey: key.slice(1),
-        emulatorKey: key,
+    managers.push(manager);
+    vi.spyOn(manager, "refreshOutpoints").mockResolvedValue(undefined);
+    vi.spyOn(manager, "refreshVtxos").mockResolvedValue(undefined);
+    const coins: VirtualCoin[] = [];
+    const spent = new Set<string>();
+    const sources = new Map<string, Transaction>();
+    const submitTx = vi.fn(async (arkTx: string, checkpointTxs: string[]) => {
+        for (const encoded of checkpointTxs) {
+            const input = Transaction.fromPSBT(base64.decode(encoded)).getInput(0);
+            spent.add(`${hex.encode(input.txid!)}:${input.index}`);
+        }
+        return { signedArkTx: arkTx, signedCheckpointTxs: checkpointTxs };
+    });
+    vi.mocked(indexer.getVirtualTxs).mockImplementation(async (txids: string[]) => ({
+        txs: txids.flatMap((id) =>
+            sources.has(id) ? [base64.encode(sources.get(id)!.toPSBT())] : [],
+        ),
+    }));
+    const server = hex.decode(keys.server).subarray(1);
+    const arkade = await Arkade.connect({
+        arkade: {
+            getInfo: async () =>
+                ({
+                    signerPubkey: keys.server,
+                    dust: 330n,
+                    checkpointTapscript: hex.encode(
+                        CSVMultisigTapscript.encode({
+                            timelock: { type: "blocks", value: 10n },
+                            pubkeys: [server],
+                        }).script,
+                    ),
+                }) as ArkadeInfo,
+        },
+        emulator: { submitTx } as never,
+        emulatorPubkey: keys.emulator,
+        network: networks.regtest,
         indexer,
-    } as unknown as Arkade;
+        contractManager: manager,
+    });
     const wallet = {
         getContractManager: vi.fn(async () => manager),
         send: vi.fn(async () => "funding"),
     };
     const executor = new NativeExecutor(arkade, wallet as unknown as IWallet);
-    const importTemplate = (doc: unknown = template()) =>
-        executor.importTemplate(doc, { "artifact-id": artifact });
-    return {
-        executor,
-        manager,
-        coin,
-        source,
-        indexer,
-        send,
-        builder,
-        contract,
-        registered,
-        arkade,
-        wallet,
-        key: hex.encode(key),
-        importTemplate,
+    /** Serves the coins of every funded position to the execution's contract. */
+    const track = (execution: NativeExecution) =>
+        vi
+            .spyOn(execution.contract, "getUtxos")
+            .mockImplementation(async () => coins.filter((c) => !spent.has(`${c.txid}:${c.vout}`)));
+    /** One transaction paying `values` to the contract, and its coins. */
+    const fund = (
+        execution: NativeExecution,
+        values = [50_000],
+        edit?: (tx: Transaction) => void,
+    ) => {
+        const source = new Transaction();
+        source.addInput({ txid: "99".repeat(32), index: coins.length });
+        for (const value of values) {
+            source.addOutput({ script: execution.contract.pkScript, amount: BigInt(value) });
+        }
+        edit?.(source);
+        sources.set(source.id, source);
+        const funded = values.map(
+            (value, vout): VirtualCoin => ({
+                txid: source.id,
+                vout,
+                value,
+                script: hex.encode(execution.contract.pkScript),
+                createdAt: new Date(0),
+                isUnrolled: false,
+                status: { confirmed: false },
+            }),
+        );
+        coins.push(...funded);
+        track(execution);
+        return funded;
     };
+    const importTemplate = (doc: unknown = document(), vars: Record<string, string> = variables) =>
+        executor.importTemplate(doc, { variables: vars });
+    return { indexer, manager, submitTx, arkade, wallet, executor, track, fund, importTemplate };
 }
 
-async function twoPositions() {
-    const s = await setup();
-    s.source.addOutput({ script: hex.decode(`5120${payout}`), amount: 50_000n });
-    s.coin.txid = s.source.id;
-    const other = { ...s.coin, vout: 1 };
-    s.contract.getUtxos.mockImplementation(async () =>
-        [s.coin, other].filter((coin) => !coin.isSpent),
-    );
-    return { ...s, other };
-}
+const scriptOf = (execution: NativeExecution) => hex.encode(execution.contract.pkScript);
 
-function remote(s: Awaited<ReturnType<typeof setup>>) {
+function remote(execution: NativeExecution) {
     return {
-        getInfo: vi.fn(async () => ({ serverPubkey: s.key, emulatorPubkey: s.key })),
-        registerArtifact: vi.fn(async (_document: unknown) => ({ id: "artifact-id" })),
-        registerTemplate: vi.fn(async (_document: unknown) => ({ id: "renew-template" })),
-        registerDelegation: vi.fn(async (_id: string, _variables?: Record<string, string>) => ({
-            address: s.contract.address,
-            status: "active",
+        getInfo: vi.fn(async () => ({
+            version: "test",
+            network: "regtest",
+            cosignerPubkey: keys.cosigner,
+            serverPubkey: keys.server,
+            emulatorPubkey: keys.emulator,
+            encryptionPubkey: undefined as string | undefined,
         })),
+        listTemplates: vi.fn(),
+        getDelegation: vi.fn(),
+        getArtifact: vi.fn(),
+        getTemplate: vi.fn(async (_id: string): Promise<ExecutorTemplateDetails> => {
+            throw new ExecutorRequestError("Failed to get Executor template (404)", 404);
+        }),
+        registerArtifact: vi.fn(async (document: string | object) => ({
+            id: decodeArtifact(utf8.encode(document as string)).id,
+            document: document as string,
+        })),
+        registerTemplate: vi.fn(async (document: string | object) => ({
+            id: decode(utf8.encode(document as string)).id,
+            status: "active",
+            document: document as string,
+            artifactIds: [],
+            params: [],
+            type: "virtual",
+        })),
+        registerDelegation: vi.fn(
+            async (templateId: string, vars: Record<string, string>, _options?: object) => ({
+                id: 1,
+                templateId,
+                variables: vars,
+                status: "active" as const,
+                inputs: [
+                    {
+                        name: "coin",
+                        onchain: false,
+                        script: scriptOf(execution),
+                        address: execution.contract.address,
+                    },
+                ],
+            }),
+        ),
     };
 }
 
-describe("SDK native template execution", () => {
-    it("requires an explicit packet policy before constructing or registering a contract", async () => {
+describe("NativeExecutor import", () => {
+    it("imports a virtual template/v1 spend and registers its contract closed with a v2 plan", async () => {
         const s = await setup();
-        const doc: Record<string, unknown> = template();
-        delete doc.packets;
-        await expect(s.importTemplate(doc)).rejects.toThrow("NativeExecutor: missing 'packets'");
-        expect(s.arkade.contract).not.toHaveBeenCalled();
-        expect(s.contract.register).not.toHaveBeenCalled();
+        const execution = await s.importTemplate();
+        const doc = decode(utf8.encode(JSON.stringify(document())));
+        expect(execution).toEqual({
+            contract: execution.contract,
+            functionName: "release",
+            templateId: locktime.expected.template_id,
+            spendId: locktime.expected.spend_id,
+            type: "virtual",
+        });
+        expect(Object.isFrozen(execution)).toBe(true);
+        const [row] = await s.manager.getContracts({ script: scriptOf(execution) });
+        expect(row).toMatchObject({ type: "arkade", address: execution.contract.address });
+        expect(row.metadata).toEqual({
+            genericallySpendable: false,
+            nativeExecution: {
+                version: 2,
+                document: new TextDecoder().decode(doc.canonical),
+                artifacts: {},
+                variables,
+                templateId: doc.id,
+                spendId: doc.spendId,
+            },
+        });
+        expect(s.wallet.send).not.toHaveBeenCalled();
+    });
+
+    it("captures the document, artifacts and variables as they were at the call", async () => {
+        const s = await setup();
+        const definition = structuredClone(locktime.template.inputs[0].contract.definition);
+        const id = decodeArtifact(utf8.encode(JSON.stringify(definition))).id;
+        const doc = document(["1"], (d) => (d.inputs[0].contract.definition = { artifact: id }));
+        const artifacts = { [id]: definition };
+        const vars = { ...variables };
+        const pending = s.executor.importTemplate(doc, { artifacts, variables: vars });
+        doc.outputs[0].locking = `5120${"22".repeat(32)}`;
+        definition.functions[1].arkade!.asm = ["0"];
+        vars.dest = "33".repeat(32);
+        const execution = await pending;
+        const [row] = await s.manager.getContracts({ script: scriptOf(execution) });
+        const saved = row.metadata!.nativeExecution as Record<string, any>;
+        expect(saved.variables).toEqual(variables);
+        expect(JSON.parse(saved.artifacts[id]).functions[1].arkade.asm).toEqual(["1"]);
+        expect(JSON.parse(saved.document).outputs[0].locking).toBe("5120<dest>");
+    });
+
+    const proofTemplate = () => proofVector.template;
+    it.each([
+        ["a proof template", proofTemplate, {}, /proof templates are built .* not proven natively/],
+        ["an onchain template", () => onchainVector.template, {}, /onchain templates/],
+        [
+            "a second input",
+            () =>
+                document(["1"], (d) => {
+                    d.inputs.push({ ...structuredClone(d.inputs[0]), name: "more" });
+                    d.outputs.push({ ...structuredClone(d.outputs[0]), name: "more", index: 1 });
+                    d.outputs[1].value.from = "more";
+                    d.packets.output_index = 2;
+                }),
+            variables,
+            /exactly one input/,
+        ],
+        [
+            "a leaf with an uninjected signature",
+            () => document(["1"], (d) => (d.inputs[0].spend = { function: "exit", leaf: "exit" })),
+            variables,
+            /inject/,
+        ],
+        [
+            "a leaf the owner must sign",
+            () =>
+                document(["1"], (d) => {
+                    const leaf = d.inputs[0].contract.definition.functions[1].leaves[0];
+                    leaf.asm.splice(3, 0, "<owner>", "OP_CHECKSIGVERIFY");
+                    leaf.witness.push({
+                        name: "ownerSig",
+                        type: "signature",
+                        encoding: "schnorr-64",
+                        injected: true,
+                    });
+                }),
+            variables,
+            /signer <owner> is not available offline/,
+        ],
+        ["a leaf without a covenant", () => plainLeaf.template, {}, /no covenant/],
+        [
+            "the Executor's cosigner key",
+            () => document(["<COSIGNER_KEY>", "OP_DROP", "1"]),
+            variables,
+            /cosigner key/,
+        ],
+        [
+            "a supplied taptree",
+            () => suppliedTaptree.template,
+            suppliedTaptree.bindings.variables,
+            /supplied taptree/,
+        ],
+        [
+            "a leaf the arkade contract handler cannot express",
+            () => witnessOrder.template,
+            {},
+            /programFromArtifact/,
+        ],
+        ["a variable that is not lowercase hex", document, { ...variables, dest: "AB" }, /hex/],
+        ["an undeclared variable", document, { ...variables, extra: "00" }, /variables/],
+    ])("refuses %s before registering or funding", async (_, doc, vars, error) => {
+        const s = await setup();
+        const create = vi.spyOn(s.manager, "createContract");
+        await expect(s.importTemplate(doc(), vars as Record<string, string>)).rejects.toThrow(
+            error,
+        );
+        expect(create).not.toHaveBeenCalled();
+        expect(s.wallet.send).not.toHaveBeenCalled();
+    });
+
+    it("re-imports the same plan and refuses another plan over the same contract", async () => {
+        const s = await setup();
+        const first = await s.importTemplate();
+        const again = await s.importTemplate();
+        expect(again.contract.pkScript).toEqual(first.contract.pkScript);
+        await expect(
+            s.importTemplate(document(), { ...variables, dest: "44".repeat(32) }),
+        ).rejects.toThrow(/conflicting native execution plan/);
     });
 
     it.each([
-        -1,
-        0.5,
-        Number.NaN,
-        Number.POSITIVE_INFINITY,
-        Number.NEGATIVE_INFINITY,
-        Number.MAX_SAFE_INTEGER + 1,
-    ])(
-        "rejects invalid delegation expiry %s before any custom provider call",
-        async (expiresAt) => {
-            const s = await setup();
-            const execution = await s.importTemplate();
-            const provider = remote(s);
-            await expect(
-                s.executor.delegate(execution, provider as never, expiresAt),
-            ).rejects.toThrow(/invalid expiry/);
-            for (const method of Object.values(provider)) expect(method).not.toHaveBeenCalled();
-        },
-    );
-
-    it.each([undefined, 0, 4_102_444_800, Number.MAX_SAFE_INTEGER])(
-        "forwards valid delegation expiry %s unchanged",
-        async (expiresAt) => {
-            const s = await setup();
-            const execution = await s.importTemplate();
-            const provider = remote(s);
-            await s.executor.delegate(execution, provider as never, expiresAt);
-            expect(provider.registerDelegation).toHaveBeenCalledExactlyOnceWith(
-                "renew-template",
-                {},
-                expiresAt ?? 0,
-            );
-        },
-    );
-
-    it("watches under the template ID the delegatee returns, with the imported variables", async () => {
+        [
+            "a different address",
+            { address: "tark1different" },
+            /does not match derived script or address/,
+        ],
+        ["an open spend gate", { metadata: { genericallySpendable: true } }, /generic spending/],
+    ])("refuses an existing row with %s", async (_, update, error) => {
         const s = await setup();
-        const doc = { ...template(), variables: { destination: "bytes" } };
-        doc.outputs[0].locking = "<destination>";
-        const execution = await s.executor.importTemplate(
-            doc,
-            { "artifact-id": artifact },
-            { destination: `5120${payout}` },
-        );
-        const provider = remote(s);
-        provider.registerTemplate.mockResolvedValue({ id: "registered-template" });
-        await s.executor.delegate(execution, provider as never);
-        expect(provider.registerDelegation).toHaveBeenCalledExactlyOnceWith(
-            "registered-template",
-            { destination: `5120${payout}` },
-            0,
-        );
+        const execution = await s.importTemplate();
+        await s.manager.updateContract(scriptOf(execution), update);
+        await expect(s.importTemplate()).rejects.toThrow(error);
     });
 
-    it.each(["", undefined, 7])(
-        "rejects registered template ID %s before creating a remote watch",
-        async (id) => {
+    it("imports the VHTLC non-interactive claim with its sealed preimage as plaintext", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate(vhtlc.template, vhtlc.bindings.variables);
+        expect(execution.functionName).toBe("nonInteractiveClaim");
+        expect(execution.templateId).toBe(vhtlc.expected.template_id);
+    });
+});
+
+describe("NativeExecutor fund", () => {
+    it("pays through the wallet once the covenant passes its dry run", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        await expect(s.executor.fund(execution, 50_000)).resolves.toBe("funding");
+        expect(s.wallet.send).toHaveBeenCalledExactlyOnceWith({
+            address: execution.contract.address,
+            amount: 50_000,
+        });
+    });
+
+    it("refuses a covenant that fails every probe, naming the opcode and position", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate(document(["0", "OP_VERIFY", "1"]));
+        const clock = Date.now;
+        await expect(s.executor.fund(execution, 50_000)).rejects.toThrow(
+            /no probed time or expiry lets the covenant pass: OP_VERIFY at position 1/,
+        );
+        expect(Date.now).toBe(clock);
+        expect(s.wallet.send).not.toHaveBeenCalled();
+    });
+
+    it("funds a covenant that passes only in the future, which execute refuses today", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate(document([DEADLINE, "OP_CHECKTIME"]));
+        const clock = Date.now;
+        await s.executor.fund(execution, 50_000);
+        expect(Date.now).toBe(clock);
+        expect(s.wallet.send).toHaveBeenCalledOnce();
+        const [coin] = s.fund(execution);
+        const hook = vi.fn();
+        await expect(
+            s.executor.execute(execution, coin, { beforeEmulatorSubmit: hook }),
+        ).rejects.toThrow(/fails its dry run/);
+        expect(hook).not.toHaveBeenCalled();
+        expect(s.submitTx).not.toHaveBeenCalled();
+    });
+
+    it("refuses an amount the template cannot pay out", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        await expect(s.executor.fund(execution, 100)).rejects.toThrow(/no probed time/);
+        expect(s.wallet.send).not.toHaveBeenCalled();
+    });
+
+    it.each([0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
+        "refuses the invalid amount %s",
+        async (amount) => {
             const s = await setup();
             const execution = await s.importTemplate();
-            const provider = remote(s);
-            provider.registerTemplate.mockResolvedValue({ id } as never);
-            await expect(s.executor.delegate(execution, provider as never)).rejects.toThrow(
-                /invalid registered template ID/,
-            );
-            expect(provider.registerDelegation).not.toHaveBeenCalled();
+            await expect(s.executor.fund(execution, amount)).rejects.toThrow(/invalid amount/);
+            expect(s.wallet.send).not.toHaveBeenCalled();
         },
     );
+});
 
-    it.each([false, true])(
-        "delegates only captured documents, artifacts and variables (inline: %s)",
-        async (inline) => {
-            const s = await setup();
-            const capturedArtifact = structuredClone(artifact);
-            const doc: any = { ...template(), variables: { destination: "bytes" } };
-            doc.outputs[0].locking = "<destination>";
-            if (inline) doc.inputs[0].contract.definition = capturedArtifact;
-            const expected = structuredClone(doc);
-            const variables = { destination: `5120${payout}` };
-            const pending = s.executor.importTemplate(
-                doc,
-                { "artifact-id": capturedArtifact },
-                variables,
-            );
-            doc.outputs[0].locking = `5120${"22".repeat(32)}`;
-            capturedArtifact.functions[0].arkade!.asm = ["OP_0"];
-            variables.destination = `5120${"33".repeat(32)}`;
-            const execution = await pending;
-            const provider = remote(s);
-            provider.registerArtifact.mockResolvedValue({ id: "registered-artifact" });
-            if (!inline) expected.inputs[0].contract.definition.artifact = "registered-artifact";
-            await s.executor.delegate(execution, provider as never);
-            if (inline) expect(provider.registerArtifact).not.toHaveBeenCalled();
-            else expect(provider.registerArtifact).toHaveBeenCalledExactlyOnceWith(artifact);
-            expect(provider.registerTemplate).toHaveBeenCalledExactlyOnceWith(expected);
-            expect(provider.registerDelegation).toHaveBeenCalledWith(
-                "renew-template",
-                { destination: `5120${payout}` },
-                0,
-            );
-            expect(hex.encode(execution.destination)).toBe(`5120${payout}`);
-        },
-    );
-
-    it("keeps imported payout bytes private across exposed and builder mutations", async () => {
-        const s = await twoPositions();
+describe("NativeExecutor execute", () => {
+    it("submits through the emulator without a wallet signature and refreshes the coin", async () => {
+        const s = await setup();
         const execution = await s.importTemplate();
-        const expected = hex.decode(`5120${payout}`);
-        execution.destination.fill(0);
-        const received: Uint8Array[] = [];
-        s.builder.to.mockImplementation((script: Uint8Array) => {
-            received.push(script.slice());
-            script.fill(1);
-            return s.builder;
-        });
-        await s.executor.execute(execution, s.coin);
-        execution.destination.fill(2);
-        await s.executor.execute(execution, s.other);
-        expect(received).toEqual([expected, expected]);
-        expect(s.contract.pkScript).toEqual(expected);
+        const [coin] = s.fund(execution);
+        const hook = vi.fn();
+        const result = await s.executor.execute(execution, coin, { beforeEmulatorSubmit: hook });
+        const [arkTx, checkpointTxs] = s.submitTx.mock.calls[0];
+        const ark = Transaction.fromPSBT(base64.decode(arkTx));
+        expect(result.txid).toBe(ark.id);
+        expect(hook).toHaveBeenCalledExactlyOnceWith({ txid: ark.id, arkTx, checkpointTxs });
+        expect(hex.encode(ark.getOutput(0).script!)).toBe(`5120${variables.dest}`);
+        expect(ark.getOutput(0).amount).toBe(50_000n);
+        expect(ark.getInput(0).tapScriptSig ?? []).toEqual([]);
+        expect(s.manager.refreshOutpoints).toHaveBeenLastCalledWith([
+            { txid: coin.txid, vout: coin.vout },
+        ]);
+    });
+
+    it.each([
+        ["a timestamp", { expiresAt: new Date(Number(DEADLINE) * 1000) }, true],
+        ["a height", { expiresAtHeight: Number(DEADLINE) }, true],
+        ["no expiry", {}, false],
+    ])("hands the emulator the coin's expiry as %s", async (_, expiry, passes) => {
+        const s = await setup();
+        const execution = await s.importTemplate(
+            document(["OP_PUSHEXPIRY", DEADLINE, "OP_NUMEQUAL"]),
+        );
+        const [coin] = s.fund(execution);
+        Object.assign(coin, expiry);
+        const run = s.executor.execute(execution, coin);
+        if (passes) await expect(run).resolves.toBeDefined();
+        else await expect(run).rejects.toThrow(/fails its dry run: .*not found/);
+        expect(s.submitTx).toHaveBeenCalledTimes(passes ? 1 : 0);
     });
 
     it.each(["refreshOutpoints", "refreshVtxos"] as const)(
@@ -285,43 +431,41 @@ describe("SDK native template execution", () => {
         async (method) => {
             const s = await setup();
             const execution = await s.importTemplate();
+            const [coin] = s.fund(execution);
             const failure = new Error("indexer unavailable after acceptance");
             if (method === "refreshOutpoints") {
-                s.manager.refreshOutpoints
+                vi.mocked(s.manager.refreshOutpoints)
                     .mockResolvedValueOnce(undefined)
                     .mockRejectedValueOnce(failure);
-            } else s.manager.refreshVtxos.mockRejectedValueOnce(failure);
+            } else vi.mocked(s.manager.refreshVtxos).mockRejectedValueOnce(failure);
             const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
-            try {
-                await expect(s.executor.execute(execution, s.coin)).resolves.toEqual({
-                    txid: "bb".repeat(32),
-                });
-                expect(s.send).toHaveBeenCalledOnce();
-                await expect(s.executor.execute(execution, s.coin)).rejects.toThrow(/spent/);
-                expect(s.send).toHaveBeenCalledOnce();
-            } finally {
-                warning.mockRestore();
-            }
+            const result = await s.executor.execute(execution, coin);
+            expect(result.txid).toHaveLength(64);
+            expect(warning).toHaveBeenCalledOnce();
+            await expect(s.executor.execute(execution, coin)).rejects.toThrow(/spent/);
+            expect(s.submitTx).toHaveBeenCalledOnce();
         },
     );
 
     it("propagates pre-submit refresh and submission failures unchanged", async () => {
         const s = await setup();
         const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
         const refreshFailure = new Error("refresh before dispatch failed");
-        s.manager.refreshOutpoints.mockRejectedValueOnce(refreshFailure);
-        await expect(s.executor.execute(execution, s.coin)).rejects.toBe(refreshFailure);
-        expect(s.send).not.toHaveBeenCalled();
+        vi.mocked(s.manager.refreshOutpoints).mockRejectedValueOnce(refreshFailure);
+        await expect(s.executor.execute(execution, coin)).rejects.toBe(refreshFailure);
+        expect(s.submitTx).not.toHaveBeenCalled();
         const submitFailure = new Error("response lost");
-        s.send.mockRejectedValueOnce(submitFailure);
-        await expect(s.executor.execute(execution, s.coin)).rejects.toBe(submitFailure);
+        s.submitTx.mockRejectedValueOnce(submitFailure);
+        await expect(s.executor.execute(execution, coin)).rejects.toBe(submitFailure);
         expect(s.manager.refreshVtxos).not.toHaveBeenCalled();
     });
 
     it("captures a queued source before an earlier pre-submit hook fails without dispatch", async () => {
-        const s = await twoPositions();
+        const s = await setup();
         const execution = await s.importTemplate();
-        const point = { txid: s.coin.txid, vout: s.coin.vout };
+        const [coin, other] = s.fund(execution, [50_000, 50_000]);
+        const point = { txid: coin.txid, vout: coin.vout };
         const original = { ...point };
         let release!: () => void;
         const gate = new Promise<void>((resolve) => {
@@ -332,79 +476,64 @@ describe("SDK native template execution", () => {
             await gate;
             throw failure;
         });
-        const dispatch = vi.fn();
-        s.send.mockImplementation(async (...args: unknown[]) => {
-            const options = args[0] as {
-                beforeEmulatorSubmit?: (proposal: unknown) => Promise<void>;
-            };
-            await options.beforeEmulatorSubmit?.({
-                txid: s.source.id,
-                arkTx: base64.encode(s.source.toPSBT()),
-                checkpointTxs: [],
-            });
-            const input = s.builder.from.mock.lastCall![0];
-            const coin = [s.coin, s.other].find(
-                (coin) => coin.txid === input.txid && coin.vout === input.vout,
-            )!;
-            dispatch({ txid: coin.txid, vout: coin.vout });
-            coin.isSpent = true;
-            return { txid: "bb".repeat(32) };
-        });
         const first = s.executor.execute(execution, original, { beforeEmulatorSubmit: hook });
         const firstResult = expect(first).rejects.toBe(failure);
         await vi.waitFor(() => expect(hook).toHaveBeenCalledOnce());
         const second = s.executor.execute(execution, point);
-        point.vout = s.other.vout;
+        point.vout = other.vout;
         release();
         await firstResult;
         await second;
-        expect(dispatch).toHaveBeenCalledExactlyOnceWith(original);
-        expect(s.coin.isSpent).toBe(true);
-        expect(s.other.isSpent).toBe(false);
-        expect(point).toEqual({ ...original, vout: s.other.vout });
-        expect(Object.isFrozen(point)).toBe(false);
+        const spent = Transaction.fromPSBT(base64.decode(s.submitTx.mock.calls[0][1][0])).getInput(
+            0,
+        );
+        expect(s.submitTx).toHaveBeenCalledOnce();
+        expect({ txid: hex.encode(spent.txid!), vout: spent.index }).toEqual(original);
+        expect(point).toEqual({ ...original, vout: other.vout });
     });
 
-    it.each(["manager lookup", "send"])(
+    it.each(["manager lookup", "submit"])(
         "retains the original immutable refresh point during %s",
         async (stage) => {
-            const s = await twoPositions();
+            const s = await setup();
             const execution = await s.importTemplate();
-            const point = { txid: s.coin.txid, vout: s.coin.vout, label: "caller-owned" };
+            const [coin, other] = s.fund(execution, [50_000, 50_000]);
+            const point = { txid: coin.txid, vout: coin.vout, label: "caller-owned" };
             const original = { txid: point.txid, vout: point.vout };
             let release!: () => void;
             const gate = new Promise<void>((resolve) => {
                 release = resolve;
             });
             s.wallet.getContractManager.mockClear();
-            if (stage === "manager lookup")
+            const submit = s.submitTx.getMockImplementation()!;
+            if (stage === "manager lookup") {
                 s.wallet.getContractManager.mockImplementationOnce(async () => {
                     await gate;
                     return s.manager;
                 });
-            else
-                s.send.mockImplementationOnce(async () => {
+            } else {
+                s.submitTx.mockImplementationOnce(async (...args) => {
                     await gate;
-                    return { txid: "bb".repeat(32) };
+                    return submit(...args);
                 });
+            }
             const pending = s.executor.execute(execution, point);
             await vi.waitFor(() =>
                 expect(
-                    stage === "manager lookup" ? s.wallet.getContractManager : s.send,
+                    stage === "manager lookup" ? s.wallet.getContractManager : s.submitTx,
                 ).toHaveBeenCalledOnce(),
             );
-            point.vout = s.other.vout;
+            point.vout = other.vout;
             release();
             await pending;
-            expect(s.builder.from).toHaveBeenCalledWith(expect.objectContaining(original));
-            expect(s.manager.refreshOutpoints).toHaveBeenCalledTimes(2);
-            for (const [points] of s.manager.refreshOutpoints.mock.calls) {
+            const refresh = vi.mocked(s.manager.refreshOutpoints);
+            expect(refresh).toHaveBeenCalledTimes(2);
+            for (const [points] of refresh.mock.calls) {
                 expect(points).toEqual([original]);
                 expect(Object.isFrozen(points[0])).toBe(true);
                 expect(points[0]).not.toBe(point);
             }
-            expect(point).toEqual({ ...original, vout: s.other.vout, label: "caller-owned" });
-            expect(Object.isFrozen(point)).toBe(false);
+            expect(point).toEqual({ ...original, vout: other.vout, label: "caller-owned" });
         },
     );
 
@@ -431,20 +560,20 @@ describe("SDK native template execution", () => {
         await expect(pending).rejects.toThrow("invalid source outpoint");
         expect(s.wallet.getContractManager).not.toHaveBeenCalled();
         expect(s.manager.refreshOutpoints).not.toHaveBeenCalled();
-        expect(s.contract.getUtxos).not.toHaveBeenCalled();
         expect(s.indexer.getVirtualTxs).not.toHaveBeenCalled();
-        expect(s.send).not.toHaveBeenCalled();
+        expect(s.submitTx).not.toHaveBeenCalled();
     });
 
     it("rejects a throwing source getter immediately without poisoning a pending execution", async () => {
         const s = await setup();
         const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
         let release!: () => void;
         const gate = new Promise<void>((resolve) => {
             release = resolve;
         });
-        s.manager.refreshOutpoints.mockImplementationOnce(() => gate);
-        const valid = s.executor.execute(execution, s.coin);
+        vi.mocked(s.manager.refreshOutpoints).mockImplementationOnce(() => gate);
+        const valid = s.executor.execute(execution, coin);
         await vi.waitFor(() => expect(s.manager.refreshOutpoints).toHaveBeenCalledOnce());
         const failure = new Error("source getter failed");
         const point = {
@@ -457,256 +586,39 @@ describe("SDK native template execution", () => {
         expect(() => {
             invalid = s.executor.execute(execution, point);
         }).not.toThrow();
-        let rejected = false;
-        const rejection = invalid.catch((error) => {
-            expect(error).toBe(failure);
-            rejected = true;
-        });
-        try {
-            await vi.waitFor(() => expect(rejected).toBe(true));
-            await expect(s.executor.execute(execution, { txid: "bad", vout: 0 })).rejects.toThrow(
-                "invalid source outpoint",
-            );
-            expect(s.manager.refreshOutpoints).toHaveBeenCalledOnce();
-        } finally {
-            release();
-            await Promise.all([valid, rejection]);
-        }
-        expect(s.send).toHaveBeenCalledOnce();
-        expect(s.manager.refreshOutpoints).toHaveBeenCalledTimes(2);
-    });
-
-    it.each(["address", "script"] as const)(
-        "refuses funding when the registered %s differs from the derived contract",
-        async (field) => {
-            const s = await setup();
-            s.registered[field] =
-                field === "address" ? "different-address" : `5120${"22".repeat(32)}`;
-            const before = structuredClone(s.registered);
-            await expect(
-                s.importTemplate().then((execution) => s.executor.fund(execution, 50_000)),
-            ).rejects.toThrow(/registered contract does not match derived script or address/);
-            expect(s.wallet.send).not.toHaveBeenCalled();
-            expect(s.registered).toEqual(before);
-        },
-    );
-
-    it("refuses to fund a template whose existing contract permits generic spending", async () => {
-        const s = await setup();
-        s.registered.metadata = { genericallySpendable: true, legacy: "keep" };
-        const before = structuredClone(s.registered);
-        await expect(
-            s.importTemplate().then((execution) => s.executor.fund(execution, 50_000)),
-        ).rejects.toThrow(/existing contract permits generic spending/);
-        expect(s.wallet.send).not.toHaveBeenCalled();
-        expect(s.registered).toEqual(before);
-    });
-
-    it.each([undefined, false])("keeps the existing closed spend gate %s", async (gate) => {
-        const s = await setup();
-        s.registered.metadata = gate === undefined ? undefined : { genericallySpendable: gate };
-        await s.executor.fund(await s.importTemplate(), 50_000);
-        expect(s.wallet.send).toHaveBeenCalledOnce();
-        expect(s.registered.metadata?.genericallySpendable).toBe(false);
-    });
-
-    it("rejects an application packet rather than silently dropping its state", async () => {
-        const s = await setup();
-        s.source.addOutput(Extension.create([new UnknownPacket(2, new Uint8Array([1]))]).txOut());
-        s.coin.txid = s.source.id;
-        await expect(s.executor.execute(await s.importTemplate(), s.coin)).rejects.toThrow(
-            /unsupported packet 2/,
+        await expect(invalid).rejects.toBe(failure);
+        await expect(s.executor.execute(execution, { txid: "bad", vout: 0 })).rejects.toThrow(
+            "invalid source outpoint",
         );
-        expect(s.send).not.toHaveBeenCalled();
-    });
-
-    it.each([
-        [1, true],
-        [0, false],
-    ])("spends a position funded beside asset change at vout %i", async (assetVout, spends) => {
-        const s = await setup();
-        const group = AssetGroup.create(
-            AssetId.create("cc".repeat(32), 0),
-            null,
-            [AssetInput.create(0, 5n)],
-            [AssetOutput.create(assetVout, 5n)],
-            [],
-        );
-        s.source.addOutput({ script: hex.decode(`5120${"33".repeat(32)}`), amount: 1_000n });
-        s.source.addOutput(Extension.create([Packet.create([group])]).txOut());
-        s.coin.txid = s.source.id;
-        const run = s.executor.execute(await s.importTemplate(), s.coin);
-        if (spends) {
-            await run;
-            expect(s.send).toHaveBeenCalledOnce();
-        } else {
-            await expect(run).rejects.toThrow(/carries assets/);
-            expect(s.send).not.toHaveBeenCalled();
-        }
-    });
-
-    it("verifies the tracked amount against the actual creating transaction", async () => {
-        const s = await setup();
-        s.coin.value++;
-        await expect(s.executor.execute(await s.importTemplate(), s.coin)).rejects.toThrow(
-            /does not match/,
-        );
-        expect(s.send).not.toHaveBeenCalled();
-    });
-    it("rejects a CSV covenant before locking funds in an offchain-only template", async () => {
-        const s = await setup();
-        const csvArtifact = structuredClone(artifact);
-        csvArtifact.functions[0].leaves[0].asm.unshift("1", "OP_CHECKSEQUENCEVERIFY", "OP_DROP");
-        await expect(
-            s.executor.importTemplate(template(), { "artifact-id": csvArtifact }),
-        ).rejects.toThrow(/CSV/);
-        expect(s.contract.register).not.toHaveBeenCalled();
-    });
-
-    it("rejects a hash condition leaf without witness metadata before funding", async () => {
-        const s = await setup();
-        const guarded = structuredClone(artifact);
-        guarded.constructorInputs.push({ name: "lock", type: "bytes32" });
-        guarded.functions[0].leaves[0].asm.unshift("OP_SHA256", "<lock>", "OP_EQUAL", "OP_VERIFY");
-        const doc = template();
-        Object.assign(doc.inputs[0].contract.arguments, { lock: "22".repeat(32) });
-        await expect(s.executor.importTemplate(doc, { "artifact-id": guarded })).rejects.toThrow(
-            /conditions/,
-        );
-        expect(s.contract.register).not.toHaveBeenCalled();
-    });
-
-    it.each([
-        // Asserts nLockTime >= timeoutHeight, but the leaf has no CLTV to set it.
-        [
-            "escrow cancel",
-            escrowJson,
-            "cancel",
-            {
-                partyAPk: "02".repeat(32),
-                partyBPk: "03".repeat(32),
-                oraclePk: "04".repeat(32),
-                oracleMessageHash: "33".repeat(32),
-                partyAScript: payout,
-                partyBScript: "22".repeat(32),
-                settlementAmount: hex.encode(BigNum.encode(50_000n)),
-                timeoutHeight: "01",
-                exit: "64",
-            },
-        ],
-        // Asserts version 2 and two inputs, for a batch intent.
-        [
-            "timed-savings renew",
-            savingsJson,
-            "renew",
-            {
-                owner: "02".repeat(32),
-                payout,
-                releaseAt: hex.encode(BigNum.encode(1_700_000_000n)),
-                exitSequence: hex.encode(BigNum.encode(144n)),
-            },
-        ],
-    ])(
-        "rejects the %s covenant the executor's transaction cannot satisfy",
-        async (_, definition, fn, args) => {
-            const s = await setup();
-            const doc = template();
-            doc.inputs[0] = {
-                ...doc.inputs[0],
-                contract: { definition: definition as never, arguments: args as never },
-                spend: { function: fn, leaf: fn },
-            };
-            await expect(s.executor.importTemplate(doc)).rejects.toThrow(/covenant checks/);
-            expect(s.contract.register).not.toHaveBeenCalled();
-            expect(s.wallet.send).not.toHaveBeenCalled();
-        },
-    );
-
-    it.each([true, false])(
-        "checks a covenant locktime against the leaf's CLTV (CLTV leaf: %s)",
-        async (cltv) => {
-            const s = await setup();
-            const timed = structuredClone(artifact);
-            timed.constructorInputs.push({ name: "lock", type: "int" });
-            timed.functions[0].arkade!.asm = [
-                "OP_INSPECTLOCKTIME",
-                "<lock>",
-                "OP_GREATERTHANOREQUAL",
-            ];
-            if (cltv)
-                timed.functions[0].leaves[0].asm.unshift(
-                    "<lock>",
-                    "OP_CHECKLOCKTIMEVERIFY",
-                    "OP_DROP",
-                );
-            const doc = template();
-            Object.assign(doc.inputs[0].contract.arguments, {
-                lock: hex.encode(BigNum.encode(500n)),
-            });
-            const imported = s.executor.importTemplate(doc, { "artifact-id": timed });
-            if (cltv) await expect(imported).resolves.toBeDefined();
-            else await expect(imported).rejects.toThrow(/covenant checks/);
-        },
-    );
-
-    it("rejects an external signer before allowing funding", async () => {
-        const s = await setup();
-        const signed = structuredClone(artifact);
-        signed.constructorInputs.push({ name: "owner", type: "pubkey" });
-        signed.functions[0].leaves[0].asm.unshift("<owner>", "OP_CHECKSIGVERIFY");
-        const doc = template();
-        Object.assign(doc.inputs[0].contract.arguments, { owner: s.key });
-        await expect(s.executor.importTemplate(doc, { "artifact-id": signed })).rejects.toThrow(
-            /signers/,
-        );
-        expect(s.wallet.send).not.toHaveBeenCalled();
-    });
-
-    it("uses the existing wallet for funding and refreshes the exact consumed outpoint", async () => {
-        const s = await setup();
-        const execution = await s.importTemplate();
-        await s.executor.fund(execution, 50_000);
-        expect(s.wallet.send).toHaveBeenCalledWith({
-            address: "independent-address",
-            amount: 50_000,
-        });
-        expect(s.contract.register).toHaveBeenCalledWith({
-            metadata: {
-                genericallySpendable: false,
-                nativeExecution: {
-                    document: template(),
-                    variables: {},
-                    plan: { version: 1, functionName: "release", destinationHex: `5120${payout}` },
-                },
-            },
-        });
-        await s.executor.execute(execution, s.coin);
-        expect(s.manager.refreshOutpoints).toHaveBeenCalledWith([
-            { txid: s.coin.txid, vout: s.coin.vout },
-        ]);
+        expect(s.manager.refreshOutpoints).toHaveBeenCalledOnce();
+        release();
+        await valid;
+        expect(s.submitTx).toHaveBeenCalledOnce();
     });
 
     it("serializes competing attempts and never selects a replacement coin", async () => {
         const s = await setup();
         const execution = await s.importTemplate();
+        const [coin] = s.fund(execution, [50_000, 50_000]);
         const results = await Promise.allSettled([
-            s.executor.execute(execution, s.coin),
-            s.executor.execute(execution, s.coin),
+            s.executor.execute(execution, coin),
+            s.executor.execute(execution, coin),
         ]);
         expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
-        expect(s.send).toHaveBeenCalledTimes(1);
-        expect(s.indexer.getVirtualTxs).toHaveBeenCalledTimes(1);
-        expect(s.builder.to).toHaveBeenCalledWith(hex.decode(`5120${payout}`), 50_000n);
+        expect(s.submitTx).toHaveBeenCalledOnce();
+        expect(s.indexer.getVirtualTxs).toHaveBeenCalledOnce();
     });
 
     it("serializes executors sharing one wallet before re-reading the same position", async () => {
         const s = await setup();
         const other = new NativeExecutor(s.arkade, s.wallet as unknown as IWallet);
         const first = await s.importTemplate();
-        const second = await other.importTemplate(template(), { "artifact-id": artifact });
+        const second = await other.importTemplate(document(), { variables });
+        const [coin] = s.fund(first);
+        s.track(second);
         const results = await Promise.allSettled([
-            s.executor.execute(first, s.coin),
-            other.execute(second, s.coin),
+            s.executor.execute(first, coin),
+            other.execute(second, coin),
         ]);
         expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
         expect(results[1]).toMatchObject({
@@ -714,9 +626,7 @@ describe("SDK native template execution", () => {
                 message: expect.stringMatching(/position is missing/),
             }),
         });
-        expect(s.send).toHaveBeenCalledOnce();
-        expect(s.indexer.getVirtualTxs).toHaveBeenCalledOnce();
-        expect(s.contract.getUtxos).toHaveBeenCalledTimes(2);
+        expect(s.submitTx).toHaveBeenCalledOnce();
     });
 
     it("lets another wallet execute while one wallet is waiting for its position refresh", async () => {
@@ -724,42 +634,35 @@ describe("SDK native template execution", () => {
         const second = await setup();
         const firstExecution = await first.importTemplate();
         const secondExecution = await second.importTemplate();
+        const [firstCoin] = first.fund(firstExecution);
+        const [secondCoin] = second.fund(secondExecution);
         let release!: () => void;
         const gate = new Promise<void>((resolve) => {
             release = resolve;
         });
-        first.manager.refreshOutpoints.mockImplementationOnce(() => gate);
-        const pending = first.executor.execute(firstExecution, first.coin);
-        let completed = false;
-        const independent = second.executor.execute(secondExecution, second.coin).then(() => {
-            completed = true;
-        });
-        try {
-            await vi.waitFor(() => expect(completed).toBe(true));
-            expect(first.send).not.toHaveBeenCalled();
-            expect(second.send).toHaveBeenCalledOnce();
-        } finally {
-            release();
-            await Promise.all([pending, independent]);
-        }
-        expect(first.send).toHaveBeenCalledOnce();
+        vi.mocked(first.manager.refreshOutpoints).mockImplementationOnce(() => gate);
+        const pending = first.executor.execute(firstExecution, firstCoin);
+        await second.executor.execute(secondExecution, secondCoin);
+        expect(first.submitTx).not.toHaveBeenCalled();
+        expect(second.submitTx).toHaveBeenCalledOnce();
+        release();
+        await pending;
+        expect(first.submitTx).toHaveBeenCalledOnce();
     });
 
     it("continues the shared wallet queue after a pre-submit failure", async () => {
         const s = await setup();
-        const other = new NativeExecutor(s.arkade, s.wallet as unknown as IWallet);
-        const first = await s.importTemplate();
-        const second = await other.importTemplate(template(), { "artifact-id": artifact });
+        const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
         const failure = new Error("creating transaction unavailable");
-        s.indexer.getVirtualTxs.mockRejectedValueOnce(failure);
+        vi.mocked(s.indexer.getVirtualTxs).mockRejectedValueOnce(failure);
         const results = await Promise.allSettled([
-            s.executor.execute(first, s.coin),
-            other.execute(second, s.coin),
+            s.executor.execute(execution, coin),
+            s.executor.execute(execution, coin),
         ]);
         expect(results[0]).toMatchObject({ status: "rejected", reason: failure });
         expect(results[1].status).toBe("fulfilled");
-        expect(s.send).toHaveBeenCalledOnce();
-        expect(s.indexer.getVirtualTxs).toHaveBeenCalledTimes(2);
+        expect(s.submitTx).toHaveBeenCalledOnce();
     });
 
     it("refuses a second manager and another executor's imported handle", async () => {
@@ -771,104 +674,264 @@ describe("SDK native template execution", () => {
         await expect(s.importTemplate()).rejects.toThrow(/existing contract manager/);
     });
 
-    it("rejects asset-bearing positions instead of dropping assets", async () => {
+    it("refuses a position the indexer reports with assets", async () => {
         const s = await setup();
-        s.coin.assets.push({ assetId: "ab", amount: 1n } as never);
-        await expect(s.executor.execute(await s.importTemplate(), s.coin)).rejects.toThrow(
-            /contains assets/,
-        );
-        expect(s.send).not.toHaveBeenCalled();
+        const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
+        coin.assets = [{ assetId: "ab", amount: 1 } as never];
+        await expect(s.executor.execute(execution, coin)).rejects.toThrow(/contains assets/);
+        expect(s.submitTx).not.toHaveBeenCalled();
     });
 
     it.each([
-        [
-            "intent transaction",
-            (t: any) => {
-                t.type = "intent";
-            },
-        ],
-        [
-            "secret",
-            (t: any) => {
-                t.secrets = { preimage: {} };
-            },
-        ],
-        [
-            "trigger",
-            (t: any) => {
-                t.trigger = {};
-            },
-        ],
-        [
-            "expiry schedule",
-            (t: any) => {
-                t.inputs[0].schedule = { before_expiry_seconds: 1024 };
-            },
-        ],
-        [
-            "second input",
-            (t: any) => {
-                t.inputs.push(t.inputs[0]);
-            },
-        ],
-        [
-            "asset route",
-            (t: any) => {
-                t.outputs[0].assets = [];
-            },
-        ],
-        [
-            "amount expression",
-            (t: any) => {
-                t.outputs[0].value.amount = "$(funds.value - 1)";
-            },
-        ],
-        [
-            "fees",
-            (t: any) => {
-                t.fees = { from: "funds", max: 1 };
-            },
-        ],
-        [
-            "packet advertisement",
-            (t: any) => {
-                t.packets.advertise = [];
-            },
-        ],
-        [
-            "packet location",
-            (t: any) => {
-                t.packets.output_index = 2;
-            },
-        ],
-    ])("fails closed on %s before persisting or funding", async (_, mutate) => {
-        const s = await setup();
-        const doc = template();
-        mutate(doc);
-        await expect(s.importTemplate(doc)).rejects.toThrow();
-        expect(s.contract.register).not.toHaveBeenCalled();
-        expect(s.wallet.send).not.toHaveBeenCalled();
-    });
-
-    it("checks pinned keys and the independently derived address before funding", async () => {
+        [1, true],
+        [0, false],
+    ])("spends a position funded beside asset change at vout %i", async (assetVout, spends) => {
         const s = await setup();
         const execution = await s.importTemplate();
-        const provider = remote(s);
-        provider.registerDelegation.mockResolvedValue({
-            address: "wrong-address",
+        const group = AssetGroup.create(
+            AssetId.create("cc".repeat(32), 0),
+            null,
+            [AssetInput.create(0, 5n)],
+            [AssetOutput.create(assetVout, 5n)],
+            [],
+        );
+        const [coin] = s.fund(execution, [50_000], (tx) => {
+            tx.addOutput({ script: hex.decode(`5120${"33".repeat(32)}`), amount: 1_000n });
+            tx.addOutput(Extension.create([Packet.create([group])]).txOut());
+        });
+        const run = s.executor.execute(execution, coin);
+        if (spends) await expect(run).resolves.toBeDefined();
+        else await expect(run).rejects.toThrow(/carries assets/);
+        expect(s.submitTx).toHaveBeenCalledTimes(spends ? 1 : 0);
+    });
+
+    it("refuses a source carrying a packet no template rule handles", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const [coin] = s.fund(execution, [50_000], (tx) => {
+            tx.addOutput(Extension.create([new UnknownPacket(2, new Uint8Array([1]))]).txOut());
+        });
+        await expect(s.executor.execute(execution, coin)).rejects.toThrow(
+            /carries packet 2 that no rule handles/,
+        );
+        expect(s.submitTx).not.toHaveBeenCalled();
+    });
+
+    it("verifies the tracked amount against the actual creating transaction", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
+        coin.value++;
+        await expect(s.executor.execute(execution, coin)).rejects.toThrow(/does not match/);
+        expect(s.submitTx).not.toHaveBeenCalled();
+    });
+});
+
+describe("NativeExecutor delegate", () => {
+    it.each([
+        -1,
+        0.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+        Number.MAX_SAFE_INTEGER + 1,
+    ])("rejects the invalid expiry %s before any provider call", async (expiresAt) => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const provider = remote(execution);
+        await expect(s.executor.delegate(execution, provider, expiresAt)).rejects.toThrow(
+            /invalid expiry/,
+        );
+        for (const method of Object.values(provider)) expect(method).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, 0, 4_102_444_800, Number.MAX_SAFE_INTEGER])(
+        "forwards the valid expiry %s unchanged",
+        async (expiresAt) => {
+            const s = await setup();
+            const execution = await s.importTemplate();
+            const provider = remote(execution);
+            await s.executor.delegate(execution, provider, expiresAt);
+            expect(provider.registerDelegation).toHaveBeenCalledExactlyOnceWith(
+                execution.templateId,
+                variables,
+                { expiresAt },
+            );
+        },
+    );
+
+    it("registers each artifact, then the canonical template, then the delegation", async () => {
+        const s = await setup();
+        const definition = locktime.template.inputs[0].contract.definition;
+        const id = decodeArtifact(utf8.encode(JSON.stringify(definition))).id;
+        const doc = document(["1"], (d) => (d.inputs[0].contract.definition = { artifact: id }));
+        const execution = await s.executor.importTemplate(doc, {
+            artifacts: { [id]: definition },
+            variables,
+        });
+        const provider = remote(execution);
+        const delegation = await s.executor.delegate(execution, provider);
+        const canonical = new TextDecoder().decode(
+            decode(utf8.encode(JSON.stringify(doc))).canonical,
+        );
+        expect(provider.registerArtifact).toHaveBeenCalledExactlyOnceWith(
+            JSON.stringify(definition),
+        );
+        expect(provider.registerTemplate).toHaveBeenCalledExactlyOnceWith(canonical);
+        const order = [
+            provider.registerArtifact,
+            provider.registerTemplate,
+            provider.registerDelegation,
+        ];
+        expect(order.map((m) => m.mock.invocationCallOrder[0])).toEqual(
+            order.map((m) => m.mock.invocationCallOrder[0]).sort((a, b) => a - b),
+        );
+        expect(delegation.templateId).toBe(execution.templateId);
+    });
+
+    it.each([
+        ["server", { serverPubkey: `02${"22".repeat(32)}` }],
+        ["emulator", { emulatorPubkey: keys.cosigner }],
+    ])("refuses an Executor with another %s key before registering anything", async (_, info) => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const provider = remote(execution);
+        provider.getInfo.mockResolvedValue({ ...(await provider.getInfo()), ...info });
+        await expect(s.executor.delegate(execution, provider)).rejects.toThrow(/keys differ/);
+        expect(provider.registerTemplate).not.toHaveBeenCalled();
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it("refuses a provider that cannot look up templates", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const { getTemplate: _, ...provider } = remote(execution);
+        await expect(s.executor.delegate(execution, provider)).rejects.toThrow(
+            /cannot look up templates/,
+        );
+        expect(provider.getInfo).not.toHaveBeenCalled();
+    });
+
+    it("refuses a provider that cannot upload a template the Executor lacks", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const { registerArtifact: _, ...provider } = remote(execution);
+        await expect(s.executor.delegate(execution, provider)).rejects.toThrow(
+            /cannot register templates/,
+        );
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it("delegates to a template the Executor already has, uploading nothing", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const provider = remote(execution);
+        provider.getTemplate.mockImplementationOnce(async (id: string) => ({
+            id,
             status: "active",
-        });
-        await expect(s.executor.delegate(execution, provider as never)).rejects.toThrow(
-            /different address/,
+            document: "",
+            artifactIds: [],
+            params: [],
+            type: "virtual",
+        }));
+        const delegation = await s.executor.delegate(execution, provider);
+        expect(provider.getTemplate).toHaveBeenCalledExactlyOnceWith(execution.templateId);
+        expect(provider.registerArtifact).not.toHaveBeenCalled();
+        expect(provider.registerTemplate).not.toHaveBeenCalled();
+        expect(delegation.templateId).toBe(execution.templateId);
+    });
+
+    it("names the missing template when the Executor refuses uploads", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const provider = remote(execution);
+        provider.registerTemplate.mockRejectedValueOnce(
+            new ExecutorRequestError("served on the admin port only", 403),
         );
+        await expect(s.executor.delegate(execution, provider)).rejects.toThrow(
+            new RegExp(`template ${execution.templateId} is not installed.*operator must install`),
+        );
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it("refuses a template the Executor holds but has disabled", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const provider = remote(execution);
+        provider.getTemplate.mockImplementationOnce(async (id: string) => ({
+            id,
+            status: "disabled",
+            document: "",
+            artifactIds: [],
+            params: [],
+            type: "virtual",
+        }));
+        await expect(s.executor.delegate(execution, provider)).rejects.toThrow(/is disabled/);
+        expect(provider.registerTemplate).not.toHaveBeenCalled();
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it("refuses an Executor that files the template under another id", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const provider = remote(execution);
+        provider.registerTemplate.mockResolvedValueOnce({
+            id: "ab".repeat(32),
+            status: "active",
+            document: "",
+            artifactIds: [],
+            params: [],
+            type: "virtual",
+        });
+        await expect(s.executor.delegate(execution, provider)).rejects.toThrow(
+            /registered template .* as abab/,
+        );
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["another script", { script: `5120${"55".repeat(32)}` }],
+        ["another address", { address: "tark1other" }],
+        ["an inactive status", { status: "cancelled" }],
+        ["a second input", { second: true }],
+    ])("refuses a delegation with %s", async (_, change) => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const provider = remote(execution);
+        const base = await provider.registerDelegation(execution.templateId, {});
+        const [input] = base.inputs;
+        provider.registerDelegation.mockResolvedValueOnce({
+            ...base,
+            status: ("status" in change ? change.status : base.status) as never,
+            inputs: "second" in change ? [input, input] : [{ ...input, ...change }],
+        });
+        await expect(s.executor.delegate(execution, provider)).rejects.toThrow(
+            /another template, script or address, or an inactive delegation/,
+        );
+    });
+
+    it("seals each sealed variable to the Executor's key, and refuses an Executor without one", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate(vhtlc.template, vhtlc.bindings.variables);
+        const secret = secp256k1.utils.randomSecretKey();
+        const provider = remote(execution);
+        await expect(s.executor.delegate(execution, provider)).rejects.toThrow(
+            /cannot receive sealed variables/,
+        );
+        expect(provider.registerTemplate).not.toHaveBeenCalled();
+        const info = await provider.getInfo();
         provider.getInfo.mockResolvedValue({
-            serverPubkey: `02${"22".repeat(32)}`,
-            emulatorPubkey: s.key,
+            ...info,
+            encryptionPubkey: hex.encode(secp256k1.getPublicKey(secret, true)),
         });
-        await expect(s.executor.delegate(execution, provider as never)).rejects.toThrow(
-            /keys differ/,
+        await s.executor.delegate(execution, provider);
+        const [, sent] = provider.registerDelegation.mock.calls[0];
+        const { preimage, ...rest } = vhtlc.bindings.variables;
+        expect(sent).toMatchObject(rest);
+        expect(sent.preimage).not.toBe(preimage);
+        expect(hex.encode(open(secret, hex.decode(sent.preimage), execution.templateId))).toBe(
+            preimage,
         );
-        expect(provider.registerDelegation).toHaveBeenCalledTimes(1);
-        expect(s.wallet.send).not.toHaveBeenCalled();
     });
 });
