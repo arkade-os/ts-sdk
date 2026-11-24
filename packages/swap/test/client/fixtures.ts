@@ -81,6 +81,7 @@ export const CHECKPOINT_TAPSCRIPT = hex.encode(
 /** What the wallet answers `getArkadeInfo()` with. */
 export const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
+    dust: 330n,
     unilateralExitDelay: 4096n,
     network: "regtest",
     deprecatedSigners: [],

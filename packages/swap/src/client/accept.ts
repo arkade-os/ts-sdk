@@ -428,15 +428,18 @@ const registeredOfferRecord = async (
     const { quote, wallet, corridors, now } = input;
     const { plan } = preparation;
     const arkade = corridors.get("arkade").deps;
-    const receiveIsBtc = plan.receive.asset.id === BTC_ASSET_ID;
+    // The quote's legs, not the card's ids: a current card spells its assets in CAIP-19.
+    const depositAssetId = toDiscoveryLeg(quote.give.asset).assetId;
+    const receiveAssetId = toDiscoveryLeg(quote.take.asset).assetId;
+    const receiveIsBtc = receiveAssetId === BTC_ASSET_ID;
     const offer = await createOffer(
         wallet,
         {
             // Keyed on the receive side: the covenant binds what the fill delivers.
             wantAmount: plan.receive.atomic,
             ...(receiveIsBtc
-                ? { offerAsset: asset.AssetId.fromString(plan.deposit.asset.id) }
-                : { wantAsset: asset.AssetId.fromString(plan.receive.asset.id) }),
+                ? { offerAsset: asset.AssetId.fromString(depositAssetId) }
+                : { wantAsset: asset.AssetId.fromString(receiveAssetId) }),
             emulatorPubkey: arkade.emulatorPubkey,
         },
         { coverageId: quote.id },
@@ -448,6 +451,9 @@ const registeredOfferRecord = async (
         offerHex: offer.offerHex,
         swapAddress: offer.address,
         swapPkScript: hex.encode(offer.swapPkScript),
+        ...(preparation.carrierSats === undefined
+            ? {}
+            : { carrierSats: preparation.carrierSats.toString() }),
     };
 };
 
@@ -642,8 +648,8 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
         const depositIsBtc = isBtcAssetLenient(record.route.give.asset);
         return send({
             address: record.swapAddress,
-            // An asset deposit rides a dust-sat carrier: the solver's published one when the record
-            // names it (the fill is priced against it), else the SDK default.
+            // An asset deposit rides a dust-sat carrier: the quoted one when the record names it
+            // (the fill is priced against it), else the SDK default.
             ...(depositIsBtc
                 ? { amount: toSafeNumber(amount, "give.amount") }
                 : {

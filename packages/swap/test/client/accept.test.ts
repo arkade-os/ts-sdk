@@ -293,7 +293,7 @@ describe("accept() — the offer extension packet", () => {
 
         const [payment] = h.wallet.sent;
         expect(payment?.assets).toEqual([{ assetId: USD_ASSET_ID, amount: 10_000n }]);
-        expect(payment?.amount).toBeUndefined();
+        expect(payment?.amount).toBe(Number(quote.depositCarrierSats));
     });
 });
 

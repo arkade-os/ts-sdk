@@ -190,6 +190,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: a quote says what an asset deposit funds as its carrier.** `Quote.depositCarrierSats` is the sats funded beside an asset give leg: the solver's verified carrier on a negotiated quote, the operator's dust on a feed-priced one. Subtract it from a BTC take for the net proceeds; it is absent when BTC is given.
+
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
@@ -534,6 +536,10 @@ style and have not been backfilled.
 - **`@arkade-os/swap`: a funding refused before submission cancels the swap instead of leaving it pending.** With one funding attempt per quote, a record whose only send was refused would stay `accepted` with no txid for good: `accept()` no longer retries it, and the drive retired only an expired send deadline. When `send` refuses during coin selection (`Insufficient funds`, `Insufficient asset balance`, `Cannot form minimum change`, also as the service-worker client's `Send failed: Error: …`) or with `VtxoReservedError`, the offer is `cancelled` or the corridor swap `failed`, with `fundingNotSubmitted: { reason: "send_refused" }`, and its contract stops being watched, as an expired send deadline already did. Any other funding error still leaves the swap pending.
 
 - **`@arkade-os/swap`: quoted funding never pays change as a fee.** Funding passes `maxChangeFee: 0`, so change below the operator's VTXO minimum that the wallet cannot return is refused before submission, and the swap cancelled as above, instead of being paid as an offchain fee on top of the quote.
+
+- **`@arkade-os/swap`: a feed-priced asset deposit funds the carrier it was priced with.** A feed quote priced the deposit's carrier at 330 sats while funding sent the wallet's dust, so the two disagreed whenever the operator's dust was not 330. The quote now reads the operator's dust live, prices and records it, and funding sends that amount even if the operator's dust changes before `accept()`. An operator reporting a dust of 0, which is how a missing one reads, is refused at `quote()` with an error naming the operator.
+
+- **`@arkade-os/swap`: a feed-priced quote on a CAIP-19 card can be accepted.** `accept()` built the covenant from the card's raw asset ids, which a current registry spells in CAIP-19, and failed with `invalid asset id format, must be hex` before recording anything. It now uses the quote's own legs.
 
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
