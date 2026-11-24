@@ -5373,6 +5373,8 @@ export class Wallet
         const isCurrent = recovery?.isCurrent ?? (() => true);
         const hasPending = await this.hasPendingTxFlag();
         if (!hasPending || !isCurrent()) {
+            // Nothing left to recover, so nothing to block sends for.
+            if (!hasPending && isCurrent()) this.pendingTxRecoveryDeferred = false;
             return { finalized: [], pending: [] };
         }
 
@@ -5552,6 +5554,7 @@ export class Wallet
         // if any failed, keep it so recovery retries on next startup.
         if (finalized.length === pending.length && isCurrent()) {
             await this.setPendingTxFlag(false, isCurrent);
+            if (isCurrent()) this.pendingTxRecoveryDeferred = false;
         }
 
         return { finalized, pending };

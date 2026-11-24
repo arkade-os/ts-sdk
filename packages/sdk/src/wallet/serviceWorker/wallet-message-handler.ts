@@ -2495,7 +2495,11 @@ export class WalletMessageHandler
                 );
             } catch (error: unknown) {
                 if (init.stale) return;
-                if (isTransientOperatorError(error) && (await signingWallet.deferPendingTxRecovery())) {
+                if (
+                    isTransientOperatorError(error) &&
+                    (await signingWallet.deferPendingTxRecovery())
+                ) {
+                    if (init.stale) return;
                     this.schedulePendingTxRecovery(signingWallet, context, init);
                 } else {
                     console.error("Error recovering pending transactions:", error);

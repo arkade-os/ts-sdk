@@ -570,6 +570,16 @@ describe("Wallet script queries stay under the URL cap", () => {
         expect(await h.hasPendingTx()).toBe(true);
         expect(h.wallet.hasDeferredPendingTxRecovery).toBe(true);
     });
+
+    it("unfences sends when a public recovery clears the flag", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSpent: true })] });
+
+        await h.wallet.finalizePendingTxs();
+
+        expect(await h.hasPendingTx()).toBe(false);
+        await expectSendsAllowed(h);
+    });
 });
 
 /**

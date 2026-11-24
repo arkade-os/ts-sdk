@@ -2887,6 +2887,30 @@ describe("WalletMessageHandler repo-backed reads", () => {
             );
         });
 
+        it("schedules nothing when a newer INIT lands during the fallback deferral", async () => {
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            const wallet = makeWallet({
+                serverInfoSource: "live",
+                finalizePendingTxs: vi
+                    .fn()
+                    .mockRejectedValue(new ProviderUnavailableError("operator down")),
+            });
+            wallet.deferPendingTxRecovery.mockImplementation(async () => {
+                await gate;
+                return true;
+            });
+            const context = initWith(wallet);
+
+            const first = (updater as any).onWalletInitialized(context);
+            await until(() => wallet.deferPendingTxRecovery.mock.calls.length > 0);
+            (updater as any).initEpoch++;
+            release();
+            await first;
+
+            expect((updater as any).retryPendingTxs).toBeUndefined();
+        });
+
         it("leaves only the newest INIT's retry in place", async () => {
             const wallet = makeWallet({ hasDeferredPendingTxRecovery: true });
             const context = initWith(wallet);
@@ -2908,6 +2932,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             const second = (updater as any).onWalletInitialized(context);
             await until(() => (updater as any).retryPendingTxs !== firstRetry);
             const secondRetry = (updater as any).retryPendingTxs;
+            expect(secondRetry).toBeDefined();
             expect(secondRetry).not.toBe(firstRetry);
 
             release();
