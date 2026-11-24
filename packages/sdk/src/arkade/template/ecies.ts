@@ -29,6 +29,9 @@ export function seal(
     rng: (bytesLength: number) => Uint8Array = randomBytes,
 ): Uint8Array {
     const ephemeralKey = rng(32);
+    if (!secp256k1.utils.isValidSecretKey(ephemeralKey)) {
+        throw new Error("ecies: generate ephemeral key: not a valid secp256k1 scalar");
+    }
     const ephemeralPub = secp256k1.getPublicKey(ephemeralKey, true);
     const key = deriveKey(ephemeralKey, recipientPubkey, ephemeralPub);
     const nonce = rng(NONCE_LENGTH);

@@ -71,6 +71,13 @@ describe("template ecies", () => {
         expect(() => seal(pub, PREIMAGE, TEMPLATE_ID, rng)).toThrow(/^ecies: generate nonce/);
     });
 
+    it("refuses an ephemeral key that is not a valid scalar", () => {
+        const rng = (n: number) => new Uint8Array(n);
+        expect(() => seal(pub, PREIMAGE, TEMPLATE_ID, rng)).toThrow(
+            /^ecies: generate ephemeral key/,
+        );
+    });
+
     describe("rejects what Go's Decrypt rejects, at the same stage", () => {
         const sealed = hex.decode(SEALED_HERE);
         const flipped = (i: number) => {
