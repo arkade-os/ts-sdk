@@ -2085,6 +2085,19 @@ style and have not been backfilled.
   2.4.0, already installed through other dependencies, is now a direct
   dependency.
 
+- **The Executor's `template/v1` engine, ported.** The Executor builds a
+  delegation's transaction from a template, and a wallet that executes the same
+  template itself must build it the same way, or their addresses and
+  transactions disagree. `src/arkade/template/` ports the Executor's
+  `pkg/template` v0.0.5. It covers decoding with the canonical template,
+  spend and artifact ids, compilation, binding, and instantiation. It builds
+  the unsigned PSBT that the Executor's `Build` emits for `proof`, `virtual` and
+  `onchain` templates, runs binding expressions in the arkade VM, and seals
+  sealed variables with ECIES. It is not exported yet. The Executor's 80
+  vectors, copied into `packages/sdk/test/fixtures/template-v1/`, and
+  differential runs against its Go API check it. `@noble/ciphers` 2.1.1,
+  already installed for the swap package, is now an SDK dependency.
+
 ## [0.1.13] - 2026-11-21
 
 ### Bug Fixes
