@@ -8,7 +8,7 @@ import { fundingWasNotSubmitted, type SwapRecord } from "./record";
  * the service-worker client rewraps them as `Send failed: Error: …`. Matched exactly, since an
  * unknown error may follow a submission and must leave the swap pending. */
 const SEND_REFUSAL =
-    /^(?:Send failed: Error: )?(?:Insufficient funds|Insufficient asset balance: have \d+, need \d+|Cannot form minimum change amount of \d+ sats)$/;
+    /^(?:Send failed: Error: )?(?:Insufficient funds|Insufficient asset balance: have \d+, need \d+|Cannot form minimum change amount of \d+ sats|Asset recipient amount \d+ is below dust \d+)$/;
 
 export const refusedBeforeSubmission = (error: unknown): boolean =>
     error instanceof Error &&

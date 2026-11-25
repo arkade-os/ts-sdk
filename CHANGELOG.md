@@ -523,6 +523,10 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`send` refuses an asset recipient below dust instead of burning the asset.** A recipient amount below the wallet's pinned dust is routed to the subdust (`OP_RETURN`) script, which for an asset recipient destroys the asset. `validateRecipients` now throws `Asset recipient amount N is below dust D` before coin selection. A recipient with no amount still defaults to dust, and a BTC-only recipient still takes the subdust script. `arkAssetRail` defaults its carrier to 330 sats, so against an operator whose dust is higher it now refuses where it used to burn the asset; defaulting to the wallet's dust is left for a follow-up.
+
+- **`@arkade-os/swap`: a funding refused as below dust cancels the swap.** The new SDK refusal counts as a refusal before submission, so the swap ends `cancelled` with `send_refused` and its contract retired. If the operator lowered its dust after the wallet was created, a feed quote that gives an asset is refused at funding until the wallet is recreated.
+
 - **`@arkade-os/swap`: a funding refused before submission cancels the swap instead of leaving it pending.** With one funding attempt per quote, a record whose only send was refused would stay `accepted` with no txid for good: `accept()` no longer retries it, and the drive retired only an expired send deadline. When `send` refuses during coin selection (`Insufficient funds`, `Insufficient asset balance`, `Cannot form minimum change`, also as the service-worker client's `Send failed: Error: …`) or with `VtxoReservedError`, the offer is `cancelled` or the corridor swap `failed`, with `fundingNotSubmitted: { reason: "send_refused" }`, and its contract stops being watched, as an expired send deadline already did. Any other funding error still leaves the swap pending.
 
 - **`@arkade-os/swap`: quoted funding never pays change as a fee.** Funding passes `maxChangeFee: 0`, so change below the operator's VTXO minimum that the wallet cannot return is refused before submission, and the swap cancelled as above, instead of being paid as an offchain fee on top of the quote.

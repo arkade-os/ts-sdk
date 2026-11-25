@@ -120,6 +120,33 @@ describe("validateRecipients address binding", () => {
         );
         expect(validated).toHaveLength(1);
     });
+
+    const assets = [{ assetId: "00".repeat(34), amount: 1n }];
+    const address = () => encodeAddr(SERVER_XONLY, "tark");
+
+    it("rejects an asset recipient below dust", () => {
+        expect(() =>
+            validateRecipients([{ address: address(), amount: 999, assets }], 1000, makeContext()),
+        ).toThrow(/Asset recipient amount 999 is below dust 1000/);
+    });
+
+    it("defaults an asset recipient with no amount to dust", () => {
+        const [validated] = validateRecipients(
+            [{ address: address(), assets }],
+            1000,
+            makeContext(),
+        );
+        expect(validated.amount).toBe(1000);
+    });
+
+    it("still routes a BTC recipient below dust to the subdust script", () => {
+        const [validated] = validateRecipients(
+            [{ address: address(), amount: 999 }],
+            1000,
+            makeContext(),
+        );
+        expect(validated.script).toEqual(ArkAddress.decode(address()).subdustPkScript);
+    });
 });
 
 /**

@@ -1225,6 +1225,26 @@ describe("accept() — funding the quote exactly", () => {
     });
 });
 
+describe("asset deposit below dust", () => {
+    it.each([
+        ["raw", "Asset recipient amount 300 is below dust 330"],
+        [
+            "worker-wrapped",
+            `Send failed: ${new Error("Asset recipient amount 300 is below dust 330")}`,
+        ],
+    ])("cancels a funding the SDK refused as below dust (%s)", async (_, message) => {
+        const h = await setup();
+        const quote = await quoteFor(h, "spot");
+        vi.spyOn(h.wallet.wallet, "send").mockRejectedValue(new Error(message));
+        await expect(h.client.accept(quote)).rejects.toThrow(message);
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.status).toBe("cancelled");
+        expect(stored.fundingNotSubmitted).toEqual({ reason: "send_refused" });
+        expect(h.wallet.watched).toContainEqual([stored.swapPkScript, "retained"]);
+        await h.client[Symbol.asyncDispose]();
+    });
+});
+
 describe("unsent funding coverage", () => {
     it("retains a same-script liability including externally funded generic failure after restart", async () => {
         const h = await setup();
