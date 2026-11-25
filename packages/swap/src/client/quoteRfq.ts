@@ -514,7 +514,6 @@ const quoteArkadeAsset = async (
         quote: {
             id: input.quoteId,
             ...(assetPayment === undefined ? {} : { assetPayment }),
-            ...(carrierSats === undefined ? {} : { carrierSats }),
             route: assembleRoute(
                 { ...input.endpoints.give, instrument: { kind: "wallet" } },
                 {

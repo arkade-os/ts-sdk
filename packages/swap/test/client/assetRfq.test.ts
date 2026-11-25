@@ -246,7 +246,7 @@ describe("quote() on a negotiated asset market", () => {
         // mispricing only when both legs are the same asset.
         expect(quote.give).toEqual({ asset: USD, amount: 1_000n });
         expect(quote.take).toEqual({ asset: BTC, amount: 9_970n });
-        expect(quote.carrierSats).toBe(330n);
+        expect(quote.depositCarrierSats).toBe(330n);
         // The spread plus the 330-sat carrier, which the filler keeps: this solver returns none of it.
         expect(quote.fee).toEqual({ amount: 360n, asset: BTC });
     });
@@ -783,7 +783,6 @@ describe("accept() on a negotiated asset market", () => {
         });
         const quote = await client.quote(sell());
         expect(quote.depositCarrierSats).toBe(546n);
-        expect(quote.carrierSats).toBe(546n);
         await client.accept(quote);
 
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
@@ -799,11 +798,11 @@ describe("accept() on a negotiated asset market", () => {
         const wallet = await acceptWallet();
         const { client: restarted } = await setup({ wallet, repository });
 
-        await expect(restarted.accept({ ...quote, carrierSats: 1n })).rejects.toBeInstanceOf(
+        await expect(restarted.accept({ ...quote, depositCarrierSats: 1n })).rejects.toBeInstanceOf(
             AcceptConflict,
         );
         expect(wallet.sent).toHaveLength(0);
-        const { carrierSats: _legacy, ...legacyQuote } = quote;
+        const { depositCarrierSats: _legacy, ...legacyQuote } = quote;
         await restarted.accept(legacyQuote);
         expect(wallet.sent[0]?.amount).toBe(330);
     });

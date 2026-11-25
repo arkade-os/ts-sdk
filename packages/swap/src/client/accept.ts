@@ -209,10 +209,10 @@ export const conflictingFields = (record: SwapRecord, quote: Quote): string[] =>
         },
     );
     if (
-        quote.carrierSats !== undefined &&
-        (record.family !== "offer" || record.carrierSats !== quote.carrierSats.toString())
+        quote.depositCarrierSats !== undefined &&
+        (record.family !== "offer" || record.carrierSats !== quote.depositCarrierSats.toString())
     ) {
-        conflicts.push("carrierSats");
+        conflicts.push("depositCarrierSats");
     }
     return conflicts;
 };
@@ -553,7 +553,7 @@ const registeredAssetRecord = async (
     input: AcceptInput,
     preparation: AssetRfqPreparation,
 ): Promise<OfferSwapRecord> => {
-    if (input.quote.carrierSats !== preparation.carrierSats)
+    if (input.quote.depositCarrierSats !== preparation.carrierSats)
         throw new Error("deposit carrier differs from verified quote preparation");
     if (
         stableStringify(
