@@ -1582,8 +1582,7 @@ export async function requestArkadeSwap(
             );
         }
     }
-    const carrierSats =
-        params.offerAsset === undefined ? 0n : quoteCarrierSats(quote, info.dust);
+    const carrierSats = params.offerAsset === undefined ? 0n : quoteCarrierSats(quote, info.dust);
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
         info,

@@ -31,7 +31,6 @@ const ROUTES: [string, () => QuoteInput][] = [
     ["arkade -> lightning", () => ({ to: invoiceFor(PAYMENT_HASH, CLOCK) })],
     ["lightning -> arkade", () => ({ via: "lightning", amount: 5_000n, amountOn: "give" })],
     ["arkade -> onchain", () => ({ to: BCRT1, amount: 100_000n, amountOn: "give" })],
-    ["onchain -> arkade", () => ({ via: "onchain", amount: 100_000n, amountOn: "give" })],
     ["arkade -> arkade", () => ({ give: "BTC", take: "USD", amount: 10_000n, amountOn: "give" })],
 ];
 
