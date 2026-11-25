@@ -254,6 +254,7 @@ import {
     WsElectrumChainSource,
 } from "./providers/electrum";
 import type {
+    ElectrumSocket,
     TransactionHistory as ElectrumTransactionHistory,
     BlockHeader as ElectrumBlockHeader,
     Unspent as ElectrumUnspent,
@@ -297,12 +298,15 @@ import {
 } from "./providers/delegate";
 import {
     DelegatedOutput,
+    ExecutorArtifact,
     ExecutorDelegation,
     ExecutorDelegationDetails,
     ExecutorInfo,
     ExecutorProvider,
     ExecutorRequestError,
     ExecutorTemplate,
+    ExecutorTemplateDetails,
+    ExecutorTemplateParam,
     RestExecutorProvider,
 } from "./providers/executor";
 import {
@@ -1117,6 +1121,7 @@ export type {
     TxNotificationEvent,
     SweepTxNotification,
     ExplorerTransaction,
+    ElectrumSocket,
     ElectrumTransactionHistory,
     ElectrumBlockHeader,
     ElectrumUnspent,
@@ -1275,6 +1280,9 @@ export type {
     ExecutorDelegation,
     ExecutorDelegationDetails,
     ExecutorTemplate,
+    ExecutorTemplateDetails,
+    ExecutorTemplateParam,
+    ExecutorArtifact,
     DelegatedOutput,
     DelegatedWallet,
     DelegationOptions,

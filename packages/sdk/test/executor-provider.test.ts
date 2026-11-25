@@ -243,6 +243,199 @@ describe("RestExecutorProvider", () => {
         report.mockRestore();
         rateGate.reset();
     });
+
+    it("reports rate-limited artifact and template uploads to the shared gate", async () => {
+        const report = vi.spyOn(rateGate, "reportRateLimited");
+        const provider = new RestExecutorProvider("https://executor.test");
+        for (const [call, path] of [
+            [() => provider.registerArtifact("{}"), "/v1/artifact"],
+            [() => provider.registerTemplate("{}"), "/v1/template"],
+        ] as const) {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 429,
+                headers: { get: () => "3" },
+                text: () => Promise.resolve("slow down"),
+            });
+            await expect(call()).rejects.toMatchObject({ status: 429 });
+            expect(report).toHaveBeenLastCalledWith(`https://executor.test${path}`, "3");
+        }
+        report.mockRestore();
+        rateGate.reset();
+    });
+
+    it("does not pause the Executor for a registration refused by a full store", async () => {
+        const report = vi.spyOn(rateGate, "reportRateLimited");
+        const provider = new RestExecutorProvider("https://executor.test");
+        for (const call of [
+            () => provider.registerDelegation("tpl-1", {}),
+            () => provider.registerArtifact("{}"),
+            () => provider.registerTemplate("{}"),
+        ]) {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 429,
+                headers: { get: () => null },
+                text: () => Promise.resolve('{"code":8,"message":"cap reached","details":[]}'),
+            });
+            await expect(call()).rejects.toMatchObject({ status: 429 });
+        }
+        expect(report).not.toHaveBeenCalled();
+        report.mockRestore();
+        rateGate.reset();
+    });
+
+    it("still reports a 429 whose body cannot be read", async () => {
+        const report = vi.spyOn(rateGate, "reportRateLimited");
+        const lost = new Error("body stream lost");
+        mockFetch.mockResolvedValueOnce({
+            ok: false,
+            status: 429,
+            headers: { get: () => "3" },
+            text: () => Promise.reject(lost),
+        });
+        await expect(
+            new RestExecutorProvider("https://executor.test").registerTemplate("{}"),
+        ).rejects.toBe(lost);
+        expect(report).toHaveBeenCalledWith("https://executor.test/v1/template", "3");
+        report.mockRestore();
+        rateGate.reset();
+    });
+
+    it("surfaces an upload refused on the public port as status 403", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+        for (const call of [
+            () => provider.registerArtifact("{}"),
+            () => provider.registerTemplate("{}"),
+        ]) {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 403,
+                text: () => Promise.resolve('{"code":7,"message":"served on the admin port only"}'),
+            });
+            await expect(call()).rejects.toMatchObject({ status: 403 });
+        }
+    });
+
+    it("reads the encryption key when the Executor has one, refusing one not compressed", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+        const encryptionPubkey = hex.encode(compressedKey);
+        respond({ ...makeInfo(), encryptionPubkey });
+        await expect(provider.getInfo()).resolves.toEqual({ ...makeInfo(), encryptionPubkey });
+        for (const body of [makeInfo(), { ...makeInfo(), encryptionPubkey: "" }]) {
+            respond(body);
+            expect(await provider.getInfo()).not.toHaveProperty("encryptionPubkey");
+        }
+        for (const [key, error] of [
+            [hex.encode(ownerKey), "encryptionPubkey is not compressed"],
+            ["zz", "encryptionPubkey is not hex"],
+            [5, "missing encryptionPubkey"],
+        ] as const) {
+            respond({ ...makeInfo(), encryptionPubkey: key });
+            await expect(provider.getInfo()).rejects.toThrow(error);
+        }
+    });
+
+    it("registers an artifact, sending an object as its JSON and a string unchanged", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+        const document = { name: "Renew", functions: [] };
+        for (const sent of [document, JSON.stringify(document)]) {
+            respond({ artifact: { ...artifact, createdAt: "1700000000" } });
+            await expect(provider.registerArtifact(sent)).resolves.toEqual({
+                ...artifact,
+                createdAt: 1700000000,
+            });
+            expect(mockFetch).toHaveBeenLastCalledWith("https://executor.test/v1/artifact", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ document: JSON.stringify(document) }),
+            });
+        }
+    });
+
+    it("registers a template, reading omitted lists as empty", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+        const signal = new AbortController().signal;
+        respond({ template: { ...templateDetails, createdAt: "1700000000" } });
+        await expect(provider.registerTemplate({ version: 1 }, { signal })).resolves.toEqual({
+            ...templateDetails,
+            createdAt: 1700000000,
+        });
+        expect(mockFetch).toHaveBeenLastCalledWith("https://executor.test/v1/template", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ document: '{"version":1}' }),
+            signal,
+        });
+        const { artifactIds: _, params: __, ...bare } = templateDetails;
+        respond({ template: bare });
+        await expect(provider.registerTemplate("{}")).resolves.toEqual({
+            ...bare,
+            artifactIds: [],
+            params: [],
+        });
+    });
+
+    it("gets an artifact and a template by id", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+        const signal = new AbortController().signal;
+        respond({ artifact });
+        await expect(provider.getArtifact("art-1", { signal })).resolves.toEqual(artifact);
+        expect(mockFetch).toHaveBeenLastCalledWith("https://executor.test/v1/artifact/art-1", {
+            signal,
+        });
+        respond({ template: templateDetails });
+        await expect(provider.getTemplate("a/b")).resolves.toEqual(templateDetails);
+        expect(mockFetch).toHaveBeenLastCalledWith("https://executor.test/v1/template/a%2Fb", {
+            signal: undefined,
+        });
+    });
+
+    it("reports the Executor's NOT_FOUND for artifacts and templates, not a proxy's 404", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+        for (const call of [
+            () => provider.registerArtifact("{}"),
+            () => provider.getArtifact("art-1"),
+            // a template naming an artifact the Executor does not hold
+            () => provider.registerTemplate("{}"),
+            () => provider.getTemplate("tpl-1"),
+        ]) {
+            respond({ code: 5, message: "artifact not found", details: [] }, 404);
+            await expect(call()).rejects.toMatchObject({ status: 404 });
+            respond("<html>404</html>", 404);
+            await expect(call()).rejects.toMatchObject({ status: undefined });
+        }
+    });
+
+    it("rejects a malformed artifact or template", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+        const getTemplate = () => provider.getTemplate("tpl-1");
+        for (const [call, body, error] of [
+            [() => provider.registerArtifact("{}"), {}, "Invalid Executor artifact"],
+            [() => provider.getArtifact("art-1"), { artifact: { id: "a" } }, "missing document"],
+            [
+                () => provider.getArtifact("art-1"),
+                { artifact: { ...artifact, createdAt: "soon" } },
+                "createdAt is not an integer",
+            ],
+            [() => provider.registerTemplate("{}"), { template: {} }, "template: missing id"],
+            [getTemplate, { template: { ...templateDetails, type: "" } }, "missing type"],
+            [getTemplate, { template: { ...templateDetails, artifactIds: [7] } }, "not strings"],
+            [
+                getTemplate,
+                { template: { ...templateDetails, params: {} } },
+                "params is not an array",
+            ],
+            [
+                getTemplate,
+                { template: { ...templateDetails, params: [{ name: "owner" }] } },
+                "template param: missing type",
+            ],
+        ] as const) {
+            respond(body);
+            await expect(call()).rejects.toThrow(error);
+        }
+    });
 });
 
 describe("ExecutorManagerImpl.register", () => {
@@ -1304,6 +1497,14 @@ function makeInfo() {
 }
 
 const template = { id: "tpl-1", status: "active" };
+const artifact = { id: "art-1", document: '{"name":"Renew"}' };
+const templateDetails = {
+    ...template,
+    document: '{"version":1}',
+    artifactIds: ["art-1"],
+    params: [{ name: "owner", type: "pubkey" }],
+    type: "virtual",
+};
 
 const respond = (body: unknown, status = 200) =>
     mockFetch.mockResolvedValueOnce({

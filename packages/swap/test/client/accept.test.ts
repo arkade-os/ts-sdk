@@ -14,7 +14,13 @@ import { collectSwapRecords } from "../../src/repository";
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { DefaultVtxo, SendDeadlineExceededError, VtxoReservedError, Wallet } from "@arkade-os/sdk";
+import {
+    DefaultVtxo,
+    SendDeadlineExceededError,
+    VtxoReservedError,
+    Wallet,
+    type ExtendedVirtualCoin,
+} from "@arkade-os/sdk";
 import { createSwapClient, type SwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
 import {
@@ -955,6 +961,115 @@ describe("accept() — what the record carries", () => {
     });
 });
 
+describe("accept funding constraints", () => {
+    const coinFor = (value: bigint): ExtendedVirtualCoin =>
+        ({ txid: "c".repeat(64), vout: 1, value: Number(value) }) as ExtendedVirtualCoin;
+
+    it("funds with the captured inputs and change fee limit", async () => {
+        const h = await setup({ balance: { available: 0 } });
+        const quote = await quoteFor(h, "lightningSend");
+        const coin = coinFor(quote.give.amount);
+        const options = { selectedVtxos: [coin], maxChangeFee: 0, validUntil: NOW + 30 };
+        const original = { ...coin };
+        const funding = h.client.accept(quote, options);
+        coin.vout = 10;
+        options.selectedVtxos.length = 0;
+        options.maxChangeFee = 500;
+
+        await funding;
+        expect(h.wallet.requests).toEqual([
+            expect.objectContaining({
+                recipients: [expect.objectContaining({ amount: Number(quote.give.amount) })],
+                selectedVtxos: [original],
+                maxChangeFee: 0,
+                validUntil: NOW + 30,
+            }),
+        ]);
+    });
+
+    /** Fail the next accept's claim, so the record is durable and unsent but nothing was sent. */
+    const interruptBeforeSend = (h: Harness) =>
+        vi.spyOn(h.repository, "claimSwapFunding").mockRejectedValueOnce(new Error("interrupted"));
+
+    it("recovers an interrupted constrained acceptance only with the same funding constraints", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        const coin = coinFor(quote.give.amount);
+        const options = { selectedVtxos: [coin], maxChangeFee: 0, validUntil: NOW + 30 };
+        interruptBeforeSend(h);
+        await expect(h.client.accept(quote, options)).rejects.toThrow("interrupted");
+        const restarted = await setup({ repository: h.repository });
+
+        await expect(restarted.client.accept(quote)).rejects.toBeInstanceOf(AcceptConflict);
+        await expect(
+            restarted.client.accept(quote, { ...options, selectedVtxos: [{ ...coin, vout: 2 }] }),
+        ).rejects.toBeInstanceOf(AcceptConflict);
+        expect(restarted.wallet.sent).toHaveLength(0);
+
+        const { validUntil, ...sameInputs } = options;
+        await restarted.client.accept(quote, sameInputs);
+        expect(restarted.wallet.requests[0]).toMatchObject({
+            selectedVtxos: [coin],
+            maxChangeFee: 0,
+            validUntil,
+        });
+    });
+
+    it("refuses funding options on an external receive", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningReceive");
+
+        await expect(h.client.accept(quote, { maxChangeFee: 0 })).rejects.toThrow(
+            "funding options require an Arkade send",
+        );
+        expect(h.wallet.contracts).toHaveLength(0);
+    });
+
+    it("refuses an empty or repeated input selection before persisting", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        const coin = coinFor(quote.give.amount);
+
+        await expect(h.client.accept(quote, { selectedVtxos: [] })).rejects.toThrow(
+            "selectedVtxos must name at least one input",
+        );
+        await expect(h.client.accept(quote, { selectedVtxos: [coin, coin] })).rejects.toThrow(
+            "selectedVtxos must contain distinct inputs",
+        );
+        expect(await h.repository.getSwapRecord(quote.id)).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
+    });
+
+    it("keeps the earlier recorded funding deadline on a retry", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        const options = { selectedVtxos: [coinFor(quote.give.amount)], maxChangeFee: 0 };
+
+        interruptBeforeSend(h);
+        await expect(h.client.accept(quote, { ...options, validUntil: NOW + 30 })).rejects.toThrow(
+            "interrupted",
+        );
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingDeadline).toBe(NOW + 30);
+
+        const restarted = await setup({ repository: h.repository });
+        await restarted.client.accept(quote, { ...options, validUntil: NOW + 60 });
+        expect(restarted.wallet.requests[0]).toMatchObject({ validUntil: NOW + 30 });
+    });
+
+    it("retires rather than funds a stored quote past its original expiry", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        interruptBeforeSend(h);
+        await expect(h.client.accept(quote)).rejects.toThrow("interrupted");
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+
+        const restarted = await setup({ repository: h.repository });
+        const swap = await restarted.client.accept({ ...quote, expiresAt: quote.expiresAt + 60 });
+        expect(swap.outcome).toBe("cancelled");
+        expect(restarted.wallet.sent).toHaveLength(0);
+    });
+});
+
 describe("accept funding deadline", () => {
     it("reconciles a funded auction-origin record after its dispatch deadline", async () => {
         const h = await setup();
@@ -1250,6 +1365,164 @@ describe("accept() — funding the quote exactly", () => {
         const stored = (await h.repository.getSwapRecord(quote.id)) as CorridorSwapRecord;
         expect(stored.state).toBe("failed");
         expect(fundingWasNotSubmitted(stored)).toBe(true);
+        await h.client[Symbol.asyncDispose]();
+    });
+});
+
+describe("accept() — a funding that never started", () => {
+    /** An accepted quote whose record is durable and `unsent`: the claim failed before any send. */
+    const seedUnsent = async (h: Harness, route: RouteName = "spot"): Promise<Quote> => {
+        const quote = await quoteFor(h, route);
+        const claim = vi
+            .spyOn(h.repository, "claimSwapFunding")
+            .mockRejectedValueOnce(new Error("store busy"));
+        await expect(h.client.accept(quote)).rejects.toThrow("store busy");
+        claim.mockRestore();
+        expect(h.wallet.sent).toHaveLength(0);
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingSend).toBe("unsent");
+        return quote;
+    };
+
+    it("funds exactly once on the next accept after a failure before the send", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        expect((await h.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        expect((await h.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        expect(h.wallet.sent).toHaveLength(1);
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingSend).toBe("claimed");
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("funds an unsent record once from a fresh client after a crash", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        await h.client[Symbol.asyncDispose]();
+        const restarted = await setup({ repository: h.repository });
+        expect((await restarted.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        expect(restarted.wallet.sent).toHaveLength(1);
+        await restarted.client[Symbol.asyncDispose]();
+    });
+
+    it("sends once when two runtimes resume the same unsent record", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        const corridors = corridorSet(
+            await resolveCorridorBase({
+                wallet: h.wallet.wallet,
+                operator: walletOperator(h.wallet.wallet),
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                requireLive: false,
+            }),
+        );
+        vi.resetModules();
+        const { acceptQuote: first } = await import("../../src/client/accept");
+        vi.resetModules();
+        const { acceptQuote: second } = await import("../../src/client/accept");
+        const input = {
+            quote,
+            wallet: h.wallet.wallet,
+            repository: h.repository,
+            corridors,
+            now: NOW,
+        };
+        await Promise.all([first(input), second(input)]);
+        expect(h.wallet.sent).toHaveLength(1);
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingTxid).toBe(FUNDING_TXID);
+    });
+
+    it("never resends a record written before the field existed", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        const { fundingSend: _, ...legacy } = (await h.repository.getSwapRecord(quote.id))!;
+        await h.repository.saveSwapRecord(legacy as typeof legacy & { fundingSend?: undefined });
+        expect((await h.client.accept(quote)).fundingTxid).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("does not adopt another swap's deposit at an unsent record's script", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        h.wallet.deposits.set(stored.swapPkScript, [
+            { txid: "c".repeat(64), value: Number(stored.give.amount) },
+        ]);
+        expect((await h.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        expect(h.wallet.sent).toHaveLength(1);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("retires an unsent record past its expiry on accept", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+        const swap = await h.client.accept(quote);
+        expect(swap.outcome).toBe("cancelled");
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.fundingNotSubmitted).toEqual({ reason: "send_not_started" });
+        expect(h.wallet.watched).toContainEqual([stored.swapPkScript, "retained"]);
+        expect(h.wallet.sent).toHaveLength(0);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("stops retrying a lost claim on a drive tick", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        await h.client[Symbol.asyncDispose]();
+        const restarted = await setup({ repository: h.repository });
+        // Another runtime claims and funds it after this one loaded its copy.
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        await restarted.client.start();
+        await h.repository.saveSwapRecord({
+            ...stored,
+            fundingSend: "claimed",
+            fundingTxid: FUNDING_TXID,
+        });
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+        const claim = vi.spyOn(h.repository, "claimSwapFunding");
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(claim.mock.calls.length).toBeGreaterThan(0);
+        const calls = claim.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(claim.mock.calls.length).toBe(calls);
+        expect(((await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord).status).toBe(
+            "pending",
+        );
+        await restarted.client[Symbol.asyncDispose]();
+    });
+
+    it("retires an unsent record past its expiry on a drive tick", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        await h.client[Symbol.asyncDispose]();
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+        const restarted = await setup({ repository: h.repository });
+        await restarted.client.start();
+        await restarted.client.stop();
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.status).toBe("cancelled");
+        expect(stored.fundingNotSubmitted).toEqual({ reason: "send_not_started" });
+        expect(restarted.wallet.sent).toHaveLength(0);
+        await restarted.client[Symbol.asyncDispose]();
+    });
+});
+
+describe("asset deposit below dust", () => {
+    it.each([
+        ["raw", "Asset recipient amount 300 is below dust 330"],
+        [
+            "worker-wrapped",
+            `Send failed: ${new Error("Asset recipient amount 300 is below dust 330")}`,
+        ],
+    ])("cancels a funding the SDK refused as below dust (%s)", async (_, message) => {
+        const h = await setup();
+        const quote = await quoteFor(h, "spot");
+        vi.spyOn(h.wallet.wallet, "send").mockRejectedValue(new Error(message));
+        await expect(h.client.accept(quote)).rejects.toThrow(message);
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.status).toBe("cancelled");
+        expect(stored.fundingNotSubmitted).toEqual({ reason: "send_refused" });
+        expect(h.wallet.watched).toContainEqual([stored.swapPkScript, "retained"]);
         await h.client[Symbol.asyncDispose]();
     });
 });

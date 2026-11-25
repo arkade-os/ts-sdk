@@ -12,9 +12,26 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- **Published type declarations compile without `skipLibCheck`.** The
+  declaration bundler emitted `arkade`'s type-only exports as values once they
+  were split across chunks, so twenty of them, `arkade.Program` among them,
+  failed a strict consumer; local type aliases at the barrel keep them types. The
+  Electrum providers also referenced `ElectrumWS`, whose declarations need
+  `ws` types that the SDK does not ship. They now take an `ElectrumSocket`, the
+  four methods they call, which `ElectrumWS` still satisfies. Repositories are
+  `AsyncDisposable`, so a consumer needs `esnext.disposable` in `lib` (or
+  `@types/node`). The dist smoke test now type-checks ESM and CJS consumers
+  without `skipLibCheck`.
+
+- **`Ramps.offboardExact` documents what a cosign that failed after signing leaves open.** The error is rethrown and the boarding coins stay held, but an operator that kept the signed transaction can still complete it. A batch offboard cannot spend those coins to conflict with it: arkd refuses an intent with onchain inputs and onchain outputs (`INVALID_INTENT_PROOF`). The README and the method's doc now describe the options, so the caller picks the strategy. The hold's 6-block release is named, and `isCosignFallback`'s doc says `offboardExact` rethrows regardless.
+
+## [0.5.13] - 2026-11-23
+
 ### Breaking Changes
 
-- **`@arkade-os/swap`: `AssetSwapRepository` is version 6, and a quote is funded at most once.** Version 6 adds the required `createSwapRecordIfAbsent(record)`: it inserts only when no record has that quote id, atomically across every client sharing the store, and resolves `true` only once committed. `accept()` creates the record through it and funds only when it returns `true`, so two runtimes sharing one store can no longer both fund a quote. A second `accept()` of a stored record without a funding txid no longer sends again, because an empty indexer read does not prove the first attempt failed: it adopts a deposit found at the covenant, or returns the swap still `accepted`, and no longer throws `QuoteExpired` for it. The four built-in repositories implement the method without a data migration. A custom repository fails to compile until it adds the method; an untyped one throws before anything is funded. `SwapRecordCommon.fundingNotSubmitted` gains a second proof, `{ reason: "send_refused" }` (see Bug Fixes), so narrow on `reason` before reading `validUntil`.
+- **`@arkade-os/swap`: `AssetSwapRepository` is version 6, and a quote is funded at most once.** Version 6 adds the required `createSwapRecordIfAbsent(record)`: it inserts only when no record has that quote id, atomically across every client sharing the store, and resolves `true` only once committed. `accept()` creates the record through it and funds only when it returns `true`, so two runtimes sharing one store can no longer both fund a quote. It also adds `claimSwapFunding(id)`, which atomically flips a record's new `fundingSend` from `"unsent"` to `"claimed"` and resolves `true` only for the caller that flipped it. A second `accept()` of a stored record without a funding txid no longer sends again once its send may have started, because an empty indexer read does not prove the first attempt failed: it adopts a deposit found at the covenant, or returns the swap still `accepted`, and no longer throws `QuoteExpired` for it. A record whose failure provably came before the send started stays `"unsent"`, so a second `accept()` funds it, only after one runtime claims it. The funding constraints and deadline an interrupted acceptance recorded apply to that retry, and a record whose send may have started keeps them without sending again. The drive's startup restore no longer stamps a found deposit onto an unsent record, since that deposit belongs to another swap. An unsent record past its expiry is retired by `accept()` or the drive as cancelled with `{ reason: "send_not_started" }`; when another runtime holds the claim, both answer with the stored record, so the drive stops retrying the claim every poll, and a record written before `fundingSend` existed is never resent. The four built-in repositories implement both methods without a data migration. A custom repository fails to compile until it adds both methods; an untyped one throws before anything is funded. `SwapRecordCommon.fundingNotSubmitted` gains two proofs, `{ reason: "send_refused" }` (see Bug Fixes) and `{ reason: "send_not_started" }`, so narrow on `reason` before reading `validUntil`.
 
 - **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
 
@@ -81,6 +98,11 @@ style and have not been backfilled.
   rail's `RouteResult.swapId`, and the key it documents for `persist`, are now
   the covenant's `swapPkScript` hex rather than its `offerHex`.
 
+- **Reservation repositories require atomic release.** Version 2 adds required
+  `deleteReservationIfMatches(id, expected)`, which must compare and delete in one
+  transaction and acknowledge commit. Unsupported JavaScript backends retain
+  restored holds but reject acquisition and release before writes. IndexedDB's
+  stored schema is unchanged.
 - **Service-worker pages and workers must use the same wallet request protocol.** Every wallet operation now carries its captured identity/operator/network binding, including reads used to construct quotes and transactions. Older page/worker combinations fail before wallet access; update both together. `ServiceWorkerWallet` and its readonly variant accept `expectedNetwork` to verify the configured network during bootstrap.
 - **A worker `clear()` can be refused.** `ServiceWorkerWallet.clear()` rejects while a settlement or another long-running request from a page is in flight. It also fails without wiping anything if the remaining requests take over 5s to drain; the page then reinitializes before retrying. A logout that clears unconditionally must handle the rejection.
 
@@ -186,6 +208,20 @@ style and have not been backfilled.
 ### Features
 
 - **`@arkade-os/swap`: a quote says what an asset deposit funds as its carrier.** `Quote.depositCarrierSats` is the sats funded beside an asset give leg: the solver's verified carrier on a negotiated quote, the operator's dust on a feed-priced one. Subtract it from a BTC take for the net proceeds; it is absent when BTC is given.
+
+- **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier as `depositCarrierSats`. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.
+
+- **`ExecutorProvider` can register and read the Executor's templates and
+  artifacts.** The SDK's Executor client covered only delegations, so a caller
+  delegating its own template needed a second client to upload it.
+  `RestExecutorProvider` adds `registerArtifact`, `getArtifact`,
+  `registerTemplate` and `getTemplate`, optional on the `ExecutorProvider`
+  interface so existing implementations still conform. A 404 from these calls
+  counts as the Executor's only when its body is the gRPC NOT_FOUND status.
+  `ExecutorInfo` reports the service's `encryptionPubkey` when it advertises
+  one, validated as a compressed key, so `getInfo()` now refuses a malformed
+  one. Executor v0.0.5 takes uploads on its admin port only, and its public
+  port answers 403 unless it runs with `EXECUTOR_PUBLIC_REGISTRY=true`.
 
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
@@ -474,6 +510,15 @@ style and have not been backfilled.
   `ASSET_SWAP_CONTRACT_VERSIONS`, what an asset RFQ advertises, is the directed
   covenant alone. It refuses to compile without a taker, and v2 refuses one.
 
+- **Worker wallets can dispose without clearing ownership records.**
+  `ServiceWorkerReadonlyWallet.dispose()` and `ServiceWorkerWallet.dispose()`
+  revoke the scoped worker and local proxy while preserving wallet, contract,
+  intent and reservation stores. The worker is left as a freshly started one:
+  every handler stops, and another page still using the wallet re-initializes
+  it on its next request. Disposed proxies cannot automatically reinitialize;
+  `clear()` remains the explicit destructive reset. `dispose()` resolves when
+  the worker already runs no wallet, and can be called again after a failure.
+  A `MessageHandler`'s channel gains `release()`.
 - **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
   can import the negotiation field names, refusal code, and asset contract IDs
   without loading the client or contract builders. Existing `/protocol` exports
@@ -523,6 +568,10 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`send` refuses an asset recipient below dust instead of burning the asset.** A recipient amount below the wallet's pinned dust is routed to the subdust (`OP_RETURN`) script, which for an asset recipient destroys the asset. `validateRecipients` now throws `Asset recipient amount N is below dust D` before coin selection. A recipient with no amount still defaults to dust, and a BTC-only recipient still takes the subdust script. `arkAssetRail` defaults its carrier to 330 sats, so against an operator whose dust is higher it now refuses where it used to burn the asset; defaulting to the wallet's dust is left for a follow-up.
+
+- **`@arkade-os/swap`: a funding refused as below dust cancels the swap.** The new SDK refusal counts as a refusal before submission, so the swap ends `cancelled` with `send_refused` and its contract retired. If the operator lowered its dust after the wallet was created, a feed quote that gives an asset is refused at funding until the wallet is recreated.
+
 - **`@arkade-os/swap`: a funding refused before submission cancels the swap instead of leaving it pending.** With one funding attempt per quote, a record whose only send was refused would stay `accepted` with no txid for good: `accept()` no longer retries it, and the drive retired only an expired send deadline. When `send` refuses during coin selection (`Insufficient funds`, `Insufficient asset balance`, `Cannot form minimum change`, also as the service-worker client's `Send failed: Error: …`) or with `VtxoReservedError`, the offer is `cancelled` or the corridor swap `failed`, with `fundingNotSubmitted: { reason: "send_refused" }`, and its contract stops being watched, as an expired send deadline already did. Any other funding error still leaves the swap pending.
 
 - **`@arkade-os/swap`: quoted funding never pays change as a fee.** Funding passes `maxChangeFee: 0`, so change below the operator's VTXO minimum that the wallet cannot return is refused before submission, and the swap cancelled as above, instead of being paid as an offchain fee on top of the quote.
@@ -538,6 +587,16 @@ style and have not been backfilled.
 - **`@arkade-os/swap`: `validatePlan` checks dust on a BTC side spelled in CAIP-19.** It recognised BTC only as `btc`, so a plan from a current card, which spells BTC `arkade:bitcoin/slip44:0` or `arkade:mutinynet/slip44:1`, skipped the dust check and passed a BTC side below dust, on the cross-asset payment rail as well.
 
 - **`@arkade-os/swap`: `nostr-tools` is a regular dependency, no longer an optional peer.** The root declarations import its `SimplePool` type for `createNostrTransportFactory(pool?)`, so a consumer type-checking them without having installed the peer could not resolve it. The client still imports `nostr-tools` only once Nostr is used. A consumer pinning a different version now gets the swap package's own copy beside theirs.
+
+- **`@arkade-os/swap`: a resumed `accept()` no longer outlives its stored quote.** The retry checked expiry against the caller's quote object only, which no conflict check covers, so a quote carrying a later `expiresAt` could fund a stored, unfunded record past its expiry. The earlier of the stored and given expiries now applies.
+
+- **A full Executor store no longer pauses every request to that Executor.**
+  An Executor at its delegation cap answers `registerDelegation` with gRPC
+  `RESOURCE_EXHAUSTED`, which its gateway serves as a 429 without
+  `Retry-After`. `RestExecutorProvider` reported that to the shared rate gate
+  as a rate limit, so every request to that Executor then waited out the
+  default cooldown. A 429 carrying that status is now only an error, and any
+  other 429 still pauses the origin.
 
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
@@ -628,6 +687,9 @@ style and have not been backfilled.
   fee and the swap record still carry a carrier only for an asset deposit, so a
   BTC deposit is still funded as plain sats.
 
+- **Stale reservation handles cannot delete a restarted wallet's newer hold.**
+  Durable release compares the expected outpoints and deletes the matching row
+  atomically, then updates memory only after commit.
 - **Retained service-worker proxies cannot read or spend a replacement wallet.** Wallet requests and contract-event subscriptions retain their original wallet binding. Requests capture their wallet, providers and repository before awaiting, and disposal drains admitted operations for up to 5s before closing their storage; settlements and other long-running operations are not waited for, so a re-init during a batch round is not blocked. Initialization separately drains its finite writes and finalization while pending subscription setup remains revocable; clearing revokes callbacks before draining. Reservation requests also verify the original network without changing durable hold namespaces, and timeout settings and settlement events still follow the original operation.
 
 - **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.

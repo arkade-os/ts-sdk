@@ -233,7 +233,11 @@ export function isCosignRejectedAfterSigning(e: unknown): boolean {
     return e instanceof OnchainCosignRejectedError && !isCosignFallback(e);
 }
 
-/** True only when the coins were definitely not spent, so paying another way is safe. */
+/**
+ * True only when the coins were definitely not spent, so paying another way is safe, as
+ * `sendOnchain` and `cosignOnchainTx` callers may. `Ramps.offboardExact` still rethrows every
+ * `OnchainCosignRejectedError` after signing (see README "Onchain cosigning").
+ */
 export function isCosignFallback(e: unknown): boolean {
     if (e instanceof OnchainCosignRejectedError) {
         return !!e.arkErrorName && DEFINITE_COSIGN_REJECTIONS.has(e.arkErrorName);

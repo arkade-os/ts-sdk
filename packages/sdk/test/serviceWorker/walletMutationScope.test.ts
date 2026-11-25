@@ -4,14 +4,21 @@ import { getNetwork, type NetworkName } from "../../src/networks";
 import type { Wallet } from "../../src/wallet/wallet";
 import { vtxoReservationScope } from "../../src/wallet/vtxoReservationScope";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
+import {
+    MessageBusInitializingError,
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "../../src/worker/errors";
 import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
 
 const deferred = <T>() => {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((done) => {
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((done, fail) => {
         resolve = done;
+        reject = fail;
     });
-    return { promise, resolve };
+    return { promise, resolve, reject };
 };
 
 async function walletContext(options: { key?: string; url?: string; network?: NetworkName } = {}) {
@@ -98,6 +105,199 @@ async function setup() {
 }
 
 describe("wallet request scope", () => {
+    it.each([
+        { key: "34" },
+        { url: "https://other.example/ark" },
+        { url: "https://ark.example/other" },
+        { network: "signet" as const },
+    ])("refuses foreign disposal without stopping the current wallet: %j", async (options) => {
+        const original = await setup();
+        const current = await walletContext(options);
+        await original.handler.stop();
+        await original.start(current);
+        await expect(original.proxy.dispose()).rejects.toThrow(/wallet request scope/i);
+        expect(current.dispose).not.toHaveBeenCalled();
+        expect(original.handler.walletRequestBinding).toEqual(current.binding);
+        expect(original.handler.wallet).toBe(current.wallet);
+    });
+
+    it("revokes authority before draining and excludes its own disposal request", async () => {
+        const original = await setup();
+        const finish = deferred<string>();
+        original.send.mockImplementation(() => finish.promise);
+        const sending = original.proxy.send({ address: "recipient", amount: 1_000 });
+        await vi.waitFor(() => expect(original.send).toHaveBeenCalledOnce());
+        const disposing = original.proxy.dispose();
+        await vi.waitFor(() => expect(original.handler.walletRequestBinding).toBeUndefined());
+        expect(original.dispose).not.toHaveBeenCalled();
+        const rejected = await original.handler.handleMessage({
+            id: "late-send",
+            tag: original.handler.messageTag,
+            type: "SCOPED_WALLET_REQUEST_V1",
+            payload: {
+                binding: original.binding,
+                request: {
+                    id: "late-send",
+                    tag: original.handler.messageTag,
+                    type: "SEND",
+                    payload: {},
+                },
+            },
+        });
+        expect(rejected.error?.message).toMatch(/wallet request scope/i);
+        finish.resolve("original-tx");
+        await sending;
+        await disposing;
+        expect(original.dispose).toHaveBeenCalledOnce();
+    });
+
+    it("does not restart a disposed proxy after its earlier ping fails", async () => {
+        const original = await setup();
+        const ping = deferred<void>();
+        Object.assign(original.proxy, { pingServiceWorker: () => ping.promise });
+        const reinitialize = vi.fn().mockResolvedValue(undefined);
+        Object.assign(original.proxy, { reinitialize });
+        const sending = original.proxy.send({ address: "recipient", amount: 1_000 });
+        await original.proxy.dispose();
+        ping.reject(new Error("worker unavailable"));
+        await expect(sending).rejects.toThrow(/disposed/i);
+        expect(original.send).not.toHaveBeenCalled();
+        expect(reinitialize).not.toHaveBeenCalled();
+    });
+
+    it("refuses a deduplicated read once disposal begins but answers the admitted one", async () => {
+        const original = await setup();
+        const address = deferred<string>();
+        vi.mocked(original.wallet.getAddress).mockImplementation(() => address.promise);
+        const admitted = original.proxy.getAddress();
+        await vi.waitFor(() => expect(original.wallet.getAddress).toHaveBeenCalledOnce());
+        const disposing = original.proxy.dispose();
+        const refused = expect(original.proxy.getAddress()).rejects.toThrow(/disposed/i);
+        address.resolve("admitted-address");
+        await expect(admitted).resolves.toBe("admitted-address");
+        await refused;
+        await disposing;
+    });
+
+    it("fails closed without destructive fallback when an older worker rejects disposal", async () => {
+        const original = await setup();
+        original.sendMessageDirect.mockRejectedValue(new Error("unsupported request"));
+        await expect(original.proxy.dispose()).rejects.toThrow("unsupported request");
+        await expect(original.proxy.send({ address: "recipient", amount: 1_000 })).rejects.toThrow(
+            /disposed/i,
+        );
+        expect(original.sendMessageDirect).toHaveBeenCalledOnce();
+        expect(original.sendMessageDirect.mock.calls[0][0].payload.request.type).toBe("DISPOSE");
+        expect(original.dispose).not.toHaveBeenCalled();
+    });
+
+    it("resolves disposal when the restarted worker runs no wallet", async () => {
+        const original = await setup();
+        const reinitialize = vi.fn().mockResolvedValue(undefined);
+        Object.assign(original.proxy, { reinitialize });
+        original.sendMessageDirect.mockRejectedValue(new MessageBusNotInitializedError());
+        await expect(original.proxy.dispose()).resolves.toBeUndefined();
+        expect(original.sendMessageDirect).toHaveBeenCalledOnce();
+        expect(reinitialize).not.toHaveBeenCalled();
+        await expect(original.proxy.send({ address: "recipient", amount: 1_000 })).rejects.toThrow(
+            /disposed/i,
+        );
+    });
+
+    it("waits out an init in flight before disposing", async () => {
+        const original = await setup();
+        original.sendMessageDirect
+            .mockRejectedValueOnce(new MessageBusInitializingError())
+            .mockResolvedValueOnce({ id: "x", tag: "x", type: "DISPOSE_SUCCESS" });
+        await expect(original.proxy.dispose()).resolves.toBeUndefined();
+        expect(original.sendMessageDirect).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends disposal again when called after a failure, staying fenced", async () => {
+        const original = await setup();
+        original.sendMessageDirect.mockRejectedValueOnce(
+            new ServiceWorkerTimeoutError("timed out"),
+        );
+        await expect(original.proxy.dispose()).rejects.toThrow("timed out");
+        await expect(original.proxy.send({ address: "recipient", amount: 1_000 })).rejects.toThrow(
+            /disposed/i,
+        );
+        original.sendMessageDirect.mockResolvedValueOnce({
+            id: "x",
+            tag: "x",
+            type: "DISPOSE_SUCCESS",
+        });
+        await expect(original.proxy.dispose()).resolves.toBeUndefined();
+        expect(original.sendMessageDirect).toHaveBeenCalledTimes(2);
+        await expect(original.proxy.send({ address: "recipient", amount: 1_000 })).rejects.toThrow(
+            /disposed/i,
+        );
+    });
+
+    it("finishes an admitted reinitialization before requesting worker disposal", async () => {
+        const original = await setup();
+        const config = deferred<unknown>();
+        Object.assign(original.proxy, { buildInitConfig: () => config.promise });
+        const initializing = (original.proxy as any).reinitialize();
+        const failure = expect(initializing).rejects.toThrow(/disposed/i);
+        const disposing = original.proxy.dispose();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(original.dispose).not.toHaveBeenCalled();
+        config.resolve({});
+        await failure;
+        await disposing;
+        expect(original.dispose).toHaveBeenCalledOnce();
+    });
+
+    it("does not tear down a replacement wallet when captured disposal finishes late", async () => {
+        const original = await setup();
+        const finish = deferred<void>();
+        original.dispose.mockImplementation(() => finish.promise);
+        const disposing = original.proxy.dispose();
+        await vi.waitFor(() => expect(original.dispose).toHaveBeenCalledOnce());
+        const replacement = await walletContext({ key: "34" });
+        await original.start(replacement);
+        finish.resolve(undefined);
+        await disposing;
+        await original.proxy.dispose();
+        expect(original.handler.wallet).toBe(replacement.wallet);
+        expect(original.handler.walletRequestBinding).toEqual(replacement.binding);
+        expect(replacement.dispose).not.toHaveBeenCalled();
+    });
+
+    it("does not deliver wallet updates after local disposal", async () => {
+        const listeners = new Set<(event: MessageEvent) => void>();
+        vi.stubGlobal("navigator", {
+            serviceWorker: {
+                addEventListener: (_type: string, listener: (event: MessageEvent) => void) =>
+                    listeners.add(listener),
+                removeEventListener: (_type: string, listener: (event: MessageEvent) => void) =>
+                    listeners.delete(listener),
+            },
+        });
+        try {
+            const original = await setup();
+            const received = vi.fn();
+            const unsubscribe = original.proxy.onWalletUpdate(received);
+            const update = {
+                tag: original.handler.messageTag,
+                type: "VTXO_UPDATE",
+                broadcast: true,
+                walletRequestBinding: original.binding,
+                payload: { vtxos: [] },
+            };
+            for (const listener of listeners) listener({ data: update } as MessageEvent);
+            expect(received).toHaveBeenCalledOnce();
+            await original.proxy.dispose();
+            for (const listener of listeners) listener({ data: update } as MessageEvent);
+            expect(received).toHaveBeenCalledOnce();
+            unsubscribe();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it("refuses B-derived payout preparation before an A-wallet send after switching back", async () => {
         const original = await setup();
         const other = await walletContext({ key: "34" });
@@ -197,6 +397,7 @@ describe("wallet request scope", () => {
         "MIGRATE_DEPRECATED_SIGNER_VTXOS",
         "RESTORE_WALLET",
         "CLEAR",
+        "DISPOSE",
         "CREATE_CONTRACT",
         "UPDATE_CONTRACT",
         "DELETE_CONTRACT",
