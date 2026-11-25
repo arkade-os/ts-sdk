@@ -1,10 +1,28 @@
 import { Address, OutScript, Transaction } from "@scure/btc-signer";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
-import type { ElectrumWS } from "ws-electrumx-client";
 import type { Network, NetworkName } from "../networks";
 import type { Coin } from "../wallet";
 import type { ExplorerTransaction, OnchainProvider } from "./onchain";
+
+/**
+ * The Electrum client methods the providers call. `ElectrumWS` from
+ * `ws-electrumx-client` satisfies it; naming the class would make the SDK's
+ * declarations depend on its `ws` types, which pull in `@types/node`.
+ */
+export interface ElectrumSocket {
+    request<T = unknown>(
+        method: string,
+        ...params: (boolean | string | number | (string | number)[])[]
+    ): Promise<T>;
+    subscribe(
+        method: string,
+        callback: (...payload: unknown[]) => unknown,
+        ...params: (string | number)[]
+    ): Promise<void>;
+    unsubscribe(method: string, ...params: (string | number)[]): Promise<unknown>;
+    close(reason: string): Promise<boolean>;
+}
 
 /**
  * Default WebSocket Electrum endpoints. Mainnet, mutinynet, and signet
@@ -199,7 +217,7 @@ export class WsElectrumChainSource {
     private headersSubscribePromise: Promise<HeaderSubscribeResult> | null = null;
 
     constructor(
-        private ws: ElectrumWS,
+        private ws: ElectrumSocket,
         private network: Network,
     ) {}
 
@@ -563,7 +581,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     private mtpInflight?: { hash: string; mtp: Promise<number> };
 
     constructor(
-        private ws: ElectrumWS,
+        private ws: ElectrumSocket,
         private network: Network,
     ) {
         this.chain = new WsElectrumChainSource(ws, network);

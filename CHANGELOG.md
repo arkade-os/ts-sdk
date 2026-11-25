@@ -14,6 +14,17 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Published type declarations compile without `skipLibCheck`.** The
+  declaration bundler emitted `arkade`'s type-only exports as values once they
+  were split across chunks, so twenty of them, `arkade.Program` among them,
+  failed a strict consumer; local type aliases at the barrel keep them types. The
+  Electrum providers also referenced `ElectrumWS`, whose declarations need
+  `ws` types that the SDK does not ship. They now take an `ElectrumSocket`, the
+  four methods they call, which `ElectrumWS` still satisfies. Repositories are
+  `AsyncDisposable`, so a consumer needs `esnext.disposable` in `lib` (or
+  `@types/node`). The dist smoke test now type-checks ESM and CJS consumers
+  without `skipLibCheck`.
+
 - **`Ramps.offboardExact` documents what a cosign that failed after signing leaves open.** The error is rethrown and the boarding coins stay held, but an operator that kept the signed transaction can still complete it. A batch offboard cannot spend those coins to conflict with it: arkd refuses an intent with onchain inputs and onchain outputs (`INVALID_INTENT_PROOF`). The README and the method's doc now describe the options, so the caller picks the strategy. The hold's 6-block release is named, and `isCosignFallback`'s doc says `offboardExact` rethrows regardless.
 
 ## [0.5.13] - 2026-11-23
