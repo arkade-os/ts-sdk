@@ -143,6 +143,9 @@ describe("a wallet without an Executor, on Arkade's operator", () => {
             await new VtxoManager(wallet, {}).renewVtxos();
             expect(settle).toHaveBeenCalledOnce();
 
+            // the address it shows is the own one, from one repository read
+            expect(await wallet.getAddress()).toBe(wallet.arkAddress.encode());
+
             expect(operatorInfo).not.toHaveBeenCalled();
             expect(xOnlyPublicKey).not.toHaveBeenCalled();
         } finally {

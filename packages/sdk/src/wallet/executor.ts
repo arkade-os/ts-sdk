@@ -29,6 +29,7 @@ import { timeoutSignal } from "../utils/fetch";
 import { timelockToSequence } from "../utils/timelock";
 import { newestWalletReceiveContract } from "./walletReceiveRotator";
 import { toXOnlySignerHex } from "./signerRotation";
+import { isVtxoSpent } from "./vtxo";
 
 /**
  * Bounds a registration or a refresh's status read, neither with a `fetch` deadline of its own;
@@ -90,11 +91,24 @@ export interface RegistrationOptions {
     emulatorPubkey?: string;
 }
 
-/** What the manager needs of a wallet: its key, its operator and its contracts. */
+/**
+ * What the manager needs of a wallet: its key, its operator and its contracts. `arkAddress` is the
+ * wallet's own address, which hrp and operator key are read from: `getAddress()` answers the
+ * delegated twin once one is registered, and registration must not depend on the rows it is about
+ * to write. A wallet without it answers from `getAddress()`.
+ */
 export type DelegatedWallet = Pick<
     IWallet,
     "identity" | "getAddress" | "getContractManager" | "getOperatorInfo"
->;
+> & {
+    readonly arkAddress?: ArkAddress;
+    /** The displayed receive tapscript, whose key a refresh keeps alive. */
+    readonly offchainTapscript?: { readonly options: { readonly pubKey: Uint8Array } };
+};
+
+async function ownAddress(wallet: Pick<DelegatedWallet, "arkAddress" | "getAddress">) {
+    return wallet.arkAddress ?? ArkAddress.decode(await wallet.getAddress());
+}
 
 export interface DelegatedContractWatch {
     contract: Contract;
@@ -108,6 +122,9 @@ export interface DelegatedContractWatch {
 export type ContractReader = (filter?: ContractFilter) => Promise<Contract[]>;
 
 // Building a script takes milliseconds and every poll reads all watches, rotated-off keys included.
+// Capped first-in first-out: it spans every wallet in the process, and an HD wallet adds a row per
+// receipt.
+const SCRIPT_CACHE_LIMIT = 512;
 const scriptCache = new Map<string, DelegatedContractWatch["script"]>();
 
 function cachedScript(params: Record<string, string>): DelegatedContractWatch["script"] {
@@ -115,6 +132,9 @@ function cachedScript(params: Record<string, string>): DelegatedContractWatch["s
     let script = scriptCache.get(key);
     if (!script) {
         script = ExecutorContractHandler.createScript(params);
+        if (scriptCache.size >= SCRIPT_CACHE_LIMIT) {
+            scriptCache.delete(scriptCache.keys().next().value!);
+        }
         scriptCache.set(key, script);
     }
     return script;
@@ -153,23 +173,75 @@ export async function delegatedContracts(
                 (typeof descriptor === "string" &&
                     hex.encode(deriveDescriptorLeafPubKey(descriptor)) === owner);
             if (!held || owner === undefined) continue;
-            const script = cachedScript(contract.params);
-            if (hex.encode(script.pkScript) !== contract.script) continue;
-            const expiresAt = contract.metadata?.[DELEGATION_EXPIRES_KEY];
-            watches.push({
-                contract,
-                owner,
-                script,
-                signer: toXOnlySignerHex(contract.params.serverPubKey),
-                live:
-                    contract.metadata?.[DELEGATION_STATUS_KEY] === "active" &&
-                    !(typeof expiresAt === "number" && expiresAt > 0 && expiresAt <= now),
-            });
+            const watch = watchOf(contract, owner, now);
+            if (watch) watches.push(watch);
         } catch (e) {
             console.warn("Skipping malformed delegated contract", contract.script, e);
         }
     }
     return watches;
+}
+
+/** `contract` as a watch of `owner`, or undefined when its script is not the one its params derive. */
+function watchOf(
+    contract: Contract,
+    owner: string,
+    now: number,
+): DelegatedContractWatch | undefined {
+    const script = cachedScript(contract.params);
+    if (hex.encode(script.pkScript) !== contract.script) return undefined;
+    const expiresAt = contract.metadata?.[DELEGATION_EXPIRES_KEY];
+    return {
+        contract,
+        owner,
+        script,
+        signer: toXOnlySignerHex(contract.params.serverPubKey),
+        live:
+            contract.metadata?.[DELEGATION_STATUS_KEY] === "active" &&
+            !(typeof expiresAt === "number" && expiresAt > 0 && expiresAt <= now),
+    };
+}
+
+const warnedStatusless = new Set<string>();
+
+/**
+ * The delegated twin of a receive key: its renewal watch under `signer` while the service holds
+ * it, the most recently registered when there are several. Both keys are x-only hex.
+ *
+ * Takes no identity: a watch is the key's own when its owner is the key. Rows are filtered by
+ * owner before any script is built, so keys the wallet rotated off cost nothing. Read on every
+ * call, as the page and the service worker both write rows.
+ */
+export async function receiveTwin(
+    getContracts: ContractReader,
+    owner: string,
+    signer: string,
+): Promise<DelegatedContractWatch | undefined> {
+    const rows = (await getContracts({ type: ["executor"] }))
+        .filter(
+            (c) =>
+                c.params.template === "renewal" &&
+                c.params.owner?.slice(2).toLowerCase() === owner &&
+                c.params.serverPubKey !== undefined &&
+                toXOnlySignerHex(c.params.serverPubKey) === signer,
+        )
+        .sort((a, b) => registeredAt(b) - registeredAt(a));
+    const now = Math.floor(Date.now() / 1000);
+    for (const contract of rows) {
+        const watch = watchOf(contract, owner, now);
+        if (watch?.live) return watch;
+        if (contract.metadata?.[DELEGATION_STATUS_KEY] === undefined) warnStatusless(contract);
+    }
+    return undefined;
+}
+
+/** A restored watch has no status, so the wallet cannot tell the service still holds it. */
+function warnStatusless(contract: Contract): void {
+    if (warnedStatusless.has(contract.script)) return;
+    warnedStatusless.add(contract.script);
+    console.warn(
+        `Executor renewal watch ${contract.address} has no delegation status, as after a restore: the wallet shows its own address until registerRenewal() confirms it`,
+    );
 }
 
 /**
@@ -186,17 +258,17 @@ export async function delegatedContracts(
  * it (a restore) the rows carry no status.
  */
 export async function watchExecutorContracts(
-    wallet: Pick<IWallet, "identity" | "getAddress" | "getContractManager">,
+    wallet: Pick<DelegatedWallet, "identity" | "getAddress" | "getContractManager" | "arkAddress">,
     keys: ExecutorContractKeys,
     params: DelegationParams,
     registered?: ExecutorWatchMetadata,
     descriptor?: string,
 ): Promise<Contract[]> {
-    const [owner, address, manager] = await Promise.all([
+    const [owner, { hrp, serverPubKey }, manager] = await Promise.all([
         descriptor === undefined
             ? wallet.identity.compressedPublicKey()
             : ownerKey(wallet.identity, descriptor),
-        wallet.getAddress(),
+        ownAddress(wallet),
         wallet.getContractManager(),
     ]);
     // the identity's key needs no descriptor to sign
@@ -205,7 +277,6 @@ export async function watchExecutorContracts(
         equalBytes(owner.subarray(1), await wallet.identity.xOnlyPublicKey())
             ? undefined
             : descriptor;
-    const { hrp, serverPubKey } = ArkAddress.decode(address);
     const templates: ExecutorDefault[] =
         params.boardingExitDelay === undefined ? ["renewal"] : ["renewal", "boarding"];
     const contracts: Contract[] = [];
@@ -420,13 +491,27 @@ export interface IExecutorManager {
      * is thrown, and the error names the keys that failed, so a retry covers the rest.
      * `expiresAt` applies to every watch registered.
      *
-     * A send's change returns to the live renewal contract of its first delegated input, and the
-     * wallet's own renewals pay into the newest live one, unless the amount is `maxFee + dust` or
-     * less, or a renewed coin carries assets. A renewal spending a coin at a live renewal contract
-     * pays to `getAddress()` instead: the Executor missed that coin, so paying it back repeats the
-     * miss. A coin received at `getAddress()` is covered from its first renewal on; until then the
-     * wallet renews it itself. Under an Executor that keeps failing, a coin alternates: one
-     * fallback renewal out, one ordinary renewal back in.
+     * This is the opt-in to receiving under delegation. While the displayed receive key's renewal
+     * watch is live, `getAddress()` answers that contract, the key's delegated twin, so the
+     * Executor renews what lands there while the wallet is offline: payments, change, `settle()`
+     * outputs, renewals and swap payouts and refunds all follow it. The wallet's own address
+     * answers when there is no live twin. The address changes once, the first time a twin is live:
+     * apps that store the output of `getAddress()` must not keep it. An HD wallet registers one
+     * twin per receive key; an older twin stays live, so a payment to an address the wallet showed
+     * earlier is still renewed. Look-ahead addresses and `getNewAddresses` are not delegated, and
+     * are covered from the wallet's own first renewal of what lands there.
+     *
+     * The Executor sees the amount and time of every receipt at a twin, and with an HD wallet it
+     * can link the addresses of one wallet. It can delay a renewal, not spend.
+     *
+     * A send's change returns to the live renewal contract of its first delegated input, else goes
+     * to `getAddress()`. The wallet's own renewals pay to `getAddress()`, unless the amount is
+     * `maxFee + dust` or less. A renewal spending a coin at a live renewal contract pays to the
+     * wallet's own address instead: the Executor missed that coin, so paying it back repeats the
+     * miss. A renewal of a coin that carries assets is the exception to both: `settle()` places
+     * assets only at `getAddress()`, so it pays that address, whatever the amount and wherever the
+     * coin sat. Under an Executor that keeps failing, a coin alternates: one fallback renewal out,
+     * one ordinary renewal back in.
      */
     registerRenewal(
         params: DelegationOptions,
@@ -543,6 +628,19 @@ export class ExecutorManagerImpl implements IExecutorManager {
         return first;
     }
 
+    /** @internal The renewal watch of `descriptor`'s key alone, under the params of `options`. */
+    async registerRenewalAt(
+        descriptor: string,
+        options: DelegationOptions,
+        registration: RegistrationOptions = {},
+    ): Promise<ExecutorWatchRegistration> {
+        const context = this.lazyContext();
+        return (
+            (await this.storedWatch(descriptor, options, registration, "renewal")) ??
+            (await this.registerAt(await context(), descriptor, options, registration, "renewal"))
+        );
+    }
+
     /** @internal {@link registerBoarding} for `descriptor`'s key; the displayed one by default. */
     async registerBoardingAt(
         descriptor: string | undefined,
@@ -570,10 +668,11 @@ export class ExecutorManagerImpl implements IExecutorManager {
      * registration moves the boarding address. One that cannot be revived stops being live, and
      * the wallet boards its deposits itself. A failing watch leaves the others to be tried.
      *
-     * Only a key the wallet still uses is revived: the displayed one, and the most recently
-     * registered other key with a live watch, whose renewal contract the wallet's renewals pay
-     * into. A lapsed watch of any older key ends instead: it never held a coin, and reviving it
-     * would repeat for every rotation, forever.
+     * Only a watch the wallet still needs is revived: the displayed boarding and receive keys', the
+     * most recently registered other key's, and a renewal watch whose contract holds an unspent
+     * coin, which the Executor must keep renewing while the wallet is offline. A lapsed watch of
+     * any other key ends instead: it never held a coin, or none is left, and reviving it would
+     * repeat for every rotation, forever.
      *
      * The status reads run as called; only the writes go through `write`, so a caller that orders
      * them with its rotations holds those back for one write, never for the whole refresh.
@@ -651,7 +750,10 @@ export class ExecutorManagerImpl implements IExecutorManager {
             (w) => w.contract.script === lapsed.contract.script,
         );
         if (!watch?.live) return;
-        if (!(await this.keyInUse(watch.owner, context.server))) {
+        if (
+            !(await this.keyInUse(watch.owner, context.server)) &&
+            !(template === "renewal" && (await this.holdsCoin(watch.contract)))
+        ) {
             await this.endWatch(watch, status);
             return;
         }
@@ -685,20 +787,36 @@ export class ExecutorManagerImpl implements IExecutorManager {
         });
     }
 
+    /** Whether `contract` holds an unspent coin the Executor could renew, as stored. */
+    private async holdsCoin(contract: Contract): Promise<boolean> {
+        const manager = await this.wallet.getContractManager();
+        const [stored] = await manager.getStoredContractsWithVtxos({ script: contract.script });
+        return (stored?.vtxos ?? []).some((v) => !isVtxoSpent(v) && !v.isSwept);
+    }
+
     /**
-     * The displayed key, and the most recently registered other key with a live watch: the
-     * wallet's renewals pay into its renewal contract, and a rotation copies its params when the
-     * displayed key has no watch.
+     * The displayed boarding key, the displayed receive key, and the most recently registered
+     * other key with a live watch, whose params a rotation copies when the displayed key has no
+     * watch.
      */
     private async keyInUse(owner: string, server: string): Promise<boolean> {
         const displayed = await ownerKey(this.wallet.identity, await this.displayedDescriptor());
         const displayedOwner = hex.encode(displayed.subarray(1));
-        if (owner === displayedOwner) return true;
+        const receiveOwner = this.wallet.offchainTapscript
+            ? hex.encode(this.wallet.offchainTapscript.options.pubKey)
+            : undefined;
+        if (owner === displayedOwner || owner === receiveOwner) return true;
         const others = [
             ...(await this.heldWatches("boarding")),
             ...(await this.heldWatches("renewal")),
         ]
-            .filter((w) => w.live && w.signer === server && w.owner !== displayedOwner)
+            .filter(
+                (w) =>
+                    w.live &&
+                    w.signer === server &&
+                    w.owner !== displayedOwner &&
+                    w.owner !== receiveOwner,
+            )
             .sort((a, b) => registeredAt(b.contract) - registeredAt(a.contract));
         return others[0]?.owner === owner;
     }
@@ -741,11 +859,10 @@ export class ExecutorManagerImpl implements IExecutorManager {
         { emulatorPubkey }: RegistrationOptions,
         template: ExecutorDefault,
     ): Promise<ExecutorWatchRegistration | undefined> {
-        const [address, owner] = await Promise.all([
-            this.wallet.getAddress(),
+        const [{ hrp, serverPubKey }, owner] = await Promise.all([
+            ownAddress(this.wallet),
             ownerKey(this.wallet.identity, descriptor),
         ]);
-        const { hrp, serverPubKey } = ArkAddress.decode(address);
         const server = hex.encode(serverPubKey);
         const xOnlyOwner = hex.encode(owner.subarray(1));
         const watch = (await this.heldWatches(template)).find(
@@ -786,7 +903,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
 
     /** The wallet's operator key, x-only hex: the signer a live watch is registered under. */
     private async operatorSigner(): Promise<string> {
-        return hex.encode(ArkAddress.decode(await this.wallet.getAddress()).serverPubKey);
+        return hex.encode((await ownAddress(this.wallet)).serverPubKey);
     }
 
     /**
@@ -818,7 +935,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             );
         }
         // the watch address commits to the service's operator key, so it must be the wallet's
-        const { hrp, serverPubKey } = ArkAddress.decode(await this.wallet.getAddress());
+        const { hrp, serverPubKey } = await ownAddress(this.wallet);
         const server = hex.encode(serverPubKey);
         if (info.serverPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
