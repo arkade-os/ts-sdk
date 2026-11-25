@@ -1225,7 +1225,9 @@ export class WalletMessageHandler
     private contractEventsSubscription: (() => void) | undefined;
     private retryPendingTxs?: () => Promise<void>;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
-    private channel: { broadcast(response: WalletUpdaterResponse): void } | undefined;
+    private channel:
+        | { broadcast(response: WalletUpdaterResponse): void; release?(): Promise<void> }
+        | undefined;
 
     // One counter per subscription field, bumped exactly where that field is
     // dropped — never where a neighbour's is. They cannot be merged:
@@ -1512,7 +1514,8 @@ export class WalletMessageHandler
                 }
                 const context = this.captureRequestContext(message.payload.binding);
                 if (request.type === "DISPOSE") {
-                    await this.stop();
+                    const release = this.channel?.release;
+                    await (release ? release() : this.stop());
                     return this.tagged({ id: request.id, type: "DISPOSE_SUCCESS" });
                 }
                 if (request.type === "CLEAR" && this.longRunningOperations.size > 0) {

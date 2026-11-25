@@ -87,6 +87,8 @@ export interface MessageHandler<
         },
         channel?: {
             broadcast(response: RES): void;
+            /** Stop every handler and leave the bus uninitialized, as in a fresh worker; a no-op once this generation has ended. */
+            release?(): Promise<void>;
         },
     ): Promise<void>;
 
@@ -232,8 +234,8 @@ export class MessageBus {
      */
     private initChain: Promise<void> = Promise.resolve();
     /**
-     * Number of inits accepted but not yet settled (queued or running). The
-     * bus refuses ordinary wallet messages while this is > 0.
+     * Number of inits and releases accepted but not yet settled (queued or
+     * running). The bus refuses ordinary wallet messages while this is > 0.
      */
     private pendingInitCount = 0;
     private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
@@ -483,6 +485,30 @@ export class MessageBus {
         return run;
     }
 
+    /** Back to a fresh worker's state. On the init chain, so a later init builds only after these handlers stop. */
+    private release(epoch: number): Promise<void> {
+        this.pendingInitCount += 1;
+        const run = this.initChain
+            .then(async () => {
+                // A later init or stop() already ended this generation and stopped its handlers.
+                if (epoch !== this.broadcastEpoch || !this.initialized) return;
+                this.initialized = false;
+                this.invalidateBroadcasts();
+                if (this.tickTimeout !== null) {
+                    self.clearTimeout(this.tickTimeout);
+                    this.tickTimeout = null;
+                }
+                await Promise.all(
+                    Array.from(this.handlers.values()).map((h) => h.stop().catch(() => {})),
+                );
+            })
+            .finally(() => {
+                this.pendingInitCount -= 1;
+            });
+        this.initChain = run.catch(() => undefined);
+        return run;
+    }
+
     /**
      * The bus serves ordinary wallet messages only when it is initialized AND
      * no init is in flight.
@@ -510,6 +536,7 @@ export class MessageBus {
                 if (epoch !== this.broadcastEpoch) return;
                 this.broadcastToClients([response]);
             },
+            release: () => this.release(epoch),
         };
         if (this.initialized) {
             // Clear the flag first so onMessage() rejects incoming messages

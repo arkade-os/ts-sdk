@@ -478,8 +478,11 @@ style and have not been backfilled.
 - **Worker wallets can dispose without clearing ownership records.**
   `ServiceWorkerReadonlyWallet.dispose()` and `ServiceWorkerWallet.dispose()`
   revoke the scoped worker and local proxy while preserving wallet, contract,
-  intent and reservation stores. Disposed proxies cannot automatically reinitialize;
-  `clear()` remains the explicit destructive reset.
+  intent and reservation stores. The worker is left as a freshly started one:
+  every handler stops, and another page still using the wallet re-initializes
+  it on its next request. Disposed proxies cannot automatically reinitialize;
+  `clear()` remains the explicit destructive reset. A `MessageHandler`'s
+  channel gains `release()`.
 - **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
   can import the negotiation field names, refusal code, and asset contract IDs
   without loading the client or contract builders. Existing `/protocol` exports

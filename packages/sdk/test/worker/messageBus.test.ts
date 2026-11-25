@@ -4,9 +4,14 @@ import {
     InMemoryContractRepository,
     InMemoryBatchRegistrationRepository,
     ReadonlyWallet,
+    SingleKey,
     Wallet,
+    getNetwork,
     type BatchRegistrationRepository,
 } from "../../src";
+import { vtxoReservationScope } from "../../src/wallet/vtxoReservationScope";
+import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
+import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
 import {
     MessageBus,
     MessageHandler,
@@ -1221,6 +1226,128 @@ describe("MessageBus init serialization (Iteration 1)", () => {
         gates[1].resolve({});
         await pB;
         await bus.stop();
+    });
+
+    describe("release", () => {
+        it("lets another page re-initialize after a dispose", async () => {
+            const identity = SingleKey.fromHex("12".repeat(32));
+            const url = "https://ark.example/ark/";
+            const binding = {
+                scope: vtxoReservationScope(url, await identity.xOnlyPublicKey()),
+                network: "regtest" as const,
+            };
+            const wallets: { dispose: ReturnType<typeof vi.fn> }[] = [];
+            const buildServices = async () => {
+                const wallet = {
+                    identity,
+                    network: getNetwork("regtest"),
+                    dispose: vi.fn().mockResolvedValue(undefined),
+                    indexerProvider: {},
+                    getAddress: vi.fn().mockResolvedValue("address"),
+                    getProviderConnectionState: () => ({ mode: "online", syncing: false }),
+                };
+                wallets.push(wallet);
+                return {
+                    wallet,
+                    readonlyWallet: wallet,
+                    arkProvider: {},
+                    vtxoReservationScope: binding.scope,
+                    walletRequestBinding: binding,
+                };
+            };
+            const handler = new WalletMessageHandler();
+            const bus = makeBus([handler as never], buildServices);
+            await bus.start();
+            await sendInit("init", { postMessage: vi.fn() });
+
+            // A proxy whose requests reach the bus the way a page's postMessage would.
+            const makeProxy = () => {
+                const reinitialize = vi.fn(async () => {
+                    await sendInit("reinit", { postMessage: vi.fn() });
+                });
+                const proxy = Object.assign(Object.create(ServiceWorkerWallet.prototype), {
+                    identity,
+                    messageTag: handler.messageTag,
+                    messageTimeouts: {},
+                    inflightRequests: new Map(),
+                    initConfig: { arkServer: { url } },
+                    expectedWalletScope: binding.scope,
+                    expectedNetwork: binding.network,
+                    walletRequestBinding: binding,
+                    pingServiceWorker: async () => {},
+                    reinitialize,
+                    sendMessageDirect: (request: RequestEnvelope) =>
+                        new Promise((resolve, reject) => {
+                            void messageHandler({
+                                data: structuredClone(request),
+                                source: {
+                                    postMessage: (response) =>
+                                        (response as ResponseEnvelope).error
+                                            ? reject((response as ResponseEnvelope).error)
+                                            : resolve(response),
+                                },
+                                waitUntil: (p: Promise<unknown>) => p,
+                            });
+                        }),
+                }) as ServiceWorkerWallet;
+                return { proxy, reinitialize };
+            };
+            const a = makeProxy();
+            const b = makeProxy();
+
+            await a.proxy.dispose();
+            await expect(b.proxy.getAddress()).resolves.toBe("address");
+
+            expect(b.reinitialize).toHaveBeenCalledOnce();
+            expect(wallets).toHaveLength(2);
+            expect(wallets[0].dispose).toHaveBeenCalledOnce();
+            await expect(a.proxy.getAddress()).rejects.toThrow(/disposed/i);
+
+            await bus.stop();
+        });
+
+        it("makes an init that arrives during a release wait for it", async () => {
+            const handler = new TestHandler();
+            const stopping = deferred<void>();
+            const bus = makeBus([handler], async () => ({}));
+            await bus.start();
+            await sendInit("A", { postMessage: vi.fn() });
+            handler.stop.mockImplementationOnce(() => stopping.promise);
+            const buildSpy = vi.spyOn(bus as never, "buildServicesFn" as never);
+
+            const releasing = handler.channel!.release!();
+            const reinit = sendInit("B", { postMessage: vi.fn() });
+            await flush();
+
+            expect(handler.stop).toHaveBeenCalledOnce();
+            expect(handler.start).toHaveBeenCalledOnce();
+            expect(buildSpy).not.toHaveBeenCalled();
+
+            stopping.resolve();
+            await releasing;
+            await reinit;
+            expect(handler.start).toHaveBeenCalledTimes(2);
+            await bus.stop();
+        });
+
+        it("ignores a release from a generation that already ended", async () => {
+            const handler = new TestHandler();
+            const bus = makeBus([handler], async () => ({}));
+            await bus.start();
+            await sendInit("A", { postMessage: vi.fn() });
+            const stale = handler.channel!;
+            await sendInit("B", { postMessage: vi.fn() });
+            expect(handler.stop).toHaveBeenCalledOnce();
+
+            await stale.release!();
+
+            expect(handler.stop).toHaveBeenCalledOnce();
+            handler.handleMessage.mockResolvedValue({ id: "m1", tag: handler.messageTag });
+            const source = { postMessage: vi.fn() };
+            await sendMessage("m1", handler.messageTag, source);
+            expect(handler.handleMessage).toHaveBeenCalledOnce();
+            await bus.stop();
+        });
     });
 
     it("stops existing handlers before starting new ones on re-init", async () => {
