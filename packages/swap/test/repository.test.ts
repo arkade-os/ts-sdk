@@ -627,6 +627,32 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         expect(await repository.getSwapRecord("q1")).toEqual(swapRecord("q1"));
     });
 
+    it("claims an unsent record's funding once, and never a stamped, proven or missing one", async () => {
+        await using repository = create();
+        const unsent = (id: string) => ({ ...swapRecord(id), fundingSend: "unsent" as const });
+        await repository.saveSwapRecord(unsent("q1"));
+        await repository.saveSwapRecord({ ...unsent("stamped"), fundingTxid: "ab".repeat(32) });
+        await repository.saveSwapRecord({
+            ...unsent("proven"),
+            fundingNotSubmitted: { reason: "send_refused" },
+        });
+        await repository.saveSwapRecord(swapRecord("legacy"));
+
+        expect(await Promise.all([1, 2].map(() => repository.claimSwapFunding("q1")))).toEqual([
+            true,
+            false,
+        ]);
+        expect((await repository.getSwapRecord("q1"))?.fundingSend).toBe("claimed");
+        expect(await repository.getSwapRecord("q1")).toEqual({
+            ...unsent("q1"),
+            fundingSend: "claimed",
+        });
+        for (const id of ["stamped", "proven", "legacy", "missing"]) {
+            expect(await repository.claimSwapFunding(id)).toBe(false);
+        }
+        expect((await repository.getSwapRecord("legacy"))?.fundingSend).toBeUndefined();
+    });
+
     it("replaces a record on a second save rather than duplicating it", async () => {
         await using repository = create();
         await repository.saveSwapRecord(swapRecord("q1"));

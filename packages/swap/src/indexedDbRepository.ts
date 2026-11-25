@@ -18,7 +18,7 @@ import {
 } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
-import type { SwapRecord } from "./client/record";
+import { claimedFunding, type SwapRecord } from "./client/record";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 /** Bump when adding an object store or index. `initDatabase` only runs inside
@@ -186,6 +186,20 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
             };
         });
         return created;
+    }
+
+    async claimSwapFunding(id: string): Promise<boolean> {
+        let claimed = false;
+        await this.write(STORE_SWAP_RECORDS, (store) => {
+            const existing = store.get(id);
+            existing.onsuccess = () => {
+                const next = existing.result && claimedFunding(existing.result as SwapRecord);
+                if (!next) return;
+                store.put(next);
+                claimed = true;
+            };
+        });
+        return claimed;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

@@ -126,7 +126,11 @@ export interface SwapRecordCommon {
     /** SDK proof that this wallet never submitted the funding transaction. */
     readonly fundingNotSubmitted?:
         | { readonly reason: "send_deadline"; readonly validUntil: number }
-        | { readonly reason: "send_refused" };
+        | { readonly reason: "send_refused" }
+        | { readonly reason: "send_not_started" };
+    /** Wallet-funded records only. `unsent`: no send has started, so funding may be retried;
+     * `claimed`: one runtime owns the send. Absent: written before this field, possibly sent. */
+    readonly fundingSend?: "unsent" | "claimed";
     /** Last retryable receive-claim error; becomes the terminal failure if the claim window closes. */
     readonly claimFailure?: string;
     /** Terminal failure reason. */
@@ -389,6 +393,14 @@ export const fundsFromWallet = (route: {
     give: { instrument: Instrument | RecordedInstrument };
 }): boolean => route.give.instrument.kind === "wallet";
 
+/** The record flipped to `claimed`, or `undefined` unless it is unsent, unstamped and unproven. */
+export const claimedFunding = (record: SwapRecord): SwapRecord | undefined =>
+    record.fundingSend === "unsent" &&
+    record.fundingTxid === undefined &&
+    record.fundingNotSubmitted === undefined
+        ? { ...record, fundingSend: "claimed" }
+        : undefined;
+
 export const fundingWasNotSubmitted = (
     record: Pick<
         SwapRecordCommon,
@@ -398,6 +410,7 @@ export const fundingWasNotSubmitted = (
     const proof = record.fundingNotSubmitted;
     return (
         (proof?.reason === "send_refused" ||
+            proof?.reason === "send_not_started" ||
             (proof?.reason === "send_deadline" &&
                 Number.isSafeInteger(proof.validUntil) &&
                 proof.validUntil > 0 &&

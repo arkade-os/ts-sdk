@@ -26,7 +26,7 @@ import {
 } from "@arkade-os/sdk";
 import { fundingWasNotSubmitted } from "./record";
 import { assetPaymentOf } from "./assetPayment";
-import { retireUnsubmittedFunding } from "./fundingNotSubmitted";
+import { retireNeverSent, retireUnsubmittedFunding } from "./fundingNotSubmitted";
 import { hex } from "@scure/base";
 import { finalizePendingClaim, findPendingClaims, pushClaim } from "../claim";
 import { claimOnchainFill, nextClaimFeeRate } from "../onchainHtlc";
@@ -908,8 +908,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             });
         }
         if (!lapseTimer) {
-            lapseTimer = setInterval(cancelLapsed, config.pollIntervalMs ?? 5_000);
+            lapseTimer = setInterval(() => {
+                cancelLapsed();
+                retireLapsedUnsent();
+            }, config.pollIntervalMs ?? 5_000);
             cancelLapsed();
+            retireLapsedUnsent();
         }
     };
 
@@ -950,6 +954,30 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 })
                     .catch((error: unknown) => {
                         console.warn(`[swap] could not cancel lapsed swap ${record.id}`, error);
+                    })
+                    .finally(() => lapsing.delete(record.id)),
+            );
+        }
+    };
+
+    /** Retire swaps whose funding never started and whose quote lapsed, so nobody watches their
+     * covenant forever. */
+    const retireLapsedUnsent = (): void => {
+        if (disposed || !repository || mode === "readonly") return;
+        for (const record of records.values()) {
+            if (
+                record.fundingSend !== "unsent" ||
+                record.fundingTxid !== undefined ||
+                now() <= record.expiresAt ||
+                lapsing.has(record.id)
+            ) {
+                continue;
+            }
+            lapsing.add(record.id);
+            void track(
+                retireNeverSent({ wallet, drive: { ingest: remember } }, repository, record)
+                    .catch((error: unknown) => {
+                        console.warn(`[swap] could not retire unsent swap ${record.id}`, error);
                     })
                     .finally(() => lapsing.delete(record.id)),
             );

@@ -14,7 +14,7 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
-import type { SwapRecord } from "../../client/record";
+import { claimedFunding, type SwapRecord } from "../../client/record";
 
 const DEFAULT_PREFIX = "arkade_";
 // SQLite's default parameter ceiling is 999; stay well under it per statement.
@@ -250,6 +250,25 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             created = true;
         });
         return created;
+    }
+
+    async claimSwapFunding(id: string): Promise<boolean> {
+        await this.ensureInit();
+        let claimed = false;
+        await this.withTx(async (tx) => {
+            const row = await tx.get<{ data: string }>(
+                `SELECT data FROM ${this.swapRecords} WHERE id = ?`,
+                [id],
+            );
+            const next = row && claimedFunding(JSON.parse(row.data) as SwapRecord);
+            if (!next) return;
+            await tx.run(`UPDATE ${this.swapRecords} SET data = ? WHERE id = ?`, [
+                JSON.stringify(next),
+                id,
+            ]);
+            claimed = true;
+        });
+        return claimed;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

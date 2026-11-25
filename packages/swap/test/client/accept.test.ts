@@ -1225,6 +1225,118 @@ describe("accept() — funding the quote exactly", () => {
     });
 });
 
+describe("accept() — a funding that never started", () => {
+    /** An accepted quote whose record is durable and `unsent`: the claim failed before any send. */
+    const seedUnsent = async (h: Harness, route: RouteName = "spot"): Promise<Quote> => {
+        const quote = await quoteFor(h, route);
+        const claim = vi
+            .spyOn(h.repository, "claimSwapFunding")
+            .mockRejectedValueOnce(new Error("store busy"));
+        await expect(h.client.accept(quote)).rejects.toThrow("store busy");
+        claim.mockRestore();
+        expect(h.wallet.sent).toHaveLength(0);
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingSend).toBe("unsent");
+        return quote;
+    };
+
+    it("funds exactly once on the next accept after a failure before the send", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        expect((await h.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        expect((await h.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        expect(h.wallet.sent).toHaveLength(1);
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingSend).toBe("claimed");
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("funds an unsent record once from a fresh client after a crash", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        await h.client[Symbol.asyncDispose]();
+        const restarted = await setup({ repository: h.repository });
+        expect((await restarted.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        expect(restarted.wallet.sent).toHaveLength(1);
+        await restarted.client[Symbol.asyncDispose]();
+    });
+
+    it("sends once when two runtimes resume the same unsent record", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        const corridors = corridorSet(
+            await resolveCorridorBase({
+                wallet: h.wallet.wallet,
+                operator: walletOperator(h.wallet.wallet),
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                requireLive: false,
+            }),
+        );
+        vi.resetModules();
+        const { acceptQuote: first } = await import("../../src/client/accept");
+        vi.resetModules();
+        const { acceptQuote: second } = await import("../../src/client/accept");
+        const input = {
+            quote,
+            wallet: h.wallet.wallet,
+            repository: h.repository,
+            corridors,
+            now: NOW,
+        };
+        await Promise.all([first(input), second(input)]);
+        expect(h.wallet.sent).toHaveLength(1);
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingTxid).toBe(FUNDING_TXID);
+    });
+
+    it("never resends a record written before the field existed", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        const { fundingSend: _, ...legacy } = (await h.repository.getSwapRecord(quote.id))!;
+        await h.repository.saveSwapRecord(legacy as typeof legacy & { fundingSend?: undefined });
+        expect((await h.client.accept(quote)).fundingTxid).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("does not adopt another swap's deposit at an unsent record's script", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        h.wallet.deposits.set(stored.swapPkScript, [
+            { txid: "c".repeat(64), value: Number(stored.give.amount) },
+        ]);
+        expect((await h.client.accept(quote)).fundingTxid).toBe(FUNDING_TXID);
+        expect(h.wallet.sent).toHaveLength(1);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("retires an unsent record past its expiry on accept", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+        const swap = await h.client.accept(quote);
+        expect(swap.outcome).toBe("cancelled");
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.fundingNotSubmitted).toEqual({ reason: "send_not_started" });
+        expect(h.wallet.watched).toContainEqual([stored.swapPkScript, "retained"]);
+        expect(h.wallet.sent).toHaveLength(0);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("retires an unsent record past its expiry on a drive tick", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        await h.client[Symbol.asyncDispose]();
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+        const restarted = await setup({ repository: h.repository });
+        await restarted.client.start();
+        await restarted.client.stop();
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.status).toBe("cancelled");
+        expect(stored.fundingNotSubmitted).toEqual({ reason: "send_not_started" });
+        expect(restarted.wallet.sent).toHaveLength(0);
+        await restarted.client[Symbol.asyncDispose]();
+    });
+});
+
 describe("asset deposit below dust", () => {
     it.each([
         ["raw", "Asset recipient amount 300 is below dust 330"],

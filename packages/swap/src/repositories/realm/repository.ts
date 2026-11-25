@@ -10,7 +10,7 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
-import type { SwapRecord } from "../../client/record";
+import { claimedFunding, type SwapRecord } from "../../client/record";
 
 const SWAPS = "ArkadeAssetSwap";
 const RFQ_SWAPS = "ArkadeRfqSwap";
@@ -157,6 +157,20 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
             created = true;
         });
         return created;
+    }
+
+    async claimSwapFunding(id: string): Promise<boolean> {
+        let claimed = false;
+        this.realm.write(() => {
+            const [row] = [
+                ...this.realm.objects<{ data: string }>(SWAP_RECORDS).filtered("id == $0", id),
+            ];
+            const next = row && claimedFunding(JSON.parse(row.data) as SwapRecord);
+            if (!next) return;
+            row.data = JSON.stringify(next);
+            claimed = true;
+        });
+        return claimed;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
