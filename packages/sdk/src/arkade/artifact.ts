@@ -583,6 +583,13 @@ export function programFromArtifact(
         }
     }
 
+    // ponytail: 0.1.0 frees these names; they move to `operator`/`OPERATOR_EXIT_DELAY`, which it
+    // reserves, with the single operator key migration.
+    for (const input of artifact.constructorInputs) {
+        if (isNamed(input) && (input.name === "server" || input.name === "SERVER_EXIT_DELAY")) {
+            fail(`constructor input '${input.name}' is reserved by the SDK; rename it`);
+        }
+    }
     const params: InputDef[] = [
         ...artifact.constructorInputs.flatMap((input) => flatten(input, structsByName, budget)),
         { name: "server", type: "pubkey" },

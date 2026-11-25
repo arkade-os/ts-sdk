@@ -1086,7 +1086,7 @@ describe("reading an arkadec artifact", () => {
                     { name: "server", type: "pubkey" },
                 ],
             },
-            /duplicate program parameter 'server'/,
+            /'server' is reserved by the SDK/,
         ],
         [
             "a struct named pubkey",
@@ -1124,6 +1124,11 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
             /emulator or a tweaked constructor key/,
+        ],
+        [
+            "a constructor input named SERVER_EXIT_DELAY",
+            demo({ constructorInputs: [{ name: "SERVER_EXIT_DELAY", type: "int" }] }),
+            /'SERVER_EXIT_DELAY' is reserved by the SDK/,
         ],
         [
             "an operator key in a covenant",
