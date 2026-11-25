@@ -115,8 +115,12 @@ export interface SwapRecordCommon {
     /** The quote's own deadline, unix seconds — what makes a stalled accept a
      * benign abandon rather than a live obligation. */
     readonly expiresAt: number;
-    /** Retained funding dispatch cap for an auction-origin quote. */
+    /** Funding dispatch cap retained for auction-origin or constrained funding. */
     readonly fundingDeadline?: number;
+    readonly fundingConstraints?: {
+        readonly outpoints?: readonly string[];
+        readonly maxChangeFee?: number;
+    };
     /** The one thing a counterparty must see, when the route has one. Durable because a duplicate
      * accept after a restart must return the SAME invoice, and the quote object is gone by then. */
     readonly artifact?: RecordedArtifact;

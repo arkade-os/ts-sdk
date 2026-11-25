@@ -14,7 +14,13 @@ import { collectSwapRecords } from "../../src/repository";
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { DefaultVtxo, SendDeadlineExceededError, VtxoReservedError, Wallet } from "@arkade-os/sdk";
+import {
+    DefaultVtxo,
+    SendDeadlineExceededError,
+    VtxoReservedError,
+    Wallet,
+    type ExtendedVirtualCoin,
+} from "@arkade-os/sdk";
 import { createSwapClient, type SwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
 import {
@@ -923,6 +929,115 @@ describe("accept() — what the record carries", () => {
         // Milliseconds here would retire a terminal record after ~43 minutes.
         expect(stored?.createdAt).toBe(NOW);
         expect(stored?.updatedAt).toBe(NOW);
+    });
+});
+
+describe("accept funding constraints", () => {
+    const coinFor = (value: bigint): ExtendedVirtualCoin =>
+        ({ txid: "c".repeat(64), vout: 1, value: Number(value) }) as ExtendedVirtualCoin;
+
+    it("funds with the captured inputs and change fee limit", async () => {
+        const h = await setup({ balance: { available: 0 } });
+        const quote = await quoteFor(h, "lightningSend");
+        const coin = coinFor(quote.give.amount);
+        const options = { selectedVtxos: [coin], maxChangeFee: 0, validUntil: NOW + 30 };
+        const original = { ...coin };
+        const funding = h.client.accept(quote, options);
+        coin.vout = 10;
+        options.selectedVtxos.length = 0;
+        options.maxChangeFee = 500;
+
+        await funding;
+        expect(h.wallet.requests).toEqual([
+            expect.objectContaining({
+                recipients: [expect.objectContaining({ amount: Number(quote.give.amount) })],
+                selectedVtxos: [original],
+                maxChangeFee: 0,
+                validUntil: NOW + 30,
+            }),
+        ]);
+    });
+
+    /** Fail the next accept's claim, so the record is durable and unsent but nothing was sent. */
+    const interruptBeforeSend = (h: Harness) =>
+        vi.spyOn(h.repository, "claimSwapFunding").mockRejectedValueOnce(new Error("interrupted"));
+
+    it("recovers an interrupted constrained acceptance only with the same funding constraints", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        const coin = coinFor(quote.give.amount);
+        const options = { selectedVtxos: [coin], maxChangeFee: 0, validUntil: NOW + 30 };
+        interruptBeforeSend(h);
+        await expect(h.client.accept(quote, options)).rejects.toThrow("interrupted");
+        const restarted = await setup({ repository: h.repository });
+
+        await expect(restarted.client.accept(quote)).rejects.toBeInstanceOf(AcceptConflict);
+        await expect(
+            restarted.client.accept(quote, { ...options, selectedVtxos: [{ ...coin, vout: 2 }] }),
+        ).rejects.toBeInstanceOf(AcceptConflict);
+        expect(restarted.wallet.sent).toHaveLength(0);
+
+        const { validUntil, ...sameInputs } = options;
+        await restarted.client.accept(quote, sameInputs);
+        expect(restarted.wallet.requests[0]).toMatchObject({
+            selectedVtxos: [coin],
+            maxChangeFee: 0,
+            validUntil,
+        });
+    });
+
+    it("refuses funding options on an external receive", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningReceive");
+
+        await expect(h.client.accept(quote, { maxChangeFee: 0 })).rejects.toThrow(
+            "funding options require an Arkade send",
+        );
+        expect(h.wallet.contracts).toHaveLength(0);
+    });
+
+    it("refuses an empty or repeated input selection before persisting", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        const coin = coinFor(quote.give.amount);
+
+        await expect(h.client.accept(quote, { selectedVtxos: [] })).rejects.toThrow(
+            "selectedVtxos must name at least one input",
+        );
+        await expect(h.client.accept(quote, { selectedVtxos: [coin, coin] })).rejects.toThrow(
+            "selectedVtxos must contain distinct inputs",
+        );
+        expect(await h.repository.getSwapRecord(quote.id)).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
+    });
+
+    it("keeps the earlier recorded funding deadline on a retry", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        const options = { selectedVtxos: [coinFor(quote.give.amount)], maxChangeFee: 0 };
+
+        interruptBeforeSend(h);
+        await expect(h.client.accept(quote, { ...options, validUntil: NOW + 30 })).rejects.toThrow(
+            "interrupted",
+        );
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingDeadline).toBe(NOW + 30);
+
+        const restarted = await setup({ repository: h.repository });
+        await restarted.client.accept(quote, { ...options, validUntil: NOW + 60 });
+        expect(restarted.wallet.requests[0]).toMatchObject({ validUntil: NOW + 30 });
+    });
+
+    it("retires rather than funds a stored quote past its original expiry", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        interruptBeforeSend(h);
+        await expect(h.client.accept(quote)).rejects.toThrow("interrupted");
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+
+        const restarted = await setup({ repository: h.repository });
+        const swap = await restarted.client.accept({ ...quote, expiresAt: quote.expiresAt + 60 });
+        expect(swap.outcome).toBe("cancelled");
+        expect(restarted.wallet.sent).toHaveLength(0);
     });
 });
 

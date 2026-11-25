@@ -654,6 +654,8 @@ export interface AcceptWallet {
     readonly wallet: IWallet;
     /** Every funding call, in order. */
     readonly sent: SentPayment[];
+    /** Every funding call's whole request, send options included. */
+    readonly requests: unknown[];
     /** Every contract row written, in order — first-writer-wins is modelled. */
     readonly contracts: WrittenContract[];
     /** Every watch-state change, in order. The offer route promotes its row. */
@@ -687,6 +689,7 @@ export const acceptWallet = async (
 ): Promise<AcceptWallet> => {
     const base = await hdWallet();
     const sent: SentPayment[] = [];
+    const requests: unknown[] = [];
     const contracts: WrittenContract[] = [];
     const watched: WatchStateCall[] = [];
     const deposits = new Map<
@@ -746,11 +749,12 @@ export const acceptWallet = async (
         send: async (request: SentPayment | { recipients: SentPayment[] }) => {
             const failure = over.failSend?.();
             if (failure) throw failure;
+            requests.push(request);
             sent.push(...("recipients" in request ? request.recipients : [request]));
             return over.txid ?? FUNDING_TXID;
         },
     } as unknown as IWallet;
-    return { wallet, sent, contracts, watched, deposits };
+    return { wallet, sent, requests, contracts, watched, deposits };
 };
 
 /** The txid `acceptWallet`'s `send` returns unless told otherwise. */
