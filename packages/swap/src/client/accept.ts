@@ -278,10 +278,8 @@ const captureFundingConstraints = ({ quote, funding }: AcceptInput) => {
     if (!fundsFromWallet(quote.route)) throw new Error("funding options require an Arkade send");
     const { selectedVtxos, maxChangeFee } = funding;
     const outpoints = selectedVtxos?.map(({ txid, vout }) => `${txid}:${vout}`).sort();
-    if (
-        outpoints !== undefined &&
-        (outpoints.length === 0 || new Set(outpoints).size !== outpoints.length)
-    )
+    if (outpoints?.length === 0) throw new Error("selectedVtxos must name at least one input");
+    if (outpoints !== undefined && new Set(outpoints).size !== outpoints.length)
         throw new Error("selectedVtxos must contain distinct inputs");
     if (maxChangeFee !== undefined && (!Number.isSafeInteger(maxChangeFee) || maxChangeFee < 0))
         throw new Error("maxChangeFee must be a non-negative safe integer");

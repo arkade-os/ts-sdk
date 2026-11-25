@@ -183,7 +183,7 @@ style and have not been backfilled.
 
 ### Features
 
-- **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline.
+- **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.
 
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
@@ -520,6 +520,8 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **`@arkade-os/swap`: a resumed `accept()` no longer outlives its stored quote.** The retry checked expiry against the caller's quote object only, which no conflict check covers, so a quote carrying a later `expiresAt` could fund a stored, unfunded record past its expiry. The earlier of the stored and given expiries now applies.
 
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 

@@ -936,6 +936,21 @@ describe("accept funding constraints", () => {
         expect(h.wallet.contracts).toHaveLength(0);
     });
 
+    it("refuses an empty or repeated input selection before persisting", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "lightningSend");
+        const coin = coinFor(quote.give.amount);
+
+        await expect(h.client.accept(quote, { selectedVtxos: [] })).rejects.toThrow(
+            "selectedVtxos must name at least one input",
+        );
+        await expect(h.client.accept(quote, { selectedVtxos: [coin, coin] })).rejects.toThrow(
+            "selectedVtxos must contain distinct inputs",
+        );
+        expect(await h.repository.getSwapRecord(quote.id)).toBeUndefined();
+        expect(h.wallet.sent).toHaveLength(0);
+    });
+
     it("keeps a retry's earlier funding deadline across another interruption", async () => {
         const h = await setup({ failSend: () => new Error("interrupted") });
         const quote = await quoteFor(h, "lightningSend");
