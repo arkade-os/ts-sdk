@@ -264,6 +264,42 @@ describe("RestExecutorProvider", () => {
         rateGate.reset();
     });
 
+    it("does not pause the Executor for a registration refused by a full store", async () => {
+        const report = vi.spyOn(rateGate, "reportRateLimited");
+        const provider = new RestExecutorProvider("https://executor.test");
+        for (const call of [
+            () => provider.registerDelegation("tpl-1", {}),
+            () => provider.registerArtifact("{}"),
+            () => provider.registerTemplate("{}"),
+        ]) {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 429,
+                headers: { get: () => null },
+                text: () => Promise.resolve('{"code":8,"message":"cap reached","details":[]}'),
+            });
+            await expect(call()).rejects.toMatchObject({ status: 429 });
+        }
+        expect(report).not.toHaveBeenCalled();
+        report.mockRestore();
+        rateGate.reset();
+    });
+
+    it("surfaces an upload refused on the public port as status 403", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+        for (const call of [
+            () => provider.registerArtifact("{}"),
+            () => provider.registerTemplate("{}"),
+        ]) {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 403,
+                text: () => Promise.resolve('{"code":7,"message":"served on the admin port only"}'),
+            });
+            await expect(call()).rejects.toMatchObject({ status: 403 });
+        }
+    });
+
     it("reads the encryption key when the Executor has one, refusing one not compressed", async () => {
         const provider = new RestExecutorProvider("https://executor.test");
         const encryptionPubkey = hex.encode(compressedKey);

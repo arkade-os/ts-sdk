@@ -98,13 +98,16 @@ export interface ExecutorProvider {
         options?: { signal?: AbortSignal },
     ): Promise<ExecutorDelegationDetails>;
     // Optional, so a provider serving delegated boarding alone still conforms.
-    /** `document` is the JSON text, or an object to send as its JSON. */
+    /**
+     * `document` is the JSON text, or an object to send as its JSON. Executor v0.0.5 takes uploads
+     * on its admin port; its public port answers 403 unless run with `EXECUTOR_PUBLIC_REGISTRY=true`.
+     */
     registerArtifact?(
         document: string | object,
         options?: { signal?: AbortSignal },
     ): Promise<ExecutorArtifact>;
     getArtifact?(id: string, options?: { signal?: AbortSignal }): Promise<ExecutorArtifact>;
-    /** Needs the template's artifacts registered first; `document` as in `registerArtifact`. */
+    /** Needs the template's artifacts registered first; `document` and 403 as in `registerArtifact`. */
     registerTemplate?(
         document: string | object,
         options?: { signal?: AbortSignal },
@@ -161,11 +164,12 @@ export class RestExecutorProvider implements ExecutorProvider {
             body: JSON.stringify(body),
             signal: options.signal,
         });
-        if (response.status === 429) {
-            rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
-        }
         if (!response.ok) {
-            throw await failure(response, "register delegation");
+            throw await failure(
+                response,
+                "register delegation",
+                await postErrorBody(url, response),
+            );
         }
         const data: unknown = await response.json();
         return parseDelegation(isObject(data) ? data.delegation : undefined);
@@ -252,11 +256,8 @@ export class RestExecutorProvider implements ExecutorProvider {
             body: JSON.stringify(body),
             signal,
         });
-        if (response.status === 429) {
-            rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
-        }
         if (!response.ok) {
-            throw await notFoundFailure(response, what);
+            throw await notFoundFailure(response, what, await postErrorBody(url, response));
         }
         return response.json();
     }
@@ -272,32 +273,49 @@ export class RestExecutorProvider implements ExecutorProvider {
 }
 
 /** Only the Executor's own NOT_FOUND says it lacks the record, not a proxy's 404 page. */
-async function notFoundFailure(response: Response, what: string): Promise<ExecutorRequestError> {
-    const body = await response.text();
+async function notFoundFailure(
+    response: Response,
+    what: string,
+    text?: string,
+): Promise<ExecutorRequestError> {
+    const body = text ?? (await response.text());
     return new ExecutorRequestError(
         `Failed to ${what} (${response.status}): ${body}`,
-        response.status === 404 && !isGrpcNotFound(body) ? undefined : response.status,
+        response.status === 404 && grpcCode(body) !== 5 ? undefined : response.status,
     );
 }
 
-async function failure(response: Response, what: string): Promise<ExecutorRequestError> {
+async function failure(
+    response: Response,
+    what: string,
+    text?: string,
+): Promise<ExecutorRequestError> {
     return new ExecutorRequestError(
-        `Failed to ${what} (${response.status}): ${await response.text()}`,
+        `Failed to ${what} (${response.status}): ${text ?? (await response.text())}`,
         response.status,
     );
+}
+
+/** A 429 is a rate limit unless it is the Executor's RESOURCE_EXHAUSTED: a store at its cap. */
+async function postErrorBody(url: string, response: Response): Promise<string> {
+    const body = await response.text();
+    if (response.status === 429 && grpcCode(body) !== 8) {
+        rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
+    }
+    return body;
 }
 
 function documentText(document: string | object): string {
     return typeof document === "string" ? document : JSON.stringify(document);
 }
 
-/** The gateway's gRPC status body for NOT_FOUND, whatever its message. */
-function isGrpcNotFound(body: string): boolean {
+/** The gRPC status code of a gateway error body, whatever its message. */
+function grpcCode(body: string): unknown {
     try {
         const parsed: unknown = JSON.parse(body);
-        return isObject(parsed) && parsed.code === 5;
+        return isObject(parsed) ? parsed.code : undefined;
     } catch {
-        return false;
+        return undefined;
     }
 }
 
