@@ -21,6 +21,11 @@ import {
     type SQLExecutor,
 } from "../src/repositories/sqlite";
 import { decodeArtifact } from "../src/arkade/template/abi";
+import {
+    NativeExecutionJournal,
+    NativeExecutor,
+    type NativeExecution,
+} from "../src/nativeExecutor";
 import { ExecutorRequestError } from "../src/providers/executor";
 import { createMockIndexerProvider, TEST_PUB_KEY, TEST_SERVER_PUB_KEY } from "./contracts/helpers";
 import locktime from "./fixtures/template-v1/locktime.json";
@@ -103,7 +108,7 @@ describe("NativeExecutor with existing SQLite contracts", () => {
             wallet,
             indexer,
             walletRepository,
-            native: new arkade.NativeExecutor(client, wallet as unknown as IWallet),
+            native: new NativeExecutor(client, wallet as unknown as IWallet),
         };
     }
 
@@ -112,10 +117,7 @@ describe("NativeExecutor with existing SQLite contracts", () => {
         session.native.importTemplate(doc, { variables });
 
     /** A coin at the execution's contract whose creating tx the indexer serves. */
-    function position(
-        session: Awaited<ReturnType<typeof open>>,
-        execution: arkade.NativeExecution,
-    ) {
+    function position(session: Awaited<ReturnType<typeof open>>, execution: NativeExecution) {
         const source = new Transaction();
         source.addInput({ txid: "99".repeat(32), index: 0 });
         source.addOutput({ script: execution.contract.pkScript, amount: 50_000n });
@@ -211,7 +213,7 @@ describe("NativeExecutor with existing SQLite contracts", () => {
         const session = await open();
         const execution = await importTemplate(session);
         const { coin, submit } = position(session, execution);
-        const journal = new arkade.NativeExecutionJournal(session.walletRepository);
+        const journal = new NativeExecutionJournal(session.walletRepository);
         const result = await session.native.execute(execution, coin, {
             beforeEmulatorSubmit: async (proposal) => {
                 await journal.admit(coin, proposal);

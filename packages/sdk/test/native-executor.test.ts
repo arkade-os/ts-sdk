@@ -15,7 +15,8 @@ import {
     type VirtualCoin,
 } from "../src";
 import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../src/extension/asset";
-import { Arkade, NativeExecutor, type NativeExecution } from "../src/arkade";
+import { Arkade } from "../src/arkade";
+import { NativeExecutor, type NativeExecution } from "../src/nativeExecutor";
 import { decode } from "../src/arkade/template";
 import { decodeArtifact } from "../src/arkade/template/abi";
 import { ExecutorRequestError, type ExecutorTemplateDetails } from "../src/providers/executor";

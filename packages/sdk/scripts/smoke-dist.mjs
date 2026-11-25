@@ -249,6 +249,7 @@ const nodeSafe = [
     "./worker/expo",
     "./wallet/expo",
     "./compiler",
+    "./native-executor",
 ];
 
 const signerSessionProbe = `

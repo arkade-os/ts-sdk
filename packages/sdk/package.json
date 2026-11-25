@@ -99,6 +99,16 @@
                 "types": "./dist/compiler.d.cts",
                 "default": "./dist/compiler.cjs"
             }
+        },
+        "./native-executor": {
+            "import": {
+                "types": "./dist/nativeExecutor.d.ts",
+                "default": "./dist/nativeExecutor.js"
+            },
+            "require": {
+                "types": "./dist/nativeExecutor.d.cts",
+                "default": "./dist/nativeExecutor.cjs"
+            }
         }
     },
     "files": [
