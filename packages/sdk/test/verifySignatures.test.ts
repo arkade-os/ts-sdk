@@ -46,6 +46,7 @@ describe("verifyTapscriptSignatures", async () => {
                 amount: amount,
             },
             tapLeafScript: [tapLeaf],
+            ...(sighashType === SigHash.DEFAULT ? {} : { sighashType }),
         });
 
         // Add output
@@ -206,6 +207,40 @@ describe("verifyTapscriptSignatures", async () => {
         expect(() => {
             verifyTapscriptSignatures(tx, 0, []);
         }).toThrow(/missing tapScriptSig/);
+    });
+
+    describe("signature encoding", () => {
+        const reencoded = (encode: (sig: Uint8Array) => Uint8Array) => {
+            const tx = createMockTransaction([{ identity: identity1, publicKey: publicKey1 }]);
+            const input = (tx as any).inputs[0];
+            const [data, sig] = input.tapScriptSig[0];
+            input.tapScriptSig[0] = [data, encode(sig)];
+            return () => verifyTapscriptSignatures(tx, 0, [hex.encode(publicKey1)]);
+        };
+
+        it("refuses a 65-byte signature whose sighash byte is SIGHASH_DEFAULT", () => {
+            expect(reencoded((sig) => Uint8Array.from([...sig, SigHash.DEFAULT]))).toThrow(
+                /not a BIP-341 signature encoding/,
+            );
+        });
+
+        it("refuses bytes past the sighash byte", () => {
+            expect(reencoded((sig) => Uint8Array.from([...sig, 1, 2]))).toThrow(
+                /not a BIP-341 signature encoding/,
+            );
+        });
+
+        it("still verifies an explicit sighash byte the caller allows", () => {
+            const tx = createMockTransaction(
+                [{ identity: identity1, publicKey: publicKey1 }],
+                1000n,
+                SigHash.ALL,
+            );
+            expect(tx.getInput(0).tapScriptSig?.[0][1]).toHaveLength(65);
+            expect(() =>
+                verifyTapscriptSignatures(tx, 0, [hex.encode(publicKey1)], [], [SigHash.ALL]),
+            ).not.toThrow();
+        });
     });
 
     // Note: Additional edge case tests (invalid signature, invalid length, missing tapLeafScript, etc.)
