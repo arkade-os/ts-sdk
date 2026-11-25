@@ -14,6 +14,10 @@ export const refusedBeforeSubmission = (error: unknown): boolean =>
     error instanceof Error &&
     (error.name === "VtxoReservedError" || SEND_REFUSAL.test(error.message));
 
+/** The script a record's deposit is funded to. */
+export const fundingScriptOf = (record: SwapRecord): string =>
+    record.family === "offer" ? record.swapPkScript : record.lockupPkScript;
+
 export const retireUnsubmittedFunding = async (
     wallet: IWallet,
     repository: AssetSwapRepository,
@@ -21,7 +25,7 @@ export const retireUnsubmittedFunding = async (
     contracts?: OfferContractRetirer,
 ): Promise<void> => {
     if (!fundingWasNotSubmitted(record)) return;
-    const script = record.family === "offer" ? record.swapPkScript : record.lockupPkScript;
+    const script = fundingScriptOf(record);
     try {
         await retireOfferContract(
             contracts ?? (await wallet.getContractManager()),
@@ -29,7 +33,7 @@ export const retireUnsubmittedFunding = async (
                 const records = await collectSwapRecords(repository);
                 const native = records.map((row) => ({
                     id: row.id,
-                    swapPkScript: row.family === "offer" ? row.swapPkScript : row.lockupPkScript,
+                    swapPkScript: fundingScriptOf(row),
                     createdAt: row.createdAt * 1000,
                     status:
                         row.family === "offer"

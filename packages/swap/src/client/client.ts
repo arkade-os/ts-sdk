@@ -440,8 +440,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         if (market.backend === "feed") {
             if (assetPayment !== undefined)
                 throw new Error("assetPayment needs a negotiated BTC-to-asset market");
-            let depositCarrierSats: bigint | undefined;
-            if (!isBtcAsset(resolvedRoute.give.asset)) {
+            const operatorDust = async (): Promise<bigint> => {
                 const { dust } = await liveOperatorInfo(wallet);
                 if (
                     typeof dust !== "bigint" ||
@@ -451,15 +450,15 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     throw new Error(
                         `the Arkade operator reports dust ${String(dust)}, which cannot carry an asset deposit`,
                     );
-                depositCarrierSats = dust;
-            }
+                return dust;
+            };
             const { quote, preparation } = await quoteFromFeed({
                 quoteId,
                 candidate: market,
                 market: marketRef,
                 legs: resolvedRoute.legs,
                 endpoints: { give: resolvedRoute.give, take: resolvedRoute.take },
-                ...(depositCarrierSats === undefined ? {} : { depositCarrierSats }),
+                operatorDust,
                 ...(resolvedRoute.amount === undefined ? {} : { amount: resolvedRoute.amount }),
                 feed,
                 ...(config.policy === undefined ? {} : { policy: config.policy }),
