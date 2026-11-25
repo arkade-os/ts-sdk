@@ -21,12 +21,20 @@ const deriveKey = (secretKey: Uint8Array, publicKey: Uint8Array, ephemeralPub: U
 const aad = (ephemeralPub: Uint8Array, templateId: string) =>
     concatBytes(ephemeralPub, utf8ToBytes(templateId));
 
-/** `rng` is for tests only: a repeated ephemeral key and nonce breaks AES-GCM outright. */
 export function seal(
     recipientPubkey: Uint8Array,
     plaintext: Uint8Array,
     templateId: string,
-    rng: (bytesLength: number) => Uint8Array = randomBytes,
+): Uint8Array {
+    return sealWithRng(randomBytes, recipientPubkey, plaintext, templateId);
+}
+
+/** For known-answer tests only: a repeated ephemeral key and nonce breaks AES-GCM outright. */
+export function sealWithRng(
+    rng: (bytesLength: number) => Uint8Array,
+    recipientPubkey: Uint8Array,
+    plaintext: Uint8Array,
+    templateId: string,
 ): Uint8Array {
     const ephemeralKey = rng(32);
     if (!secp256k1.utils.isValidSecretKey(ephemeralKey)) {
