@@ -747,6 +747,35 @@ describe("accept() — reconcile from evidence before a second funding", () => {
         expect(h.wallet.sent).toHaveLength(0);
     });
 
+    it("does not adopt a deposit already stamped on an identical swap", async () => {
+        let fail = false;
+        const h = await setup({
+            failSend: () => (fail ? new Error("crashed mid-send") : undefined!),
+        });
+        const first = await quoteFor(h, "spot");
+        const second = await quoteFor(h, "spot");
+        const stampedFirst = await h.client.accept(first);
+        expect(stampedFirst.fundingTxid).toBeDefined();
+
+        fail = true;
+        await expect(h.client.accept(second)).rejects.toThrow(/crashed mid-send/);
+        const a = (await h.repository.getSwapRecord(first.id)) as OfferSwapRecord;
+        const b = (await h.repository.getSwapRecord(second.id)) as OfferSwapRecord;
+        // Identical offers derive one address: the first one's deposit sits where the second looks.
+        expect(b.swapPkScript).toBe(a.swapPkScript);
+        h.wallet.deposits.set(a.swapPkScript, [
+            { txid: stampedFirst.fundingTxid!, value: Number(second.give.amount) },
+        ]);
+
+        fail = false;
+        const retried = await h.client.accept(second);
+
+        expect(retried.fundingTxid).toBeUndefined();
+        expect((await h.repository.getSwapRecord(second.id))?.fundingTxid).toBeUndefined();
+        // only the first swap's send landed; the second is neither adopted nor sent again
+        expect(h.wallet.sent).toHaveLength(1);
+    });
+
     it("matches an asset deposit on the asset entry, not the sat carrier", async () => {
         let fail = true;
         const h = await setup({
