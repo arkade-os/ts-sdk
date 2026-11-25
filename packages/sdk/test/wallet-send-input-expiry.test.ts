@@ -10,6 +10,7 @@ import {
     ServiceWorkerWallet,
     WalletMessageHandler,
     SendDeadlineExceededError,
+    SendInputsRefusedError,
     type ExtendedVirtualCoin,
     type SendParams,
 } from "../src";
@@ -179,6 +180,7 @@ describe("Wallet.send inputExpiryFloor", () => {
             expect(submit.mock.calls[0][0]).toEqual([normalizeVtxo(input)]);
         } else {
             await expect(send).rejects.toThrow("input expiry floor");
+            await expect(send).rejects.toBeInstanceOf(SendInputsRefusedError);
             expect(submit).not.toHaveBeenCalled();
         }
     });

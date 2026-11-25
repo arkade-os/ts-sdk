@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
+import { SendInputsRefusedError } from "../../src/wallet/sendInputsRefused";
 import { bindTestWallet, testWalletBinding } from "../helpers/walletRequest";
 
 // What the bus hands the page after restoring the worker error's name.
@@ -27,6 +28,13 @@ describe("ServiceWorkerWallet settle and send errors", () => {
         const wallet = walletWhoseWorkerThrows(reserved);
         await expect(wallet.settle({ inputs: [], outputs: [] })).rejects.toBe(reserved);
         await expect(wallet.send({ address: "ark1", amount: 1_000 })).rejects.toBe(reserved);
+    });
+
+    it("rebuild SendInputsRefusedError from the name the worker relays", async () => {
+        const wallet = walletWhoseWorkerThrows(fromWorker("SendInputsRefusedError"));
+        const error = await wallet.send({ address: "ark1", amount: 1_000 }).catch((e) => e);
+        expect(error).toBeInstanceOf(SendInputsRefusedError);
+        expect(error.message).toBe("SendInputsRefusedError from worker");
     });
 
     it("still wrap every other error as before", async () => {

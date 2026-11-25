@@ -128,7 +128,9 @@ export interface SwapClientConfig {
 export interface AcceptOptions {
     /** Final funding submission deadline, Unix seconds, capped by the quote expiry. */
     readonly validUntil?: number;
-    /** Spend exactly these VTXOs. An interrupted acceptance requires the same outpoints. */
+    /** Spend exactly these VTXOs. An interrupted acceptance requires the same outpoints. Inputs
+     * the wallet refuses (`SendInputsRefusedError`) cancel the swap with nothing sent, and
+     * `accept()` rethrows; quote again to try other inputs or a higher `maxChangeFee`. */
     readonly selectedVtxos?: readonly ExtendedVirtualCoin[];
     /** Maximum unavoidable BTC change paid as an offchain fee, in sats. Zero forbids it.
      * Repeat the same limit when resuming an interrupted acceptance. */

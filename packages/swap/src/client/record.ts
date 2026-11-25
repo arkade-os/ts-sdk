@@ -128,10 +128,9 @@ export interface SwapRecordCommon {
      * resume, never an `AcceptConflict`. */
     readonly fundingTxid?: string;
     /** SDK proof that this wallet never submitted the funding transaction. */
-    readonly fundingNotSubmitted?: {
-        readonly reason: "send_deadline";
-        readonly validUntil: number;
-    };
+    readonly fundingNotSubmitted?:
+        | { readonly reason: "send_deadline"; readonly validUntil: number }
+        | { readonly reason: "inputs_refused" };
     /** Last retryable receive-claim error; becomes the terminal failure if the claim window closes. */
     readonly claimFailure?: string;
     /** Terminal failure reason. */
@@ -401,12 +400,15 @@ export const fundingWasNotSubmitted = (
     > & { family: SwapFamily; status?: AssetSwapStatus; state?: RfqSwapState },
 ): boolean => {
     const proof = record.fundingNotSubmitted;
+    const proven =
+        proof?.reason === "inputs_refused" ||
+        (proof?.reason === "send_deadline" &&
+            Number.isSafeInteger(proof.validUntil) &&
+            proof.validUntil > 0 &&
+            Number.isSafeInteger(record.expiresAt) &&
+            proof.validUntil <= record.expiresAt);
     return (
-        proof?.reason === "send_deadline" &&
-        Number.isSafeInteger(proof.validUntil) &&
-        proof.validUntil > 0 &&
-        Number.isSafeInteger(record.expiresAt) &&
-        proof.validUntil <= record.expiresAt &&
+        proven &&
         record.fundingTxid === undefined &&
         record.route?.give?.instrument?.kind === "wallet" &&
         (record.family === "offer" ? record.status === "cancelled" : record.state === "failed")
