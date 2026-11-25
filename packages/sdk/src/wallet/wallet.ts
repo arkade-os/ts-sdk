@@ -256,6 +256,7 @@ import {
     exitCsvOf,
     emulatorInputIndexes,
     estimateOnchainCosignFee,
+    operatorCosignedInputs,
     prepareOwnedInput,
     submitOnchainSpend,
 } from "../contracts/onchainSpend";
@@ -5622,7 +5623,17 @@ export class Wallet
             );
         }
 
-        if (emulated.size > 0) await attachPrevoutTxs(tx, this.onchainProvider);
+        const operated = operatorCosignedInputs(tx, [
+            this._arkServerPublicKey,
+            ...[...this._deprecatedSigners.keys()].map((k) => hex.decode(k)),
+        ]);
+        const viaOperator = emulated.size > 0 && operated.size === emulated.size;
+        if (operated.size > 0 && !viaOperator) {
+            throw new OnchainCosignPreflightError(
+                "covenants co-signed by arkd and by the emulator cannot share a transaction; spend them separately",
+            );
+        }
+        if (emulated.size > 0 && !viaOperator) await attachPrevoutTxs(tx, this.onchainProvider);
         const signed = (await this._signerRouter.sign(
             tx,
             this.inputSigningJobsFromWitnessUtxos(tx, ownedIndexes),
@@ -5646,6 +5657,7 @@ export class Wallet
                     arkProvider: this.arkProvider,
                     emulator: this._emulator,
                     onchainProvider: this.onchainProvider,
+                    viaOperator,
                 });
             } catch (e) {
                 // Segwit txids ignore witnesses, so the unsigned id is the one arkd may have broadcast.

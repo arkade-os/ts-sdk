@@ -19,10 +19,12 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import {
     ArkadeTweak,
     ConditionWitness,
+    PrevoutTxField,
     VtxoTaprootTree,
     getArkPsbtFields,
     setArkPsbtField,
 } from "../utils/unknownFields";
+import { computeArkadeScriptPublicKey } from "../arkade/tweak";
 import type { VirtualCoin } from "../wallet";
 import type { Contract, PathSelection } from "./types";
 import { exitSequence } from "./handlers/helpers";
@@ -111,6 +113,38 @@ export function emulatorInputIndexes(tx: Transaction): Set<number> {
     } catch (e) {
         if (e instanceof ExtensionNotFoundError) return new Set();
         throw e;
+    }
+}
+
+/** Packet inputs whose leaf names one of `operatorKeys` tweaked by its entry's script: arkd co-signs them. */
+export function operatorCosignedInputs(tx: Transaction, operatorKeys: Uint8Array[]): Set<number> {
+    let entries;
+    try {
+        entries = Extension.fromTx(tx).getEmulatorPacket()?.entries ?? [];
+    } catch (e) {
+        if (e instanceof ExtensionNotFoundError) return new Set();
+        throw e;
+    }
+    const held = new Set<number>();
+    for (const { vin, script } of entries) {
+        const leaf = tx.getInput(vin)?.tapLeafScript?.[0];
+        if (!leaf) continue;
+        const leafHex = hex.encode(scriptFromTapLeafScript(leaf));
+        const named = (key: Uint8Array) =>
+            leafHex.includes(hex.encode(computeArkadeScriptPublicKey(key, script)));
+        if (operatorKeys.some(named)) held.add(vin);
+    }
+    return held;
+}
+
+function dropPrevoutTxs(tx: Transaction): void {
+    for (let i = 0; i < tx.inputsLength; i++) {
+        const { unknown } = tx.getInput(i);
+        const kept = unknown?.filter((u) => PrevoutTxField.decode(u) === null);
+        if (kept && kept.length !== unknown!.length) {
+            tx.updateInput(i, { unknown: undefined }, true);
+            if (kept.length > 0) tx.updateInput(i, { unknown: kept });
+        }
     }
 }
 
@@ -321,6 +355,9 @@ export async function submitOnchainSpend(
             throw new Error("arkd-cosigned inputs present but no arkProvider configured");
         }
         if (!deps.arkProvider.cosignOnchainTx) throw new OnchainCosignUnsupportedError();
+        // arkd attaches its own prevout txs to a packet's tx without deduping, and its signer
+        // then refuses the duplicate keys as "invalid tx".
+        if (emulated.size > 0) dropPrevoutTxs(tx);
         return deps.arkProvider.cosignOnchainTx(base64.encode(tx.toPSBT()));
     }
     for (let i = 0; i < tx.inputsLength; i++) {

@@ -16,10 +16,12 @@ import {
     emulatorInputIndexes,
     estimateOnchainCosignFee,
     isCosignFallback,
+    operatorCosignedInputs,
     prepareOwnedInput,
     rehydrateCosignError,
     submitOnchainSpend,
 } from "../../src/contracts/onchainSpend";
+import { computeArkadeScriptPublicKey } from "../../src/arkade/tweak";
 import { TxWeightEstimator } from "../../src/utils/txSizeEstimator";
 import {
     OnchainCosignAmbiguousError,
@@ -28,7 +30,13 @@ import {
 } from "../../src/providers/ark";
 import { ConditionMultisigTapscript } from "../../src/script/tapscript";
 import { VtxoScript, scriptFromTapLeafScript } from "../../src/script/base";
-import { ConditionWitness, VtxoTaprootTree, getArkPsbtFields } from "../../src/utils/unknownFields";
+import {
+    ConditionWitness,
+    PrevoutTxField,
+    VtxoTaprootTree,
+    getArkPsbtFields,
+    setArkPsbtField,
+} from "../../src/utils/unknownFields";
 
 const script = new DefaultVtxo.Script({
     pubKey: schnorr.getPublicKey(new Uint8Array(32).fill(1)),
@@ -330,15 +338,15 @@ describe("emulator inputs", () => {
         pubkeys: [keyA, keyB],
     });
     const vtxo = new VtxoScript([conditionLeaf.script]);
-    const emulatorTx = () => {
+    const emulatorTx = (tree = vtxo) => {
         const tx = new Transaction({ version: 2 });
         tx.addInput({ txid: hex.decode(coin.txid), index: 0 });
         tx.addOutput({ script: script.pkScript, amount: 9_000n });
         prepareOwnedInput(tx, {
             index: 0,
-            coin: { value: 10_000, script: hex.encode(vtxo.pkScript) },
-            path: { leaf: vtxo.leaves[0], extraWitness: [preimage] },
-            tapTree: vtxo.encode(),
+            coin: { value: 10_000, script: hex.encode(tree.pkScript) },
+            path: { leaf: tree.leaves[0], extraWitness: [preimage] },
+            tapTree: tree.encode(),
         });
         attachExtension(tx, [
             EmulatorPacket.create([
@@ -403,6 +411,36 @@ describe("emulator inputs", () => {
         expect(sent.getInput(0).finalScriptWitness).toBeUndefined();
         expect(sent.getInput(0).tapScriptSig).toHaveLength(2);
         expect(getArkPsbtFields(sent, 0, ConditionWitness)).toEqual([[preimage]]);
+    });
+
+    it("drops the client's prevout txs before arkd, which attaches its own", async () => {
+        const tx = emulatorTx();
+        setArkPsbtField(tx, 0, PrevoutTxField, new Uint8Array([1, 2, 3]));
+        const arkProvider = { cosignOnchainTx: vi.fn(async (_: string) => "arkd-txid") };
+
+        await submitOnchainSpend(tx, new Set(), {
+            arkProvider,
+            viaOperator: true,
+            onchainProvider: { broadcastTransaction: vi.fn(), getRawTransaction: vi.fn() },
+        });
+
+        const sent = Transaction.fromPSBT(
+            base64.decode(arkProvider.cosignOnchainTx.mock.calls[0][0]),
+        );
+        expect(getArkPsbtFields(sent, 0, PrevoutTxField)).toEqual([]);
+        expect(getArkPsbtFields(sent, 0, ConditionWitness)).toEqual([[preimage]]);
+    });
+
+    it("finds the packet inputs whose leaf names an operator key tweaked by their script", () => {
+        const tweakedB = computeArkadeScriptPublicKey(keyB, new Uint8Array([0x51]));
+        const leaf = ConditionMultisigTapscript.encode({
+            conditionScript: Script.encode(["SHA256", sha256(preimage), "EQUAL"]),
+            pubkeys: [keyA, tweakedB],
+        });
+        const tx = emulatorTx(new VtxoScript([leaf.script]));
+
+        expect(operatorCosignedInputs(tx, [keyB])).toEqual(new Set([0]));
+        expect(operatorCosignedInputs(tx, [keyA])).toEqual(new Set());
     });
 
     it("finalizes a condition leaf on the direct broadcast path too", async () => {
