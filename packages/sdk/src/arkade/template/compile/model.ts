@@ -1,6 +1,6 @@
 import { concatBytes } from "@scure/btc-signer/utils.js";
 
-import type { ArtifactFunction, Definition, Leaf } from "../abi";
+import type { ArtifactFunction, Definition, Field, Leaf } from "../abi";
 import { isContextFree } from "../asm";
 
 export type Piece =
@@ -65,8 +65,8 @@ export interface Input {
     leaf: string;
     selected: ArtifactFunction;
     selectedLeaf: Leaf;
-    /** Flattened covenant inputs. */
-    arguments: ByteTemplate[];
+    /** Flattened covenant inputs, each with the field it binds. */
+    arguments: { value: ByteTemplate; field: Field }[];
     /** Non-signature witness items. */
     witness: Map<string, ByteTemplate>;
     sequence?: LockSpec;

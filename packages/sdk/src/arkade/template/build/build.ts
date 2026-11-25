@@ -162,9 +162,8 @@ function spendsOf(i: Instance, d: ReturnType<typeof newDraft>): Spending[] {
             .reverse();
         const covenant = ct.covenants.get(input.function);
         if (covenant === undefined) return { leaf, proof, witness };
-        // Go pairs the flattened arguments with the declared, unflattened inputs (build.go:202)
-        const items = (input.selected.arkade?.inputs ?? [])
-            .map((f, k) => item(`argument ${q(f.name)}`, input.arguments[k], f.type))
+        const items = input.arguments
+            .map((a) => item(`argument ${q(a.field.name)}`, a.value, a.field.type))
             .reverse();
         return {
             leaf,

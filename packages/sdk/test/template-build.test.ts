@@ -215,6 +215,28 @@ it("puts the first declared covenant input on top of the stack", () => {
     );
 });
 
+it("flattens a covenant array input by index, its first element nearest the top", () => {
+    const [s0, s1] = ["08".repeat(32), "09".repeat(32)];
+    const t = edited("virtual-plain-leaf", (d) => {
+        d.packets = { output_index: 2 };
+        d.inputs[0].contract.definition.functions[1].arkade = {
+            inputs: [
+                { name: "a", type: "int" },
+                { name: "sigs", type: "bytes32[2]" },
+            ],
+            asm: ["OP_2DROP", "OP_DROP", "OP_1"],
+        };
+        d.inputs[0].spend = { function: "pay", leaf: "pay", arguments: [7, s0, s1] };
+    });
+    const sources = funded(t, {}, [[100_000]]);
+    const a = build(bind(t, { keys, variables: {} }), { sources, fee: { dust: 330n } });
+    const ext = Extension.fromBytes(parseTx(a.tx).outputs[a.extension].script);
+    const witness = ext.getEmulatorPacket()?.entries[0].witness ?? new Uint8Array();
+    expect(hex.encode(witness)).toBe(
+        hex.encode(serializeWitness([hex.decode(s1), hex.decode(s0), Uint8Array.of(7)])),
+    );
+});
+
 // Go's types rule these out: uint64 fees, time.Time stamps and parsed *btcec.PublicKey keys.
 describe("caller inputs Go cannot express", () => {
     const t = edited("onchain", () => {});

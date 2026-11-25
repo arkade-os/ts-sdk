@@ -152,5 +152,11 @@ function decodeTaptree(raw: Uint8Array): Uint8Array[] {
             throw badTree((e as Error).message);
         }
     }
+    const seen = new Set<string>();
+    for (const s of scripts) {
+        const leaf = hex.encode(s);
+        if (seen.has(leaf)) throw badTree(`leaf ${leaf} is repeated`);
+        seen.add(leaf);
+    }
     return scripts;
 }
