@@ -6,6 +6,7 @@ import {
     IndexedDBWalletRepository,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    NativeExecutionJournal,
     networks,
     RestArkProvider,
     RestEmulatorProvider,
@@ -17,12 +18,7 @@ import {
     type EmulatorSubmitProposal,
     type VirtualCoin,
 } from "../../src";
-import { Arkade } from "../../src/arkade";
-import {
-    NativeExecutionJournal,
-    NativeExecutor,
-    type NativeExecution,
-} from "../../src/nativeExecutor";
+import { Arkade, NativeExecutor, type NativeExecution } from "../../src/arkade";
 import { emulateOffchainTx } from "../../src/arkade/vm";
 import { vmExtensionCodec } from "../../src/extension/vmCodec";
 import vhtlc from "../fixtures/template-v1/vhtlc-claim.json";

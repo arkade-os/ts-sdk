@@ -12,8 +12,7 @@ import {
     type ArkadeInfo,
     type IWallet,
 } from "../src";
-import { Arkade } from "../src/arkade";
-import { NativeExecutor } from "../src/nativeExecutor";
+import { Arkade, NativeExecutor } from "../src/arkade";
 import { nativeOffchainTx } from "../src/arkade/executor";
 import { compile, decode, instantiate } from "../src/arkade/template";
 import { decodeArtifact } from "../src/arkade/template/abi";

@@ -817,10 +817,7 @@ style and have not been backfilled.
   encryption key and registers a delegation, uploading the artifacts and the
   template only when the Executor lacks them; when it refuses uploads (v0.0.5
   accepts them on its admin port only by default), the error names the template
-  its operator must install. `NativeExecutor` and `NativeExecutionJournal` are
-  imported from `@arkade-os/sdk/native-executor`, not the package entry, so an
-  app that does not use them does not carry the VM and the template engine
-  (about 170 KB of minified code).
+  its operator must install.
 
 - **Native execution can await persistence before emulator dispatch.** The
   optional beforeEmulatorSubmit callback receives immutable exact proposal bytes;
