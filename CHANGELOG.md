@@ -183,6 +183,18 @@ style and have not been backfilled.
 
 ### Features
 
+- **`ExecutorProvider` can register and read the Executor's templates and
+  artifacts.** The SDK's Executor client covered only delegations, so a caller
+  delegating its own template needed a second client to upload it.
+  `RestExecutorProvider` adds `registerArtifact`, `getArtifact`,
+  `registerTemplate` and `getTemplate`, optional on the `ExecutorProvider`
+  interface so existing implementations still conform. A 404 from these calls
+  counts as the Executor's only when its body is the gRPC NOT_FOUND status.
+  `ExecutorInfo` reports the service's `encryptionPubkey` when it advertises
+  one, validated as a compressed key, so `getInfo()` now refuses a malformed
+  one. Executor v0.0.5 takes uploads on its admin port only, and its public
+  port answers 403 unless it runs with `EXECUTOR_PUBLIC_REGISTRY=true`.
+
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
@@ -518,6 +530,14 @@ style and have not been backfilled.
   has no `reason`. Non-breaking.
 
 ### Bug Fixes
+
+- **A full Executor store no longer pauses every request to that Executor.**
+  An Executor at its delegation cap answers `registerDelegation` with gRPC
+  `RESOURCE_EXHAUSTED`, which its gateway serves as a 429 without
+  `Retry-After`. `RestExecutorProvider` reported that to the shared rate gate
+  as a rate limit, so every request to that Executor then waited out the
+  default cooldown. A 429 carrying that status is now only an error, and any
+  other 429 still pauses the origin.
 
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
