@@ -437,6 +437,17 @@ describe("buildContract", () => {
         expect(kinds(() => buildContract(k, {}, keys, new Uint8Array()))).toEqual(["ineligible"]);
     });
 
+    it("refuses a given tree that repeats a leaf, as the Executor does since executor#19", () => {
+        const k = def([fn("a", ["<SERVER_KEY>", "OP_CHECKSIG"])]);
+        const other = `20${hex.encode(pub(5).subarray(1))}ac`;
+        for (const t of [tree(declared, declared), tree(declared, other, declared)]) {
+            expect(() => buildContract(k, {}, keys, t)).toThrow(
+                `bad taptree: leaf ${declared} is repeated`,
+            );
+            expect(kinds(() => buildContract(k, {}, keys, t))).toEqual(["ineligible"]);
+        }
+    });
+
     it("takes a tree's other leaves only when DecodeClosure accepts them, as Go does", () => {
         const k = def([fn("a", ["<SERVER_KEY>", "OP_CHECKSIG"])]);
         const [g, g2] = [pub(1), pub(2)].map((p) => hex.encode(p.subarray(1)));
@@ -796,5 +807,14 @@ describe("artifact/v1 parsing", () => {
         expect(kinds(() => parse(nested(10, arrays)))).toEqual(["invalid_artifact"]);
         expect(kinds(() => parse(nested(40, [])))).toEqual(["invalid_artifact"]);
         expect(kinds(() => parse(nested(0, arrays.slice(0, 1))))).toEqual([]);
+    });
+
+    it("caps the flattened constructor names at 1 MiB of UTF-8 (executor#18)", () => {
+        const named = (name: string) => () =>
+            parse(leafless(one(["OP_1"]), [{ name, type: "int[1024]" }]));
+        expect(kinds(named("x".repeat(1024)))).toEqual([]);
+        for (const name of ["x".repeat(1025), "é".repeat(513)]) {
+            expect(() => named(name)()).toThrow("constructor names flatten to more than 1048576");
+        }
     });
 });

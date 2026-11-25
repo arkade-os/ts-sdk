@@ -14,6 +14,7 @@ import {
     type Template,
     TemplateError,
 } from "../src/arkade/template";
+import { Failure } from "../src/arkade/template/errors";
 import { parseTx, serializeTx, serializeWitness, txid } from "../src/arkade/vm";
 import { Extension } from "../src/extension";
 
@@ -215,6 +216,28 @@ it("puts the first declared covenant input on top of the stack", () => {
     );
 });
 
+it("flattens a covenant array input by index, its first element nearest the top", () => {
+    const [s0, s1] = ["08".repeat(32), "09".repeat(32)];
+    const t = edited("virtual-plain-leaf", (d) => {
+        d.packets = { output_index: 2 };
+        d.inputs[0].contract.definition.functions[1].arkade = {
+            inputs: [
+                { name: "a", type: "int" },
+                { name: "sigs", type: "bytes32[2]" },
+            ],
+            asm: ["OP_2DROP", "OP_DROP", "OP_1"],
+        };
+        d.inputs[0].spend = { function: "pay", leaf: "pay", arguments: [7, s0, s1] };
+    });
+    const sources = funded(t, {}, [[100_000]]);
+    const a = build(bind(t, { keys, variables: {} }), { sources, fee: { dust: 330n } });
+    const ext = Extension.fromBytes(parseTx(a.tx).outputs[a.extension].script);
+    const witness = ext.getEmulatorPacket()?.entries[0].witness ?? new Uint8Array();
+    expect(hex.encode(witness)).toBe(
+        hex.encode(serializeWitness([hex.decode(s1), hex.decode(s0), Uint8Array.of(7)])),
+    );
+});
+
 // Go's types rule these out: uint64 fees, time.Time stamps and parsed *btcec.PublicKey keys.
 describe("caller inputs Go cannot express", () => {
     const t = edited("onchain", () => {});
@@ -301,6 +324,59 @@ describe("what a compiled template or instance shares with its caller", () => {
         );
         k.cosigner[1] ^= 1;
         expect(i.keys.cosigner).toEqual(keys.cosigner);
+    });
+});
+
+describe("bounds and codes from arkade-os/executor#18", () => {
+    it("bounds delegation seconds by uint32", () => {
+        const schedule = (n: number) => () =>
+            edited("counter", (d) => (d.delegation.schedule.counter.before_expiry_seconds = n));
+        const trigger = (n: number) => () =>
+            edited("counter", (d) => {
+                d.variables = { a: "bytes" };
+                d.delegation = {
+                    trigger: {
+                        counter: {
+                            packet: 7,
+                            require: { "tlv:0": "0x01" },
+                            capture: { a: "tlv:3" },
+                            expires_after_seconds: n,
+                        },
+                    },
+                };
+                delete d.packets.advertise;
+            });
+        for (const f of [schedule, trigger]) {
+            expect(thrown(f(2 ** 32 - 1))).toBeUndefined();
+            expect(thrown(f(2 ** 32))).toBe("decode/invalid_template");
+        }
+    });
+
+    it("checks the service keys before it opens the variables", () => {
+        const t = edited("onchain", () => {});
+        const watch = () =>
+            instantiate(t, {
+                keys: { ...keys, cosigner: undefined },
+                variables: { nope: Uint8Array.of(1) },
+            });
+        expect(thrown(watch)).toBe("instantiate/unsupported");
+    });
+
+    it("codes an input that cannot pay the fee as unaffordable, still ineligible", () => {
+        const t = edited("onchain", () => {});
+        const sources = funded(t, {}, [[500]]);
+        const fee: Fee = { dust: 330n, onchain: () => 600n };
+        let e: unknown;
+        try {
+            build(bind(t, { keys, variables: {} }), { sources, fee });
+        } catch (err) {
+            e = err;
+        }
+        expect(e).toBeInstanceOf(TemplateError);
+        expect([(e as TemplateError).code, ((e as TemplateError).cause as Failure).kinds]).toEqual([
+            "unaffordable",
+            ["ineligible", "unaffordable"],
+        ]);
     });
 });
 

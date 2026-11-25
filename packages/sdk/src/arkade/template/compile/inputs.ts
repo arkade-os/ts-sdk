@@ -110,7 +110,7 @@ function spend(c: Compiler, ct: Construction, s: schema.Spend) {
     if (given.length !== want.length) {
         throw bad(`function ${q(f.name)} takes ${want.length} arguments, got ${given.length}`);
     }
-    const args = given.map((a, i) => bind(c, a, want[i].type));
+    const args = given.map((a, i) => ({ value: bind(c, a, want[i].type), field: want[i] }));
     const witness = new Map<string, ByteTemplate>();
     for (const w of l.witness) {
         if (w.type === "signature") {

@@ -313,6 +313,7 @@ export class Instance {
 }
 
 function instantiateWith(t: Template, c: Given): Instance {
+    checkKeys(t, c.keys);
     const vars = open(t, c.variables, c.decrypt);
     validateVariables(t, vars, false);
     const watch = c.sources === undefined;

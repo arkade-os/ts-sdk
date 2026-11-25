@@ -2202,8 +2202,18 @@ style and have not been backfilled.
   `onchain` templates, runs binding expressions in the arkade VM, and seals
   sealed variables with ECIES. It is not exported yet. The Executor's 80
   vectors, copied into `packages/sdk/test/fixtures/template-v1/`, and
-  differential runs against its Go API check it. `@noble/ciphers` 2.1.1,
-  already installed for the swap package, is now an SDK dependency.
+  differential runs against its Go API check it. It also follows the Executor's
+  template changes after v0.0.5, up to `153bbe8`:
+  - the bounds and error codes of arkade-os/executor#18: names in a flattened
+    constructor total at most 1 MiB, delegation seconds fit a uint32, a
+    template has at most 65535 inputs and 65535 outputs, missing
+    service keys are refused before variables are opened, and an input that
+    cannot pay the fee is `unaffordable`;
+  - it refuses a supplied taptree that repeats a leaf (#19);
+  - it pairs covenant array arguments with their flattened fields (#20).
+
+  `@noble/ciphers` 2.1.1, already installed for the swap package, is now an SDK
+  dependency.
 
 ## [0.1.13] - 2026-11-21
 
