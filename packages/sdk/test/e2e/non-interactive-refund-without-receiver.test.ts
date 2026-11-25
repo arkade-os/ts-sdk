@@ -69,6 +69,7 @@ import {
     RestOperatorProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
+    REGTEST_EMULATOR_PUBKEY,
 } from "../../src";
 import { beforeEachFaucet, execCommand, faucetOffchain, mineBlocks, randomP2TR } from "./utils";
 
@@ -196,6 +197,7 @@ describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             indexer: indexerProvider,
             network: networks.regtest,
         });
