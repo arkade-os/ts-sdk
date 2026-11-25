@@ -481,8 +481,9 @@ style and have not been backfilled.
   intent and reservation stores. The worker is left as a freshly started one:
   every handler stops, and another page still using the wallet re-initializes
   it on its next request. Disposed proxies cannot automatically reinitialize;
-  `clear()` remains the explicit destructive reset. A `MessageHandler`'s
-  channel gains `release()`.
+  `clear()` remains the explicit destructive reset. `dispose()` resolves when
+  the worker already runs no wallet, and can be called again after a failure.
+  A `MessageHandler`'s channel gains `release()`.
 - **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
   can import the negotiation field names, refusal code, and asset contract IDs
   without loading the client or contract builders. Existing `/protocol` exports

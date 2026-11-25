@@ -701,6 +701,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         number
     >;
     private reinitPromise: Promise<void> | null = null;
+    private disposed = false;
     private disposePromise?: Promise<void>;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<string, Promise<WalletUpdaterResponse>>();
@@ -1182,27 +1183,48 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     private assertNotDisposed(): void {
-        if (this.disposePromise) throw new Error("Service worker wallet is disposed");
+        if (this.disposed) throw new Error("Service worker wallet is disposed");
     }
 
-    /** Revoke this worker wallet and proxy without deleting persisted data or holds. */
+    /** Revoke this worker wallet and proxy without deleting persisted data or holds; call again after a failure to retry. */
     dispose(): Promise<void> {
-        this.disposePromise ??= Promise.resolve().then(async () => {
-            await this.reinitPromise?.catch(() => undefined);
-            const message: RequestDispose = {
-                id: getRandomId(),
-                tag: this.messageTag,
-                type: "DISPOSE",
-            };
-            const response = await this.sendMessageDirect(
-                this.scopeRequest(message),
-                this.getTimeoutForRequest(message),
-            );
-            if (response.type !== "DISPOSE_SUCCESS") {
-                throw new Error("Worker did not confirm wallet disposal");
-            }
+        this.disposed = true;
+        this.disposePromise ??= this.disposeWorker().catch((error) => {
+            this.disposePromise = undefined;
+            throw error;
         });
         return this.disposePromise;
+    }
+
+    private async disposeWorker(): Promise<void> {
+        await this.reinitPromise?.catch(() => undefined);
+        const message: RequestDispose = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "DISPOSE",
+        };
+        for (let initWaits = 0; ; ) {
+            try {
+                const response = await this.sendMessageDirect(
+                    this.scopeRequest(message),
+                    this.getTimeoutForRequest(message),
+                );
+                if (response.type !== "DISPOSE_SUCCESS") {
+                    throw new Error("Worker did not confirm wallet disposal");
+                }
+                return;
+            } catch (error) {
+                // The init may be this proxy's own: wait for it, then stop what it started.
+                if (isMessageBusInitializingError(error)) {
+                    if (initWaits >= MAX_INIT_WAITS) throw error;
+                    await sleep(initWaitBackoffMs(initWaits++));
+                    continue;
+                }
+                // No initialized bus runs no wallet: a restarted worker, or one already released.
+                if (isMessageBusNotInitializedError(error)) return;
+                throw error;
+            }
+        }
     }
 
     /** This tells the service worker to wipe all locally persisted wallet data. */
@@ -1504,7 +1526,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const messageHandler = (event: MessageEvent) => {
             const response = event.data as WalletUpdate | undefined;
             if (
-                this.disposePromise ||
+                this.disposed ||
                 !binding ||
                 !response ||
                 response.tag !== tag ||

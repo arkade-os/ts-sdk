@@ -4,6 +4,11 @@ import { getNetwork, type NetworkName } from "../../src/networks";
 import type { Wallet } from "../../src/wallet/wallet";
 import { vtxoReservationScope } from "../../src/wallet/vtxoReservationScope";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
+import {
+    MessageBusInitializingError,
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "../../src/worker/errors";
 import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
 
 const deferred = <T>() => {
@@ -184,6 +189,49 @@ describe("wallet request scope", () => {
         expect(original.sendMessageDirect).toHaveBeenCalledOnce();
         expect(original.sendMessageDirect.mock.calls[0][0].payload.request.type).toBe("DISPOSE");
         expect(original.dispose).not.toHaveBeenCalled();
+    });
+
+    it("resolves disposal when the restarted worker runs no wallet", async () => {
+        const original = await setup();
+        const reinitialize = vi.fn().mockResolvedValue(undefined);
+        Object.assign(original.proxy, { reinitialize });
+        original.sendMessageDirect.mockRejectedValue(new MessageBusNotInitializedError());
+        await expect(original.proxy.dispose()).resolves.toBeUndefined();
+        expect(original.sendMessageDirect).toHaveBeenCalledOnce();
+        expect(reinitialize).not.toHaveBeenCalled();
+        await expect(original.proxy.send({ address: "recipient", amount: 1_000 })).rejects.toThrow(
+            /disposed/i,
+        );
+    });
+
+    it("waits out an init in flight before disposing", async () => {
+        const original = await setup();
+        original.sendMessageDirect
+            .mockRejectedValueOnce(new MessageBusInitializingError())
+            .mockResolvedValueOnce({ id: "x", tag: "x", type: "DISPOSE_SUCCESS" });
+        await expect(original.proxy.dispose()).resolves.toBeUndefined();
+        expect(original.sendMessageDirect).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends disposal again when called after a failure, staying fenced", async () => {
+        const original = await setup();
+        original.sendMessageDirect.mockRejectedValueOnce(
+            new ServiceWorkerTimeoutError("timed out"),
+        );
+        await expect(original.proxy.dispose()).rejects.toThrow("timed out");
+        await expect(original.proxy.send({ address: "recipient", amount: 1_000 })).rejects.toThrow(
+            /disposed/i,
+        );
+        original.sendMessageDirect.mockResolvedValueOnce({
+            id: "x",
+            tag: "x",
+            type: "DISPOSE_SUCCESS",
+        });
+        await expect(original.proxy.dispose()).resolves.toBeUndefined();
+        expect(original.sendMessageDirect).toHaveBeenCalledTimes(2);
+        await expect(original.proxy.send({ address: "recipient", amount: 1_000 })).rejects.toThrow(
+            /disposed/i,
+        );
     });
 
     it("finishes an admitted reinitialization before requesting worker disposal", async () => {
