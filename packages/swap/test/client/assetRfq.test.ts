@@ -798,6 +798,49 @@ describe("accept() on a negotiated asset market", () => {
         expect(wallet.sent[0]?.amount).toBe(10_000);
     });
 
+    it("prices a feed BTC deposit's delivered carrier at the operator's dust, and records none", async () => {
+        const wallet = await acceptWallet();
+        Object.assign(wallet.wallet, { getArkadeInfo: async () => ({ ...ARK_INFO, dust: 546n }) });
+        const card = { ...canonicalSpotCard, charges_delivered_carrier: true };
+        const { client, repository } = await setup({ wallet, snapshot: [card] });
+        const quote = await client.quote(buy());
+
+        expect(quote.market.backend).toBe("feed");
+        expect(quote.depositCarrierSats).toBeUndefined();
+        // The card's payout less the 546-sat carrier, 55 cents at the fixture price.
+        expect(quote.take.amount).toBe(CARD_PAYOUT - 55n);
+        await client.accept(quote);
+
+        const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.carrierSats).toBeUndefined();
+        expect(wallet.sent[0]?.amount).toBe(10_000);
+    });
+
+    it("quotes a feed BTC deposit without the operator where the card charges no carrier", async () => {
+        const wallet = await acceptWallet();
+        Object.assign(wallet.wallet, {
+            // the client's own parse reads a snapshot; only a live read fails
+            getArkadeInfo: async (opts?: { requireLive?: boolean }) => {
+                if (opts?.requireLive) throw new Error("operator down");
+                return ARK_INFO;
+            },
+        });
+        const { client } = await setup({ wallet, snapshot: [canonicalSpotCard] });
+
+        expect((await client.quote(buy())).take.amount).toBe(CARD_PAYOUT);
+    });
+
+    it("refuses a feed BTC deposit on a charging card when the operator reports no dust", async () => {
+        const wallet = await acceptWallet();
+        Object.assign(wallet.wallet, { getArkadeInfo: async () => ({ ...ARK_INFO, dust: 0n }) });
+        const card = { ...canonicalSpotCard, charges_delivered_carrier: true };
+        const { client } = await setup({ wallet, snapshot: [card] });
+
+        await expect(client.quote(buy())).rejects.toThrow(
+            "the Arkade operator reports dust 0, which cannot carry an asset deposit",
+        );
+    });
+
     it.each([
         { dust: 330n, card: canonicalSpotCard, net: 9_970n, fee: 30n },
         { dust: 546n, card: canonicalSpotCard, net: 9_970n, fee: 30n },

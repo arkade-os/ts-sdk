@@ -74,8 +74,9 @@ export interface FeedQuoteInput {
     readonly market: CardMarketRef;
     readonly legs: { readonly give: DiscoveryLeg; readonly take: DiscoveryLeg };
     readonly endpoints: { readonly give: ResolvedEndpoint; readonly take: ResolvedEndpoint };
-    /** The operator's dust, carrying an asset give leg; absent when BTC is given. */
-    readonly depositCarrierSats?: bigint;
+    /** The operator's validated dust; read only when a carrier is priced, so a BTC give to a card
+     * that doesn't charge for the delivered carrier needs no operator. */
+    readonly operatorDust: () => Promise<bigint>;
     readonly amount?: PinnedAmount;
     readonly feed: FeedFetch;
     readonly policy?: SwapPolicy;
@@ -107,8 +108,13 @@ export const quoteFromFeed = async (
         // no invoice on this route can pin one; caller input, not a swap-boundary refusal
         throw new Error("an asset swap needs an amount and the side it pins");
     }
-    const carrier = input.depositCarrierSats;
-    const priced = carrier ?? ASSET_CARRIER_SATS;
+    // The carrier the solver delivers is the operator's dust, which a card charging for it asks of
+    // a BTC deposit too; any other BTC give prices none, so the fallback is never charged.
+    const giveIsBtc = isBtcAsset(input.endpoints.give.asset);
+    const needsDust = !giveIsBtc || candidate.card.charges_delivered_carrier === true;
+    const dust = needsDust ? await input.operatorDust() : undefined;
+    const carrier = giveIsBtc ? undefined : dust;
+    const priced = dust ?? ASSET_CARRIER_SATS;
 
     const plan = await quoteAdvertisedPlan(
         candidate.card,
