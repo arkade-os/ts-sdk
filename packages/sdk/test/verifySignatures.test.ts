@@ -224,6 +224,12 @@ describe("verifyTapscriptSignatures", async () => {
             );
         });
 
+        it("refuses a signature shorter than 64 bytes", () => {
+            expect(reencoded((sig) => sig.subarray(0, 63))).toThrow(
+                /not a BIP-341 signature encoding/,
+            );
+        });
+
         it("refuses bytes past the sighash byte", () => {
             expect(reencoded((sig) => Uint8Array.from([...sig, 1, 2]))).toThrow(
                 /not a BIP-341 signature encoding/,
