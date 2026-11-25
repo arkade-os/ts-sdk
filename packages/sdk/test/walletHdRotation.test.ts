@@ -22,6 +22,7 @@ import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { WalletReceiveRotator } from "../src/wallet/walletReceiveRotator";
 import type { Contract, ContractEvent, ExtendedVirtualCoin } from "../src";
 import { jsonResponse } from "./helpers/response";
+import { ProviderUnavailableError } from "../src/providers/errors";
 
 /**
  * Hand-crafted integration tests for HD receive rotation against the
@@ -1804,6 +1805,31 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const result = await wallet.finalizePendingTxs(coins);
         return { result, finalizeSpy };
     }
+
+    it("rethrows a transient finalize failure during recovery but not on a live boot", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const pending = await pendingTxFor(wallet, coin);
+        const info = await wallet.arkProvider.getInfo();
+        await (wallet as any).setPendingTxFlag(true);
+        vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([pending] as never);
+        const finalizeSpy = vi
+            .spyOn(wallet.arkProvider, "finalizeTx")
+            .mockRejectedValue(new ProviderUnavailableError("operator offline"));
+
+        // The per-tx catch would otherwise report a pass that reached a conclusion,
+        // unfencing sends on an operator that vanished mid-recovery.
+        await expect(
+            (wallet as any).finalizePendingTxsImpl([coin], { info, isCurrent: () => true }),
+        ).rejects.toThrow("operator offline");
+
+        const result = await wallet.finalizePendingTxs([coin]);
+        expect(result.finalized).toEqual([]);
+        expect(result.pending).toEqual([pending.arkTxid]);
+        expect(finalizeSpy).toHaveBeenCalledTimes(2);
+
+        await wallet.dispose();
+    });
 
     it("leaves a pending tx alone when its checkpoint does not rebuild", async () => {
         const { wallet } = await makeStaticBatchWallet();

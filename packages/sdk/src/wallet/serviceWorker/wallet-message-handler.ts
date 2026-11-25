@@ -1,6 +1,7 @@
 import { hex } from "@scure/base";
 import { requiresWalletScope, walletOperation, type WalletRequestBinding } from "./wallet-request";
 import { OperatorInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
+import { isTransientOperatorError } from "../../providers/availability";
 import { GetVtxosOptions, IndexerProvider, PaginationOptions } from "../../providers/indexer";
 import { WalletRepository } from "../../repositories";
 import type {
@@ -1218,6 +1219,7 @@ export class WalletMessageHandler
     private incomingFundsSubscription: (() => void) | undefined;
     private incomingFundsRegistrations = new WeakMap<object, Promise<void>>();
     private contractEventsSubscription: (() => void) | undefined;
+    private retryPendingTxs?: () => Promise<void>;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
     private channel: { broadcast(response: WalletUpdaterResponse): void } | undefined;
 
@@ -1253,6 +1255,9 @@ export class WalletMessageHandler
         ...params: Parameters<MessageHandler<WalletUpdaterRequest, WalletUpdaterResponse>["start"]>
     ): Promise<void> {
         const [services, repositories, channel] = params;
+        if (services.wallet?.serverInfoSource === "cache") {
+            await services.wallet.deferPendingTxRecovery();
+        }
         this.readonlyWallet = services.readonlyWallet;
         this.wallet = services.wallet;
         this.walletRequestBinding = services.walletRequestBinding
@@ -1263,6 +1268,7 @@ export class WalletMessageHandler
         this.walletRepository = repositories.walletRepository;
         this.channel = channel;
         this.onNextTick = [];
+        this.retryPendingTxs = undefined;
     }
 
     async stop() {
@@ -1278,6 +1284,7 @@ export class WalletMessageHandler
         this.channel = undefined;
         this.walletRequestBinding = undefined;
         this.onNextTick = [];
+        this.retryPendingTxs = undefined;
 
         if (this.incomingFundsSubscription) {
             this.incomingFundsSubscription();
@@ -1306,6 +1313,10 @@ export class WalletMessageHandler
     }
 
     async tick(_now: number) {
+        const retryPendingTxs = this.retryPendingTxs;
+        this.retryPendingTxs = undefined;
+        void retryPendingTxs?.();
+
         // Drain atomically: assigning [] after the await would re-clear anything
         // a concurrent stop()/clear() queued, and resurrect what it dropped.
         const pending = this.onNextTick.splice(0);
@@ -1510,6 +1521,7 @@ export class WalletMessageHandler
                     this.contractEventsEpoch++;
                     this.boardingEpoch++;
                     this.onNextTick = [];
+                    this.retryPendingTxs = undefined;
                 }
                 const execution = pending
                     ? settledWithin(pending, this.drainBudgetMs).then((drained) => {
@@ -2443,7 +2455,21 @@ export class WalletMessageHandler
 
         // The last INIT to start wins: an older one returns at its next check.
         this.initEpoch++;
+        this.retryPendingTxs = undefined;
         const init = this.newGeneration("init");
+
+        // Scheduled before the awaits below, so a failing INIT still lifts the block.
+        if (
+            signingWallet?.serverInfoSource === "cache" &&
+            !signingWallet.hasDeferredPendingTxRecovery
+        ) {
+            await signingWallet.deferPendingTxRecovery();
+            if (init.stale) return;
+        }
+        const deferred = signingWallet?.hasDeferredPendingTxRecovery === true;
+        if (signingWallet && deferred) {
+            this.schedulePendingTxRecovery(signingWallet, context, init);
+        }
 
         // Initialize contract manager FIRST — this populates the repository
         // with full virtual output history for all contracts (one indexer call per contract)
@@ -2453,9 +2479,7 @@ export class WalletMessageHandler
         await this.refreshCachedData({ lazyBoarding }, context, init);
         if (init.stale) return;
 
-        // Recover pending transactions (init-only, not on reload).
-        // Pending txs only exist if a send was interrupted mid-finalization.
-        if (signingWallet) {
+        if (signingWallet && !deferred) {
             try {
                 const vtxos = await this.getVtxosFromRepo(undefined, context);
                 if (init.stale) return;
@@ -2470,7 +2494,16 @@ export class WalletMessageHandler
                     `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`,
                 );
             } catch (error: unknown) {
-                console.error("Error recovering pending transactions:", error);
+                if (init.stale) return;
+                if (
+                    isTransientOperatorError(error) &&
+                    (await signingWallet.deferPendingTxRecovery())
+                ) {
+                    if (init.stale) return;
+                    this.schedulePendingTxRecovery(signingWallet, context, init);
+                } else {
+                    console.error("Error recovering pending transactions:", error);
+                }
             }
             if (init.stale) return;
         }
@@ -2501,6 +2534,40 @@ export class WalletMessageHandler
                 console.error("Error starting VtxoManager:", error);
             }
         }
+    }
+
+    private schedulePendingTxRecovery(
+        wallet: Wallet,
+        context: WalletRequestContext,
+        init: Generation,
+    ) {
+        const reported = new Set<string>();
+        const retry = async () => {
+            if (init.stale) return;
+            try {
+                await this.runOwnedOperation(context, () =>
+                    wallet.resumeDeferredPendingTxs(() => !init.stale),
+                );
+            } catch (error) {
+                if (init.stale) return;
+                // The wallet unfences sends as soon as a pass reached the operator, so a
+                // wallet still refusing them is exactly what a later tick can still fix.
+                if (!wallet.hasDeferredPendingTxRecovery) {
+                    console.error("Error recovering pending transactions:", error);
+                    return;
+                }
+                if (!isTransientOperatorError(error)) {
+                    // A misconfigured operator fails the same way every tick.
+                    const reason = String(error);
+                    if (!reported.has(reason)) {
+                        reported.add(reason);
+                        console.error("Retrying pending transaction recovery:", error);
+                    }
+                }
+                this.retryPendingTxs = retry;
+            }
+        };
+        this.retryPendingTxs = retry;
     }
 
     private async registerIncomingFunds(

@@ -185,6 +185,18 @@ style and have not been backfilled.
 
 - **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.
 
+- **`ExecutorProvider` can register and read the Executor's templates and
+  artifacts.** The SDK's Executor client covered only delegations, so a caller
+  delegating its own template needed a second client to upload it.
+  `RestExecutorProvider` adds `registerArtifact`, `getArtifact`,
+  `registerTemplate` and `getTemplate`, optional on the `ExecutorProvider`
+  interface so existing implementations still conform. A 404 from these calls
+  counts as the Executor's only when its body is the gRPC NOT_FOUND status.
+  `ExecutorInfo` reports the service's `encryptionPubkey` when it advertises
+  one, validated as a compressed key, so `getInfo()` now refuses a malformed
+  one. Executor v0.0.5 takes uploads on its admin port only, and its public
+  port answers 403 unless it runs with `EXECUTOR_PUBLIC_REGISTRY=true`.
+
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
@@ -522,6 +534,14 @@ style and have not been backfilled.
 ### Bug Fixes
 
 - **`@arkade-os/swap`: a resumed `accept()` no longer outlives its stored quote.** The retry checked expiry against the caller's quote object only, which no conflict check covers, so a quote carrying a later `expiresAt` could fund a stored, unfunded record past its expiry. The earlier of the stored and given expiries now applies.
+- 
+- **A full Executor store no longer pauses every request to that Executor.**
+  An Executor at its delegation cap answers `registerDelegation` with gRPC
+  `RESOURCE_EXHAUSTED`, which its gateway serves as a 429 without
+  `Retry-After`. `RestExecutorProvider` reported that to the shared rate gate
+  as a rate limit, so every request to that Executor then waited out the
+  default cooldown. A 429 carrying that status is now only an error, and any
+  other 429 still pauses the origin.
 
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
@@ -536,6 +556,21 @@ style and have not been backfilled.
 - **ArkadeCash claims check the operator's signatures.** `claimCash` verifies the operator's signatures on the sweep, as sends do, so a sweep the operator did not co-sign is reported as failed.
 
 - **`@arkade-os/swap`: a solver's asset carrier is capped at the operator's dust.** A quote whose `carrier_sats` exceeds the operator's dust (at least 330 sats) is refused before anything is registered or funded, and a carrier the payout does not return now counts as fee.
+
+- **Cached browser wallets open during an operator outage even after an interrupted send.**
+  The service worker defers pending-transaction recovery to its background tick.
+  Once the operator responds, recovery checks current indexer state and can use
+  spent or swept outputs as proof inputs; subdust and exited outputs are left out,
+  as neither can carry an ownership proof. New Arkade submissions are refused only
+  until one recovery pass has reached the operator — not until every pending
+  transaction finalizes, and not when no output could be found to prove ownership
+  with. Whatever a pass leaves unfinalized stays flagged for the next startup to
+  retry. Until a pass does reach the operator — while it is unreachable, reports
+  another network, or answers unusably — sends stay refused and the tick keeps
+  retrying, so recovery self-heals once the operator is fixed.
+  Recovery is also deferred when the operator becomes unreachable between boot and
+  wallet initialization. A recovery that clears the pending flag also lifts the
+  block, whichever path ran it.
 
 - **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
 

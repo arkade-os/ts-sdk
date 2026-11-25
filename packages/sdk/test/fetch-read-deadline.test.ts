@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseFetch, FetchError, READ_TIMEOUT_MS } from "../src/utils/fetch";
-import { isRetryableProviderError } from "../src/providers/availability";
+import { isRetryableProviderError, isTransientOperatorError } from "../src/providers/availability";
+import { isFetchTimeoutError } from "../src/providers/ark";
 import { sseStreamIterator } from "../src/providers/expoUtils";
 
 describe("baseFetch read deadline", () => {
@@ -151,5 +152,13 @@ describe("baseFetch read deadline", () => {
         await stream.next().catch(() => undefined);
 
         expect(received?.signal).toBeInstanceOf(AbortSignal);
+    });
+});
+
+describe("operator error classification survives a valueless rejection", () => {
+    it.each([undefined, null, "offline", 0])("classifies %o without throwing", (value) => {
+        expect(isFetchTimeoutError(value)).toBe(false);
+        expect(isRetryableProviderError(value)).toBe(false);
+        expect(isTransientOperatorError(value)).toBe(false);
     });
 });
