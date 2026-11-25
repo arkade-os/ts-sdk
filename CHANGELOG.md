@@ -519,6 +519,17 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Published type declarations compile without `skipLibCheck`.** The
+  declaration bundler emitted `arkade`'s type-only exports as values once they
+  were split across chunks, so twenty of them, `arkade.Program` among them,
+  failed a strict consumer; local type aliases at the barrel keep them types. The
+  Electrum providers also referenced `ElectrumWS`, whose declarations need
+  `ws` types that the SDK does not ship. They now take an `ElectrumSocket`, the
+  four methods they call, which `ElectrumWS` still satisfies. Repositories are
+  `AsyncDisposable`, so a consumer needs `esnext.disposable` in `lib` (or
+  `@types/node`). The dist smoke test now type-checks ESM and CJS consumers
+  without `skipLibCheck`.
+
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
 - **Boarding inputs in a commitment transaction are signed with the default sighash**, whatever sighash type the operator's PSBT declares, as forfeits already were.
@@ -2058,10 +2069,6 @@ style and have not been backfilled.
   `programFromArtifact` and `ArkadeProgramScript`, and the existing path
   helpers share the Executor CSV lookup with onchain preflight.
 
-- **Keep public namespace declarations valid under strict checking.** Local type
-  aliases preserve Arkade's type-only exports across declaration chunks, and the
-  SDK supplies the WebSocket declarations required by its public Electrum types.
-  The packaged ESM and CJS type smoke now checks dependency declarations too.
 - **Dev-tooling dependency overrides raised past every high and critical
   advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
   development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and

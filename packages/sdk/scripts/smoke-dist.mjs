@@ -221,7 +221,7 @@ writeFileSync(join(consumer, "public-types.cts"), publicTypes);
             "--moduleResolution",
             "NodeNext",
             "--lib",
-            "ES2022,DOM",
+            "ES2022,DOM,ESNext.Disposable",
             "public-types.mts",
             "public-types.cts",
         ],
