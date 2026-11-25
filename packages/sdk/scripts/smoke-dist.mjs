@@ -17,7 +17,7 @@
 //      ./dist/index.cjs and ./dist/contracts/handlers/index.cjs by
 //      relative path, assert object identity for `contractHandlers`
 //      and that the registered handler types are exactly
-//      arkade,boarding,default,delegate,vhtlc,vhtlc-v2.
+//      arkade,boarding,default,delegate,executor,vhtlc,vhtlc-v2.
 //   4. ESM singleton: same but via `await import("...")` with
 //      --input-type=module.
 //   5. Public package-name resolution: build a consumer dir with
@@ -142,7 +142,7 @@ section("contractHandlers singleton: CJS + ESM");
 
 const runNode = (args, cwd) => spawnSync(process.execPath, args, { cwd, encoding: "utf8" });
 
-const expectedTypes = "arkade,boarding,default,delegate,vhtlc,vhtlc-v2";
+const expectedTypes = "arkade,boarding,default,delegate,executor,vhtlc,vhtlc-v2";
 const publicExports = `
 for (const name of ["classifyBoardingExpiry", "decodeBoardingExit"]) {
     if (typeof root[name] !== "function") throw new Error("missing root export " + name);
@@ -205,25 +205,15 @@ writeFileSync(
     join(consumer, "package.json"),
     JSON.stringify({ name: "smoke-consumer", type: "module", private: true }),
 );
-writeFileSync(
-    join(consumer, "wallet-update.ts"),
-    `import { ServiceWorkerWallet, type WalletUpdate } from "@arkade-os/sdk";
-declare const wallet: ServiceWorkerWallet;
-const unsubscribe: () => void = wallet.onWalletUpdate((update: WalletUpdate) => {
-    if (update.type === "CONTRACT_EVENT") update.payload.event.type satisfies string;
-    else if (update.type === "UTXO_UPDATE") update.payload.coins.length satisfies number;
-    else update.payload.newVtxos.length satisfies number;
-});
-void unsubscribe;
-`,
-);
+const publicTypes = readFileSync(join(repoRoot, "scripts", "public-types.mts"), "utf8");
+writeFileSync(join(consumer, "public-types.mts"), publicTypes);
+writeFileSync(join(consumer, "public-types.cts"), publicTypes);
 {
     const r = runNode(
         [
             createRequire(import.meta.url).resolve("typescript/bin/tsc"),
             "--noEmit",
             "--strict",
-            "--skipLibCheck",
             "--target",
             "ES2022",
             "--module",
@@ -231,13 +221,15 @@ void unsubscribe;
             "--moduleResolution",
             "NodeNext",
             "--lib",
-            "ES2022,DOM",
-            "wallet-update.ts",
+            "ES2022,DOM,ESNext.Disposable",
+            "public-types.mts",
+            "public-types.cts",
         ],
         consumer,
     );
-    if (r.status === 0) ok("WalletUpdate public type and subscription compile for a consumer");
-    else fail(`WalletUpdate consumer → ${(r.stderr || r.stdout).trim()}`);
+    if (r.status === 0)
+        ok("Public namespace and WalletUpdate declarations compile strictly in ESM/CJS");
+    else fail(`Public declaration consumer → ${(r.stderr || r.stdout).trim()}`);
 }
 
 // Subpaths that must Node-import cleanly without optional Expo peers.

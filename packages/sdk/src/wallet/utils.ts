@@ -211,6 +211,19 @@ export function isSdkPicked(params: object | undefined): boolean {
 }
 
 /**
+ * Where the boarding sweeps send coins: a `Wallet`'s own boarding address, never the delegated one
+ * a deposit may have been swept off; any other `IWallet` answers {@link IWallet.getBoardingAddress}.
+ */
+export function getOwnBoardingAddress(
+    wallet: Pick<IWallet, "getBoardingAddress">,
+): Promise<string> {
+    const own = (wallet as { ownBoardingAddress?: () => string }).ownBoardingAddress;
+    return typeof own === "function"
+        ? Promise.resolve(own.call(wallet))
+        : wallet.getBoardingAddress();
+}
+
+/**
  * Boarding UTXOs an SDK pick may take. A `Wallet` leaves out those an in-flight settle is
  * spending; any other `IWallet` answers with its full list, and its `settle` refuses a clash.
  */
@@ -230,7 +243,7 @@ export function getSelectableBoardingUtxos(
 export async function getSelectableBoardingUtxoGroups(
     wallet: Pick<IWallet, "getBoardingUtxos">,
     currentSigner: string,
-): Promise<Pick<BoardingUtxoGroup, "serverPubKey" | "coins">[]> {
+): Promise<Pick<BoardingUtxoGroup, "serverPubKey" | "coins" | "delegated">[]> {
     const groups = (
         wallet as { getSelectableBoardingUtxoGroups?: () => Promise<BoardingUtxoGroup[]> }
     ).getSelectableBoardingUtxoGroups;
@@ -328,6 +341,10 @@ export function validateRecipients(
         const amount = recipient.amount || dustAmount;
         if (amount <= 0) {
             throw new Error("Amount must be positive");
+        }
+        // Below dust the output goes to OP_RETURN, which would burn the asset.
+        if ((recipient.assets?.length ?? 0) > 0 && amount < dustAmount) {
+            throw new Error(`Asset recipient amount ${amount} is below dust ${dustAmount}`);
         }
 
         if (recipient.tapTree) {

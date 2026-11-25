@@ -402,6 +402,14 @@ function advertisedLimit(fromServer: unknown): bigint | undefined {
     return limit > 0n ? limit : undefined;
 }
 
+/** `POST /v1/tx/onchain/cosign` arrived in arkd v0.9.22; an unreadable version is not judged. */
+function predatesOnchainCosign(version: string): boolean {
+    const [major, minor, patch] = (/^v?(\d+)\.(\d+)\.(\d+)/.exec(version) ?? [])
+        .slice(1)
+        .map(Number);
+    return major === 0 && (minor < 9 || (minor === 9 && patch < 22));
+}
+
 /**
  * REST-based operator provider implementation.
  *
@@ -448,7 +456,7 @@ export class RestOperatorProvider implements OperatorProvider {
     }
 
     private emitServerInfoChanged(info: OperatorInfo): void {
-        this._onchainCosignUnsupported = false;
+        this._onchainCosignUnsupported = predatesOnchainCosign(info.version);
         for (const listener of this._serverInfoListeners) {
             try {
                 listener(info);
@@ -650,6 +658,7 @@ export class RestOperatorProvider implements OperatorProvider {
         ) {
             this.emitServerInfoChanged(info);
         }
+        if (predatesOnchainCosign(info.version)) this._onchainCosignUnsupported = true;
         return info;
     }
 
@@ -709,7 +718,7 @@ export class RestOperatorProvider implements OperatorProvider {
         const arkError = maybeArkError(new Error(text));
         if (!arkError && (response.status === 404 || response.status === 501)) {
             this._onchainCosignUnsupported = true;
-            throw new OnchainCosignUnsupportedError();
+            throw new OnchainCosignAmbiguousError(`${response.status} with no cosign endpoint`);
         }
         // arkd answers INTERNAL_ERROR even after a successful broadcast (failed db write).
         if (!arkError || arkError.name === ArkErrorName.INTERNAL_ERROR) {
@@ -1328,7 +1337,9 @@ export function isFetchTimeoutError(err: any): boolean {
         );
     };
 
-    return checkError(err) || checkError((err as any).cause);
+    // Optional: callers classify inside a catch, and a `Promise.reject()` carries no
+    // value — reading `.cause` off it would replace their failure with a TypeError.
+    return checkError(err) || checkError(err?.cause);
 }
 
 function mapTxNotification(data: ProtoTypes.TxNotificationData): TxNotification {

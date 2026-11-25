@@ -115,8 +115,12 @@ export interface SwapRecordCommon {
     /** The quote's own deadline, unix seconds — what makes a stalled accept a
      * benign abandon rather than a live obligation. */
     readonly expiresAt: number;
-    /** Retained funding dispatch cap for an auction-origin quote. */
+    /** Funding dispatch cap retained for auction-origin or constrained funding. */
     readonly fundingDeadline?: number;
+    readonly fundingConstraints?: {
+        readonly outpoints?: readonly string[];
+        readonly maxChangeFee?: number;
+    };
     /** The one thing a counterparty must see, when the route has one. Durable because a duplicate
      * accept after a restart must return the SAME invoice, and the quote object is gone by then. */
     readonly artifact?: RecordedArtifact;
@@ -124,10 +128,13 @@ export interface SwapRecordCommon {
      * resume, never an `AcceptConflict`. */
     readonly fundingTxid?: string;
     /** SDK proof that this wallet never submitted the funding transaction. */
-    readonly fundingNotSubmitted?: {
-        readonly reason: "send_deadline";
-        readonly validUntil: number;
-    };
+    readonly fundingNotSubmitted?:
+        | { readonly reason: "send_deadline"; readonly validUntil: number }
+        | { readonly reason: "send_refused" }
+        | { readonly reason: "send_not_started" };
+    /** Wallet-funded records only. `unsent`: no send has started, so funding may be retried;
+     * `claimed`: one runtime owns the send. Absent: written before this field, possibly sent. */
+    readonly fundingSend?: "unsent" | "claimed";
     /** Last retryable receive-claim error; becomes the terminal failure if the claim window closes. */
     readonly claimFailure?: string;
     /** Terminal failure reason. */
@@ -155,8 +162,8 @@ interface OfferSwapRecordFields extends SwapRecordCommon {
     readonly swapAddress: string;
     /** The covenant's scriptPubKey, hex — the indexer's monitoring key and the reconcile's match key. */
     readonly swapPkScript: string;
-    /** Sats riding an asset deposit, decimal: the solver's published carrier, which the fill is
-     * priced against. Absent for a BTC deposit and for feed-priced swaps (the SDK default). */
+    /** Sats riding an asset deposit, decimal: the quoted carrier, which the fill is priced against.
+     * Absent for a BTC deposit and on feed-priced records older than it (the SDK default). */
     readonly carrierSats?: string;
     /** `false`: the funding carries no offer packet. Absent attaches it. */
     readonly attachOfferPacket?: false;
@@ -390,6 +397,14 @@ export const fundsFromWallet = (route: {
     give: { instrument: Instrument | RecordedInstrument };
 }): boolean => route.give.instrument.kind === "wallet";
 
+/** The record flipped to `claimed`, or `undefined` unless it is unsent, unstamped and unproven. */
+export const claimedFunding = (record: SwapRecord): SwapRecord | undefined =>
+    record.fundingSend === "unsent" &&
+    record.fundingTxid === undefined &&
+    record.fundingNotSubmitted === undefined
+        ? { ...record, fundingSend: "claimed" }
+        : undefined;
+
 export const fundingWasNotSubmitted = (
     record: Pick<
         SwapRecordCommon,
@@ -398,11 +413,13 @@ export const fundingWasNotSubmitted = (
 ): boolean => {
     const proof = record.fundingNotSubmitted;
     return (
-        proof?.reason === "send_deadline" &&
-        Number.isSafeInteger(proof.validUntil) &&
-        proof.validUntil > 0 &&
-        Number.isSafeInteger(record.expiresAt) &&
-        proof.validUntil <= record.expiresAt &&
+        (proof?.reason === "send_refused" ||
+            proof?.reason === "send_not_started" ||
+            (proof?.reason === "send_deadline" &&
+                Number.isSafeInteger(proof.validUntil) &&
+                proof.validUntil > 0 &&
+                Number.isSafeInteger(record.expiresAt) &&
+                proof.validUntil <= record.expiresAt)) &&
         record.fundingTxid === undefined &&
         record.route?.give?.instrument?.kind === "wallet" &&
         (record.family === "offer" ? record.status === "cancelled" : record.state === "failed")

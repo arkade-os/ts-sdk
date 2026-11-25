@@ -4,6 +4,7 @@ import { hex } from "@scure/base";
 import {
     ContractManager,
     DefaultVtxo,
+    ExecutorContractHandler,
     IndexerUtxosUnsupportedError,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -14,6 +15,7 @@ import { toOnchainCoinRow } from "../../src/contracts/onchainCoins";
 import { resetRecordedSpends, saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import { updateWalletState } from "../../src/utils/syncCursors";
 import { timelockToSequence } from "../../src/utils/timelock";
+import vectors from "../fixtures/executor/vectors.json";
 import {
     createDefaultContractParams,
     createMockIndexerProvider,
@@ -79,6 +81,31 @@ const boarding = {
     state: "active" as const,
     createdAt: 0,
 };
+/** An Executor boarding watch: the only new contract type whose coins are synced on creation. */
+const executorBoarding = () => {
+    const params = {
+        template: "boarding",
+        owner: vectors.owner,
+        exitDelay: "4194305",
+        renewalWindow: "86400",
+        maxFee: "500",
+        boardingExitDelay: "4194306",
+        cosignerPubKey: vectors.cosignerPubkey,
+        serverPubKey: vectors.serverPubkey,
+        emulatorPubKey: vectors.emulatorPubkey,
+    };
+    const executorScript = ExecutorContractHandler.createScript(params);
+    return {
+        type: "executor",
+        params,
+        script: hex.encode(executorScript.pkScript),
+        address: executorScript
+            .address("tark", hex.decode(vectors.serverPubkey).subarray(1))
+            .encode(),
+        scope: "onchain" as const,
+        onchainAddress: executorScript.onchainAddress(networks.regtest),
+    };
+};
 const coin = {
     txid: "aa".repeat(32),
     vout: 1,
@@ -105,6 +132,7 @@ async function setup(
     getCoins: () => Promise<any[]>,
     outspends: any[] = [{ spent: false }, { spent: true, txid: "cc".repeat(32) }],
     getUtxos?: (opts: any) => Promise<{ utxos: any[] }>,
+    config: { onOnchainContractCreated?: () => void } = {},
 ) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
@@ -126,6 +154,7 @@ async function setup(
         walletRepository,
         onchainProvider,
         network: networks.regtest,
+        ...config,
     });
     return { manager, walletRepository, contractRepository, onchainProvider, tip, indexerProvider };
 }
@@ -919,5 +948,69 @@ describe("ContractManager.syncOnchain", () => {
             process.off("unhandledRejection", unhandled);
             error.mockRestore();
         }
+    });
+});
+
+describe("ContractManager.createContract", () => {
+    it("stores a new Executor boarding watch's coins and watches its address", async () => {
+        const { manager, walletRepository, onchainProvider } = await setup(async () => [coin]);
+        const { onchainAddress, ...params } = executorBoarding();
+
+        await manager.createContract(params);
+
+        expect(await collectScriptVtxos(walletRepository, params.script)).toHaveLength(1);
+        expect(onchainProvider.watchAddresses).toHaveBeenLastCalledWith(
+            expect.arrayContaining([script.onchainAddress(networks.regtest), onchainAddress]),
+            expect.any(Function),
+        );
+        manager.dispose();
+    });
+
+    it("does not sync a new plain boarding contract: its settle holds the lock", async () => {
+        const { manager, walletRepository, onchainProvider } = await setup(async () => [coin]);
+        const later = { type: "blocks", value: 145n } as const;
+        const rotated = new DefaultVtxo.Script({ pubKey, serverPubKey, csvTimelock: later });
+        const rotatedScript = hex.encode(rotated.pkScript);
+        const watches = onchainProvider.watchAddresses.mock.calls.length;
+
+        await manager.createContract({
+            type: "boarding",
+            params: { ...boarding.params, csvTimelock: timelockToSequence(later).toString() },
+            script: rotatedScript,
+            address: rotated.address(networks.regtest.hrp, serverPubKey).encode(),
+        });
+
+        expect(onchainProvider.getCoins).not.toHaveBeenCalled();
+        expect(onchainProvider.watchAddresses).toHaveBeenCalledTimes(watches);
+        expect(await collectScriptVtxos(walletRepository, rotatedScript)).toEqual([]);
+        manager.dispose();
+    });
+
+    it("still hydrates and watches when onOnchainContractCreated throws", async () => {
+        const onOnchainContractCreated = vi.fn(() => {
+            throw new Error("callback failed");
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { manager, walletRepository, onchainProvider } = await setup(
+            async () => [coin],
+            undefined,
+            undefined,
+            { onOnchainContractCreated },
+        );
+        const { onchainAddress, ...params } = executorBoarding();
+
+        await expect(manager.createContract(params)).resolves.toMatchObject({
+            script: params.script,
+        });
+
+        expect(onOnchainContractCreated).toHaveBeenCalledOnce();
+        expect(warn).toHaveBeenCalledWith("onOnchainContractCreated failed", expect.any(Error));
+        expect(await collectScriptVtxos(walletRepository, params.script)).toHaveLength(1);
+        expect(onchainProvider.watchAddresses).toHaveBeenLastCalledWith(
+            expect.arrayContaining([onchainAddress]),
+            expect.any(Function),
+        );
+        warn.mockRestore();
+        manager.dispose();
     });
 });

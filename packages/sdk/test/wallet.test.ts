@@ -543,6 +543,7 @@ describe("Wallet", () => {
                 }),
                 arkProvider: { getInfo: vi.fn().mockResolvedValue({ vtxoMinAmount: minimum }) },
                 getSpendableVtxos: vi.fn().mockResolvedValue(coins),
+                changeTapscriptFor: vi.fn().mockResolvedValue(tapscript),
                 _submitOffchainSpend: submit,
             };
             return { thisArg, submit, coins };

@@ -54,7 +54,7 @@ export interface SwapPolicy {
      * The verbs take the **minimum** of this and their own `maxFee`, so a call can only tighten it.
      * Enforced between `quote` and `accept`, before funding. Denominated because the fee sits on
      * the give leg on corridor routes and the take leg on asset swaps; a ceiling in a different
-     * asset than the quoted fee is refused, not converted.
+     * asset than the quoted fee, or on an asset swap at all, is refused, not converted.
      */
     readonly maxFee?: FeeCeiling;
 

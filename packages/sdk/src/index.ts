@@ -254,6 +254,7 @@ import {
     WsElectrumChainSource,
 } from "./providers/electrum";
 import type {
+    ElectrumSocket,
     TransactionHistory as ElectrumTransactionHistory,
     BlockHeader as ElectrumBlockHeader,
     Unspent as ElectrumUnspent,
@@ -295,6 +296,19 @@ import {
     DelegateOptions,
     RestDelegateProvider,
 } from "./providers/delegate";
+import {
+    DelegatedOutput,
+    ExecutorArtifact,
+    ExecutorDelegation,
+    ExecutorDelegationDetails,
+    ExecutorInfo,
+    ExecutorProvider,
+    ExecutorRequestError,
+    ExecutorTemplate,
+    ExecutorTemplateDetails,
+    ExecutorTemplateParam,
+    RestExecutorProvider,
+} from "./providers/executor";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -533,6 +547,20 @@ import type {
 } from "./repositories/walletRepository";
 import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
 import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
+import {
+    DELEGATION_EXPIRES_KEY,
+    DELEGATION_LOCAL_STATUS,
+    DELEGATION_REGISTERED_KEY,
+    DELEGATION_STATUS_KEY,
+    DelegatedWallet,
+    DelegationOptions,
+    ExecutorManagerImpl,
+    ExecutorWatchMetadata,
+    ExecutorWatchRegistration,
+    IExecutorManager,
+    RegistrationOptions,
+    watchExecutorContracts,
+} from "./wallet/executor";
 
 export * from "./arkfee";
 export {
@@ -603,6 +631,8 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
+import { ExecutorContractHandler } from "./contracts/handlers/executor";
+import type { ExecutorContractParams } from "./contracts/handlers/executor";
 import type { ArkadeService } from "./arkade/service";
 import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
@@ -737,6 +767,14 @@ export {
     KeyringDescriptorProvider,
     DelegateManagerImpl,
     RestDelegateProvider,
+    ExecutorManagerImpl,
+    watchExecutorContracts,
+    DELEGATION_EXPIRES_KEY,
+    DELEGATION_LOCAL_STATUS,
+    DELEGATION_REGISTERED_KEY,
+    DELEGATION_STATUS_KEY,
+    ExecutorRequestError,
+    RestExecutorProvider,
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -960,6 +998,7 @@ export {
     VHTLCV2ContractHandler,
     BoardingContractHandler,
     ArkadeContractHandler,
+    ExecutorContractHandler,
     isContractGenericallySpendable,
     gatedContracts,
     gateExclusion,
@@ -1082,6 +1121,7 @@ export type {
     TxNotificationEvent,
     SweepTxNotification,
     ExplorerTransaction,
+    ElectrumSocket,
     ElectrumTransactionHistory,
     ElectrumBlockHeader,
     ElectrumUnspent,
@@ -1209,6 +1249,7 @@ export type {
     VHTLCContractParams,
     VHTLCV2ContractParams,
     BoardingContractParams,
+    ExecutorContractParams,
     ArkadeContractParams,
     Discoverable,
     DiscoveryDeps,
@@ -1233,6 +1274,21 @@ export type {
     DelegateProvider,
     DelegateInfo,
     DelegateOptions,
+    IExecutorManager,
+    ExecutorProvider,
+    ExecutorInfo,
+    ExecutorDelegation,
+    ExecutorDelegationDetails,
+    ExecutorTemplate,
+    ExecutorTemplateDetails,
+    ExecutorTemplateParam,
+    ExecutorArtifact,
+    DelegatedOutput,
+    DelegatedWallet,
+    DelegationOptions,
+    ExecutorWatchMetadata,
+    ExecutorWatchRegistration,
+    RegistrationOptions,
     // Repositories
     ManagedConnection,
     WalletRepository,
@@ -1258,3 +1314,9 @@ export type {
     VirtualTx,
     VtxoBranch,
 };
+
+export type {
+    DelegationParams,
+    ExecutorContractKeys,
+    ExecutorDefault,
+} from "./script/executor/executorTemplate";

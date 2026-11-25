@@ -361,6 +361,48 @@ describe("InputSignerRouter", async () => {
         expect(signWithDescriptor).toHaveBeenCalledWith([{ tx, descriptor, inputIndexes: [0] }]);
     });
 
+    it("routes an executor contract by its compressed owner: the identity's, else its descriptor's", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        const own = taprootScript(BASELINE_REUSE_PUBKEY);
+        const rotated = taprootScript(ROTATED_B_PUBKEY);
+        const descriptor = "tr(rotated-executor)";
+        await contractRepo.saveContract(
+            makeContract({
+                script: hex.encode(own),
+                type: "executor",
+                params: { owner: `03${baselinePubKey}` },
+            }),
+        );
+        await contractRepo.saveContract(
+            makeContract({
+                script: hex.encode(rotated),
+                type: "executor",
+                params: { owner: `02${ROTATED_B_PUBKEY}` },
+                metadata: { signingDescriptor: descriptor },
+            }),
+        );
+
+        const signSpy = vi.fn().mockImplementation((tx) => tx);
+        const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
+        const router = createRouter({
+            identity: {
+                xOnlyPublicKey: () => Promise.resolve(hex.decode(baselinePubKey)),
+                sign: signSpy,
+            },
+            contractRepository: contractRepo,
+            descriptorProvider: { signWithDescriptor },
+        });
+
+        const tx = stubTxWithInputs(2);
+        await router.sign(tx, [
+            { index: 0, lookupScript: own },
+            { index: 1, lookupScript: rotated },
+        ]);
+
+        expect(signSpy).toHaveBeenCalledWith(tx, [0]);
+        expect(signWithDescriptor).toHaveBeenCalledWith([{ tx, descriptor, inputIndexes: [1] }]);
+    });
+
     it("throws MissingSigningDescriptorError (contractType 'boarding') for a rotated boarding contract missing its descriptor", async () => {
         const contractRepo = new InMemoryContractRepository();
         const script = taprootScript(ROTATED_A_PUBKEY);

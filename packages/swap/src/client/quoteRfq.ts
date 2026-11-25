@@ -32,7 +32,7 @@ import {
     resolveReceivePkScript,
     type DerivedOffer,
 } from "../offer";
-import { ASSET_SWAP_CONTRACT_VERSIONS } from "../program";
+import { ASSET_SWAP_CONTRACT_VERSIONS, assetRfqNonce } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
@@ -42,19 +42,17 @@ import {
     type OnchainNetwork,
 } from "../onchainHtlc";
 import { claimFeeSats } from "../payment/onchainSwap";
-import { ASSET_SWAP_DIRECTED } from "../rfq-contract";
+import { ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE } from "../rfq-contract";
 import {
     arkadeSwapRequest,
     deriveLightningReceive,
     deriveLightningSend,
-    deriveOnchainReceive,
     deriveOnchainSend,
     l1NetworkFromArk,
     lightningReceiveRequest,
     lightningSendRequest,
     newRfqId,
     offerTermsFromQuote,
-    onchainReceiveRequest,
     onchainSendRequest,
     requestVersionedQuote,
     unilateralClaimDelay,
@@ -78,7 +76,6 @@ import { SolverResponseInvalid } from "../transportErrors";
 import { feedSpread, quoteAdvertisedPlan, verifyPlanLegs, type FeedFetch } from "./quoteOffer";
 import type { CardMarketRef, PinnedAmount, Quote, QuoteId, ResolvedEndpoint } from "./quote";
 import type { MarketCandidate } from "./market";
-import type { Artifact } from "./route";
 import type { SwapPolicy } from "./policy";
 import {
     parseRfqQuote as parseWireQuote,
@@ -188,23 +185,6 @@ export type CorridorRfqPreparation =
           readonly htlcParams: OnchainHtlcParams;
           readonly l1Network: OnchainNetwork;
           readonly minConfirmations: number;
-      })
-    | (CommonPreparation & {
-          readonly route: "onchain->arkade";
-          /** The Arkade claim: the key the solver's lockup pays, and the P that unlocks it. */
-          readonly secrets: ProvisionedClaimSecret;
-          readonly payoutAddress: string;
-          /** What the solver's lockup must carry — the claim refuses less. */
-          readonly expectedAmount: bigint;
-          /** The HTLC's refund key, provisioned by the wallet like every other key. */
-          readonly refundKey: ProvisionedKey;
-          /** Where the L1 refund PAYS: a boarding address of this wallet. */
-          readonly refundPkScript: Uint8Array;
-          /** The L1 HTLC the trader funds, derived locally. */
-          readonly htlc: OnchainHtlc;
-          readonly htlcParams: OnchainHtlcParams;
-          readonly l1Network: OnchainNetwork;
-          readonly minConfirmations: number;
       });
 
 export interface RfqQuoteInput {
@@ -214,8 +194,7 @@ export interface RfqQuoteInput {
         | "arkade->arkade"
         | "arkade->lightning"
         | "lightning->arkade"
-        | "arkade->onchain"
-        | "onchain->arkade";
+        | "arkade->onchain";
     readonly candidate: MarketCandidate;
     readonly market: CardMarketRef;
     readonly legs: { readonly give: DiscoveryLeg; readonly take: DiscoveryLeg };
@@ -337,8 +316,11 @@ export const quoteViaRfq = async (
             return quoteLightningReceive(input);
         case "arkade->onchain":
             return quoteOnchainSend(input);
-        case "onchain->arkade":
-            return quoteOnchainReceive(input);
+        default:
+            // Reachable from untyped callers of `/advanced`, e.g. with the removed `onchain->arkade`.
+            throw new UnsupportedRoute(
+                `${String(input.route satisfies never)} is not an implemented route`,
+            );
     }
 };
 
@@ -359,8 +341,6 @@ const quoteArkadeAsset = async (
 ): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
     const pinned = pinnedFor(input);
     const sides = assetSidesOf(input.legs);
-    if (pinned.on !== "give" && sides.wantAsset === undefined)
-        throw new Error("asset-to-BTC is exact-in only");
     const payment = input.assetPayment;
     if (payment !== undefined && sides.wantAsset === undefined)
         throw new Error("assetPayment supports BTC-to-asset only");
@@ -433,7 +413,7 @@ const quoteArkadeAsset = async (
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire, input.policy);
     const taker =
-        contractVersion === ASSET_SWAP_DIRECTED
+        contractVersion === ASSET_SWAP_DIRECTED || contractVersion === ASSET_SWAP_DIRECTED_NONCE
             ? verifyTaker({
                   attested: input.transport.attestedResponder,
                   solverPubkey: parsed.solver,
@@ -463,11 +443,15 @@ const quoteArkadeAsset = async (
                 throw new Error("carrier echo differs from carrier_sats");
         }
         const validUntil =
-            Math.min(
-                parsed.validUntil,
-                carrier?.expiresAt ?? parsed.validUntil,
-                choice?.mode === "recycleReceiver" ? choice.quote.expiresAt : parsed.validUntil,
-            ) - 30;
+            carrier === undefined
+                ? parsed.validUntil
+                : Math.min(
+                      parsed.validUntil,
+                      carrier.expiresAt,
+                      choice?.mode === "recycleReceiver"
+                          ? choice.quote.expiresAt
+                          : parsed.validUntil,
+                  ) - 30;
         if (input.now >= validUntil) throw new Error("asset payment terms lapsed before funding");
         assetPayment = {
             receiveAddress:
@@ -487,7 +471,8 @@ const quoteArkadeAsset = async (
     if (assetPayment !== undefined) deepFreeze(assetPayment);
     // The solver's carrier for an asset deposit, parsed before anything is derived. A BTC
     // deposit funds none, so its wire `carrier_sats` is deliberately not read.
-    const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
+    const carrierSats =
+        sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire, input.info.dust);
     // The RFQ already disclosed amount, pair and maker script/key; feed failure may try another
     // solver before any covenant is derived or accepted. This asset path sends no invoice.
     const reference = await quoteAdvertisedPlan(
@@ -518,6 +503,7 @@ const quoteArkadeAsset = async (
         info: input.info,
         contractVersion,
         ...(taker === undefined ? {} : { taker }),
+        ...(contractVersion === ASSET_SWAP_DIRECTED_NONCE ? { nonce: assetRfqNonce(rfqId) } : {}),
     });
     // Compare-only, and never the other way round: the address the trader funds
     // is the one the trader derived, and a solver naming another one is refused
@@ -539,6 +525,7 @@ const quoteArkadeAsset = async (
                 },
             ),
             give: { asset: input.endpoints.give.asset, amount: parsed.give },
+            ...(carrierSats === undefined ? {} : { depositCarrierSats: carrierSats }),
             take: { asset: input.endpoints.take.asset, amount: parsed.take },
             market: input.market,
             solver: parsed.solver,
@@ -929,7 +916,6 @@ const quoteOnchainSend = async (
         onchain: {
             htlcLocktime: derived.htlcLocktime,
             minConfirmations: derived.minConfirmations,
-            direction: "send",
         },
     });
     verifyRefundWindow({
@@ -984,147 +970,6 @@ const quoteOnchainSend = async (
             htlc: derived.htlc,
             htlcParams: derived.htlcParams,
             l1Network: derived.l1Network,
-            minConfirmations: derived.minConfirmations,
-        },
-    };
-};
-
-/**
- * The trader funds an L1 HTLC from outside this wallet and claims the solver's Arkade lockup with
- * `P`; if the solver never funds, the trader takes the L1 funding back through the refund leaf.
- *
- * Both destinations are this wallet's own: the claim pays its Arkade address, and the refund a
- * boarding address, so refunded coins can board again (NArk's
- * `GetOrDeriveBtcRefundDestinationAsync` makes the same choice). No claim packet is sealed: an
- * unclaimed lockup only means the solver reclaims it and the trader refunds L1, so nothing is lost
- * without covclaimd.
- */
-const quoteOnchainReceive = async (
-    input: RfqQuoteInput,
-): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
-    const pinned = pinnedFor(input);
-    const pair = rfqPairFor(input.legs.give, input.legs.take);
-    const rfqId = newRfqId();
-    const l1Network = l1NetworkFromArk(input.info.network);
-
-    // Two wallet keys: the claim secret (P, covenant receiver role) and the L1 refund key. Asking
-    // twice keeps them distinct; minting one here is what key provisioning forbids.
-    // Claim secret allocates an HD index; the refund key reuses the identity. The two
-    // addresses are this wallet's own and do not depend on either key.
-    const [secrets, refundKey, payoutAddress, boardingAddress] = await Promise.all([
-        provisionClaimSecret(input.wallet),
-        provisionRefundKey(input.wallet),
-        input.wallet.getAddress(),
-        input.wallet.getBoardingAddress(),
-    ]);
-    const paymentHash = hex.encode(secrets.paymentHash);
-    // Fixed at quote time: the manager refuses a record without it, and a refund must never be
-    // built against a destination chosen after the money moved.
-    const refundPkScript = l1ScriptForAddress(boardingAddress, l1Network);
-
-    const wire = await input.transport.requestQuote(
-        withCanonicalAmount(
-            onchainReceiveRequest({
-                rfqId,
-                paymentHash,
-                payoutAddress,
-                payoutPubkey: secrets.pubkey,
-                refundPubkey: refundKey.pubkey,
-                // Placeholder: `withCanonicalAmount` writes the canonical decimal string.
-                amount: 0,
-                amountSide: toRfqAmountSide(pinned.on),
-            }),
-            pinned.value,
-        ),
-    );
-    verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire, input.policy);
-    verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
-
-    const covenant = covenantInputs(input);
-    const derived = verifyingDerivation(() =>
-        deriveOnchainReceive({
-            quote: wire,
-            paymentHash,
-            payoutPubkey: secrets.pubkey,
-            payoutAddress,
-            refundPubkey: refundKey.pubkey,
-            ...covenant,
-            l1Network,
-        }),
-    );
-    verifySendWindow({
-        quote: wire,
-        quoteId: input.quoteId,
-        now: input.now,
-        onchain: {
-            htlcLocktime: derived.htlcLocktime,
-            minConfirmations: derived.minConfirmations,
-            direction: "receive",
-        },
-    });
-    // The trader's L1 funding is what stays locked if the solver never pays, until the HTLC's own
-    // refund leaf opens.
-    verifyRefundWindow({
-        refundLocktime: derived.htlcLocktime,
-        now: input.now,
-        maxSeconds: input.policy?.maxRefundWindowSeconds,
-    });
-    verifyQuoteTtl({
-        quoteId: input.quoteId,
-        expiresAt: parsed.validUntil,
-        now: input.now,
-        floorSeconds: input.policy?.quoteTtlFloorSeconds,
-    });
-
-    // The give leg's instrument IS the artifact: the HTLC the trader funds, for exactly this much.
-    const artifact = {
-        kind: "deposit",
-        corridor: "onchain",
-        address: derived.htlc.address,
-        asset: input.endpoints.give.asset,
-        amount: parsed.give,
-        expiresAt: parsed.validUntil,
-    } as Artifact;
-    return {
-        quote: {
-            id: input.quoteId,
-            route: assembleRoute(
-                {
-                    ...input.endpoints.give,
-                    instrument: {
-                        kind: "address",
-                        address: derived.htlc.address,
-                        amount: parsed.give,
-                    },
-                },
-                { ...input.endpoints.take, instrument: { kind: "wallet" } },
-            ),
-            give: { asset: input.endpoints.give.asset, amount: parsed.give },
-            take: { asset: input.endpoints.take.asset, amount: parsed.take },
-            lock: { hash: paymentHash },
-            market: input.market,
-            solver: parsed.solver,
-            expiresAt: parsed.validUntil,
-            refundLocktime: derived.refundLocktime,
-            artifact,
-            fee: { amount: parsed.give - parsed.take, asset: input.endpoints.give.asset },
-        },
-        preparation: {
-            backend: "rfq",
-            route: "onchain->arkade",
-            card: input.candidate.card,
-            rfqId,
-            wire: parsed,
-            lockup: lockupOf(derived),
-            secrets,
-            payoutAddress,
-            expectedAmount: parsed.take,
-            refundKey,
-            refundPkScript,
-            htlc: derived.htlc,
-            htlcParams: derived.htlcParams,
-            l1Network,
             minConfirmations: derived.minConfirmations,
         },
     };

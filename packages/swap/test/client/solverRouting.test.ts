@@ -180,6 +180,10 @@ describe("solver quote failover", () => {
         const { client, attempted } = await setup({ enabled: false });
         await expect(client.quote(input())).rejects.toMatchObject({ reason: "rate_limited" });
         expect(attempted).toEqual(["first"]);
+        const selected = await client.quote(input(), { solverId: solverId(second, "regtest") });
+        expect(selected.market).toMatchObject({ solver: "second" });
+        expect(attempted).toEqual(["first", "second"]);
+        await client[Symbol.asyncDispose]();
     });
 
     it("keeps an explicit selection pinned even with routing enabled", async () => {
@@ -298,7 +302,26 @@ describe("solver quote failover", () => {
         const { client, attempted } = await setup({ selectMarket: () => undefined });
         expect(await client.candidates(input())).toEqual([]);
         await expect(client.quote(input())).rejects.toMatchObject({ name: "UnsupportedRoute" });
+        await expect(
+            client.quote(input(), { solverId: solverId(second, "regtest") }),
+        ).rejects.toMatchObject({ name: "UnsupportedRoute" });
         expect(attempted).toEqual([]);
+    });
+
+    it("quotes only the requested eligible solver without changing the automatic order", async () => {
+        const { client, attempted } = await setup();
+        const request = input();
+        const [firstCandidate, secondCandidate] = await client.candidates(request);
+        const chosen = await client.quote(request, { solverId: secondCandidate.solverId });
+        expect(chosen.market).toMatchObject({ solver: "second" });
+        expect(attempted).toEqual(["second"]);
+        await expect(
+            client.quote(request, { solverId: firstCandidate.solverId }),
+        ).rejects.toMatchObject({ reason: "rate_limited" });
+        expect(attempted).toEqual(["second", "first"]);
+        expect((await client.quote(request)).market).toMatchObject({ solver: "second" });
+        expect(attempted).toEqual(["second", "first", "first", "second"]);
+        await client[Symbol.asyncDispose]();
     });
 
     it("excludes a paused solver from candidates, resolution and quote attempts", async () => {
@@ -312,6 +335,10 @@ describe("solver quote failover", () => {
             eligible: 1,
             market: { solver: "second" },
         });
+        await expect(
+            client.quote(input(), { solverId: solverId(first, "regtest") }),
+        ).rejects.toMatchObject({ name: "UnsupportedRoute" });
+        expect(attempted).toEqual([]);
         expect((await client.quote(input())).market).toMatchObject({ solver: "second" });
         expect(attempted).toEqual(["second"]);
         await client[Symbol.asyncDispose]();
@@ -338,6 +365,9 @@ describe("solver quote failover", () => {
             routing: { preferences: () => ({ disabled: [solverId(first, "regtest")] }) },
         });
         await expect(client.quote(input())).rejects.toMatchObject({ name: "UnsupportedRoute" });
+        await expect(
+            client.quote(input(), { solverId: solverId(second, "regtest") }),
+        ).rejects.toMatchObject({ name: "UnsupportedRoute" });
         expect(attempted).toEqual([]);
         await client[Symbol.asyncDispose]();
     });

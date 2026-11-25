@@ -59,6 +59,7 @@ import { setupServiceWorker } from "../../worker/browser/utils";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../../repositories";
 import {
     RequestClear,
+    RequestDispose,
     RequestCreateContract,
     RequestDeleteContract,
     RequestGetAddress,
@@ -204,6 +205,7 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState, ContractWatchState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
+import { ExecutorManagerImpl, type IExecutorManager } from "../executor";
 import type {
     IVtxoManager,
     MigrateDeprecatedSignerOptions,
@@ -214,6 +216,7 @@ import type {
 } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
+import { RestExecutorProvider } from "../../providers/executor";
 import { getRandomId } from "../utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../networks";
 import type { ArkadeBroadcaster, ArkadeReader, GetOperatorInfoOptions, VirtualCoin } from "..";
@@ -346,6 +349,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     INIT_WALLET: 30_000,
     SCOPED_WALLET_REQUEST_V1: 30_000,
     CLEAR: 10_000,
+    DISPOSE: 30_000,
     SIGN_TRANSACTION: 30_000,
     CREATE_CONTRACT: 30_000,
     UPDATE_CONTRACT: 30_000,
@@ -495,9 +499,10 @@ interface ServiceWorkerWalletOptions {
     lazyInitialization?: boolean;
     /** Defer boarding and history loading; render boarding.loaded=false as unknown. */
     lazyBoarding?: boolean;
-    /** The operator's endpoint and optional public key. */
+    /** The operator's endpoint. */
     arkServer?: {
         url: string;
+        /** @deprecated Ignored, as `BaseWalletConfig.arkServerPublicKey`. */
         publicKey?: string;
     };
     /**
@@ -511,6 +516,12 @@ interface ServiceWorkerWalletOptions {
     expectedNetwork?: NetworkName;
     /** Optional delegation service URL. */
     delegateUrl?: string;
+    /**
+     * URL of the Executor, the service that boards the wallet's deposits while it is offline. Only
+     * a `ServiceWorkerWallet` registers watches; a readonly wallet reads them. Without one, the
+     * wallet behaves as it does without the Executor.
+     */
+    executorUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.
      * @see DEFAULT_MESSAGE_TAG
@@ -588,6 +599,7 @@ type MessageBusInitConfig = {
         publicKey?: string;
     };
     delegateUrl?: string;
+    executorUrl?: string;
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
     concurrentSpending?: boolean;
@@ -689,6 +701,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         number
     >;
     private reinitPromise: Promise<void> | null = null;
+    private disposed = false;
+    private disposePromise?: Promise<void>;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<string, Promise<WalletUpdaterResponse>>();
 
@@ -747,6 +761,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            executorUrl: options.executorUrl,
             lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
         });
@@ -953,6 +968,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     protected async sendMessage(request: WalletUpdaterRequest): Promise<WalletUpdaterResponse> {
+        this.assertNotDisposed();
         if (!DEDUPABLE_REQUEST_TYPES.has(request.type)) {
             return this.sendMessageWithRetry(request);
         }
@@ -1012,11 +1028,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             isComplete: (response: WalletUpdaterResponse) => boolean;
         },
     ): Promise<WalletUpdaterResponse> {
+        this.assertNotDisposed();
         request = this.scopeRequest(request);
         if (this.initConfig) {
             try {
                 await this.pingServiceWorker();
             } catch {
+                this.assertNotDisposed();
                 await this.reinitialize();
             }
         }
@@ -1024,6 +1042,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const timeoutMs = this.getTimeoutForRequest(request);
         const maxRetries = 2;
         for (let attempt = 0, initWaits = 0; ; attempt++) {
+            this.assertNotDisposed();
             try {
                 if (withEvents) {
                     return await this.sendMessageStreaming(
@@ -1035,6 +1054,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
                 if (isMessageBusInitializingError(error)) {
+                    this.assertNotDisposed();
                     if (initWaits >= MAX_INIT_WAITS) throw error;
                     await sleep(initWaitBackoffMs(initWaits++));
                     attempt--;
@@ -1043,6 +1063,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
+                this.assertNotDisposed();
                 await this.reinitialize();
             }
         }
@@ -1079,13 +1100,16 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     private async reinitialize(): Promise<void> {
+        this.assertNotDisposed();
         if (this.reinitPromise) return this.reinitPromise;
 
         this.reinitPromise = (async () => {
             const config = await this.buildInitConfig();
+            this.assertNotDisposed();
             const payload = this.buildInitWalletPayload();
 
             await initializeMessageBus(this.serviceWorker, config, this.messageBusTimeoutMs);
+            this.assertNotDisposed();
 
             const initMessage: RequestInitWallet = {
                 tag: this.messageTag,
@@ -1095,6 +1119,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             };
 
             await this.assertWorkerIdentityMatches();
+            this.assertNotDisposed();
             await this.sendMessageDirect(
                 this.scopeRequest(initMessage),
                 this.getTimeoutForRequest(initMessage),
@@ -1155,6 +1180,54 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             throw new Error("Worker wallet request scope changed during reinitialization");
         }
         this.walletRequestBinding ??= Object.freeze({ ...binding });
+    }
+
+    private assertNotDisposed(): void {
+        if (this.disposed) throw new Error("Service worker wallet is disposed");
+    }
+
+    /**
+     * Revoke this worker wallet and proxy without deleting persisted data or
+     * holds; call again after a failure to retry.
+     */
+    dispose(): Promise<void> {
+        this.disposed = true;
+        this.disposePromise ??= this.disposeWorker().catch((error) => {
+            this.disposePromise = undefined;
+            throw error;
+        });
+        return this.disposePromise;
+    }
+
+    private async disposeWorker(): Promise<void> {
+        await this.reinitPromise?.catch(() => undefined);
+        const message: RequestDispose = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "DISPOSE",
+        };
+        for (let initWaits = 0; ; ) {
+            try {
+                const response = await this.sendMessageDirect(
+                    this.scopeRequest(message),
+                    this.getTimeoutForRequest(message),
+                );
+                if (response.type !== "DISPOSE_SUCCESS") {
+                    throw new Error("Worker did not confirm wallet disposal");
+                }
+                return;
+            } catch (error) {
+                // The init may be this proxy's own: wait for it, then stop what it started.
+                if (isMessageBusInitializingError(error)) {
+                    if (initWaits >= MAX_INIT_WAITS) throw error;
+                    await sleep(initWaitBackoffMs(initWaits++));
+                    continue;
+                }
+                // No initialized bus runs no wallet: a restarted worker, or one already released.
+                if (isMessageBusNotInitializedError(error)) return;
+                throw error;
+            }
+        }
     }
 
     /** This tells the service worker to wipe all locally persisted wallet data. */
@@ -1450,11 +1523,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     /** Subscribe to contract and coin updates bound to this proxy's wallet. */
     onWalletUpdate(callback: (update: WalletUpdate) => void): () => void {
+        this.assertNotDisposed();
         const binding = this.walletRequestBinding;
         const tag = this.messageTag;
         const messageHandler = (event: MessageEvent) => {
             const response = event.data as WalletUpdate | undefined;
             if (
+                this.disposed ||
                 !binding ||
                 !response ||
                 response.tag !== tag ||
@@ -1939,6 +2014,7 @@ export class ServiceWorkerWallet
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
+    private readonly executorServiceUrl?: string;
     private _restoreInFlight?: Promise<void>;
     private _concurrentSpending = false;
 
@@ -1955,6 +2031,7 @@ export class ServiceWorkerWallet
         messageTag: string,
         hasDelegate: boolean,
         public readonly oneShotSubmit?: boolean,
+        executorUrl?: string,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1965,6 +2042,7 @@ export class ServiceWorkerWallet
             messageTag,
         );
         this.hasDelegate = hasDelegate;
+        this.executorServiceUrl = executorUrl;
     }
 
     get assetManager(): IAssetManager {
@@ -2008,11 +2086,13 @@ export class ServiceWorkerWallet
             messageTag,
             !!options.delegateUrl,
             options.oneShotSubmit,
+            options.executorUrl,
         );
         wallet._concurrentSpending = options.concurrentSpending === true;
 
         return ServiceWorkerWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            executorUrl: options.executorUrl,
             settlementConfig: options.settlementConfig,
             concurrentSpending: options.concurrentSpending,
             walletMode: options.walletMode,
@@ -2462,6 +2542,12 @@ export class ServiceWorkerWallet
         };
 
         return manager;
+    }
+
+    /** Runs on the page: it talks to the service over REST and records watches through this wallet. */
+    async getExecutorManager(): Promise<IExecutorManager | undefined> {
+        if (!this.executorServiceUrl) return undefined;
+        return new ExecutorManagerImpl(new RestExecutorProvider(this.executorServiceUrl), this);
     }
 
     async getVtxoManager(): Promise<IVtxoManager> {

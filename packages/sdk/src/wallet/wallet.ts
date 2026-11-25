@@ -12,6 +12,7 @@ import {
     Network,
     NetworkName,
     networkFromOperatorInfo,
+    retiredDelegatePubKeys,
 } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
@@ -101,6 +102,7 @@ import { assertValidServerUnrollScript } from "./checkpointExitDelay";
 import { READ_TIMEOUT_MS } from "../utils/fetch";
 import {
     assertAllowedSighashTypes,
+    assertArkTxSignedOverCheckpoints,
     assertCheckpointsMatchInputs,
     buildOffchainTx,
     classifyBoardingExpiry,
@@ -138,7 +140,10 @@ import type {
     BatchRegistrationState,
 } from "../repositories/intentRepository";
 import { isTerminalBatchRegistrationState } from "../repositories/intentRepository";
-import type { VtxoReservationRepository } from "../repositories/vtxoReservationRepository";
+import {
+    reservationOutpointSetKey,
+    type VtxoReservationRepository,
+} from "../repositories/vtxoReservationRepository";
 import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
@@ -158,8 +163,13 @@ import {
     pruneExitBranches,
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
-import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
-import { isRetryableProviderError } from "../providers/availability";
+import {
+    ArkError,
+    ProviderUnavailableError,
+    ServerResponseMismatchError,
+    type ProviderKind,
+} from "../providers/errors";
+import { isRetryableProviderError, isTransientOperatorError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -168,6 +178,8 @@ import {
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
+import type { ExecutorProvider } from "../providers/executor";
+import type { ExecutorDefault, ExecutorWatchTemplate } from "../script/executor/executorTemplate";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
@@ -177,6 +189,7 @@ import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } fro
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
 import { DefaultContractHandler } from "../contracts/handlers/default";
+import { delegateDiscoveryKeys } from "../contracts/handlers/delegate";
 import { arkadeServiceUrl, resolveArkadeService } from "../arkade/service";
 import type {
     ContractManagerConfig,
@@ -186,12 +199,22 @@ import type {
 import { contractHandlers } from "../contracts/handlers";
 import { migrateLegacyUtxos, offchainSnapshot, onchainRows } from "../contracts/onchainCoins";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
+import { ExecutorContractHandler, executorKeysOf } from "../contracts/handlers/executor";
+import { scopeOf } from "../contracts/scope";
+import {
+    delegatedContracts,
+    type DelegatedContractWatch,
+    ExecutorManagerImpl,
+    type IExecutorManager,
+    reRegistrationOf,
+} from "./executor";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
     validateVtxosForScript,
     saveVtxosForContract,
     getVtxosForContract,
+    hasVtxosForContract,
     vtxoOutpoint,
 } from "../contracts/vtxoOwnership";
 import {
@@ -256,6 +279,9 @@ import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./signingErrors";
+
+/** Contract types whose virtual outputs are the wallet's own. */
+const WALLET_CONTRACT_TYPES: readonly string[] = ["default", "delegate", "executor"];
 
 // Build per-input jobs for a proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
@@ -343,6 +369,11 @@ export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
 // Kept so existing wallets can still discover and spend VTXOs sent to the
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
+
+/** The Executor expires a watch that never held a coin after 168h; daily keeps that margin. */
+const EXECUTOR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** Wallet-state setting: when the Executor last answered a refresh, in unix ms. */
+const EXECUTOR_REFRESHED_KEY = "executorRefreshedAt";
 
 function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     const seen = new Set<string>();
@@ -550,6 +581,12 @@ const PENDING_RECOVERY_REASON =
 const UNROLLED_REASON =
     "was unilaterally exited and lives onchain — `Unroll.completeUnroll` is the only spend that reaches it";
 
+/** The script a send's change is locked to, and the contract bucket (address) it is stored under. */
+type ChangeDestination = {
+    tapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+    address: string;
+};
+
 /**
  * Structural rather than {@link ContractWithVtxos} so the worker's repository-built snapshot
  * (VTXOs without `contractScript`) classifies without a parallel array.
@@ -573,14 +610,6 @@ function coinKeys(inputs: readonly ExtendedCoin[]): string[] {
     return inputs
         .filter((input) => typeof input === "object" && input !== null)
         .map((input) => `${input.txid}:${input.vout}`);
-}
-
-/** Order-independent key of an outpoint set, to compare what two holds name. */
-function outpointSetKey(outpoints: readonly Outpoint[]): string {
-    return outpoints
-        .map(({ txid, vout }) => `${txid}:${vout}`)
-        .sort()
-        .join("|");
 }
 
 function assertNoPersistentReservation(
@@ -658,6 +687,8 @@ export interface BoardingUtxoGroup {
     /** CSV exit timelock decoded from THIS tapscript's exit leaf. */
     csvTimelock: RelativeTimelock;
     coins: ExtendedCoin[];
+    /** A live Executor boarding watch: the Executor boards these, settle leaves them alone. */
+    delegated?: true;
 }
 
 /**
@@ -936,6 +967,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly delegateProvider?: DelegateProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"],
         walletContractTimelocks?: RelativeTimelock[],
+        readonly executorProvider?: ExecutorProvider,
     ) {
         // Duplicates setupWalletConfig()'s network-mismatch check for callers bypassing create().
         if ("descriptor" in identity) {
@@ -991,6 +1023,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
         this._deprecatedSigners = next;
+    }
+
+    /**
+     * Arkade's retired delegator keys when this wallet's operator is Arkade's and it has an
+     * Executor: apps that drop `delegateUrl` do so to move to it. Discovery only.
+     */
+    protected retiredDelegateKeys(): Uint8Array[] {
+        if (!this.executorProvider) return [];
+        return retiredDelegatePubKeys(this.network, [
+            hex.encode(this.offchainTapscript.options.serverPubKey),
+            ...this._deprecatedSigners.keys(),
+        ]);
     }
 
     /** Boarding WATCH/HISTORY signer set: current ∪ deprecated (spend stays current-only). */
@@ -1086,8 +1130,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Fired after boarding rotation so a live {@link notifyIncomingFunds} watcher re-subscribes
-     * to the fresh address in-session instead of missing deposits until its next re-init.
+     * Fired after boarding rotation, or a new onchain contract such as an Executor boarding watch,
+     * so a live {@link notifyIncomingFunds} watcher re-subscribes to the fresh address in-session
+     * instead of missing deposits until its next re-init.
      */
     private readonly _boardingRotationListeners = new Set<() => void>();
 
@@ -1280,6 +1325,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             serverInfoSource,
             serverInfoLastOnlineAt,
             delegateProvider: config.delegateProvider,
+            executorProvider: config.executorProvider,
             walletContractTimelocks,
         };
     }
@@ -1319,6 +1365,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.delegateProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
+            setup.executorProvider,
         );
         wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
@@ -1351,13 +1398,70 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return hex.encode(this.offchainTapscript.pkScript);
     }
 
-    /** Returns the wallet's Arkade address. */
+    /**
+     * Returns the wallet's Arkade address. While an Executor renewal watch is live, the wallet's
+     * own renewals move coins received here into its renewal contract, which the Executor renews.
+     */
     async getAddress(): Promise<string> {
         return this.arkAddress.encode();
     }
 
-    /** Returns the onchain boarding address used to move funds into Arkade. */
+    /**
+     * Returns the onchain boarding address used to move funds into Arkade: with an Executor
+     * configured and a boarding watch registered, the delegated boarding address, whose deposits
+     * the Executor boards into the wallet's renewal contract while the wallet is offline.
+     */
     async getBoardingAddress(): Promise<string> {
+        return (
+            (await this.delegatedBoardingAddress()) ??
+            this.boardingTapscript.onchainAddress(this.network)
+        );
+    }
+
+    /**
+     * The live boarding watch of the displayed boarding key and current operator, see
+     * {@link delegatedExecutorContracts}. A rotated key without one shows its own address.
+     */
+    private async delegatedBoardingAddress(): Promise<string | undefined> {
+        if (!this.executorProvider) return undefined;
+        const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
+        const displayed = hex.encode(this._boardingTapscript.options.pubKey);
+        const live = (await this.delegatedExecutorContracts("boarding")).find(
+            (c) => c.live && c.signer === server && c.owner === displayed,
+        );
+        return live?.script.onchainAddress(this.network);
+    }
+
+    /**
+     * The Executor contracts of this wallet's keys, most recently registered first: the
+     * identity's, or one its `signingDescriptor` derives. Read from the contract repository, not
+     * the contract manager: a boarding or renewal read must not start its indexer sync. Reads
+     * follow registrations made through any wallet front-end.
+     */
+    protected delegatedExecutorContracts(
+        template: ExecutorDefault,
+    ): Promise<DelegatedContractWatch[]> {
+        return delegatedContracts(
+            this.identity,
+            (filter) => collectContracts(this.contractRepository, filter),
+            template,
+        );
+    }
+
+    /** Encoded tap trees of the live boarding watches, whose deposits the Executor boards. */
+    protected async liveDelegatedBoardingTrees(): Promise<Set<string>> {
+        return new Set(
+            (await this.delegatedExecutorContracts("boarding"))
+                .filter((c) => c.live)
+                .map((c) => hex.encode(c.script.encode())),
+        );
+    }
+
+    /**
+     * @internal The wallet's own boarding address, never the delegated one: where the boarding
+     * sweeps send coins, so a deposit swept off a delegated address does not land on it again.
+     */
+    ownBoardingAddress(): string {
         return this.boardingTapscript.onchainAddress(this.network);
     }
 
@@ -1965,6 +2069,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 console.warn("Skipping malformed boarding contract", c.script, e);
             }
         }
+        // Deposits at the Executor's boarding addresses are the wallet's until boarded: shown, and
+        // exited through the owner's leaf if the Executor never boards them.
+        for (const c of await this.delegatedExecutorContracts("boarding")) {
+            if (allowed.has(c.signer)) add(c.script);
+        }
         return [...byScript.values()];
     }
 
@@ -2088,39 +2197,51 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending or an
-     * unresolved intent locks, for SDK picks. The getter itself lists them: callers that mirror it
+     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, an
+     * unresolved intent locks or a live Executor watch leaves to the Executor, for SDK picks. The getter itself lists them: callers that mirror it
      * (the worker's cache and broadcasts, balances) must not see a settle's inputs vanish, and then
      * stay gone if it fails.
      */
     async getSelectableBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const [utxos, locked] = await Promise.all([
+        const [utxos, locked, delegated] = await Promise.all([
             this.getBoardingUtxos(),
             this.lockedOutpoints(),
+            this.liveDelegatedBoardingTrees(),
         ]);
-        return excludeUnselectable(utxos, this._pendingSpendOutpoints, locked);
+        return excludeUnselectable(
+            delegated.size === 0
+                ? utxos
+                : utxos.filter((u) => !delegated.has(hex.encode(u.tapTree))),
+            this._pendingSpendOutpoints,
+            locked,
+        );
     }
 
     /**
      * @internal {@link getSelectableBoardingUtxos} for every boarding address history shows,
-     * current and deprecated signers, grouped by signer. Only the boarding sweep reads it: a
-     * unilateral exit needs no operator, so it recovers coins that `settle` must not take.
+     * current and deprecated signers, grouped by signer. The periodic settle takes the current
+     * signer's groups except `delegated` ones; the boarding sweep takes them all: a unilateral
+     * exit needs no operator, so it recovers coins that `settle` must not take.
      */
     async getSelectableBoardingUtxoGroups(): Promise<BoardingUtxoGroup[]> {
         // A deprecated signer's address is recovery-only, so a failed lookup waits for the next
         // poll rather than aborting the settle and renewal that share it.
-        const [groups, locked] = await Promise.all([
+        const [groups, locked, delegated] = await Promise.all([
             this.getBoardingUtxosForSigners(
                 this.watchedBoardingSigners(),
                 new Set(this._deprecatedSigners.keys()),
             ),
             this.lockedOutpoints(),
+            this.liveDelegatedBoardingTrees(),
         ]);
         // A superset of what `getBoardingUtxos` fetches, so the balance flag stays accurate.
         this.boardingLoaded = true;
         return groups.map((group) => ({
             ...group,
             coins: excludeUnselectable(group.coins, this._pendingSpendOutpoints, locked),
+            ...(delegated.size > 0 && delegated.has(hex.encode(group.tapscript.encode()))
+                ? { delegated: true as const }
+                : {}),
         }));
     }
 
@@ -2170,6 +2291,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         let indexerStopFunc: (() => void) | undefined;
         let boardingRotationStopFunc: (() => void) | undefined;
         let stopped = false;
+        let watchedSet: string | undefined;
 
         // (Re)subscribe to the CURRENT boarding-address set, serialized on one chain so a burst of
         // rotations can't interleave teardown/setup and leak a watcher.
@@ -2182,6 +2304,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     const boardingAddresses = await this.getBoardingAddresses();
                     if (boardingAddresses.length === 0) return;
                     const boardingAddressSet = new Set(boardingAddresses);
+                    // a rotation is announced twice: by the contract it saves, then the wallet
+                    const setKey = [...boardingAddressSet].sort().join(",");
+                    if (setKey === watchedSet) return;
 
                     // Subscribe-then-swap: a throw leaves the old watcher live (stale set, not
                     // none), and there's no blind window where a deposit could be seeded as
@@ -2225,6 +2350,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
                     // Brief overlap is fine: at worst a duplicate notification, never a miss.
                     onchainStopFunc = stop;
+                    watchedSet = setKey;
                     previousStop?.();
                 })
                 .catch((e) => {
@@ -2252,7 +2378,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 if (!isContractVtxoEvent(event)) {
                     return;
                 }
-                if (event.contract.type !== "default" && event.contract.type !== "delegate") {
+                if (!WALLET_CONTRACT_TYPES.includes(event.contract.type)) {
+                    return;
+                }
+                // its coins are UTXOs, reported by the boarding watcher above
+                if (scopeOf(event.contract) === "onchain") {
                     return;
                 }
 
@@ -2309,12 +2439,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Get all pkScript hex strings for the wallet's own addresses
-     * (both delegate and non-delegate, current and historical).
+     * (default, delegate and executor, current and historical).
      */
     async getWalletScripts(): Promise<string[]> {
         const manager = await this.getContractManager();
         const contracts = await manager.getContracts({
-            type: ["default", "delegate"],
+            type: [...WALLET_CONTRACT_TYPES],
         });
         return contracts.map((c) => c.script);
     }
@@ -2328,15 +2458,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const manager = await this.getContractManager();
         const contracts = await manager.getContracts({
-            type: ["default", "delegate"],
+            type: [...WALLET_CONTRACT_TYPES],
         });
         for (const contract of contracts) {
             if (map.has(contract.script)) continue;
+            // boarding deposits are onchain, not virtual outputs
+            if (contract.type === "executor" && contract.params.template !== "renewal") continue;
             const handler = contractHandlers.get(contract.type);
             if (handler) {
                 const script = handler.createScript(contract.params) as
                     | DefaultVtxo.Script
                     | DelegateVtxo.Script;
+                if (
+                    contract.type === "executor" &&
+                    hex.encode(script.pkScript) !== contract.script
+                ) {
+                    console.warn(
+                        "Skipping delegated contract that no longer derives from its params",
+                        contract.script,
+                    );
+                    continue;
+                }
                 map.set(contract.script, script);
             }
         }
@@ -2468,6 +2610,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             },
             onchainProvider: this.onchainProvider,
             network: this.network,
+            onOnchainContractCreated: () => this.notifyBoardingRotation(),
         });
         try {
             // Baseline always-active contracts: `walletContractTimelocks` × {default, delegate}, bound
@@ -2478,10 +2621,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // The matrix also fans the OPERATOR-signer axis (current + every deprecated signer), so funds
             // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
             // by scriptHex.
-            const delegatePubKey =
-                this.offchainTapscript instanceof DelegateVtxo.Script
-                    ? this.offchainTapscript.options.delegatePubKey
-                    : undefined;
+            // Delegate rows fan over the configured key and Arkade's retired ones.
+            const delegatePubKeys = delegateDiscoveryKeys({
+                delegatePubKey:
+                    this.offchainTapscript instanceof DelegateVtxo.Script
+                        ? this.offchainTapscript.options.delegatePubKey
+                        : undefined,
+                retiredDelegatePubKeys: this.retiredDelegateKeys(),
+            });
             const baselineSigners = [
                 this.offchainTapscript.options.serverPubKey,
                 ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
@@ -2515,7 +2662,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         });
                     }
 
-                    if (delegatePubKey) {
+                    for (const delegatePubKey of delegatePubKeys) {
                         const delegateScript = new DelegateVtxo.Script({
                             pubKey: baselinePubkey,
                             serverPubKey,
@@ -2656,6 +2803,8 @@ export class Wallet
 
     override readonly identity: Identity;
     private readonly _delegateManager?: IDelegateManager;
+    // the class, not the interface: `registerBoardingAt` is @internal
+    private readonly _executorManager?: ExecutorManagerImpl;
     private _vtxoManager?: VtxoManager;
     private _vtxoManagerInitializing?: Promise<VtxoManager>;
 
@@ -2718,6 +2867,19 @@ export class Wallet
     }
 
     private _receiveRotatorInstalled = false;
+
+    /** Rotates the boarding address once the Executor boards a deposit at it. */
+    private _executorBoardUnsub?: () => void;
+    private _executorBootInstalled = false;
+    private _executorBoardChain: Promise<void> = Promise.resolve();
+    private _executorRefreshedAt = 0;
+    private _executorBoot?: Promise<void>;
+    private _executorRefreshing?: Promise<void>;
+    /**
+     * Set by dispose: a refresh stops between watches, and its queued writes do nothing. Rotations
+     * still drain.
+     */
+    private _executorStopping = false;
 
     /**
      * Descriptor-aware signer for inputs locked by rotated pubkeys (the rotator's instance).
@@ -2799,6 +2961,7 @@ export class Wallet
                 this.offchainTapscript instanceof DelegateVtxo.Script
                     ? this.offchainTapscript.options.delegatePubKey
                     : undefined,
+            retiredDelegatePubKeys: this.retiredDelegateKeys(),
         };
     }
 
@@ -2867,19 +3030,206 @@ export class Wallet
      * {@link maybeRotateBoardingAfterBoard} on every settle consuming a boarding UTXO; retired
      * addresses stay reachable through {@link getBoardingUtxos}.
      *
+     * While an Executor boarding watch is live, the new key gets a watch of its own, and this
+     * returns its delegated address; if that registration fails or times out, the new key's own
+     * address. It waits for the registration, unlike the rotation after a settle.
+     *
      * @deprecated Use {@link getNewAddresses} — it mints any combination of
      * address types at one shared index, and reports the contract row behind
      * each. Note the difference in display behaviour: this method *swaps* the
      * advertised boarding address, where `getNewAddresses` mints side
-     * addresses and leaves {@link getBoardingAddress} alone. To keep this
-     * method's behaviour, keep calling this method.
+     * addresses and leaves {@link getBoardingAddress} alone. It also registers
+     * no Executor watch: a deposit at its boarding address waits for this
+     * wallet's own settle. To keep this method's behaviour, keep calling this
+     * method.
      */
     async getNewBoardingAddress(): Promise<string> {
-        // Persisted before the swap, so a throw leaves the previous (watched) address displayed.
+        await this.onBoardChain(() => this.rotateBoarding());
+        return this.getBoardingAddress();
+    }
+
+    /**
+     * Allocate the next boarding key, register its Executor watch, then swap the display.
+     * Persisted before the swap, so a throw leaves the previous (watched) address displayed. The
+     * row is tagged at allocation: a restart before the swap boots on the new key's own address,
+     * as after a failed registration.
+     */
+    private async rotateBoarding(): Promise<void> {
         const [minted] = await this.allocateAddresses(["boarding"], false, true);
-        if (!minted?.allocated) return this.getBoardingAddress();
-        if (minted.type === "boarding") this.setBoardingTapscriptForRotation(minted.tapscript);
-        return minted.address;
+        if (minted?.type !== "boarding" || !minted.allocated) return;
+        await this.extendBoardingWatch(minted.signingDescriptor);
+        // A signer rotation during the registration rebuilt the display under the new key: keep it.
+        // The minted index stays burned, and the next rotation mints under the new signer.
+        if (
+            toXOnlySignerHex(hex.encode(minted.tapscript.options.serverPubKey)) !==
+            toXOnlySignerHex(hex.encode(this.arkServerPublicKey))
+        ) {
+            return;
+        }
+        this.setBoardingTapscriptForRotation(minted.tapscript);
+    }
+
+    /**
+     * Runs `task` after the rotations queued before it; its failure reaches only its caller. Never
+     * call {@link getNewBoardingAddress} from a task: it would wait on itself.
+     */
+    private onBoardChain<T>(task: () => Promise<T>): Promise<T> {
+        const run = this._executorBoardChain.then(task);
+        this._executorBoardChain = run.then(
+            () => undefined,
+            () => undefined,
+        );
+        return run;
+    }
+
+    /**
+     * Register the most recently registered live Executor boarding watch again for a rotated
+     * key, so its deposits are boarded while the wallet is offline too. Not the displayed key's
+     * own watch: it may have none, and the parameters are wallet policy. While renewal is on, the
+     * registration pairs a renewal watch with it, after the boarding one, whose failure it never
+     * undoes. Best-effort: on failure the key shows its own address, which the wallet boards once
+     * online.
+     */
+    private async extendBoardingWatch(descriptor: string): Promise<void> {
+        if (!this._executorManager) return;
+        const server = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
+        const watch = (await this.delegatedExecutorContracts("boarding")).find(
+            (c) => c.live && c.signer === server,
+        );
+        if (!watch) return;
+        const { options, registration } = reRegistrationOf(watch);
+        try {
+            await this._executorManager.registerBoardingAt(descriptor, options, registration);
+        } catch (e) {
+            console.warn("Failed to register an Executor watch for the new boarding address", e);
+        }
+    }
+
+    /**
+     * Startup work for an Executor: refresh its watches (every wallet), then, with a descriptor
+     * provider, rotate-on-board. The Executor boards a deposit into the renewal contract of its
+     * key, so a coin there while that key is displayed means the address was used. Renewals and a
+     * delegated coin's change land there too, and the trigger is still correct.
+     */
+    private async installExecutorBoot(): Promise<void> {
+        if (!this._executorManager || this._executorBootInstalled) return;
+        const rotates = !!this._descriptorProvider;
+        // A static wallet keeps its contract manager lazy: the task below boots it.
+        const eager = rotates ? await this.getContractManager() : undefined;
+        this._executorBootInstalled = true;
+        this._executorStopping = false;
+        if (eager) {
+            this._executorBoardUnsub = eager.onContractEvent((event) => {
+                if (event.type !== "vtxo_received" || !isContractVtxoEvent(event)) return;
+                const { type, params } = event.contract;
+                if (type !== ExecutorContractHandler.type || params.template !== "renewal") return;
+                this.queueExecutorBoardRotation(params.owner);
+            });
+        }
+        // Unawaited, so lazy init stays lazy; dispose waits for it. Off the board chain: the
+        // refresh queues its own writes there.
+        this._executorBoot = (async () => {
+            try {
+                const manager = eager ?? (await this.getContractManager());
+                await manager.whenBooted?.().catch(() => undefined);
+            } catch (e) {
+                console.warn("Failed to boot the contracts for the Executor refresh", e);
+                return;
+            }
+            // First: a rotation then extends from watches that are still held.
+            await this.refreshExecutorWatches();
+            if (rotates) await this.onBoardChain(() => this.rotateForExecutorCoinAtBoot());
+        })();
+    }
+
+    /**
+     * @internal Register again the Executor watches the service let lapse, see
+     * {@link ExecutorManagerImpl.refreshWatches}; runs at startup for every wallet with an Executor
+     * and from the poll of the {@link VtxoManager} every cycle. At most once a day, reloads
+     * included. Its writes go on the board chain, so they never interleave a rotation's
+     * registration, and a rotation waits for one write at most. Concurrent calls share one run.
+     * Best-effort: never throws. Never call it from a board chain task: it would wait on itself.
+     */
+    refreshExecutorWatches(): Promise<void> {
+        this._executorRefreshing ??= this.refreshExecutorWatchesNow().finally(() => {
+            this._executorRefreshing = undefined;
+        });
+        return this._executorRefreshing;
+    }
+
+    private async refreshExecutorWatchesNow(): Promise<void> {
+        const executor = this._executorManager;
+        if (!executor || this._executorStopping) return;
+        if (Date.now() - this._executorRefreshedAt < EXECUTOR_REFRESH_INTERVAL_MS) return;
+        const stored = await this.walletRepository.getWalletState().then(
+            (state) => state?.settings?.[EXECUTOR_REFRESHED_KEY],
+            () => undefined,
+        );
+        if (typeof stored === "number" && stored <= Date.now()) {
+            this._executorRefreshedAt = Math.max(this._executorRefreshedAt, stored);
+            if (Date.now() - this._executorRefreshedAt < EXECUTOR_REFRESH_INTERVAL_MS) return;
+        }
+        // Stamped before the call: an unreachable Executor is tried again next interval, not
+        // every poll. Stored only once it answered, so a reload retries a failed refresh.
+        const at = Date.now();
+        this._executorRefreshedAt = at;
+        try {
+            await executor.refreshWatches({
+                write: (task) => this.onBoardChain(task),
+                stopped: () => this._executorStopping,
+            });
+        } catch (e) {
+            console.warn("Failed to refresh the Executor watches", e);
+            return;
+        }
+        // Cut short: the next start refreshes again.
+        if (this._executorStopping) {
+            this._executorRefreshedAt = 0;
+            return;
+        }
+        await updateWalletState(this.walletRepository, (state) => ({
+            ...state,
+            settings: { ...state.settings, [EXECUTOR_REFRESHED_KEY]: at },
+        })).catch((e) => console.warn("Failed to store the Executor refresh time", e));
+    }
+
+    /**
+     * Re-checked when it runs: an earlier rotation may have moved the displayed key, and the
+     * deposit's own rotation must then not burn another index.
+     */
+    private queueExecutorBoardRotation(owner: string | undefined): void {
+        void this.onBoardChain(async () => {
+            const displayed = hex.encode(this._boardingTapscript.options.pubKey);
+            if (owner?.slice(2).toLowerCase() !== displayed) return;
+            try {
+                await this.rotateBoarding();
+            } catch (e) {
+                console.warn("Failed to rotate boarding address after Executor board", e);
+            }
+        });
+    }
+
+    /**
+     * A coin that predates the subscription raises no event: a stored one, or one the contract
+     * manager's boot sync writes, which is why this runs once that boot has finished. Any coin
+     * counts: it proves the key was used. Best-effort: a failed read must not fail the boot.
+     */
+    private async rotateForExecutorCoinAtBoot(): Promise<void> {
+        try {
+            const displayed = hex.encode(this._boardingTapscript.options.pubKey);
+            const rows = await collectContracts(this.contractRepository, {
+                type: [ExecutorContractHandler.type],
+            });
+            for (const row of rows) {
+                if (row.params.template !== "renewal") continue;
+                if (row.params.owner?.slice(2).toLowerCase() !== displayed) continue;
+                if (!(await hasVtxosForContract(this.walletRepository, row))) continue;
+                this.queueExecutorBoardRotation(row.params.owner);
+                return;
+            }
+        } catch (e) {
+            console.warn("Failed to look for an Executor board at boot", e);
+        }
     }
 
     /**
@@ -3414,6 +3764,20 @@ export class Wallet
     // held sets already order a hold against a spend.
     private reservationQueue: Promise<void> = Promise.resolve();
 
+    private requireReservationRepository(): VtxoReservationRepository {
+        const repository = this.reservationRepository;
+        if (!repository) throw new Error("VTXO reservation repository is required");
+        if (
+            repository.version !== 2 ||
+            typeof repository.deleteReservationIfMatches !== "function"
+        ) {
+            throw new Error(
+                "VTXO reservation repository version 2 with atomic release is required",
+            );
+        }
+        return repository;
+    }
+
     private withReservationWrite(fn: () => Promise<void>): Promise<void> {
         const run = this.reservationQueue.then(fn);
         this.reservationQueue = run.catch(() => undefined);
@@ -3428,13 +3792,13 @@ export class Wallet
 
     /** Restored before automatic spending. Reusing an owner id must name the same inputs. */
     async reserveVtxosPersistently(outpoints: readonly Outpoint[], id: string): Promise<void> {
-        if (!this.reservationRepository) throw new Error("VTXO reservation repository is required");
+        const repository = this.requireReservationRepository();
         if (typeof id !== "string" || !id) throw new Error("Reservation id is required");
         const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
         await this.withReservationWrite(async () => {
             const existing = this.persistentReservations.get(id);
             if (existing) {
-                if (outpointSetKey(existing) !== outpointSetKey(snapshot)) {
+                if (reservationOutpointSetKey(existing) !== reservationOutpointSetKey(snapshot)) {
                     throw new Error("Reservation id already holds different inputs");
                 }
                 return;
@@ -3445,7 +3809,7 @@ export class Wallet
                 this.persistentReservedOutpoints.add(`${txid}:${vout}`);
             try {
                 await assertNoIntentLockedInputs(snapshot, this.intentRepository);
-                await this.reservationRepository!.saveReservation({ id, outpoints: snapshot });
+                await repository.saveReservation({ id, outpoints: snapshot });
                 this.persistentReservations.set(id, snapshot);
             } catch (error) {
                 hold.release();
@@ -3462,11 +3826,15 @@ export class Wallet
      * newer hold under its id alone.
      */
     async releaseVtxoReservation(id: string, expected?: readonly Outpoint[]): Promise<void> {
-        if (!this.reservationRepository) throw new Error("VTXO reservation repository is required");
+        const repository = this.requireReservationRepository();
         await this.withReservationWrite(async () => {
             const outpoints = this.persistentReservations.get(id) ?? [];
-            if (expected && outpointSetKey(outpoints) !== outpointSetKey(expected)) return;
-            await this.reservationRepository!.deleteReservation(id);
+            if (
+                expected &&
+                reservationOutpointSetKey(outpoints) !== reservationOutpointSetKey(expected)
+            )
+                return;
+            if (!(await repository.deleteReservationIfMatches(id, expected ?? outpoints))) return;
             this.persistentReservations.delete(id);
             const stillNamed = new Set(
                 [...this.persistentReservations.values()]
@@ -3563,6 +3931,48 @@ export class Wallet
         return this._restoreInFlight;
     }
 
+    /**
+     * The delegations of the persisted Executor contracts, owner aside, so restore finds them at
+     * every key: {@link watchExecutorContracts} before `restore()` covers the rotated ones too.
+     */
+    private async executorWatchTemplates(): Promise<ExecutorWatchTemplate[]> {
+        const rows = await collectContracts(this.contractRepository, {
+            type: [ExecutorContractHandler.type],
+        });
+        const boarding = new Map<string, ExecutorWatchTemplate>();
+        const renewalOnly = new Map<string, ExecutorWatchTemplate>();
+        const boardingBases = new Set<string>();
+        for (const row of rows) {
+            try {
+                const p = ExecutorContractHandler.deserializeParams(row.params);
+                const keys = executorKeysOf(p);
+                const base = JSON.stringify([keys, p.exitDelay, p.renewalWindow, p.maxFee]);
+                const params = {
+                    exitDelay: p.exitDelay,
+                    renewalWindow: p.renewalWindow,
+                    maxFee: p.maxFee,
+                };
+                if (p.boardingExitDelay === undefined) {
+                    renewalOnly.set(base, { keys, params });
+                } else {
+                    boardingBases.add(base);
+                    // boarding rows differing only in their delay are distinct addresses
+                    boarding.set(JSON.stringify([base, p.boardingExitDelay]), {
+                        keys,
+                        params: { ...params, boardingExitDelay: p.boardingExitDelay },
+                    });
+                }
+            } catch (e) {
+                console.warn("Skipping malformed delegated contract", row.script, e);
+            }
+        }
+        // a renewal row's delegation is its boarding rows', minus the boarding delay
+        return [
+            ...boarding.values(),
+            ...[...renewalOnly].filter(([base]) => !boardingBases.has(base)).map(([, t]) => t),
+        ];
+    }
+
     private async _runRestore(gapLimit: number): Promise<void> {
         // Keyring foreign keys sit outside the derivation tree the gap scan walks, so only the
         // unwrapped HD provider counts. `instanceof` (inside the getter), not duck-typing: a
@@ -3571,10 +3981,11 @@ export class Wallet
         const hd = provider !== undefined;
 
         // Manager init, the static identity descriptor, and operator info do not use each other.
-        const [manager, staticDescriptor, arkInfo] = await Promise.all([
+        const [manager, staticDescriptor, arkInfo, executorWatches] = await Promise.all([
             this.getContractManager(),
             hd ? undefined : identityDescriptor(this.identity),
             this.arkProvider.getInfo(),
+            this.executorWatchTemplates(),
         ]);
         const materialize = (index: number): string =>
             hd ? provider.materializeDescriptorAt(index) : staticDescriptor!;
@@ -3604,6 +4015,14 @@ export class Wallet
             boardingTimelock:
                 this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK,
             delegatePubKey,
+            // Raw hex: the lookup skips malformed signers rather than failing the restore.
+            retiredDelegatePubKeys: this.executorProvider
+                ? retiredDelegatePubKeys(this.network, [
+                      arkInfo.signerPubkey,
+                      ...arkInfo.deprecatedSigners.map((s) => s.pubkey),
+                  ])
+                : [],
+            executorWatches,
         };
 
         const result = await manager.scanContracts({
@@ -3657,6 +4076,12 @@ export class Wallet
 
     private _concurrentSpending = false;
     private _submitsAwaitingFinalize = 0;
+    private pendingTxRecoveryDeferred = false;
+
+    /** @internal */
+    get hasDeferredPendingTxRecovery(): boolean {
+        return this.pendingTxRecoveryDeferred;
+    }
 
     /** @see WalletConfig.concurrentSpending */
     get concurrentSpending(): boolean {
@@ -3673,10 +4098,19 @@ export class Wallet
     async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
         const ark = this.arkProvider;
         return {
-            submitTx: (signedArkTx, checkpointTxs) => ark.submitTx(signedArkTx, checkpointTxs),
+            submitTx: async (signedArkTx, checkpointTxs) => {
+                this.assertNoDeferredPendingTxRecovery();
+                return ark.submitTx(signedArkTx, checkpointTxs);
+            },
             finalizeTx: (arkTxid, finalCheckpointTxs) =>
                 ark.finalizeTx(arkTxid, finalCheckpointTxs),
         };
+    }
+
+    private assertNoDeferredPendingTxRecovery(): void {
+        if (this.pendingTxRecoveryDeferred) {
+            throw new Error("Pending Arkade transaction recovery is required before sending");
+        }
     }
 
     protected constructor(
@@ -3706,6 +4140,7 @@ export class Wallet
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
         /** @see WalletConfig.oneShotSubmit */
         readonly oneShotSubmit: boolean = true,
+        executorProvider?: ExecutorProvider,
     ) {
         super(
             identity,
@@ -3722,6 +4157,7 @@ export class Wallet
             delegateProvider,
             watcherConfig,
             walletContractTimelocks,
+            executorProvider,
         );
         this.identity = identity;
 
@@ -3729,6 +4165,9 @@ export class Wallet
             settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
         this._delegateManager = delegateProvider
             ? new DelegateManagerImpl(delegateProvider, arkProvider, identity)
+            : undefined;
+        this._executorManager = executorProvider
+            ? new ExecutorManagerImpl(executorProvider, this)
             : undefined;
         this._serverUnrollScript = serverUnrollScript;
         this._receiveRotator = receiveRotator;
@@ -3778,6 +4217,12 @@ export class Wallet
                 }
                 this._receiveRotatorInstalled = true;
             }
+            try {
+                await this.installExecutorBoot();
+            } catch (installErr) {
+                await manager.dispose();
+                throw installErr;
+            }
             this._vtxoManager = manager;
             return manager;
         } finally {
@@ -3798,6 +4243,8 @@ export class Wallet
     }
 
     override async dispose(): Promise<void> {
+        // First: the VtxoManager's dispose below waits for a poll, which may be refreshing.
+        this._executorStopping = true;
         await Promise.allSettled([...this.reservationWrites]);
         // Drain an in-flight restore so it can't hit torn-down managers (deadlock-free:
         // _runRestore never calls dispose()).
@@ -3816,7 +4263,12 @@ export class Wallet
         } catch (error) {
             rotatorError = error;
         }
+        this._executorBoardUnsub?.();
+        this._executorBoardUnsub = undefined;
+        this._executorBootInstalled = false;
 
+        // Before the drain: it waits for an in-flight poll or settle, the producers of
+        // post-board rotations.
         const manager =
             this._vtxoManager ??
             (this._vtxoManagerInitializing
@@ -3831,6 +4283,17 @@ export class Wallet
         } finally {
             this._vtxoManager = undefined;
             this._vtxoManagerInitializing = undefined;
+            // They queue on the chain until they end; never reject.
+            await this._executorBoot;
+            await this._executorRefreshing;
+            this._executorBoot = undefined;
+            // A task can queue another while it runs: drain until the chain stops moving. Never
+            // rejects, and before the contract manager goes, which a drained rotation writes to.
+            let chain: Promise<void>;
+            do {
+                chain = this._executorBoardChain;
+                await chain;
+            } while (chain !== this._executorBoardChain);
             await super.dispose();
         }
 
@@ -3956,6 +4419,7 @@ export class Wallet
                     : {}),
             },
             config.oneShotSubmit,
+            setup.executorProvider,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
@@ -4078,6 +4542,7 @@ export class Wallet
             this.delegateProvider,
             this.watcherConfig,
             this.walletContractTimelocks,
+            this.executorProvider,
         );
         this.copySyncOverlapTo(readonly);
         // Carry the cached deprecated-signer set (with cutoffs) so the clone's
@@ -4090,6 +4555,11 @@ export class Wallet
     /** Returns the delegate manager when delegation support is configured. */
     async getDelegateManager(): Promise<IDelegateManager | undefined> {
         return this._delegateManager;
+    }
+
+    /** Returns the Executor manager when an Executor is configured. */
+    async getExecutorManager(): Promise<IExecutorManager | undefined> {
+        return this._executorManager;
     }
 
     /**
@@ -4533,6 +5003,10 @@ export class Wallet
      * Boarding has no on-chain receive event (the watcher sees only the L2 indexer), so a settle
      * consuming a boarding UTXO (a non-VTXO, non-arknote input) is the trigger. No-op without a
      * descriptor provider. Best-effort: the settle has committed, so failures are only logged.
+     *
+     * With an Executor the rotation runs in the background, as its watch is a network round the
+     * settle (and the tx lock it holds) must not wait on. The old key's delegated address stays
+     * displayed, still watched, until the new watch exists: the brief reuse is intended.
      */
     private async maybeRotateBoardingAfterBoard(inputs: SettleParams["inputs"]): Promise<void> {
         if (!this._descriptorProvider) return;
@@ -4540,11 +5014,14 @@ export class Wallet
             (input) => typeof input !== "string" && !isVirtualCoin(input),
         );
         if (!consumedBoarding) return;
-        try {
-            await this.getNewBoardingAddress();
-        } catch (e) {
-            console.warn("Failed to rotate boarding address after board", e);
-        }
+        const rotation = this.onBoardChain(async () => {
+            try {
+                await this.rotateBoarding();
+            } catch (e) {
+                console.warn("Failed to rotate boarding address after board", e);
+            }
+        });
+        if (!this._executorManager) await rotation;
     }
 
     private async handleSettlementFinalizationEvent(
@@ -4594,6 +5071,7 @@ export class Wallet
                     // input found in the settlement tx, sign it
                     settlementPsbt.updateInput(i, {
                         tapLeafScript: [input.forfeitTapLeafScript],
+                        sighashType: SigHash.DEFAULT,
                     });
                     const script = settlementPsbt.getInput(i).witnessUtxo?.script;
                     if (!script) {
@@ -5009,15 +5487,20 @@ export class Wallet
         } else if (sync) {
             await manager.syncOnchain();
         }
-        const [tip, locked] = await Promise.all([
+        const [tip, locked, delegated] = await Promise.all([
             this.onchainProvider.getChainTip(),
             this.lockedOutpoints(),
+            this.liveDelegatedBoardingTrees(),
         ]);
         const dropped = new Map<string, string>();
         const candidates = (await this.onchainCoins(manager))
-            .filter(({ coin, contract }) => {
+            .filter(({ coin, contract, script }) => {
                 if (named) return named.has(vtxoOutpoint(coin));
-                return isContractGenericallySpendable(contract);
+                // a live watch's deposits are the Executor's to board
+                return (
+                    isContractGenericallySpendable(contract) &&
+                    !delegated.has(hex.encode(script.encode()))
+                );
             })
             .filter(({ coin, contract }) => {
                 const key = vtxoOutpoint(coin);
@@ -5309,13 +5792,56 @@ export class Wallet
     async finalizePendingTxs(
         vtxos?: ExtendedVirtualCoin[],
     ): Promise<{ finalized: string[]; pending: string[] }> {
+        return this.finalizePendingTxsImpl(vtxos);
+    }
+
+    /** @internal */
+    async deferPendingTxRecovery(): Promise<boolean> {
+        this.pendingTxRecoveryDeferred = await this.hasPendingTxFlag();
+        return this.pendingTxRecoveryDeferred;
+    }
+
+    /** @internal */
+    async resumeDeferredPendingTxs(isCurrent: () => boolean): Promise<void> {
+        // Outside the lock: a failure here never reached the operator, so it must not
+        // reach the unfencing below either.
+        const info = await this.getOperatorInfo({ requireLive: true });
+        if (info.network !== this.network.name) {
+            throw new Error("Operator network changed while recovering pending transactions");
+        }
+        await this._withTxLock(async () => {
+            if (!isCurrent()) return;
+            try {
+                // A stale local candidate list can miss the inputs of the interrupted send.
+                await this.finalizePendingTxsImpl(undefined, { info, isCurrent });
+            } catch (error) {
+                // One pass against a reachable operator is enough; `hasPendingTx` keeps
+                // what it left for the next startup, as a live boot would. Only a
+                // transient failure is worth another tick, so only it keeps the fence.
+                if (!isTransientOperatorError(error) && isCurrent()) {
+                    this.pendingTxRecoveryDeferred = false;
+                }
+                throw error;
+            }
+            if (isCurrent()) this.pendingTxRecoveryDeferred = false;
+        });
+    }
+
+    private async finalizePendingTxsImpl(
+        vtxos?: ExtendedVirtualCoin[],
+        recovery?: { info: OperatorInfo; isCurrent: () => boolean },
+    ): Promise<{ finalized: string[]; pending: string[] }> {
+        const isCurrent = recovery?.isCurrent ?? (() => true);
         const hasPending = await this.hasPendingTxFlag();
-        if (!hasPending) {
+        if (!hasPending || !isCurrent()) {
+            // Nothing left to recover, so nothing to block sends for.
+            if (!hasPending && isCurrent()) this.pendingTxRecoveryDeferred = false;
             return { finalized: [], pending: [] };
         }
 
         if (!vtxos || vtxos.length === 0) {
             const scriptMap = await this.getScriptMap();
+            if (!isCurrent()) return { finalized: [], pending: [] };
             const allExtended: ExtendedVirtualCoin[] = [];
 
             const fetchedVtxos = await getAllNormalizedVtxos(this.indexerProvider, [
@@ -5326,7 +5852,11 @@ export class Wallet
                 const vtxoScript = scriptMap.get(vtxo.script);
                 if (!vtxoScript) continue;
 
-                if (!vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
+                // Recovery proves ownership of historical outputs, swept included, but
+                // subdust and exited outputs sink the whole proof — as in claimCash.
+                if (recovery) {
+                    if (isSubdust(vtxo, this.dustAmount) || vtxo.isUnrolled) continue;
+                } else if (!vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
                     continue;
                 }
 
@@ -5339,6 +5869,7 @@ export class Wallet
             }
 
             if (allExtended.length === 0) {
+                // Without a proof input, there is no operator response to clear the flag.
                 return { finalized: [], pending: [] };
             }
 
@@ -5349,7 +5880,10 @@ export class Wallet
             batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_PROOF));
         }
 
-        const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
+        const unrollCandidates = this.checkpointUnrollCandidates(
+            recovery?.info ?? (await this.arkProvider.getInfo()),
+        );
+        if (!isCurrent()) return { finalized: [], pending: [] };
         // Checked against every VTXO of this run, not the chunk that produced
         // the proof: a pending tx spends whatever the interrupted send did, and
         // its inputs can straddle two chunks.
@@ -5361,20 +5895,23 @@ export class Wallet
         // Track seen arkTxids so parallel batches don't finalize the same tx twice
         const seen = new Set<string>();
 
-        const results = await Promise.all(
+        const results = await Promise.allSettled(
             batches.map(async (batch) => {
                 const batchFinalized: string[] = [];
                 const batchPending: string[] = [];
 
                 const intent = await this.makeGetPendingTxIntentSignature(batch);
+                if (!isCurrent()) return { finalized: batchFinalized, pending: batchPending };
                 const pendingTxs = await this.arkProvider.getPendingTxs(intent);
 
                 for (const pendingTx of pendingTxs) {
+                    if (!isCurrent()) break;
                     if (seen.has(pendingTx.arkTxid)) continue;
                     seen.add(pendingTx.arkTxid);
 
                     batchPending.push(pendingTx.arkTxid);
                     try {
+                        const context = `pending tx ${pendingTx.arkTxid}`;
                         const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) => {
                             const tx = Transaction.fromPSBT(base64.decode(c));
                             assertAllowedSighashTypes(tx);
@@ -5382,12 +5919,29 @@ export class Wallet
                         });
                         // Registered by an earlier process, so checkpoints are rebuilt, not
                         // recalled; a mismatch stays pending for the next init.
-                        assertCheckpointsMatchInputs(
+                        const localCheckpoints = assertCheckpointsMatchInputs(
                             checkpointTxs,
                             checkpointInputs,
                             unrollCandidates,
-                            `pending tx ${pendingTx.arkTxid}`,
+                            context,
                         );
+                        // Rebuilding proves the checkpoint is ours to co-sign, not that anybody
+                        // asked for it. An unbacked entry is stuck on the operator regardless,
+                        // so failing closed here costs nothing the other entries need.
+                        if (!pendingTx.finalArkTx) {
+                            throw new ServerResponseMismatchError(
+                                `${context}: no final ark tx to bind the checkpoints to`,
+                            );
+                        }
+                        const finalArkTx = Transaction.fromPSBT(
+                            base64.decode(pendingTx.finalArkTx),
+                        );
+                        if (finalArkTx.id !== pendingTx.arkTxid) {
+                            throw new ServerResponseMismatchError(
+                                `${context}: final ark tx is ${finalArkTx.id}`,
+                            );
+                        }
+                        assertArkTxSignedOverCheckpoints(finalArkTx, localCheckpoints, context);
                         const checkpointJobs = checkpointTxs.map((tx) =>
                             this.inputSigningJobsFromWitnessUtxos(tx),
                         );
@@ -5395,6 +5949,7 @@ export class Wallet
                         const batchEligible =
                             isBatchSignable(identity) &&
                             (await this._signerRouter.canBatch(...checkpointJobs));
+                        if (!isCurrent()) break;
 
                         let finalCheckpoints: string[];
                         if (batchEligible) {
@@ -5424,9 +5979,14 @@ export class Wallet
                             );
                         }
 
+                        if (!isCurrent()) break;
                         await this.arkProvider.finalizeTx(pendingTx.arkTxid, finalCheckpoints);
                         batchFinalized.push(pendingTx.arkTxid);
                     } catch (error) {
+                        // In recovery a transient failure means the operator went away
+                        // mid-pass; swallowing it would unfence sends on a pass that never
+                        // reached a conclusion. A live boot still reports it as pending.
+                        if (recovery && isTransientOperatorError(error)) throw error;
                         console.error(
                             `Failed to finalize transaction ${pendingTx.arkTxid}:`,
                             error,
@@ -5443,15 +6003,19 @@ export class Wallet
 
         const finalized: string[] = [];
         const pending: string[] = [];
+        // Settled, not raced: failing out while a sibling batch is still signing would
+        // release the tx lock, and the next pass could finalize that tx a second time.
         for (const result of results) {
-            finalized.push(...result.finalized);
-            pending.push(...result.pending);
+            if (result.status === "rejected") throw result.reason;
+            finalized.push(...result.value.finalized);
+            pending.push(...result.value.pending);
         }
 
         // Only clear the flag if every discovered pending tx was finalized;
         // if any failed, keep it so recovery retries on next startup.
-        if (finalized.length === pending.length) {
-            await this.setPendingTxFlag(false);
+        if (finalized.length === pending.length && isCurrent()) {
+            await this.setPendingTxFlag(false, isCurrent);
+            if (isCurrent()) this.pendingTxRecoveryDeferred = false;
         }
 
         return { finalized, pending };
@@ -5491,11 +6055,12 @@ export class Wallet
         return state?.settings?.hasPendingTx === true;
     }
 
-    private async setPendingTxFlag(value: boolean): Promise<void> {
-        await updateWalletState(this.walletRepository, (state) => ({
-            ...state,
-            settings: { ...state.settings, hasPendingTx: value },
-        }));
+    private async setPendingTxFlag(value: boolean, isCurrent = () => true): Promise<void> {
+        await updateWalletState(this.walletRepository, (state) =>
+            isCurrent()
+                ? { ...state, settings: { ...state.settings, hasPendingTx: value } }
+                : state,
+        );
     }
 
     /**
@@ -5659,6 +6224,7 @@ export class Wallet
                         ],
                         outputs: [{ script: myPkScript, amount: BigInt(vtxo.value) }],
                         serverUnrollScript,
+                        verifyServerSignatures: { serverPubkey: cash.serverPubKey },
                         oneShot: this.oneShotSubmit,
                     });
                     claims.push({ txid: registeredTxid, amount: vtxo.value });
@@ -6166,8 +6732,6 @@ export class Wallet
         const offchainTapscript = this.offchainTapscript;
         const serverPubKey = this.arkServerPublicKey;
         const serverUnrollScript = this.serverUnrollScript;
-        const outputAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
-        const address = outputAddress.encode();
 
         // validate recipients and populate undefined amount with dust amount
         const recipients = validateRecipients(
@@ -6444,7 +7008,16 @@ export class Wallet
         // build change receiver with BTC change and all asset changes
         let changeReceiver: Recipient | undefined;
         let changeIndex = 0;
+        let change: ChangeDestination | undefined;
         if (changeAmount > 0) {
+            const changeTapscript = await this.changeTapscriptFor(
+                selectedCoins,
+                changeAmount,
+                serverPubKey,
+                offchainTapscript,
+            );
+            const changeAddress = changeTapscript.address(this.network.hrp, serverPubKey);
+            change = { tapscript: changeTapscript, address: changeAddress.encode() };
             const changeAssets: Asset[] = [];
             for (const [assetId, amount] of assetChanges) {
                 if (amount > 0n) {
@@ -6456,13 +7029,13 @@ export class Wallet
             outputs.push({
                 script:
                     BigInt(changeAmount) < this.dustAmount
-                        ? outputAddress.subdustPkScript
-                        : outputAddress.pkScript,
+                        ? changeAddress.subdustPkScript
+                        : changeAddress.pkScript,
                 amount: BigInt(changeAmount),
             });
 
             changeReceiver = {
-                address: address,
+                address: change.address,
                 amount: changeAmount,
                 assets: changeAssets.length > 0 ? changeAssets : undefined,
             };
@@ -6509,11 +7082,75 @@ export class Wallet
                 serverPubKey,
                 serverUnrollScript,
                 changeAssets: changeReceiver?.assets,
+                change,
             },
             onReserved,
             !selectedVtxos,
             { validUntil },
         );
+    }
+
+    /**
+     * Change follows its inputs: a send spending a coin at a live renewal watch returns the change
+     * to that contract, so the Executor keeps renewing it. The own script otherwise. Fail-open: a
+     * send must not fail over a delegation lookup.
+     */
+    private async changeTapscriptFor(
+        inputs: ExtendedVirtualCoin[],
+        changeAmount: number,
+        serverPubKey: Bytes,
+        own: DefaultVtxo.Script | DelegateVtxo.Script,
+    ): Promise<DefaultVtxo.Script | DelegateVtxo.Script> {
+        try {
+            const live = await this.liveRenewalWatches(toXOnlySignerHex(hex.encode(serverPubKey)));
+            for (const coin of inputs) {
+                const watch = live.find((w) => w.contract.script === coin.script);
+                if (!watch) continue;
+                return this.renews(watch, BigInt(changeAmount)) ? watch.script : own;
+            }
+        } catch (e) {
+            console.warn("Unable to inspect Executor renewal watches", e);
+        }
+        return own;
+    }
+
+    /** The live Executor renewal watches under `signer`, the operator's x-only key. */
+    private async liveRenewalWatches(signer: string): Promise<DelegatedContractWatch[]> {
+        return (await this.delegatedExecutorContracts("renewal")).filter(
+            (w) => w.live && w.signer === signer,
+        );
+    }
+
+    /** Whether the Executor can renew `amount` at `watch`: not for `maxFee + dust` or less. */
+    private renews(watch: DelegatedContractWatch, amount: bigint): boolean {
+        return amount > BigInt(watch.contract.params.maxFee) + this.dustAmount;
+    }
+
+    /**
+     * @internal Where the wallet's own renewals pay `amount`: the newest live Executor renewal
+     * contract under the current operator, so the Executor renews the coin from then on. One the
+     * displayed boarding key does not own comes first: a coin at that key's contract rotates the
+     * boarding address. The wallet's address when none applies, for `maxFee + dust` or less, which
+     * the Executor cannot renew, or when a renewed coin carries assets, which `settle()` places
+     * only at the wallet's address. Also the wallet's address when any of `inputScripts` sits at a
+     * live renewal contract, whatever the reason: the Executor had its chance at that coin, and
+     * paying it back there only repeats the miss. Fail-open: a renewal must not fail over a
+     * delegation lookup.
+     */
+    async renewalAddress(amount: bigint, inputScripts: readonly string[] = []): Promise<string> {
+        const own = await this.getAddress();
+        try {
+            const { hrp, serverPubKey } = ArkAddress.decode(own);
+            const displayed = hex.encode(this._boardingTapscript.options.pubKey);
+            const underOperator = await this.liveRenewalWatches(hex.encode(serverPubKey));
+            if (underOperator.some((w) => inputScripts.includes(w.contract.script))) return own;
+            const live = underOperator.filter((w) => this.renews(w, amount));
+            const watch = live.find((w) => w.owner !== displayed) ?? live[0];
+            return watch ? watch.script.address(hrp, serverPubKey).encode() : own;
+        } catch (e) {
+            console.warn("Unable to inspect Executor renewal watches", e);
+            return own;
+        }
     }
 
     /**
@@ -6532,6 +7169,8 @@ export class Wallet
             serverUnrollScript: CSVMultisigTapscript.Type;
             changeAssets?: Asset[];
             recordSentHistory?: boolean;
+            /** Where the change went; `offchainTapscript` when absent. */
+            change?: ChangeDestination;
         },
         onReserved?: () => void,
         picked = false,
@@ -6562,6 +7201,7 @@ export class Wallet
                 persist.serverPubKey,
                 persist.changeAssets,
                 persist.recordSentHistory ?? true,
+                persist.change,
             );
 
             return arkTxid;
@@ -6699,6 +7339,7 @@ export class Wallet
         serverUnrollScript: CSVMultisigTapscript.Type,
         options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        this.assertNoDeferredPendingTxRecovery();
         await assertNoIntentLockedInputs(inputs, this.intentRepository);
         assertNoPersistentReservation(inputs, this.persistentReservedOutpoints);
         const validUntil = captureSendDeadline(options?.validUntil);
@@ -6846,8 +7487,10 @@ export class Wallet
         changeAssets?: Asset[],
         // False for self-transfer migrations: a `TxSent` row would show a phantom outflow.
         recordSentHistory: boolean = true,
+        change?: ChangeDestination,
     ): Promise<void> {
         const primaryAddress = offchainTapscript.address(this.network.hrp, serverPubKey).encode();
+        const changeTapscript = change?.tapscript ?? offchainTapscript;
 
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
@@ -6912,10 +7555,10 @@ export class Wallet
                     txid: arkTxid,
                     vout: changeVout,
                     createdAt: new Date(createdAt),
-                    forfeitTapLeafScript: offchainTapscript.forfeit(),
-                    proofTapLeafScript: offchainTapscript.forfeit(),
+                    forfeitTapLeafScript: changeTapscript.forfeit(),
+                    proofTapLeafScript: changeTapscript.forfeit(),
                     isUnrolled: false,
-                    tapTree: offchainTapscript.encode(),
+                    tapTree: changeTapscript.encode(),
                     value: Number(changeAmount),
                     ...changeFacts,
                     spentBy: "",
@@ -6923,7 +7566,7 @@ export class Wallet
                         confirmed: false,
                     },
                     assets: changeAssets,
-                    script: hex.encode(offchainTapscript.pkScript),
+                    script: hex.encode(changeTapscript.pkScript),
                 };
             }
 
@@ -6959,11 +7602,11 @@ export class Wallet
                 );
             }
 
-            // Change is always primary-script by construction.
+            // Change goes to the primary script, or to the renewal contract its inputs sat at.
             if (changeVtxo) {
                 await saveVtxosForContract(
                     this.walletRepository,
-                    { script: changeVtxo.script!, address: primaryAddress },
+                    { script: changeVtxo.script!, address: change?.address ?? primaryAddress },
                     [changeVtxo],
                 );
             }

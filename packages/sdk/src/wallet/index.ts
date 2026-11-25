@@ -36,6 +36,7 @@ export {
     type ActivityResolver,
 } from "./activity";
 import { DelegateProvider } from "../providers/delegate";
+import type { ExecutorProvider } from "../providers/executor";
 import type { ArkadeService } from "../arkade/service";
 import type { VtxoReservation } from "./wallet";
 
@@ -105,7 +106,7 @@ export interface NewAddress {
  * @see StorageConfig
  */
 export interface BaseWalletConfig {
-    /** Optional operator public key used to construct and validate Arkade addresses. */
+    /** @deprecated Ignored: the signer key comes from the operator's info, which may rotate it. */
     arkServerPublicKey?: string;
     /** Relative timelock applied to boarding scripts. */
     boardingTimelock?: RelativeTimelock;
@@ -137,6 +138,12 @@ export interface BaseWalletConfig {
     onchainProvider?: OnchainProvider | ((network: NetworkName) => OnchainProvider);
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
+    /**
+     * Optional Executor, the service that boards the wallet's deposits while it is offline. Only a
+     * `Wallet` registers watches, through `getExecutorManager()`; a readonly wallet reads them.
+     * Without one, the wallet behaves as it does without the Executor.
+     */
+    executorProvider?: ExecutorProvider;
 }
 
 /**
@@ -1191,6 +1198,8 @@ export interface IReadonlyWallet {
 
     /** Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync cursor, contracts). */
     clear(): Promise<void>;
+    /** Release wallet-owned background resources without wiping persisted data. */
+    dispose?(): Promise<void>;
 }
 
 export {
