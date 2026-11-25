@@ -264,7 +264,8 @@ are adopted the same way, with `backend: "rfq"`.
 The one global the core requires is `crypto.getRandomValues`. Node and browsers have it; React
 Native does not, so install `react-native-get-random-values` (or `expo-crypto`) and import it
 before this package. `crypto.subtle` is unused. `EventSource` and `WebSocket` are needed only by
-the watch and relay transports, each of which takes an injected implementation.
+the watch and relay transports, each of which takes an injected implementation. `structuredClone`
+is needed only by `accept()` with `selectedVtxos`; React Native without it needs a polyfill.
 
 The client takes no operator URL. Operator info, Arkade chain reads and broadcast are all derived
 from the wallet, which is the single place that knows which operator it speaks to. The onchain
