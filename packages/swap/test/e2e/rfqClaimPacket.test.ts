@@ -17,6 +17,7 @@ import {
     SingleKey,
     Transaction,
     Wallet,
+    REGTEST_EMULATOR_PUBKEY,
 } from "@arkade-os/sdk";
 import { CLAIM_PACKET_TYPE, claimPacketShape, type InvoiceFacts } from "../../src";
 import { covclaimdClient } from "../../src/advanced";
@@ -114,6 +115,7 @@ describe("claim packet, end to end (regtest)", () => {
             amountSide: "to",
             covclaimdPubkey,
             decodeInvoice,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
         });
         expect(receive.expectedAmount).toBe(RECEIVE_SATS);
 

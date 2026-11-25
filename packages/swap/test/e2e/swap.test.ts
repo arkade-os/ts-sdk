@@ -29,6 +29,7 @@ import {
     SingleKey,
     type StorageConfig,
     Wallet,
+    REGTEST_EMULATOR_PUBKEY,
 } from "@arkade-os/sdk";
 import { discover, quoteOffer, type Market } from "@arkade-os/solver-discovery";
 import {
@@ -761,6 +762,7 @@ const offerBtcForAsset = async (
         wantAmount,
         wantAsset: asset.AssetId.fromString(assetLeg.id),
         contractVersion: SOLVERD_CONTRACT_VERSION,
+        emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
     });
     const fundingTxid = await wallet.send({
         address: offer.address,
@@ -797,6 +799,7 @@ const offerAssetForBtc = async (
         wantAmount: wantSats,
         offerAsset: asset.AssetId.fromString(assetLeg.id),
         contractVersion: SOLVERD_CONTRACT_VERSION,
+        emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
     });
     const fundingTxid = await wallet.send({
         address: offer.address,
