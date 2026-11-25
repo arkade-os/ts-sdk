@@ -55,7 +55,8 @@ Each handler implements the `MessageHandler` interface:
 - `start(services, repositories, channel?)` — called once after initialization
   with the wallet, operator provider, repositories, and a push channel to the
   clients. The channel is scoped to the generation it was handed out in and
-  goes inert on its own after a re-init or `stop()`.
+  goes inert on its own after a re-init or `stop()`. `channel.release()` stops
+  every handler and leaves the bus uninitialized, as in a fresh worker.
 - `stop()` — called on shutdown.
 - `tick(now)` — called periodically, for cadence-driven work; returns responses
   to broadcast to clients.

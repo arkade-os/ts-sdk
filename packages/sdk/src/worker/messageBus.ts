@@ -87,7 +87,10 @@ export interface MessageHandler<
         },
         channel?: {
             broadcast(response: RES): void;
-            /** Stop every handler and leave the bus uninitialized, as in a fresh worker; a no-op once this generation has ended. */
+            /**
+             * Stop every handler and leave the bus uninitialized, as in a
+             * fresh worker; a no-op once this generation has ended.
+             */
             release?(): Promise<void>;
         },
     ): Promise<void>;
@@ -485,7 +488,10 @@ export class MessageBus {
         return run;
     }
 
-    /** Back to a fresh worker's state. On the init chain, so a later init builds only after these handlers stop. */
+    /**
+     * Back to a fresh worker's state. On the init chain, so a later init
+     * builds only after these handlers stop.
+     */
     private release(epoch: number): Promise<void> {
         this.pendingInitCount += 1;
         const run = this.initChain

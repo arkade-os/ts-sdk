@@ -1309,11 +1309,11 @@ describe("MessageBus init serialization (Iteration 1)", () => {
         it("makes an init that arrives during a release wait for it", async () => {
             const handler = new TestHandler();
             const stopping = deferred<void>();
-            const bus = makeBus([handler], async () => ({}));
+            const buildServices = vi.fn(async () => ({}));
+            const bus = makeBus([handler], buildServices);
             await bus.start();
             await sendInit("A", { postMessage: vi.fn() });
             handler.stop.mockImplementationOnce(() => stopping.promise);
-            const buildSpy = vi.spyOn(bus as never, "buildServicesFn" as never);
 
             const releasing = handler.channel!.release!();
             const reinit = sendInit("B", { postMessage: vi.fn() });
@@ -1321,12 +1321,13 @@ describe("MessageBus init serialization (Iteration 1)", () => {
 
             expect(handler.stop).toHaveBeenCalledOnce();
             expect(handler.start).toHaveBeenCalledOnce();
-            expect(buildSpy).not.toHaveBeenCalled();
+            expect(buildServices).toHaveBeenCalledOnce();
 
             stopping.resolve();
             await releasing;
             await reinit;
             expect(handler.start).toHaveBeenCalledTimes(2);
+            expect(buildServices).toHaveBeenCalledTimes(2);
             await bus.stop();
         });
 

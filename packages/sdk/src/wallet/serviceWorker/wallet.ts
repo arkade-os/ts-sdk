@@ -1186,7 +1186,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         if (this.disposed) throw new Error("Service worker wallet is disposed");
     }
 
-    /** Revoke this worker wallet and proxy without deleting persisted data or holds; call again after a failure to retry. */
+    /**
+     * Revoke this worker wallet and proxy without deleting persisted data or
+     * holds; call again after a failure to retry.
+     */
     dispose(): Promise<void> {
         this.disposed = true;
         this.disposePromise ??= this.disposeWorker().catch((error) => {
