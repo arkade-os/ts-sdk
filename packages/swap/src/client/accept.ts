@@ -52,13 +52,18 @@ import { registerLockupContract } from "../lockupContract";
 import { onchainSendProfile } from "../rfqCorridors";
 import { rfqSecretsProfile } from "../rfqProfileParts";
 import { BTC_ASSET_ID } from "../store";
-import type { AssetSwapRepository } from "../repository";
+import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import { isBtcAsset, isBtcAssetLenient } from "./assetId";
 import { toDiscoveryLeg } from "./aliases";
 import type { CorridorSet } from "./corridors/registry";
 import type { SwapDrive } from "./drive";
 import { assetPaymentFacts, recordAssetPayment, storedFundingBounds } from "./assetPayment";
-import { refusedBeforeSubmission, retireNeverSent, stopUnsentFunding } from "./fundingNotSubmitted";
+import {
+    fundingScriptOf,
+    refusedBeforeSubmission,
+    retireNeverSent,
+    stopUnsentFunding,
+} from "./fundingNotSubmitted";
 import { recordOutcome } from "./outcome";
 import { AcceptConflict, InsufficientFunds, MissingCorridorDep, QuoteExpired } from "./errors";
 import { fromAtomicDecimal } from "./amount";
@@ -447,7 +452,7 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
         }
         // Its one funding attempt may have landed without its txid, so adopt a deposit found
         // for it and never send again: an empty read does not prove that attempt failed.
-        const found = await reconcileFunding({ wallet }, stored);
+        const found = await reconcileFunding({ wallet }, stored, repository);
         return answer(
             found === undefined ? stored : await stampFunding(repository, stored, found, now),
         );
@@ -774,18 +779,35 @@ const offerExtensionOf = (record: OfferSwapRecord): { type: number; payload: Uin
  *
  * Matched by script, then amount: identical offers share one address, and only the record
  * carries the deposited amount. A VTXO matching no amount is left alone — adopting it would
- * attach a deposit to the wrong swap and double-fund the right one.
+ * attach a deposit to the wrong swap and double-fund the right one. So is one already stamped on
+ * another record at this script (by txid, so one deposit output per txid is assumed).
+ *
+ * Two identical records that are both unstamped can still race for one deposit; the drive's
+ * restore matching has the same shape.
  */
 const reconcileFunding = async (
     input: Pick<AcceptInput, "wallet">,
     record: SwapRecord,
+    repository: AssetSwapRepository,
 ): Promise<string | undefined> => {
-    const script = record.family === "offer" ? record.swapPkScript : record.lockupPkScript;
+    const script = fundingScriptOf(record);
     const expected = BigInt(record.give.amount);
     const reader = await input.wallet.getArkadeReader();
     // Not the reader's paged `getVtxos`: a missed page would read as "no deposit" and double-fund.
     const vtxos = await getAllNormalizedVtxos(reader, [script]);
-    const deposit = vtxos.find((vtxo) => depositMatches(vtxo, record, expected));
+    const taken = new Set(
+        (await collectSwapRecords(repository))
+            .filter(
+                (other) =>
+                    other.id !== record.id &&
+                    other.fundingTxid !== undefined &&
+                    fundingScriptOf(other) === script,
+            )
+            .map((other) => other.fundingTxid),
+    );
+    const deposit = vtxos.find(
+        (vtxo) => !taken.has(vtxo.txid) && depositMatches(vtxo, record, expected),
+    );
     return deposit?.txid;
 };
 
