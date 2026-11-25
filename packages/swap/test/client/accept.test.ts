@@ -1321,6 +1321,32 @@ describe("accept() — a funding that never started", () => {
         await h.client[Symbol.asyncDispose]();
     });
 
+    it("stops retrying a lost claim on a drive tick", async () => {
+        const h = await setup();
+        const quote = await seedUnsent(h);
+        await h.client[Symbol.asyncDispose]();
+        const restarted = await setup({ repository: h.repository });
+        // Another runtime claims and funds it after this one loaded its copy.
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        await restarted.client.start();
+        await h.repository.saveSwapRecord({
+            ...stored,
+            fundingSend: "claimed",
+            fundingTxid: FUNDING_TXID,
+        });
+        vi.setSystemTime((quote.expiresAt + 1) * 1000);
+        const claim = vi.spyOn(h.repository, "claimSwapFunding");
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(claim.mock.calls.length).toBeGreaterThan(0);
+        const calls = claim.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(claim.mock.calls.length).toBe(calls);
+        expect(((await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord).status).toBe(
+            "pending",
+        );
+        await restarted.client[Symbol.asyncDispose]();
+    });
+
     it("retires an unsent record past its expiry on a drive tick", async () => {
         const h = await setup();
         const quote = await seedUnsent(h);

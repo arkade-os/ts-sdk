@@ -86,12 +86,13 @@ export const stopUnsentFunding = async (
     return stopped;
 };
 
-/** Retire a record whose send never started; `undefined` if another runtime holds its claim. */
+/** Retire a record whose send never started. If another runtime holds its claim, answers with
+ * the stored record instead, so the caller stops treating its own copy as unsent. */
 export const retireNeverSent = async (
     input: StopInput,
     repository: AssetSwapRepository,
     record: SwapRecord,
-): Promise<SwapRecord | undefined> =>
+): Promise<SwapRecord> =>
     (await repository.claimSwapFunding(record.id))
         ? stopUnsentFunding(
               input,
@@ -99,4 +100,4 @@ export const retireNeverSent = async (
               { ...record, fundingSend: "claimed" },
               { reason: "send_not_started" },
           )
-        : undefined;
+        : ((await repository.getSwapRecord(record.id)) ?? record);

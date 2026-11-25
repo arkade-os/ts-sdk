@@ -370,8 +370,7 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
         if (stored.fundingSend === "unsent") {
             if (now > stored.expiresAt) {
                 return answer(
-                    (await retireNeverSent({ wallet, drive: input.drive }, repository, stored)) ??
-                        stored,
+                    await retireNeverSent({ wallet, drive: input.drive }, repository, stored),
                 );
             }
             await assertFundable(wallet, quote);
@@ -588,7 +587,9 @@ const fundAndStamp = async (
     const validUntil = cap === undefined ? undefined : Math.min(cap, record.expiresAt);
     // Everything able to fail comes before the claim; the send comes right after it.
     const recipient = fundingRecipient(record);
-    if (!(await repository.claimSwapFunding(record.id))) return record;
+    if (!(await repository.claimSwapFunding(record.id))) {
+        return (await repository.getSwapRecord(record.id)) ?? record;
+    }
     record = { ...record, fundingSend: "claimed" };
     let started = false;
     try {

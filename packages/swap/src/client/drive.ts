@@ -982,6 +982,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             lapsing.add(record.id);
             void track(
                 retireNeverSent({ wallet, drive: { ingest: remember } }, repository, record)
+                    .then((fresh) => {
+                        // A lost claim answers with the stored record; stop retrying on our copy.
+                        if (records.get(record.id) === record) remember(fresh);
+                    })
                     .catch((error: unknown) => {
                         console.warn(`[swap] could not retire unsent swap ${record.id}`, error);
                     })
