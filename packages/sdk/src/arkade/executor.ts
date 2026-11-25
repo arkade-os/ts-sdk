@@ -28,7 +28,6 @@ import {
 } from "../utils/unknownFields";
 import type { CSVMultisigTapscript } from "../script/tapscript";
 import { Extension } from "../extension";
-import { vmExtensionCodec } from "../extension/vmCodec";
 import { evenOwnerKey } from "../contracts/handlers/executor";
 import {
     type ExecutorDelegation,
@@ -39,19 +38,21 @@ import { programFromArtifact, type ContractArtifact } from "./artifact";
 import { Arkade, ArkadeContract, type ArkadeParamValue, type ArkadeSpendResult } from "./contract";
 import { ARKADE_TYPE_ENCODINGS } from "./program";
 import * as BigNum from "./bignum";
-import {
-    type Action,
-    compile,
-    type ContractKeys,
-    decode,
-    decodeArtifact,
-    type Document,
-    type Instance,
-    instantiate,
-    type Template,
-} from "./template";
-import { seal } from "./template/ecies";
-import { emulateOffchainTx, ExecutionError } from "./vm";
+import type * as NativeRuntime from "./nativeRuntime";
+import type { Action, ContractKeys, Document, Instance, Template } from "./template";
+
+type Runtime = typeof NativeRuntime;
+let runtime: Promise<Runtime> | undefined;
+
+// A dynamic import keeps the VM and the template engine out of the package entry's bundle.
+// A failed load is not cached, so a dropped chunk fetch can be retried.
+function loadRuntime(): Promise<Runtime> {
+    runtime ??= import("./nativeRuntime").catch((error: unknown) => {
+        runtime = undefined;
+        throw error;
+    });
+    return runtime;
+}
 
 /** What a contract row persists to rebuild its template offline and delegate it. */
 interface Saved {
@@ -103,6 +104,18 @@ function jsonText(value: unknown, what: string): string {
     return encoded;
 }
 
+/** An artifact's JSON text as it is now, or the error reading it raises when first used. */
+function snapshot(value: unknown, id: string): () => string {
+    try {
+        const encoded = jsonText(value, `artifact ${id}`);
+        return () => encoded;
+    } catch (error) {
+        return () => {
+            throw error;
+        };
+    }
+}
+
 function readSaved(value: unknown): Saved {
     if (value === undefined) throw new Error("NativeExecutor: no persisted native execution plan");
     if (isLegacy(value)) {
@@ -131,12 +144,12 @@ const sameVariables = (a: Record<string, string>, b: Record<string, string>) =>
     JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
 
 /** decode → compile → instantiate the watch, refusing what the wallet cannot spend alone. */
-function prepare(saved: Saved, keys: ContractKeys): Prepared {
-    const doc = decode(utf8.encode(saved.document));
+function prepare(rt: Runtime, saved: Saved, keys: ContractKeys): Prepared {
+    const doc = rt.decode(utf8.encode(saved.document));
     const given = doc.artifactIds.filter((id) => Object.hasOwn(saved.artifacts, id));
-    const template = compile(
+    const template = rt.compile(
         doc,
-        new Map(given.map((id) => [id, decodeArtifact(utf8.encode(saved.artifacts[id]))])),
+        new Map(given.map((id) => [id, rt.decodeArtifact(utf8.encode(saved.artifacts[id]))])),
     );
     if (template.type !== "virtual") {
         throw new Error(
@@ -175,14 +188,14 @@ function prepare(saved: Saved, keys: ContractKeys): Prepared {
         }
         variables[name] = hex.decode(value);
     }
-    const instance = instantiate(template, { keys, variables });
+    const instance = rt.instantiate(template, { keys, variables });
     instance.offlineSpend(false);
     return { doc, template, instance };
 }
 
 /** A stored plan must rebuild the very contract it is filed under, or `restore` refuses it. */
-function derived(saved: Saved, keys: ContractKeys, script: string): Prepared {
-    const prepared = prepare(saved, keys);
+function derived(rt: Runtime, saved: Saved, keys: ContractKeys, script: string): Prepared {
+    const prepared = prepare(rt, saved, keys);
     if (
         prepared.doc.id !== saved.templateId ||
         prepared.doc.spendId !== saved.spendId ||
@@ -281,6 +294,7 @@ export function nativeOffchainTx(
 
 /** Builds the spend of `coin` and runs it as the emulator's EmulateOffchainTx would. */
 function dryRun(
+    rt: Runtime,
     { instance }: Prepared,
     coin: NativeCoin & { expiry?: number; createdAt?: number },
     dust: bigint,
@@ -293,13 +307,13 @@ function dryRun(
         { dust },
     );
     const offchain = nativeOffchainTx(action, [coin], checkpoint);
-    const requests = emulateOffchainTx({
+    const requests = rt.emulateOffchainTx({
         arkPsbt: offchain.arkTx.toPSBT(),
         checkpoints: offchain.checkpoints.map((c) => c.toPSBT()),
         vtxoExpiries: new Map(
             coin.expiry === undefined ? [] : [[`${coin.txid}:${coin.vout}`, BigInt(coin.expiry)]],
         ),
-        codec: vmExtensionCodec,
+        codec: rt.vmExtensionCodec,
         now: now === undefined ? undefined : BigInt(now),
     });
     if (requests.length === 0) throw new Error("the emulator has nothing to sign");
@@ -323,10 +337,12 @@ async function spendableAt(wallet: IWallet, coin?: VirtualCoin): Promise<TimeHei
     return at;
 }
 
-function reason(error: unknown): string {
+function reason(rt: Runtime, error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
     for (let e: unknown = error; e instanceof Error; e = e.cause) {
-        if (e instanceof ExecutionError) return `${e.opcode} at position ${e.position}: ${message}`;
+        if (e instanceof rt.ExecutionError) {
+            return `${e.opcode} at position ${e.position}: ${message}`;
+        }
     }
     return message;
 }
@@ -396,21 +412,27 @@ export class NativeExecutor {
         if (!this.arkade.indexer) throw new Error("NativeExecutor: an indexer is required");
         const emulator = this.arkade.emulatorKey;
         if (!emulator) throw new Error("NativeExecutor: an emulator is required");
-        const doc = decode(utf8.encode(jsonText(document, "the template")));
-        const given = opts?.artifacts ?? {};
+        // Inputs are read before the runtime loads, so a caller changing them after the call
+        // cannot change the plan; an artifact the document never names is still never checked.
+        const documentText = jsonText(document, "the template");
+        const given = new Map(
+            Object.entries(opts?.artifacts ?? {}).map(([id, v]) => [id, snapshot(v, id)]),
+        );
+        const variables = { ...opts?.variables };
+        const rt = await loadRuntime();
+        const doc = rt.decode(utf8.encode(documentText));
         const saved: Saved = {
             version: 2,
             document: text.decode(doc.canonical),
             artifacts: Object.fromEntries(
-                doc.artifactIds
-                    .filter((id) => Object.hasOwn(given, id))
-                    .map((id) => [id, jsonText(given[id], `artifact ${id}`)]),
+                doc.artifactIds.filter((id) => given.has(id)).map((id) => [id, given.get(id)!()]),
             ),
-            variables: { ...opts?.variables },
+            variables,
             templateId: doc.id,
             spendId: doc.spendId,
         };
-        const prepared = prepare(saved, { server: evenOwnerKey(this.arkade.serverKey), emulator });
+        const keys = { server: evenOwnerKey(this.arkade.serverKey), emulator };
+        const prepared = prepare(rt, saved, keys);
         const contract = arkadeContract(this.arkade, saved, prepared);
         const metadata = () => ({
             genericallySpendable: false,
@@ -450,11 +472,7 @@ export class NativeExecutor {
                     "NativeExecutor: conflicting native execution plan for existing contract",
                 );
             }
-            derived(
-                plan,
-                { server: evenOwnerKey(this.arkade.serverKey), emulator },
-                registered.script,
-            );
+            derived(rt, plan, keys, registered.script);
             return this.own(contract, saved, prepared);
         });
     }
@@ -486,6 +504,7 @@ export class NativeExecutor {
         if (!emulatorKey)
             throw new Error("NativeExecutor: the stored contract has no emulator key");
         const prepared = derived(
+            await loadRuntime(),
             saved,
             { server: evenOwnerKey(serverKey), emulator: emulatorKey },
             script,
@@ -516,6 +535,7 @@ export class NativeExecutor {
             throw new Error("NativeExecutor: invalid amount");
         }
         const { dust } = await this.arkade.arkProvider.getInfo();
+        const rt = await loadRuntime();
         const source = new Transaction({ version: 3 });
         source.addInput({ txid: new Uint8Array(32), index: 0 });
         source.addOutput({ script: prepared.instance.pkScript(0), amount: BigInt(amount) });
@@ -528,6 +548,7 @@ export class NativeExecutor {
             for (const expiry of [clock + 1, clock + FUTURE]) {
                 try {
                     dryRun(
+                        rt,
                         prepared,
                         { ...coin, expiry, createdAt: now },
                         dust,
@@ -542,7 +563,7 @@ export class NativeExecutor {
             }
         }
         throw new Error(
-            `NativeExecutor: no probed time or expiry lets the covenant pass: ${reason(failure)}`,
+            `NativeExecutor: no probed time or expiry lets the covenant pass: ${reason(rt, failure)}`,
             { cause: failure },
         );
     }
@@ -580,6 +601,7 @@ export class NativeExecutor {
                 throw new Error("NativeExecutor: the Executor cannot receive sealed variables");
             }
             const recipient = hex.decode(info.encryptionPubkey);
+            const { seal } = await loadRuntime();
             for (const name of template.sealed) {
                 const plaintext = hex.decode(variables[name]);
                 variables[name] = hex.encode(seal(recipient, plaintext, saved.templateId));
@@ -690,6 +712,7 @@ export class NativeExecutor {
                 }
             }
             const { dust } = await this.arkade.arkProvider.getInfo();
+            const rt = await loadRuntime();
             const { expiresAt, expiresAtHeight, createdAt } = normalizeVtxo(coin);
             // the indexer's one expiry scalar, as the emulator reads it: seconds, else a height
             const expiry = expiresAt ? Math.floor(expiresAt.getTime() / 1000) : expiresAtHeight;
@@ -697,6 +720,7 @@ export class NativeExecutor {
             let offchain: OffchainTx;
             try {
                 offchain = dryRun(
+                    rt,
                     prepared,
                     {
                         txid: coin.txid,
@@ -710,9 +734,12 @@ export class NativeExecutor {
                     this.arkade.checkpoint,
                 );
             } catch (error) {
-                throw new Error(`NativeExecutor: the spend fails its dry run: ${reason(error)}`, {
-                    cause: error,
-                });
+                throw new Error(
+                    `NativeExecutor: the spend fails its dry run: ${reason(rt, error)}`,
+                    {
+                        cause: error,
+                    },
+                );
             }
             // The awaits above can outlast the expiry, and the journal's one slot must not be
             // spent on a dead coin by `beforeEmulatorSubmit`.
