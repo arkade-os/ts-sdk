@@ -90,6 +90,7 @@ import {
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
 import { providerFeeRate } from "./onchain";
 import { assertSendDeadline, captureSendDeadline } from "./sendDeadline";
+import { SendInputsRefusedError } from "./sendInputsRefused";
 import { captureInputExpiryFloor, meetsInputExpiryFloor } from "./sendInputExpiry";
 import { toBIP371TapTree, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
@@ -6707,7 +6708,9 @@ export class Wallet
                 inputExpiryFloor &&
                 selectedVtxos.some((coin) => !meetsInputExpiryFloor(coin, inputExpiryFloor))
             ) {
-                throw new Error("send({ selectedVtxos }): input expiry floor not met");
+                throw new SendInputsRefusedError(
+                    "send({ selectedVtxos }): input expiry floor not met",
+                );
             }
             // Naming inputs skips the generic-spending gate, as on `settle({ inputs })`.
             void this.logUngatedInputs("send({ selectedVtxos })", selectedVtxos);
@@ -6765,7 +6768,7 @@ export class Wallet
                 for (const asset of recipient.assets) {
                     const remaining = (assetChanges.get(asset.assetId) ?? 0n) - asset.amount;
                     if (remaining < 0n) {
-                        throw new Error(
+                        throw new SendInputsRefusedError(
                             `send({ selectedVtxos }): inputs are short ${-remaining} of asset ${asset.assetId}`,
                         );
                     }
@@ -6884,7 +6887,7 @@ export class Wallet
         if (changeAmount < 0) {
             // Only reachable with caller-selected inputs: generic selection either
             // covers the outputs or throws while it is still selecting.
-            throw new Error(
+            throw new SendInputsRefusedError(
                 `send({ selectedVtxos }): inputs total ${totalBtcSelected} sats, outputs need ${totalBtcOutput}`,
             );
         }
@@ -6892,7 +6895,7 @@ export class Wallet
         if (selectedVtxos && assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
             // Asset change needs a change output at or above dust, and this path
             // may not reach for a coin the caller did not name.
-            throw new Error(
+            throw new SendInputsRefusedError(
                 `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
                     `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
             );
@@ -6912,7 +6915,7 @@ export class Wallet
             if (canPayChangeAsFee()) {
                 changeAmount = 0;
             } else {
-                throw new Error(
+                throw new SendInputsRefusedError(
                     `send({ selectedVtxos }): ${changeAmount} sats of change is below ` +
                         `the operator minimum of ${vtxoMinAmount} sats`,
                 );

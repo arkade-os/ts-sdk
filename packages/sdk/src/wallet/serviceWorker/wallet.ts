@@ -184,6 +184,7 @@ import {
     isSerializedAggregateError,
 } from "./wallet-message-handler";
 import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
+import { SendInputsRefusedError } from "../sendInputsRefused";
 import { captureInputExpiryFloor } from "../sendInputExpiry";
 import type {
     Contract,
@@ -2389,6 +2390,9 @@ export class ServiceWorkerWallet
         } catch (error) {
             if (error instanceof Error && error.name === "VtxoReservedError") throw error;
             if (error instanceof SendDeadlineExceededError) throw error;
+            // Rebuilt: the worker's copy arrives as a plain `Error` carrying only the name.
+            if (error instanceof Error && error.name === "SendInputsRefusedError")
+                throw new SendInputsRefusedError(error.message);
             throw new Error(`Send failed: ${error}`);
         }
     }

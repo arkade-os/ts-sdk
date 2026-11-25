@@ -14,7 +14,11 @@ import { collectSwapRecords } from "../../src/repository";
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { SendDeadlineExceededError, type ExtendedVirtualCoin } from "@arkade-os/sdk";
+import {
+    SendDeadlineExceededError,
+    SendInputsRefusedError,
+    type ExtendedVirtualCoin,
+} from "@arkade-os/sdk";
 import { createSwapClient, type SwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
 import {
@@ -924,6 +928,64 @@ describe("accept funding constraints", () => {
             maxChangeFee: 0,
             validUntil,
         });
+    });
+
+    it.each(FUNDING_ROUTES)(
+        "cancels the quote when the wallet refuses the named inputs, on %s",
+        async (route) => {
+            let refuse = true;
+            const h = await setup({
+                failSend: () =>
+                    refuse ? new SendInputsRefusedError("inputs total 1 sats") : undefined!,
+            });
+            const quote = await quoteFor(h, route);
+            const coin = coinFor(quote.give.amount);
+            const options = { selectedVtxos: [coin], maxChangeFee: 0 };
+
+            await expect(h.client.accept(quote, options)).rejects.toBeInstanceOf(
+                SendInputsRefusedError,
+            );
+            const stored = await h.repository.getSwapRecord(quote.id);
+            expect(stored?.fundingTxid).toBeUndefined();
+            expect(stored?.fundingNotSubmitted).toEqual({ reason: "inputs_refused" });
+            expect(stored?.family === "offer" ? stored.status : stored?.state).toBe(
+                route === "spot" ? "cancelled" : "failed",
+            );
+            expect(h.wallet.watched).toContainEqual([h.wallet.contracts[0]?.script, "retained"]);
+
+            // The quote is spent: other inputs on the same quote are not a conflict, they are
+            // answered off the cancelled record, and nothing was sent.
+            refuse = false;
+            const again = await h.client.accept(quote, { ...options, maxChangeFee: 500 });
+            expect(again.outcome).toBe("cancelled");
+            expect(h.wallet.sent).toHaveLength(0);
+
+            const requoted = await quoteFor(h, route);
+            await h.client.accept(requoted, { ...options, maxChangeFee: 500 });
+            expect(h.wallet.sent).toHaveLength(1);
+        },
+    );
+
+    it("cancels on a refusal during a retry, not only the first attempt", async () => {
+        let calls = 0;
+        const h = await setup({
+            failSend: () =>
+                ++calls === 1
+                    ? new Error("interrupted")
+                    : new SendInputsRefusedError("inputs total 1 sats"),
+        });
+        const quote = await quoteFor(h, "lightningSend");
+        const options = { selectedVtxos: [coinFor(quote.give.amount)], maxChangeFee: 0 };
+
+        await expect(h.client.accept(quote, options)).rejects.toThrow("interrupted");
+        expect((await h.repository.getSwapRecord(quote.id))?.fundingNotSubmitted).toBeUndefined();
+        await expect(h.client.accept(quote, options)).rejects.toBeInstanceOf(
+            SendInputsRefusedError,
+        );
+
+        const stored = await h.repository.getSwapRecord(quote.id);
+        expect(stored?.fundingNotSubmitted).toEqual({ reason: "inputs_refused" });
+        expect((await h.client.accept(quote, options)).outcome).toBe("cancelled");
     });
 
     it("refuses funding options on an external receive", async () => {

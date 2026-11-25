@@ -479,6 +479,7 @@ import {
     assertSendDeadline,
     captureSendDeadline,
 } from "./wallet/sendDeadline";
+import { SendInputsRefusedError } from "./wallet/sendInputsRefused";
 import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
 import type { ProviderConnectionState } from "./wallet/wallet";
 import type { ContractSyncState } from "./contracts/contractManager";
@@ -959,6 +960,7 @@ export {
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
+    SendInputsRefusedError,
     assertSendDeadline,
     captureSendDeadline,
     isRetryableProviderError,

@@ -33,6 +33,7 @@ import {
     asset,
     getAllNormalizedVtxos,
     SendDeadlineExceededError,
+    SendInputsRefusedError,
     type ExtendedVirtualCoin,
     type IWallet,
     type Recipient,
@@ -639,17 +640,23 @@ const fundAndStamp = async (
         const txid = await fund({ ...input, ...bounds, validUntil }, record);
         return stampFunding(repository, record, txid, input.now);
     } catch (error) {
-        if (
+        // A refusal depends only on the stored inputs and the operator's limits, so it proves
+        // no earlier attempt submitted either; the deadline does not, hence the first-attempt gate.
+        const proof =
             input.firstFundingAttempt &&
             validUntil !== undefined &&
             error instanceof SendDeadlineExceededError
-        ) {
+                ? ({ reason: "send_deadline", validUntil } as const)
+                : error instanceof SendInputsRefusedError
+                  ? ({ reason: "inputs_refused" } as const)
+                  : undefined;
+        if (proof !== undefined) {
             const stopped = {
                 ...record,
                 ...(record.family === "offer"
                     ? { status: "cancelled" as const }
                     : { state: "failed" as const }),
-                fundingNotSubmitted: { reason: "send_deadline" as const, validUntil },
+                fundingNotSubmitted: proof,
                 updatedAt: Math.floor(Date.now() / 1000),
             } as SwapRecord;
             try {

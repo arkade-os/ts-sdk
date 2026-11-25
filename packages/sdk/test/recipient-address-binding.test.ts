@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
-import { Wallet, SingleKey, RestOperatorProvider, type Recipient } from "../src";
+import {
+    Wallet,
+    SingleKey,
+    RestOperatorProvider,
+    SendInputsRefusedError,
+    type Recipient,
+    type SendParams,
+} from "../src";
 import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
@@ -381,6 +388,31 @@ describe("send with caller-selected vtxos", () => {
                 selectedVtxos: [coin(5000, [{ assetId: ASSET_A, amount: 100n }])],
             }),
         ).rejects.toThrow(new RegExp(`inputs are short 100 of asset ${ASSET_A}`));
+    });
+
+    it("refuses with a typed error, before any provider call, on every caller-input shortfall", async () => {
+        const wallet = await makeWallet();
+        const refused: SendParams[] = [
+            {
+                recipients: [{ address: ADDR, amount: 500 }],
+                selectedVtxos: [coin(300)],
+            },
+            {
+                recipients: [
+                    { address: ADDR, amount: 2000, assets: [{ assetId: ASSET_A, amount: 200n }] },
+                ],
+                selectedVtxos: [coin(5000, [{ assetId: ASSET_A, amount: 100n }])],
+            },
+            {
+                recipients: [
+                    { address: ADDR, amount: 2000, assets: [{ assetId: ASSET_A, amount: 40n }] },
+                ],
+                selectedVtxos: [coin(2000, [{ assetId: ASSET_A, amount: 100n }])],
+            },
+        ];
+        for (const params of refused) {
+            await expect(wallet.send(params)).rejects.toBeInstanceOf(SendInputsRefusedError);
+        }
     });
 
     it("pools an asset across every named input before calling it short", async () => {

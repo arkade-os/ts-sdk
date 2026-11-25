@@ -533,6 +533,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: a constrained `accept()` whose inputs the wallet refuses is cancelled instead of stuck.** The record binds `selectedVtxos` and `maxChangeFee` before it funds, so when `send` turned those inputs away locally (a BTC or asset shortfall, asset change without dust, change below the operator minimum and above the cap, an unmet `inputExpiryFloor`), every corrected retry was an `AcceptConflict` until the quote expired, and the offer stayed `pending` and watched. `send({ selectedVtxos })` now throws the new `SendInputsRefusedError` for those refusals, always before any provider call. `accept()` records `fundingNotSubmitted: { reason: "inputs_refused" }`, cancels the swap, retires its contract and rethrows; quote again to try other inputs or a higher cap. An input held by an in-flight spend still throws `VtxoReservedError` and keeps the binding, since an earlier attempt of the same accept may hold it. Against a service worker built before this release the refusal arrives as a plain `Error`, and `accept()` behaves as before.
+
 - **`@arkade-os/swap`: a resumed `accept()` no longer outlives its stored quote.** The retry checked expiry against the caller's quote object only, which no conflict check covers, so a quote carrying a later `expiresAt` could fund a stored, unfunded record past its expiry. The earlier of the stored and given expiries now applies.
 - 
 - **A full Executor store no longer pauses every request to that Executor.**

@@ -23,6 +23,7 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkError,
+    SendInputsRefusedError,
     type IndexerProvider,
     type OperatorProvider,
     type OnchainProvider,
@@ -694,9 +695,11 @@ describe("Wallet", () => {
             const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
             thisArg.logUngatedInputs = vi.fn();
 
-            await expect(send(thisArg, 505, [coins[0]], 0)).rejects.toThrow(
+            const refused = send(thisArg, 505, [coins[0]], 0);
+            await expect(refused).rejects.toThrow(
                 "111 sats of change is below the operator minimum of 330 sats",
             );
+            await expect(refused).rejects.toBeInstanceOf(SendInputsRefusedError);
             expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
             expect(submit).not.toHaveBeenCalled();
         });

@@ -507,7 +507,9 @@ export interface SendParams {
     /**
      * Spend exactly these virtual outputs, like `settle({ inputs })`: nothing is added, so a
      * shortfall is an error. For funding a contract from coins outliving its timelock, which
-     * generic selection doesn't know about.
+     * generic selection doesn't know about. Inputs that cannot fund the outputs, leave valid
+     * change, or meet `inputExpiryFloor` are refused with `SendInputsRefusedError` before any
+     * provider call.
      *
      * @see IReadonlyWallet.getVtxos
      */
