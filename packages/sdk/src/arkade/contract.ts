@@ -476,6 +476,16 @@ export class Arkade {
         );
     }
 
+    /** Whether arkd co-signs `fn`: a leaf without the emulator splice names, if anyone, the server tweaked. */
+    operatorCosignsLeaf(
+        contract: { keys: { emulatorKey?: Uint8Array } },
+        fn: Pick<CompiledProgramFunction, "def"> | undefined,
+    ): boolean {
+        return (
+            fn?.def.tapscript.emulator === null || this.operatorCosigns(contract.keys.emulatorKey)
+        );
+    }
+
     /**
      * Connect and resolve the operator key, checkpoint closure and (if present) the cosigner key.
      *
@@ -1271,7 +1281,7 @@ export class ArkadeTransactionBuilder {
             emulator: client.emulator,
             viaOperator:
                 !!unlocker.fn.arkadeScript &&
-                client.operatorCosigns(unlocker.contract.keys.emulatorKey),
+                client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
             onchainProvider: client.onchain!,
         });
     }
@@ -1350,13 +1360,13 @@ export class ArkadeTransactionBuilder {
         const emulated = inputs.find(
             ({ unlocker }) =>
                 unlocker.fn.arkadeScript &&
-                !client.operatorCosigns(unlocker.contract.keys.emulatorKey),
+                !client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
         );
         if (emulated) {
             const operated = inputs.find(
                 ({ unlocker }) =>
                     unlocker.fn.arkadeScript &&
-                    client.operatorCosigns(unlocker.contract.keys.emulatorKey),
+                    client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
             );
             if (operated) {
                 throw new Error(

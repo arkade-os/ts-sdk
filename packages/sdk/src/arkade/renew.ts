@@ -60,8 +60,8 @@ export async function renewProgramContractOutputs(
     const { indexer, network } = client;
     const arkProvider = client.arkProvider as OperatorProvider;
     // arkd signs the intent and the forfeits itself when it holds every leg's co-signer.
-    const operated = targets.filter(({ contract }) =>
-        client.operatorCosigns(contract.keys.emulatorKey),
+    const operated = targets.filter(({ contract, fn = "renew" }) =>
+        client.operatorCosignsLeaf(contract, contract.vtxoScript.functionByName(fn)),
     ).length;
     const viaOperator = operated === targets.length;
     if (operated > 0 && !viaOperator) {

@@ -1026,7 +1026,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const LEGACY_ADDRESS =
             "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc64y4r69hsamdrtrj38fnf2v8gqpfmsfxwznqgdcg67vcr5l9xd6lakg0uv9";
 
-        async function connectToOperator() {
+        async function connectToOperator(emulatorPubkey = "02" + hex.encode(operator)) {
             const { arkProvider, indexer, emulator, captured } = stubProviders(operator, operator);
             const toArkd: { arkTx?: string } = {};
             const ark = await arkade.Arkade.connect({
@@ -1044,7 +1044,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 emulator,
                 indexer,
                 network: networks.regtest,
-                emulatorPubkey: "02" + hex.encode(operator),
+                emulatorPubkey,
             });
             return { ark, captured, toArkd };
         }
@@ -1103,6 +1103,34 @@ describe("arkade.Arkade / ArkadeContract", () => {
             await contract.functions
                 .claim({ tapscript: [new Uint8Array(32)] })
                 .to(out, AMOUNT)
+                .send();
+            expect(toArkd.arkTx).toBeDefined();
+            expect(captured.arkTx).toBeUndefined();
+        });
+
+        it("sends a leaf naming only the server tweaked through arkd, whatever the contract's emulator key", async () => {
+            const { ark, captured, toArkd } = await connectToOperator("02" + hex.encode(pub(0x15)));
+            const program = htlcProgram();
+            const contract = ark.contract(
+                {
+                    ...program,
+                    functions: {
+                        claim: {
+                            ...program.functions.claim,
+                            tapscript: {
+                                ...program.functions.claim.tapscript,
+                                signers: [{ tweak: "$server", fn: "claim" }],
+                                emulator: null,
+                            },
+                        },
+                    },
+                },
+                args,
+            );
+
+            await contract.functions
+                .claim({ tapscript: [new Uint8Array(32)] })
+                .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
                 .send();
             expect(toArkd.arkTx).toBeDefined();
             expect(captured.arkTx).toBeUndefined();
