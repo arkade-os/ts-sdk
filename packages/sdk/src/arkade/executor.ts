@@ -399,8 +399,8 @@ export class NativeExecutor {
 
     /**
      * `document` is template/v1 JSON, as an object or text; `variables` are lowercase hex, a sealed
-     * one as its plaintext. Refuses anything but a one-input `virtual` spend the server and the
-     * emulator sign alone.
+     * one as its plaintext, and the wallet's contract metadata keeps every one unsealed. Refuses
+     * anything but a one-input `virtual` spend the server and the emulator sign alone.
      */
     async importTemplate(
         document: unknown,

@@ -817,7 +817,10 @@ style and have not been backfilled.
   encryption key and registers a delegation, uploading the artifacts and the
   template only when the Executor lacks them; when it refuses uploads (v0.0.5
   accepts them on its admin port only by default), the error names the template
-  its operator must install. NativeExecutor loads the VM and the template engine
+  its operator must install. Only that copy is sealed: the wallet's contract
+  metadata keeps every variable, sealed ones included, as plaintext, so wallet
+  storage is what protects a secret such as a preimage locally.
+  NativeExecutor loads the VM and the template engine
   through a dynamic import on first use, so the package entry does not carry
   them: a bundler that splits code keeps them, about 150 KB of minified code, in
   a chunk an app that never calls NativeExecutor does not load.
