@@ -591,6 +591,7 @@ const fundAndStamp = async (
         return (await repository.getSwapRecord(record.id)) ?? record;
     }
     record = { ...record, fundingSend: "claimed" };
+    const released = { ...record, fundingSend: "unsent" as const };
     let started = false;
     try {
         if (
@@ -614,7 +615,7 @@ const fundAndStamp = async (
     } catch (error) {
         if (!started) {
             try {
-                await repository.saveSwapRecord({ ...record, fundingSend: "unsent" });
+                await repository.saveSwapRecord(released);
             } catch (cause) {
                 console.warn(`[swap] could not release the funding claim of ${record.id}`, cause);
             }

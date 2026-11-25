@@ -219,6 +219,32 @@ describe("native asset payment quote", () => {
             CLOCK.validUntil - 60,
         );
     });
+    it("releases its claim when the deadline save fails before the send, then funds once", async () => {
+        const { client, repository, wallet } = await setup(carrierAnswer);
+        const quote = await client.quote({ ...buy(), assetPayment: { carrier: purchase } });
+        const original = quote.assetPayment!.validUntil;
+        const tighter = original - 20;
+        vi.spyOn(repository, "saveSwapRecord").mockImplementationOnce(async (record) => {
+            expect(record.fundingSend).toBe("claimed");
+            throw new Error("store offline");
+        });
+        const send = vi.spyOn(wallet, "send").mockResolvedValue("b".repeat(64));
+        await expect(client.accept(quote, { validUntil: tighter })).rejects.toThrow(
+            "store offline",
+        );
+        expect(send).not.toHaveBeenCalled();
+        const released = await repository.getSwapRecord(quote.id);
+        expect(released?.fundingSend).toBe("unsent");
+        expect(released?.assetPayment?.validUntil).toBe(original);
+
+        expect((await client.accept(quote, { validUntil: tighter })).fundingTxid).toBe(
+            "b".repeat(64),
+        );
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send.mock.calls[0][0]).toMatchObject({ validUntil: tighter });
+        expect((await repository.getSwapRecord(quote.id))?.fundingSend).toBe("claimed");
+    });
+
     it("keeps the original deadline and pending outcome after an ambiguous first send", async () => {
         const { client, repository, wallet } = await setup(carrierAnswer);
         const quote = await client.quote({ ...buy(), assetPayment: { carrier: purchase } });
