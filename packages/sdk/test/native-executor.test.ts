@@ -890,6 +890,16 @@ describe("NativeExecutor delegate", () => {
         expect(delegation.templateId).toBe(execution.templateId);
     });
 
+    it("refuses at import a document naming an artifact it was not given", async () => {
+        const s = await setup();
+        const definition = locktime.template.inputs[0].contract.definition;
+        const id = decodeArtifact(utf8.encode(JSON.stringify(definition))).id;
+        const doc = document(["1"], (d) => (d.inputs[0].contract.definition = { artifact: id }));
+        await expect(s.executor.importTemplate(doc, { artifacts: {}, variables })).rejects.toThrow(
+            `artifact ${id} not provided`,
+        );
+    });
+
     it.each([
         ["server", { serverPubkey: `02${"22".repeat(32)}` }],
         ["emulator", { emulatorPubkey: keys.cosigner }],
