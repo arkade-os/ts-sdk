@@ -510,6 +510,22 @@ describe("NativeExecutor execute", () => {
         expect(s.submitTx).not.toHaveBeenCalled();
     });
 
+    it("refuses a coin whose height expiry passes while its spend is being prepared", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const [coin] = s.fund(execution);
+        Object.assign(coin, { expiresAtHeight: 100 });
+        s.wallet.onchainProvider.getChainTip
+            .mockResolvedValueOnce({ height: 99 })
+            .mockResolvedValue({ height: 100 });
+        const hook = vi.fn();
+        await expect(
+            s.executor.execute(execution, coin, { beforeEmulatorSubmit: hook }),
+        ).rejects.toThrow(/expired while its spend was prepared/);
+        expect(hook).not.toHaveBeenCalled();
+        expect(s.submitTx).not.toHaveBeenCalled();
+    });
+
     it.each(["refreshOutpoints", "refreshVtxos"] as const)(
         "returns the accepted result when post-submit %s fails",
         async (method) => {

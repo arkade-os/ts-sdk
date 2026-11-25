@@ -716,7 +716,7 @@ export class NativeExecutor {
             }
             // The awaits above can outlast the expiry, and the journal's one slot must not be
             // spent on a dead coin by `beforeEmulatorSubmit`.
-            if (isPastExpiry(coin, { ...at, timestamp: new Date() })) {
+            if (isPastExpiry(coin, await spendableAt(this.wallet, coin))) {
                 throw new Error(
                     "NativeExecutor: the position expired while its spend was prepared",
                 );
