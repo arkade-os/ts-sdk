@@ -14,6 +14,7 @@ import {
     type Template,
     TemplateError,
 } from "../src/arkade/template";
+import { Failure } from "../src/arkade/template/errors";
 import { parseTx, serializeTx, serializeWitness, txid } from "../src/arkade/vm";
 import { Extension } from "../src/extension";
 
@@ -323,6 +324,59 @@ describe("what a compiled template or instance shares with its caller", () => {
         );
         k.cosigner[1] ^= 1;
         expect(i.keys.cosigner).toEqual(keys.cosigner);
+    });
+});
+
+describe("bounds and codes from arkade-os/executor#18", () => {
+    it("bounds delegation seconds by uint32", () => {
+        const schedule = (n: number) => () =>
+            edited("counter", (d) => (d.delegation.schedule.counter.before_expiry_seconds = n));
+        const trigger = (n: number) => () =>
+            edited("counter", (d) => {
+                d.variables = { a: "bytes" };
+                d.delegation = {
+                    trigger: {
+                        counter: {
+                            packet: 7,
+                            require: { "tlv:0": "0x01" },
+                            capture: { a: "tlv:3" },
+                            expires_after_seconds: n,
+                        },
+                    },
+                };
+                delete d.packets.advertise;
+            });
+        for (const f of [schedule, trigger]) {
+            expect(thrown(f(2 ** 32 - 1))).toBeUndefined();
+            expect(thrown(f(2 ** 32))).toBe("decode/invalid_template");
+        }
+    });
+
+    it("checks the service keys before it opens the variables", () => {
+        const t = edited("onchain", () => {});
+        const watch = () =>
+            instantiate(t, {
+                keys: { ...keys, cosigner: undefined },
+                variables: { nope: Uint8Array.of(1) },
+            });
+        expect(thrown(watch)).toBe("instantiate/unsupported");
+    });
+
+    it("codes an input that cannot pay the fee as unaffordable, still ineligible", () => {
+        const t = edited("onchain", () => {});
+        const sources = funded(t, {}, [[500]]);
+        const fee: Fee = { dust: 330n, onchain: () => 600n };
+        let e: unknown;
+        try {
+            build(bind(t, { keys, variables: {} }), { sources, fee });
+        } catch (err) {
+            e = err;
+        }
+        expect(e).toBeInstanceOf(TemplateError);
+        expect([(e as TemplateError).code, ((e as TemplateError).cause as Failure).kinds]).toEqual([
+            "unaffordable",
+            ["ineligible", "unaffordable"],
+        ]);
     });
 });
 

@@ -76,7 +76,9 @@ const BUILTINS = new Map<string, Field[]>([
 ]);
 const MAX_ARRAY = 1024;
 const MAX_CONSTRUCTOR = 1024;
+const MAX_CONSTRUCTOR_BYTES = 1 << 20;
 const ARRAY_TYPE = /^([a-z0-9]+)\[([1-9][0-9]*)\]$/;
+const utf8 = new TextEncoder();
 
 const invalid = (message: string) => fail("invalid_artifact", message);
 
@@ -213,19 +215,25 @@ export function canonicalDefinition(def: Definition): JsonObject {
 export function flatten(def: Definition, fields: readonly Field[]): Field[] {
     const out: Field[] = [];
     let steps = 0;
+    let size = 0;
     const tooMany = () => invalid(`constructor flattens to more than ${MAX_CONSTRUCTOR} fields`);
     const walk = (name: string, type: string): void => {
         if (++steps > MAX_CONSTRUCTOR || out.length >= MAX_CONSTRUCTOR) throw tooMany();
+        const array = ARRAY_TYPE.exec(type);
+        const n = array ? Number(array[2]) : 1;
+        if (array && (n > MAX_ARRAY || !SCALAR_TYPES.includes(array[1]))) {
+            throw invalid(`unsupported type "${type}"`);
+        }
+        const bytes = utf8.encode(name).length;
+        if (bytes > Math.floor((MAX_CONSTRUCTOR_BYTES - size) / n)) {
+            throw invalid(`constructor names flatten to more than ${MAX_CONSTRUCTOR_BYTES} bytes`);
+        }
+        size += n * bytes;
         if (SCALAR_TYPES.includes(type)) {
             out.push({ name, type });
             return;
         }
-        const array = ARRAY_TYPE.exec(type);
         if (array) {
-            const n = Number(array[2]);
-            if (n > MAX_ARRAY || !SCALAR_TYPES.includes(array[1])) {
-                throw invalid(`unsupported type "${type}"`);
-            }
             if (out.length + n > MAX_CONSTRUCTOR) throw tooMany();
             for (let i = 0; i < n; i++) out.push({ name: `${name}.${i}`, type: array[1] });
             return;

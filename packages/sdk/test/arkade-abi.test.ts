@@ -808,4 +808,13 @@ describe("artifact/v1 parsing", () => {
         expect(kinds(() => parse(nested(40, [])))).toEqual(["invalid_artifact"]);
         expect(kinds(() => parse(nested(0, arrays.slice(0, 1))))).toEqual([]);
     });
+
+    it("caps the flattened constructor names at 1 MiB of UTF-8 (executor#18)", () => {
+        const named = (name: string) => () =>
+            parse(leafless(one(["OP_1"]), [{ name, type: "int[1024]" }]));
+        expect(kinds(named("x".repeat(1024)))).toEqual([]);
+        for (const name of ["x".repeat(1025), "é".repeat(513)]) {
+            expect(() => named(name)()).toThrow("constructor names flatten to more than 1048576");
+        }
+    });
 });

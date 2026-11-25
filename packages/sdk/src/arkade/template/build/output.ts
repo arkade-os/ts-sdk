@@ -112,7 +112,10 @@ function routeSats(
     });
     if (!copies && t.fee && t.fee.from === slot) {
         if (a.fee > left) {
-            throw fail("ineligible", `input ${q(t.inputs[slot].name)} cannot pay fee ${a.fee}`);
+            throw new Failure(
+                ["ineligible", "unaffordable"],
+                `input ${q(t.inputs[slot].name)} cannot pay fee ${a.fee}`,
+            );
         }
         left -= a.fee;
     }

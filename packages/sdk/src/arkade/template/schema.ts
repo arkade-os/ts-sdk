@@ -494,6 +494,9 @@ function checkTemplate(t: Template): void {
     if (t.inputs.length === 0 || t.outputs.length === 0) {
         throw bad("a template has at least one input and one output");
     }
+    if (Math.max(t.inputs.length, t.outputs.length) > 0xffff) {
+        throw bad("a template has at most 65535 inputs or outputs");
+    }
     allOrNone("input", t.inputs);
     allOrNone("output", t.outputs);
     t.inputs.forEach(checkInput);
@@ -554,7 +557,7 @@ function checkSchedule(s: Schedule): void {
     const set = [s.immediate, s.beforeExpiry, s.minConfirmations].filter((x) => x !== undefined);
     if (set.length !== 1) throw bad("a schedule has exactly one field");
     if (s.immediate === false) throw bad("immediate must be true");
-    checkIntOrVar(s.beforeExpiry, "before_expiry_seconds", 1, MAX);
+    checkIntOrVar(s.beforeExpiry, "before_expiry_seconds", 1, MAX_UINT32);
     if (s.minConfirmations !== undefined) integer(s.minConfirmations, "min_confirmations", 1, MAX);
 }
 
@@ -618,7 +621,7 @@ function checkTrigger(tr: Trigger): void {
     if (tr.decode !== undefined && !DECODES.includes(tr.decode)) {
         throw bad("trigger decode must be tlv, records or raw");
     }
-    integer(tr.expiresAfter, "expires_after_seconds", 1, MAX);
+    integer(tr.expiresAfter, "expires_after_seconds", 1, MAX_UINT32);
     integer(tr.minValue, "trigger min_value", 0, MAX);
     if (tr.require.size === 0) throw bad("a trigger rule requires at least one field");
     if (tr.capture.size === 0) throw bad("a trigger rule captures at least one variable");
