@@ -1111,9 +1111,10 @@ describe("accept funding deadline", () => {
             });
             await expect(h.client.accept(quote)).rejects.toBeInstanceOf(SendDeadlineExceededError);
             expect(dispatched).toBe(0);
-            expect(
-                (await h.repository.getSwapRecord(quote.id))?.fundingNotSubmitted?.validUntil,
-            ).toBe(quote.expiresAt);
+            expect((await h.repository.getSwapRecord(quote.id))?.fundingNotSubmitted).toEqual({
+                reason: "send_deadline",
+                validUntil: quote.expiresAt,
+            });
             await h.client[Symbol.asyncDispose]();
         },
     );
