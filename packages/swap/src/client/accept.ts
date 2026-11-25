@@ -33,8 +33,10 @@ import {
     asset,
     getAllNormalizedVtxos,
     SendDeadlineExceededError,
+    type ExtendedVirtualCoin,
     type IWallet,
     type Recipient,
+    type SendParams,
 } from "@arkade-os/sdk";
 import {
     createOffer,
@@ -124,6 +126,7 @@ export interface AcceptInput {
     /** Unix seconds. */
     readonly now: number;
     readonly validUntil?: number;
+    readonly funding?: Pick<SendParams, "selectedVtxos" | "maxChangeFee">;
     /** `false` funds an offer without its packet. Written on the record before any funding. */
     readonly attachOfferPacket?: boolean;
 }
@@ -193,16 +196,25 @@ export const conflictingFields = (record: SwapRecord, quote: Quote): string[] =>
         solver: record.solver,
         "market.source": marketSourceOf(record.market),
     };
-    return (Object.keys(incoming) as (keyof RecordedFacts)[]).filter((field) => {
-        if (field === "give.instrument" || field === "take.instrument") {
-            return !sameRecordedInstrument(stored[field], incoming[field]);
-        }
+    const conflicts: string[] = (Object.keys(incoming) as (keyof RecordedFacts)[]).filter(
+        (field) => {
+            if (field === "give.instrument" || field === "take.instrument") {
+                return !sameRecordedInstrument(stored[field], incoming[field]);
+            }
 
-        const a = stored[field];
-        const b = incoming[field];
-        if (a === undefined && b === undefined) return false;
-        return a !== b;
-    });
+            const a = stored[field];
+            const b = incoming[field];
+            if (a === undefined && b === undefined) return false;
+            return a !== b;
+        },
+    );
+    if (
+        quote.carrierSats !== undefined &&
+        (record.family !== "offer" || record.carrierSats !== quote.carrierSats.toString())
+    ) {
+        conflicts.push("carrierSats");
+    }
+    return conflicts;
 };
 
 /** The same facts off a `Quote`, in the record's own encoding. */
@@ -236,16 +248,45 @@ const marketSourceOf = (market: Quote["market"]): string | undefined =>
  * sat credits are not modelled, since a false refusal is the failure that matters. A missed
  * shortfall surfaces as `send`'s throw after the persist, which the record survives.
  */
-const assertFundable = async (wallet: IWallet, quote: Quote): Promise<void> => {
+const assertFundable = async (
+    wallet: IWallet,
+    quote: Quote,
+    selectedVtxos?: ExtendedVirtualCoin[],
+): Promise<void> => {
     const give = quote.give;
-    const balance = await wallet.getBalance();
     // BTC on any rail is one coin. Strict: the quote was just minted with the network's own id.
-    const available = isBtcAsset(give.asset)
-        ? BigInt(balance.available)
-        : (balance.availableAssets.find((a) => give.asset.endsWith(a.assetId))?.amount ?? 0n);
+    const btc = isBtcAsset(give.asset);
+    const amountOf = (assets: { assetId: string; amount: bigint }[]) =>
+        assets.find((asset) => give.asset.endsWith(asset.assetId))?.amount ?? 0n;
+    let available: bigint;
+    if (selectedVtxos === undefined) {
+        const balance = await wallet.getBalance();
+        available = btc ? BigInt(balance.available) : amountOf(balance.availableAssets);
+    } else {
+        available = selectedVtxos.reduce(
+            (total, coin) => total + (btc ? BigInt(coin.value) : amountOf(coin.assets ?? [])),
+            0n,
+        );
+    }
     if (available < give.amount) {
         throw new InsufficientFunds(give.asset, give.amount, available);
     }
+};
+
+const captureFundingConstraints = ({ quote, funding }: AcceptInput) => {
+    if (funding === undefined) return undefined;
+    if (!fundsFromWallet(quote.route)) throw new Error("funding options require an Arkade send");
+    const { selectedVtxos, maxChangeFee } = funding;
+    const outpoints = selectedVtxos?.map(({ txid, vout }) => `${txid}:${vout}`).sort();
+    if (outpoints?.length === 0) throw new Error("selectedVtxos must name at least one input");
+    if (outpoints !== undefined && new Set(outpoints).size !== outpoints.length)
+        throw new Error("selectedVtxos must contain distinct inputs");
+    if (maxChangeFee !== undefined && (!Number.isSafeInteger(maxChangeFee) || maxChangeFee < 0))
+        throw new Error("maxChangeFee must be a non-negative safe integer");
+    return {
+        ...(outpoints === undefined ? {} : { outpoints }),
+        ...(maxChangeFee === undefined ? {} : { maxChangeFee }),
+    };
 };
 
 /**
@@ -355,6 +396,8 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
         input.drive ? input.drive.adopt(record) : swapOf(record, recordOutcome(record));
 
     const expired = now > quote.expiresAt;
+    const fundingConstraints = captureFundingConstraints(input);
+    const fundingDeadline = Math.min(input.validUntil ?? quote.expiresAt, quote.expiresAt);
 
     const stored = await repository.getSwapRecord(quote.id);
     if (stored !== undefined) {
@@ -374,14 +417,30 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
             return answer(await stampFunding(repository, stored, found, now));
         }
         // No funding evidence: retrying moves new value, so the deadline still applies.
-        if (expired) throw new QuoteExpired(quote.id, quote.expiresAt, now);
-        return answer(
-            await fundAndStamp(
-                { wallet, now, validUntil: input.validUntil, drive: input.drive },
-                stored,
-                repository,
-            ),
-        );
+        const expiresAt = Math.min(stored.expiresAt, quote.expiresAt);
+        if (now > expiresAt) throw new QuoteExpired(quote.id, expiresAt, now);
+        if (
+            stored.fundingConstraints !== undefined &&
+            stableStringify(stored.fundingConstraints) !== stableStringify(fundingConstraints)
+        ) {
+            throw new AcceptConflict(quote.id, stored.id, ["fundingConstraints"]);
+        }
+        const deadline =
+            fundingConstraints === undefined
+                ? stored.fundingDeadline
+                : Math.min(stored.fundingDeadline ?? expiresAt, fundingDeadline, expiresAt);
+        const addsConstraints =
+            fundingConstraints !== undefined && stored.fundingConstraints === undefined;
+        if (addsConstraints || deadline !== stored.fundingDeadline) {
+            const constrained = {
+                ...stored,
+                ...(addsConstraints ? { fundingConstraints } : {}),
+                fundingDeadline: deadline,
+            };
+            await repository.saveSwapRecord(constrained);
+            return answer(await fundAndStamp(input, constrained, repository));
+        }
+        return answer(await fundAndStamp(input, stored, repository));
     }
 
     // Its own deadline only, not `policy.quoteTtlFloorSeconds`: that floor is the quote path's
@@ -398,7 +457,7 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
     }
 
     const funds = fundsFromWallet(quote.route);
-    if (funds) await assertFundable(wallet, quote);
+    if (funds) await assertFundable(wallet, quote, input.funding?.selectedVtxos);
 
     const built =
         preparation.backend === "feed"
@@ -406,28 +465,19 @@ const acceptQuoteBody = async (input: AcceptInput): Promise<Swap> => {
             : preparation.route === "arkade->arkade"
               ? await registeredAssetRecord(input, preparation)
               : await registeredCorridorRecord(input, preparation);
-    const record: SwapRecord =
-        built.family === "offer" && input.attachOfferPacket === false
-            ? { ...built, attachOfferPacket: false }
-            : built;
+    const record: SwapRecord = {
+        ...built,
+        ...(built.family === "offer" && input.attachOfferPacket === false
+            ? { attachOfferPacket: false as const }
+            : {}),
+        ...(fundingConstraints === undefined ? {} : { fundingConstraints, fundingDeadline }),
+    };
 
     // Throwing, deliberately: nothing past this line may happen unless the record is durable.
     await repository.saveSwapRecord(record);
 
     if (!funds) return answer(record);
-    return answer(
-        await fundAndStamp(
-            {
-                wallet,
-                now,
-                validUntil: input.validUntil,
-                drive: input.drive,
-                firstFundingAttempt: true,
-            },
-            record,
-            repository,
-        ),
-    );
+    return answer(await fundAndStamp({ ...input, firstFundingAttempt: true }, record, repository));
 };
 
 /** The offer covenant, derived and registered by `createOffer`, and the record keeping its TLV. */
@@ -479,6 +529,8 @@ const registeredAssetRecord = async (
     input: AcceptInput,
     preparation: AssetRfqPreparation,
 ): Promise<OfferSwapRecord> => {
+    if (input.quote.carrierSats !== preparation.carrierSats)
+        throw new Error("deposit carrier differs from verified quote preparation");
     if (
         stableStringify(
             input.quote.assetPayment === undefined
@@ -545,7 +597,7 @@ const registeredCorridorRecord = async (
  * Fund the give leg, then stamp the txid. The stamp is best effort: the money has moved, so
  * failing would misreport a broadcast swap. `reconcileFunding` recovers a lost stamp.
  */
-type FundingInput = Pick<AcceptInput, "wallet" | "now" | "validUntil" | "drive"> & {
+type FundingInput = Pick<AcceptInput, "wallet" | "now" | "validUntil" | "drive" | "funding"> & {
     firstFundingAttempt?: boolean;
     inputExpiryFloor?: import("@arkade-os/sdk").InputExpiryFloor;
 };
@@ -637,7 +689,9 @@ const stampFunding = async (
 const fund = async (input: FundingInput, record: SwapRecord): Promise<string> => {
     const { wallet } = input;
     const send = (recipient: Recipient): Promise<string> =>
-        input.validUntil === undefined && input.inputExpiryFloor === undefined
+        input.validUntil === undefined &&
+        input.inputExpiryFloor === undefined &&
+        input.funding === undefined
             ? wallet.send(recipient)
             : wallet.send({
                   recipients: [recipient],
@@ -645,6 +699,7 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
                   ...(input.inputExpiryFloor === undefined
                       ? {}
                       : { inputExpiryFloor: input.inputExpiryFloor }),
+                  ...input.funding,
               });
     if (record.family === "offer") {
         const amount = fromAtomicDecimal(record.give.amount);

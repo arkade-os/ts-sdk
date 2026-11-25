@@ -21,7 +21,12 @@ import {
     InMemoryAssetSwapRepository,
     type AssetSwapRepository,
 } from "../../src/repository";
-import { QuoteExpired, QuoteVerificationFailed, UnsupportedRoute } from "../../src/client/errors";
+import {
+    AcceptConflict,
+    QuoteExpired,
+    QuoteVerificationFailed,
+    UnsupportedRoute,
+} from "../../src/client/errors";
 import {
     bindingFromOffer,
     decodeOffer,
@@ -241,8 +246,45 @@ describe("quote() on a negotiated asset market", () => {
         // mispricing only when both legs are the same asset.
         expect(quote.give).toEqual({ asset: USD, amount: 1_000n });
         expect(quote.take).toEqual({ asset: BTC, amount: 9_970n });
+        expect(quote.carrierSats).toBe(330n);
         // The spread plus the 330-sat carrier, which the filler keeps: this solver returns none of it.
         expect(quote.fee).toEqual({ amount: 360n, asset: BTC });
+    });
+
+    it("quotes and funds an exact BTC payout from an Arkade asset", async () => {
+        const wallet = await acceptWallet();
+        const { client, transport } = await setup({
+            wallet,
+            answer: (payload) =>
+                arkadeAssetAnswer(payload, CLOCK, {
+                    toAmount: 9_970n,
+                    quote: { from_amount: "1000" },
+                }),
+        });
+        const quote = await client.quote({ ...sell(), amount: 9_970n, amountOn: "take" });
+
+        expect(transport.sent[0]).toMatchObject({
+            pair: ASSET_SELL_PAIR,
+            amount: "9970",
+            amount_side: "to",
+        });
+        expect(quote.take).toEqual({ asset: BTC, amount: 9_970n });
+        await client.accept(quote);
+        expect(wallet.sent[0]).toMatchObject({
+            amount: 330,
+            assets: [{ assetId: USD_ASSET_ID, amount: 1_000n }],
+        });
+    });
+
+    it("rejects a mismatched exact BTC payout", async () => {
+        const { client } = await setup({
+            answer: (payload) => arkadeAssetAnswer(payload, CLOCK, { toAmount: 9_969n }),
+        });
+        await expect(
+            client.quote({ ...sell(), amount: 9_970n, amountOn: "take" }),
+        ).rejects.toMatchObject({
+            check: "pair",
+        });
     });
 
     it("charges no carrier to a solver that returns it in the payout", async () => {
@@ -421,13 +463,6 @@ describe("quote() on a negotiated asset market", () => {
 });
 
 describe("quote() refuses before it discloses anything", () => {
-    it("refuses an exact-out asset-to-BTC swap", async () => {
-        const { client, transport } = await setup();
-
-        await expect(client.quote({ ...sell(), amountOn: "take" })).rejects.toThrow(/exact-in/);
-        expect(transport.sent).toHaveLength(0);
-    });
-
     it("refuses a pair of assets, which no market prices", async () => {
         const { client, transport } = await setup({ snapshot: [assetPairCard] });
 
@@ -752,11 +787,29 @@ describe("accept() on a negotiated asset market", () => {
             answer: async (payload) => ({ ...(await base(payload)), carrier_sats: "546" }),
         });
         const quote = await client.quote(sell());
+        expect(quote.carrierSats).toBe(546n);
         await client.accept(quote);
 
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(stored.carrierSats).toBe("546");
         expect(wallet.sent[0]?.amount).toBe(546);
+    });
+
+    it("refuses a changed carrier on a stored quote and accepts a legacy quote without it", async () => {
+        const interrupted = await acceptWallet({ failSend: () => new Error("interrupted") });
+        const { client, repository } = await setup({ wallet: interrupted });
+        const quote = await client.quote(sell());
+        await expect(client.accept(quote)).rejects.toThrow("interrupted");
+        const wallet = await acceptWallet();
+        const { client: restarted } = await setup({ wallet, repository });
+
+        await expect(restarted.accept({ ...quote, carrierSats: 1n })).rejects.toBeInstanceOf(
+            AcceptConflict,
+        );
+        expect(wallet.sent).toHaveLength(0);
+        const { carrierSats: _legacy, ...legacyQuote } = quote;
+        await restarted.accept(legacyQuote);
+        expect(wallet.sent[0]?.amount).toBe(330);
     });
 
     it("refuses a carrier above the operator's dust, having funded nothing", async () => {

@@ -341,8 +341,6 @@ const quoteArkadeAsset = async (
 ): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
     const pinned = pinnedFor(input);
     const sides = assetSidesOf(input.legs);
-    if (pinned.on !== "give" && sides.wantAsset === undefined)
-        throw new Error("asset-to-BTC is exact-in only");
     const payment = input.assetPayment;
     if (payment !== undefined && sides.wantAsset === undefined)
         throw new Error("assetPayment supports BTC-to-asset only");
@@ -516,6 +514,7 @@ const quoteArkadeAsset = async (
         quote: {
             id: input.quoteId,
             ...(assetPayment === undefined ? {} : { assetPayment }),
+            ...(carrierSats === undefined ? {} : { carrierSats }),
             route: assembleRoute(
                 { ...input.endpoints.give, instrument: { kind: "wallet" } },
                 {

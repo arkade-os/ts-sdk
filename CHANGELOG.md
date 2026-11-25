@@ -183,6 +183,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.
+
 - **`ExecutorProvider` can register and read the Executor's templates and
   artifacts.** The SDK's Executor client covered only delegations, so a caller
   delegating its own template needed a second client to upload it.
@@ -531,6 +533,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: a resumed `accept()` no longer outlives its stored quote.** The retry checked expiry against the caller's quote object only, which no conflict check covers, so a quote carrying a later `expiresAt` could fund a stored, unfunded record past its expiry. The earlier of the stored and given expiries now applies.
+- 
 - **A full Executor store no longer pauses every request to that Executor.**
   An Executor at its delegation cap answers `registerDelegation` with gRPC
   `RESOURCE_EXHAUSTED`, which its gateway serves as a 429 without
