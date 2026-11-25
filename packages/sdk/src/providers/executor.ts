@@ -298,11 +298,15 @@ async function failure(
 
 /** A 429 is a rate limit unless it is the Executor's RESOURCE_EXHAUSTED: a store at its cap. */
 async function postErrorBody(url: string, response: Response): Promise<string> {
-    const body = await response.text();
-    if (response.status === 429 && grpcCode(body) !== 8) {
-        rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
+    let body: string | undefined;
+    try {
+        body = await response.text();
+        return body;
+    } finally {
+        if (response.status === 429 && (body === undefined || grpcCode(body) !== 8)) {
+            rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
+        }
     }
-    return body;
 }
 
 function documentText(document: string | object): string {

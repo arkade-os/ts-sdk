@@ -285,6 +285,23 @@ describe("RestExecutorProvider", () => {
         rateGate.reset();
     });
 
+    it("still reports a 429 whose body cannot be read", async () => {
+        const report = vi.spyOn(rateGate, "reportRateLimited");
+        const lost = new Error("body stream lost");
+        mockFetch.mockResolvedValueOnce({
+            ok: false,
+            status: 429,
+            headers: { get: () => "3" },
+            text: () => Promise.reject(lost),
+        });
+        await expect(
+            new RestExecutorProvider("https://executor.test").registerTemplate("{}"),
+        ).rejects.toBe(lost);
+        expect(report).toHaveBeenCalledWith("https://executor.test/v1/template", "3");
+        report.mockRestore();
+        rateGate.reset();
+    });
+
     it("surfaces an upload refused on the public port as status 403", async () => {
         const provider = new RestExecutorProvider("https://executor.test");
         for (const call of [
