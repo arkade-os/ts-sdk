@@ -6,7 +6,12 @@
  * built in a component body, and a missing dep for an unused corridor is not a construction error.
  */
 import { hex } from "@scure/base";
-import { captureSendDeadline, toXOnly, type IWallet } from "@arkade-os/sdk";
+import {
+    captureSendDeadline,
+    toXOnly,
+    type ExtendedVirtualCoin,
+    type IWallet,
+} from "@arkade-os/sdk";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import { resolveReceivePkScript } from "../offer";
 import type { SwapOperator } from "../refund";
@@ -123,6 +128,11 @@ export interface SwapClientConfig {
 export interface AcceptOptions {
     /** Final funding submission deadline, Unix seconds, capped by the quote expiry. */
     readonly validUntil?: number;
+    /** Spend exactly these VTXOs. An interrupted acceptance requires the same outpoints. */
+    readonly selectedVtxos?: readonly ExtendedVirtualCoin[];
+    /** Maximum unavoidable BTC change paid as an offchain fee, in sats. Zero forbids it.
+     * Repeat the same limit when resuming an interrupted acceptance. */
+    readonly maxChangeFee?: number;
     /** `false` funds an offer with no packet. Default on: a seed-only restore finds an unfilled
      * deposit by it. Kept on the record, so a resumed funding chooses the same. */
     readonly attachOfferPacket?: boolean;
@@ -973,11 +983,24 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             if (issued !== undefined && issued !== quote)
                 throw new Error("auction quote must be the original issued quote");
             const requestedDeadline = captureSendDeadline(options?.validUntil);
+            const attachOfferPacket = options?.attachOfferPacket;
+            const maxChangeFee = options?.maxChangeFee;
+            const selectedVtxos = options?.selectedVtxos;
             const validUntil =
                 issued === undefined
                     ? requestedDeadline
                     : Math.min(issued.expiresAt, requestedDeadline ?? issued.expiresAt);
             ensureLive("accept");
+            const funding =
+                selectedVtxos === undefined && maxChangeFee === undefined
+                    ? undefined
+                    : {
+                          selectedVtxos:
+                              selectedVtxos === undefined
+                                  ? undefined
+                                  : structuredClone([...selectedVtxos]),
+                          maxChangeFee,
+                      };
             const { corridors } = await resolved();
             const drive = driving();
             // before the persist: the restore indexes stored records, and resuming one the drive
@@ -987,7 +1010,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             return acceptQuote({
                 quote,
                 ...(validUntil === undefined ? {} : { validUntil }),
-                ...(options?.attachOfferPacket === false ? { attachOfferPacket: false } : {}),
+                ...(attachOfferPacket === false ? { attachOfferPacket: false } : {}),
+                ...(funding === undefined ? {} : { funding }),
                 ...(preparation === undefined ? {} : { preparation }),
                 wallet,
                 repository: config.repository,

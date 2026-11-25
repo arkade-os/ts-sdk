@@ -405,6 +405,12 @@ export class Ramps {
      *
      * Returns the onchain txid instead when onchain coins alone cover `amount`
      * and were spent via arkd cosigning.
+     *
+     * Rethrows a cosign that failed after the client signed (`OnchainCosignRejectedError`,
+     * `OnchainCosignAmbiguousError`): the operator may still hold that signed tx and complete it,
+     * so paying from other coins can pay twice. No batch here can conflict with it, as arkd
+     * refuses an intent mixing onchain inputs and outputs. See "Onchain cosigning" in the README for
+     * the caller's options.
      */
     async offboardExact(params: {
         destinationAddress: string;

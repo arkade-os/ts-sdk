@@ -432,6 +432,12 @@ try {
 
 `OnchainCosignAmbiguousError` means the transaction may have been broadcast (a transport failure, or a server error after submission): do not retry with other coins. The inputs stay pending until the chain resolves.
 
+For `sendOnchain` and `cosignOnchainTx` that check is enough. `Ramps.offboardExact` is stricter, because `isCosignFallback(e)` only says arkd did not sign. The wallet already did, and an operator that kept the signed transaction can complete it later, so it rethrows every `OnchainCosignRejectedError` after signing instead of paying through a batch. Paying from other coins could pay twice, and a batch offboard cannot be made to conflict with the kept transaction: arkd refuses an intent that has onchain (boarding) inputs and onchain outputs (`INVALID_INTENT_PROOF`). The caller picks the strategy:
+
+- Wait for the held inputs to resolve and retry. The hold ends when an onchain sync sees the coins spent, or releases them once the chain tip is 6 blocks (`ONCHAIN_PENDING_RELEASE_BLOCKS`, fixed, not `onchainCosignMarginBlocks`) past the tip at signing. There is no event for it: track the block height and retry after that. The sync may show that the original payment went through, so before retrying check that it did not complete (the coins are spent, or the recipient has the funds), and retry only if it did not.
+- Settle the boarding coins into VTXOs first (no onchain output), then offboard from those. That spends the coins, so the kept transaction can no longer confirm, but it joins a batch before the coins expire, which costs the user a fee and a fresh VTXO lifetime.
+- Accept the risk and pay again, if the operator is trusted not to complete the transaction.
+
 Contracts carry a `scope`: `"offchain"`, `"onchain"` or `"both"`. It controls whether the contract's onchain coins are watched and spent through cosigning; boarding contracts default to `"onchain"`.
 
 Automatic behaviour:
