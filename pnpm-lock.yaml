@@ -150,13 +150,13 @@ importers:
       light-bolt11-decoder:
         specifier: 3.2.0
         version: 3.2.0
+      nostr-tools:
+        specifier: 2.24.1
+        version: 2.24.1(typescript@5.9.2)
     devDependencies:
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5
-      nostr-tools:
-        specifier: 2.24.1
-        version: 2.24.1(typescript@5.9.2)
 
 packages:
 

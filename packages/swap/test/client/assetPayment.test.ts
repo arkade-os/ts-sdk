@@ -162,7 +162,7 @@ describe("native asset payment quote", () => {
             client.quote({ ...buy(), assetPayment: { carrier: purchase } }),
         ).rejects.toThrow(/dust/);
     });
-    it("persists its deadline before funding and restores it after an ambiguous attempt", async () => {
+    it("persists its deadline before funding and sends nothing more after an ambiguous attempt", async () => {
         const { client, repository, wallet, transport } = await setup(carrierAnswer);
         const quote = await client.quote({
             ...buy(),
@@ -185,11 +185,11 @@ describe("native asset payment quote", () => {
             fetchImpl: feedServing().fetch,
         });
         await restarted.accept(quote);
-        expect(send.mock.calls[1][0]).toMatchObject({
+        expect(send.mock.calls[0][0]).toMatchObject({
             validUntil: CLOCK.validUntil - 30,
             recipients: [{ amount: 10000 }],
         });
-        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenCalledTimes(1);
     });
     it("caps and persists caller tightening across restart without relaxing the deadline", async () => {
         const { client, repository, wallet, transport } = await setup(carrierAnswer);
@@ -213,32 +213,60 @@ describe("native asset payment quote", () => {
             fetchImpl: feedServing().fetch,
         });
         await restarted.accept(quote, { validUntil: CLOCK.validUntil + 100 });
-        expect(send.mock.calls[1][0]).toMatchObject({ validUntil: CLOCK.validUntil - 60 });
+        expect(send.mock.calls[0][0]).toMatchObject({ validUntil: CLOCK.validUntil - 60 });
+        expect(send).toHaveBeenCalledTimes(1);
+        expect((await repository.getSwapRecord(quote.id))?.assetPayment?.validUntil).toBe(
+            CLOCK.validUntil - 60,
+        );
     });
-    it("keeps a retry's tighter deadline local after an ambiguous first send", async () => {
+    it("releases its claim when the deadline save fails before the send, then funds once", async () => {
+        const { client, repository, wallet } = await setup(carrierAnswer);
+        const quote = await client.quote({ ...buy(), assetPayment: { carrier: purchase } });
+        const original = quote.assetPayment!.validUntil;
+        const tighter = original - 20;
+        vi.spyOn(repository, "saveSwapRecord").mockImplementationOnce(async (record) => {
+            expect(record.fundingSend).toBe("claimed");
+            throw new Error("store offline");
+        });
+        const send = vi.spyOn(wallet, "send").mockResolvedValue("b".repeat(64));
+        await expect(client.accept(quote, { validUntil: tighter })).rejects.toThrow(
+            "store offline",
+        );
+        expect(send).not.toHaveBeenCalled();
+        const released = await repository.getSwapRecord(quote.id);
+        expect(released?.fundingSend).toBe("unsent");
+        expect(released?.assetPayment?.validUntil).toBe(original);
+
+        expect((await client.accept(quote, { validUntil: tighter })).fundingTxid).toBe(
+            "b".repeat(64),
+        );
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send.mock.calls[0][0]).toMatchObject({ validUntil: tighter });
+        expect((await repository.getSwapRecord(quote.id))?.fundingSend).toBe("claimed");
+    });
+
+    it("keeps the original deadline and pending outcome after an ambiguous first send", async () => {
         const { client, repository, wallet } = await setup(carrierAnswer);
         const quote = await client.quote({ ...buy(), assetPayment: { carrier: purchase } });
         const original = CLOCK.validUntil - 30;
-        const tighter = original - 20;
         const send = vi
             .spyOn(wallet, "send")
             .mockRejectedValueOnce(new Error("ambiguous"))
-            .mockRejectedValueOnce(new SendDeadlineExceededError(tighter))
             .mockResolvedValue("b".repeat(64));
         await expect(client.accept(quote)).rejects.toThrow("ambiguous");
-        await expect(client.accept(quote, { validUntil: tighter })).rejects.toBeInstanceOf(
-            SendDeadlineExceededError,
-        );
+        expect(
+            (await client.accept(quote, { validUntil: original - 20 })).fundingTxid,
+        ).toBeUndefined();
         const saved = await repository.getSwapRecord(quote.id);
         expect(saved?.assetPayment?.validUntil).toBe(original);
         expect(saved?.fundingNotSubmitted).toBeUndefined();
         await client.accept(quote);
         expect(
             send.mock.calls.map(([request]) => (request as { validUntil: number }).validUntil),
-        ).toEqual([original, tighter, original]);
+        ).toEqual([original]);
     });
 
-    it("snapshots receiver terms before awaits and durably forwards the floor after restart", async () => {
+    it("snapshots receiver terms before awaits and funds once under the durable floor", async () => {
         const { client, repository, wallet, transport } = await setup(recycleAnswer);
         const choice = await recycled(wallet);
         const input = { ...buy(), assetPayment: { carrier: choice } };
@@ -277,7 +305,7 @@ describe("native asset payment quote", () => {
         });
         await restarted.accept(quote);
         expect(send.mock.calls[0][0]).toMatchObject({ inputExpiryFloor: expected });
-        expect(send.mock.calls[1][0]).toMatchObject({ inputExpiryFloor: expected });
+        expect(send).toHaveBeenCalledTimes(1);
     });
     it("reconciles observed funding before a stored carrier deadline expires", async () => {
         const { client, repository, wallet, fixture } = await setup(recycleAnswer);
@@ -500,7 +528,7 @@ describe("native asset payment quote", () => {
         );
         expect(transport.sent).toHaveLength(0);
     });
-    it("keeps an earlier uncertain submission pending after a later unsent retry", async () => {
+    it("keeps an earlier uncertain submission pending without another send", async () => {
         const { client, repository, wallet, transport } = await setup(recycleAnswer);
         const quote = await client.quote({
             ...buy(),
@@ -508,8 +536,7 @@ describe("native asset payment quote", () => {
         });
         const send = vi
             .spyOn(wallet, "send")
-            .mockRejectedValueOnce(new Error("unknown earlier submission"))
-            .mockRejectedValue(new SendDeadlineExceededError(quote.assetPayment!.validUntil));
+            .mockRejectedValueOnce(new Error("unknown earlier submission"));
         await expect(client.accept(quote)).rejects.toThrow("unknown earlier submission");
         const restarted = createSwapClient({
             wallet,
@@ -519,12 +546,12 @@ describe("native asset payment quote", () => {
             transportFor: () => transport,
             fetchImpl: feedServing().fetch,
         });
-        await expect(restarted.accept(quote)).rejects.toThrow(SendDeadlineExceededError);
+        expect((await restarted.accept(quote)).fundingTxid).toBeUndefined();
         const saved = await repository.getSwapRecord(quote.id);
         expect(saved?.fundingNotSubmitted).toBeUndefined();
         if (saved?.family !== "offer") throw new Error("missing offer");
         expect(saved.status).toBe("pending");
-        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenCalledTimes(1);
     });
     it("abandonment proof applies only to a fresh first send", async () => {
         const { client, repository, wallet, fixture } = await setup(recycleAnswer);

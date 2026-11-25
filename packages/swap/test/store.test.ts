@@ -74,7 +74,7 @@ describe("asset swap store", () => {
 
     it("reports failed add writes and keeps update writes best-effort", async () => {
         const broken = (existing: AssetSwap[] = []): AssetSwapRepository => ({
-            version: 5,
+            version: 6,
             saveSwap: async () => {
                 throw new Error("quota exceeded");
             },
@@ -89,6 +89,8 @@ describe("asset swap store", () => {
             getRfqSwapsPage: async () => ({ items: [] }),
             removeRfqSwap: async () => {},
             saveSwapRecord: async () => {},
+            createSwapRecordIfAbsent: async () => true,
+            claimSwapFunding: async () => false,
             getSwapRecord: async () => undefined,
             getSwapRecordsPage: async () => ({ items: [] }),
             removeSwapRecord: async () => {},
@@ -121,7 +123,7 @@ describe("asset swap store", () => {
 
     it("reads a failed read as empty history, but never writes on one", async () => {
         const broken: AssetSwapRepository = {
-            version: 5,
+            version: 6,
             saveSwap: async () => {},
             getAssetSwapsPage: async () => {
                 throw new Error("backend gone");
@@ -131,6 +133,8 @@ describe("asset swap store", () => {
             getRfqSwapsPage: async () => ({ items: [] }),
             removeRfqSwap: async () => {},
             saveSwapRecord: async () => {},
+            createSwapRecordIfAbsent: async () => true,
+            claimSwapFunding: async () => false,
             getSwapRecord: async () => undefined,
             getSwapRecordsPage: async () => ({ items: [] }),
             removeSwapRecord: async () => {},

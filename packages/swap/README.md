@@ -293,9 +293,9 @@ custom quote flows with `acceptQuote`/`quoteViaRfq`, record reading with `record
 with the client's internals across minor versions; the root is what stays put.
 
 `./nostr` is a floor and not a deprecation: the client opens the card's rendezvous itself, and the
-subpath is what keeps that an escape hatch rather than a wall. It is a separate entry point
-because `nostr-tools` is an optional peer dependency, so a consumer who never hand-builds a
-transport never pays for it.
+subpath is what keeps that an escape hatch rather than a wall. `nostr-tools` is a regular
+dependency, since the root declarations name its pool type, but the client imports it only once
+Nostr is used.
 
 `./protocol` is the other kind of subpath, and it is a floor rather than a staging area. Every
 name on it was the integration surface before this client — requests, covenants, records, the RFQ

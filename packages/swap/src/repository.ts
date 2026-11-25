@@ -9,7 +9,7 @@ import {
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
 import type { RfqSwapState } from "./rfqSwapState";
-import type { SwapRecord } from "./client/record";
+import { claimedFunding, type SwapRecord } from "./client/record";
 
 /** A cached registry discovery result. Refetchable, but must survive a cold boot:
  * serving it stale keeps quoting alive while a registry is down. */
@@ -48,9 +48,9 @@ export function assertRfqSwapPageFilter(filter: RfqSwapPageFilter): void {
  * Collection reads are paged. RFQ reads may filter by state and date.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
-    /** Bumped on every shape change (5: v2 swap-record store) so an implementor built
+    /** Bumped on every shape change (6: atomic swap-record creation and funding claim) so an implementor built
      * against an older shape cannot satisfy this one silently. */
-    readonly version: 5;
+    readonly version: 6;
 
     /** Insert or replace a swap by id. Store the record whole: a field-mapped backend
      * dropping `preimageHex` or `preimageSaltHex` leaves the swap unclaimable.
@@ -87,6 +87,13 @@ export interface AssetSwapRepository extends AsyncDisposable {
      * agrees; a `bigint` would throw on SQLite/Realm and round-trip on IndexedDB.
      */
     saveSwapRecord(record: SwapRecord): Promise<void>;
+    /** Insert only if no record has this id, atomically across every client sharing the
+     * store; `true` only once committed, `false` leaving the existing record untouched. Only
+     * the caller that sees `true` funds the swap. Storage failures reject. */
+    createSwapRecordIfAbsent(record: SwapRecord): Promise<boolean>;
+    /** Atomically flip an unsent, unstamped, unproven record to `fundingSend: "claimed"`; `true`
+     * only for the caller that flipped it. Only that caller may send or retire its funding. */
+    claimSwapFunding(id: string): Promise<boolean>;
     /** `undefined` on a miss — the ordinary answer for a first `accept()`, and what
      * makes it idempotent. */
     getSwapRecord(id: string): Promise<SwapRecord | undefined>;
@@ -111,7 +118,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
 }
 
 export class InMemoryAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 5 as const;
+    readonly version = 6 as const;
     private readonly swaps = new Map<string, AssetSwap>();
     private readonly records = new Map<string, SwapRecord>();
     private readonly rfqSwaps = new Map<string, RfqSwapRecord>();
@@ -168,6 +175,20 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async saveSwapRecord(record: SwapRecord): Promise<void> {
         this.records.set(record.id, record);
+    }
+
+    async createSwapRecordIfAbsent(record: SwapRecord): Promise<boolean> {
+        if (this.records.has(record.id)) return false;
+        this.records.set(record.id, record);
+        return true;
+    }
+
+    async claimSwapFunding(id: string): Promise<boolean> {
+        const record = this.records.get(id);
+        const claimed = record && claimedFunding(record);
+        if (!claimed) return false;
+        this.records.set(id, claimed);
+        return true;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

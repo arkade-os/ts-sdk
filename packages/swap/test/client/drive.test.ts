@@ -1533,6 +1533,20 @@ describe("the offer half", () => {
         await drive.dispose();
     });
 
+    it("leaves an unsent record unstamped and rebuilds the deposit beside it", async () => {
+        const funding = offerFunding();
+        const { drive, repository } = await restoreOver(
+            [offerRecord({ swapPkScript: OFFER_SCRIPT, fundingSend: "unsent" })],
+            funding,
+            offerDeposit(funding.txid),
+        );
+
+        const stored = (await repository.getSwapRecord("o1")) as OfferSwapRecord;
+        expect(stored.fundingTxid).toBeUndefined();
+        expect(await repository.getSwapRecord(funding.txid)).toBeDefined();
+        await drive.dispose();
+    });
+
     it("writes pending over a stored cancelling when the deposit is still unspent", async () => {
         const funding = offerFunding();
         const { drive, repository } = await restoreOver(

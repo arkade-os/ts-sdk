@@ -246,7 +246,7 @@ describe("quote() on a negotiated asset market", () => {
         // mispricing only when both legs are the same asset.
         expect(quote.give).toEqual({ asset: USD, amount: 1_000n });
         expect(quote.take).toEqual({ asset: BTC, amount: 9_970n });
-        expect(quote.carrierSats).toBe(330n);
+        expect(quote.depositCarrierSats).toBe(330n);
         // The spread plus the 330-sat carrier, which the filler keeps: this solver returns none of it.
         expect(quote.fee).toEqual({ amount: 360n, asset: BTC });
     });
@@ -719,18 +719,15 @@ describe("accept() on a negotiated asset market", () => {
     });
 
     it.each([ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE])(
-        "resumes a %s record from its binding and rebuilds the funding packet",
+        "keeps a %s record as its binding and funds the packet rebuilt from it",
         async (version) => {
-            let failing = true;
-            const { client, repository, transport, wallet } = await harness(
-                { failSend: () => (failing ? new Error("send exploded") : (undefined as never)) },
-                (payload) =>
-                    arkadeAssetAnswer(payload, CLOCK, {
-                        supportsNonce: version === ASSET_SWAP_DIRECTED_NONCE,
-                    }),
+            const { client, repository, transport, wallet } = await harness({}, (payload) =>
+                arkadeAssetAnswer(payload, CLOCK, {
+                    supportsNonce: version === ASSET_SWAP_DIRECTED_NONCE,
+                }),
             );
             const quote = await client.quote(buy());
-            await expect(client.accept(quote)).rejects.toThrow(/send exploded/);
+            await client.accept(quote);
             const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
             expect(stored.offerHex).toBeUndefined();
             expect(stored.binding?.version).toBe(version);
@@ -740,9 +737,6 @@ describe("accept() on a negotiated asset market", () => {
                     ? hex.encode(assetRfqNonce(rfqId))
                     : undefined,
             );
-            failing = false;
-
-            await client.accept(quote);
 
             const [extension] = wallet.sent[0]?.extensions ?? [];
             expect(extension?.type).toBe(OFFER_PACKET_TYPE);
@@ -766,6 +760,7 @@ describe("accept() on a negotiated asset market", () => {
     it("funds the asset leg through the carrier on the reverse direction", async () => {
         const { client, repository, wallet } = await harness();
         const quote = await client.quote(sell());
+        expect(quote.depositCarrierSats).toBe(330n);
         await client.accept(quote);
 
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
@@ -787,7 +782,7 @@ describe("accept() on a negotiated asset market", () => {
             answer: async (payload) => ({ ...(await base(payload)), carrier_sats: "546" }),
         });
         const quote = await client.quote(sell());
-        expect(quote.carrierSats).toBe(546n);
+        expect(quote.depositCarrierSats).toBe(546n);
         await client.accept(quote);
 
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
@@ -796,18 +791,18 @@ describe("accept() on a negotiated asset market", () => {
     });
 
     it("refuses a changed carrier on a stored quote and accepts a legacy quote without it", async () => {
-        const interrupted = await acceptWallet({ failSend: () => new Error("interrupted") });
-        const { client, repository } = await setup({ wallet: interrupted });
+        const { client, repository } = await setup({ wallet: await acceptWallet() });
         const quote = await client.quote(sell());
+        vi.spyOn(repository, "claimSwapFunding").mockRejectedValueOnce(new Error("interrupted"));
         await expect(client.accept(quote)).rejects.toThrow("interrupted");
         const wallet = await acceptWallet();
         const { client: restarted } = await setup({ wallet, repository });
 
-        await expect(restarted.accept({ ...quote, carrierSats: 1n })).rejects.toBeInstanceOf(
+        await expect(restarted.accept({ ...quote, depositCarrierSats: 1n })).rejects.toBeInstanceOf(
             AcceptConflict,
         );
         expect(wallet.sent).toHaveLength(0);
-        const { carrierSats: _legacy, ...legacyQuote } = quote;
+        const { depositCarrierSats: _legacy, ...legacyQuote } = quote;
         await restarted.accept(legacyQuote);
         expect(wallet.sent[0]?.amount).toBe(330);
     });
@@ -840,14 +835,57 @@ describe("accept() on a negotiated asset market", () => {
         expect(quote.fee).toEqual({ amount: 10_230n, asset: BTC });
     });
 
-    it("attaches no carrier to a BTC deposit", async () => {
+    it.each([
+        ["negotiated", assetCard],
+        ["feed-priced CAIP-19", canonicalSpotCard],
+    ])("attaches no carrier to a %s BTC deposit", async (_, card) => {
         const wallet = await acceptWallet();
-        const { client, repository } = await setup({ wallet });
+        const { client, repository } = await setup({ wallet, snapshot: [card] });
         const quote = await client.quote(buy());
+        expect(quote.depositCarrierSats).toBeUndefined();
         await client.accept(quote);
 
         const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(stored.carrierSats).toBeUndefined();
+        expect(wallet.sent[0]?.amount).toBe(10_000);
+    });
+
+    it.each([
+        { dust: 330n, card: canonicalSpotCard, net: 9_970n, fee: 30n },
+        { dust: 546n, card: canonicalSpotCard, net: 9_970n, fee: 30n },
+        { dust: 546n, card: spotCard, net: 9_424n, fee: 576n },
+    ])(
+        "prices, records and funds the operator's $dust-sat dust as a feed deposit's carrier",
+        async ({ dust, card, net, fee }) => {
+            const wallet = await acceptWallet();
+            let reported = dust;
+            Object.assign(wallet.wallet, {
+                getArkadeInfo: async () => ({ ...ARK_INFO, dust: reported }),
+            });
+            const { client, repository } = await setup({ wallet, snapshot: [card] });
+            const quote = await client.quote(sell());
+
+            expect(quote.market.backend).toBe("feed");
+            expect(quote.depositCarrierSats).toBe(dust);
+            expect(quote.take.amount - dust).toBe(net);
+            expect(quote.fee).toEqual({ amount: fee, asset: BTC });
+            reported = 777n;
+            await client.accept(quote);
+
+            const stored = (await repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+            expect(stored.carrierSats).toBe(dust.toString());
+            expect(wallet.sent[0]?.amount).toBe(Number(dust));
+        },
+    );
+
+    it("refuses a feed asset deposit when the operator reports no dust", async () => {
+        const wallet = await acceptWallet();
+        Object.assign(wallet.wallet, { getArkadeInfo: async () => ({ ...ARK_INFO, dust: 0n }) });
+        const { client } = await setup({ wallet, snapshot: [canonicalSpotCard] });
+
+        await expect(client.quote(sell())).rejects.toThrow(
+            "the Arkade operator reports dust 0, which cannot carry an asset deposit",
+        );
     });
 
     it("records no carrier for a BTC deposit the card charges a delivered carrier on", async () => {
