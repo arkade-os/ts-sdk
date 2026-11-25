@@ -2093,7 +2093,8 @@ style and have not been backfilled.
   spend and artifact ids, compilation, binding, and instantiation. It builds
   the unsigned PSBT that the Executor's `Build` emits for `proof`, `virtual` and
   `onchain` templates, runs binding expressions in the arkade VM, and seals
-  sealed variables with ECIES. It is not exported yet. The Executor's 80
+  sealed variables with ECIES, from fresh system randomness as Go's `Encrypt`
+  does. It is not exported yet. The Executor's 80
   vectors, copied into `packages/sdk/test/fixtures/template-v1/`, and
   differential runs against its Go API check it. It also follows the Executor's
   template changes after v0.0.5, up to `153bbe8`:

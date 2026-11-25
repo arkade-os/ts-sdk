@@ -299,7 +299,7 @@ describe("compile", () => {
         });
     }
 
-    // Each rule no vector reaches, with the Go executor's outcome at af8d9eb.
+    // Each rule no vector reaches, with the Go executor's outcome at 153bbe8.
     const P2TR = `5120${"f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"}`;
     const in0 = (d: any) => d.inputs[0];
     const args = (d: any) => d.inputs[0].contract.arguments;

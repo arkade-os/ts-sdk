@@ -18,7 +18,7 @@ import { Failure } from "../src/arkade/template/errors";
 import { parseTx, serializeTx, serializeWitness, txid } from "../src/arkade/vm";
 import { Extension } from "../src/extension";
 
-// Rules no vector reaches, with the outcomes of the Go executor's own tests at af8d9eb.
+// Rules no vector reaches, with the Go executor's outcomes at 153bbe8.
 const DIR = new URL("./fixtures/template-v1/", import.meta.url);
 const vector = (name: string) => JSON.parse(readFileSync(new URL(`${name}.json`, DIR), "utf8"));
 const keys = (() => {

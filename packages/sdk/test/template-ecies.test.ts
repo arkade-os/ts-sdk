@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { open, seal } from "../src/arkade/template/ecies";
+import { open, seal, sealWithRng } from "../src/arkade/template/ecies";
 
 // executor pkg/template/ecies/testdata/vector.json @ af8d9eb, sealed from entropy 0x33*32 || 0x44*12.
 const VECTOR = {
@@ -43,12 +43,14 @@ describe("template ecies", () => {
     });
 
     it("seals the known-answer vector from its entropy", () => {
-        const sealed = seal(pub, hex.decode(VECTOR.plaintext), "", vectorEntropy());
+        const sealed = sealWithRng(vectorEntropy(), pub, hex.decode(VECTOR.plaintext), "");
         expect(hex.encode(sealed)).toBe(VECTOR.ciphertext);
     });
 
     it("seals under a template id the bytes Go's Decrypt opens", () => {
-        expect(hex.encode(seal(pub, PREIMAGE, TEMPLATE_ID, vectorEntropy()))).toBe(SEALED_HERE);
+        expect(hex.encode(sealWithRng(vectorEntropy(), pub, PREIMAGE, TEMPLATE_ID))).toBe(
+            SEALED_HERE,
+        );
     });
 
     it("opens Go's seal under its template id only", () => {
@@ -68,12 +70,14 @@ describe("template ecies", () => {
 
     it("refuses an rng that yields a short nonce", () => {
         const rng = (n: number) => new Uint8Array(n === 32 ? 32 : 11).fill(0x33);
-        expect(() => seal(pub, PREIMAGE, TEMPLATE_ID, rng)).toThrow(/^ecies: generate nonce/);
+        expect(() => sealWithRng(rng, pub, PREIMAGE, TEMPLATE_ID)).toThrow(
+            /^ecies: generate nonce/,
+        );
     });
 
     it("refuses an ephemeral key that is not a valid scalar", () => {
         const rng = (n: number) => new Uint8Array(n);
-        expect(() => seal(pub, PREIMAGE, TEMPLATE_ID, rng)).toThrow(
+        expect(() => sealWithRng(rng, pub, PREIMAGE, TEMPLATE_ID)).toThrow(
             /^ecies: generate ephemeral key/,
         );
     });
