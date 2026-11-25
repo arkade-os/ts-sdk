@@ -801,10 +801,16 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 .filter((record) => record.fundingTxid !== undefined)
                 .map((record) => [`${record.swapPkScript}:${record.fundingTxid}`, record]),
         );
-        // Identical offers derive one script, so each unstamped record is matched once.
+        // Identical offers derive one script, so each unstamped record is matched once. An unsent
+        // record never sent, so a deposit at its script belongs to another swap.
         const unstamped = new Map<string, OfferSwapRecord[]>();
         for (const record of offer) {
-            if (record.fundingTxid !== undefined || !OFFER_LIVE(record.status)) continue;
+            if (
+                record.fundingTxid !== undefined ||
+                record.fundingSend === "unsent" ||
+                !OFFER_LIVE(record.status)
+            )
+                continue;
             unstamped.set(record.swapPkScript, [
                 ...(unstamped.get(record.swapPkScript) ?? []),
                 record,
