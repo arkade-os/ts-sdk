@@ -21,6 +21,7 @@ style and have not been backfilled.
 ### Features
 
 - **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
+- **Two-asset RFQ swaps can pay a specified recipient.** Set `assetPayment.receiveAddress` on a directed quote or an exact-payout open RFQ. Explicit carrier modes require a BTC deposit.
 
 ### Bug Fixes
 

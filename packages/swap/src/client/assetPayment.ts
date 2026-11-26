@@ -289,7 +289,9 @@ export function assertReceiverPaidEchoMatchesExpected(
 }
 
 export interface AssetPaymentInput {
+    /** Recipient for a negotiated Arkade asset payout on the wallet's network and operator. */
     readonly receiveAddress?: string;
+    /** Explicit payout carrier terms for BTC-funded asset quotes. */
     readonly carrier?: ArkadeCarrierChoice;
 }
 export interface AssetPaymentTerms {

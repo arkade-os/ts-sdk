@@ -306,7 +306,7 @@ export const quoteViaRfq = async (
     });
 
     if (input.assetPayment !== undefined && input.route !== "arkade->arkade")
-        throw new Error("assetPayment supports BTC-to-asset only");
+        throw new Error("assetPayment requires an Arkade-to-Arkade RFQ");
     switch (input.route) {
         case "arkade->arkade":
             return quoteArkadeAsset(input);
@@ -342,8 +342,11 @@ const quoteArkadeAsset = async (
     const pinned = pinnedFor(input);
     const sides = assetSidesOf(input.legs);
     const payment = input.assetPayment;
-    if (payment !== undefined && (sides.wantAsset === undefined || sides.offerAsset !== undefined))
-        throw new Error("assetPayment supports BTC-to-asset only");
+    const choice = payment?.carrier;
+    if (choice !== undefined && sides.offerAsset !== undefined)
+        throw new Error("assetPayment.carrier requires a BTC-to-asset quote");
+    if (payment !== undefined && sides.wantAsset === undefined)
+        throw new Error("assetPayment requires an Arkade asset payout");
     const twoAssetSwap = sides.offerAsset !== undefined && sides.wantAsset !== undefined;
     const contractVersions = twoAssetSwap
         ? [ASSET_SWAP_DIRECTED_NONCE]
@@ -368,7 +371,6 @@ const quoteArkadeAsset = async (
         networkFromOperatorInfo(input.info).hrp,
         toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
     );
-    const choice = payment?.carrier;
     const carrierRequest =
         choice === undefined
             ? undefined

@@ -13,6 +13,7 @@
  * actually carried, so an agreeing `offer_address` means two derivations agreed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ArkAddress } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { createSwapClient } from "../../src/client/client";
@@ -41,6 +42,7 @@ import { verifyTaker } from "../../src/client/verify";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
 import { quoteIdOfSwapId, type OfferSwapRecord } from "../../src/client/record";
+import type { ArkadeCarrierChoice } from "../../src/client/assetPayment";
 import {
     ARK_INFO,
     ASSET_BUY_PAIR,
@@ -48,6 +50,7 @@ import {
     EMULATOR_PUBKEY_HEX,
     EUR_ASSET_ID,
     FUNDING_TXID,
+    NETWORK,
     OPERATOR_PUBKEY,
     SOLVER_DISCOVERY_KEY,
     SOLVER_PUBKEY,
@@ -61,6 +64,7 @@ import {
     clockAt,
     feedServing,
     hdWallet,
+    key,
     solverFor,
     solverTransport,
     spotCard,
@@ -79,6 +83,7 @@ const CLOCK = clockAt(NOW);
 const USD = `arkade:regtest/asset:${USD_ASSET_ID}`;
 const EUR = `arkade:regtest/asset:${EUR_ASSET_ID}`;
 const BTC = "arkade:regtest/slip44:1";
+const externalRecipient = new ArkAddress(OPERATOR_PUBKEY, key(29), NETWORK.hrp).encode();
 
 /** The card's own formula at the fixture price: 10_000 sats, less 30bps. */
 const CARD_PAYOUT = 997n;
@@ -278,7 +283,10 @@ describe("quote() on a negotiated asset market", () => {
         });
     });
 
-    it("quotes and funds an exact asset payout from another Arkade asset", async () => {
+    it.each([
+        { recipient: "the wallet", receiveAddress: undefined },
+        { recipient: "an external address", receiveAddress: externalRecipient },
+    ])("quotes and funds an exact two-asset payout to $recipient", async ({ receiveAddress }) => {
         const wallet = await acceptWallet();
         Object.assign(wallet.wallet, {
             getArkadeInfo: async () => ({ ...ARK_INFO, vtxoMinAmount: 546n }),
@@ -299,13 +307,26 @@ describe("quote() on a negotiated asset market", () => {
             take: EUR,
             amount: 885n,
             amountOn: "take",
+            ...(receiveAddress === undefined ? {} : { assetPayment: { receiveAddress } }),
         });
 
+        const receiverPkScript = hex.encode(
+            ArkAddress.decode(receiveAddress ?? (await wallet.wallet.getAddress())).pkScript,
+        );
         expect(transport.sent[0]).toMatchObject({
             pair: `arkade:${USD_ASSET_ID}->arkade:${EUR_ASSET_ID}`,
             amount_side: "to",
             contract_versions: [ASSET_SWAP_DIRECTED_NONCE],
+            profile: {
+                maker_pk_script: receiverPkScript,
+                maker_public_key: hex.encode(await wallet.wallet.identity.xOnlyPublicKey()),
+            },
         });
+        expect(quote.route.take.instrument).toEqual(
+            receiveAddress === undefined
+                ? { kind: "wallet" }
+                : { kind: "address", address: receiveAddress },
+        );
         expect(quote.give).toEqual({ asset: USD, amount: 1_000n });
         expect(quote.take).toEqual({ asset: EUR, amount: 885n });
         expect(quote.fee).toEqual({ asset: EUR, amount: 15n });
@@ -315,10 +336,54 @@ describe("quote() on a negotiated asset market", () => {
             amount: 546,
             assets: [{ assetId: USD_ASSET_ID, amount: 1_000n }],
         });
-        expect(await repository.getSwapRecord(quote.id)).toMatchObject({
-            binding: { version: ASSET_SWAP_DIRECTED_NONCE, wantAsset: EUR_ASSET_ID },
+        const stored = await repository.getSwapRecord(quote.id);
+        expect(stored).toMatchObject({
+            binding: {
+                version: ASSET_SWAP_DIRECTED_NONCE,
+                wantAsset: EUR_ASSET_ID,
+                receiverPkScript,
+            },
             carrierSats: "546",
         });
+        expect(stored?.assetPayment).toEqual(
+            receiveAddress === undefined
+                ? undefined
+                : { receiveAddress, validUntil: CLOCK.validUntil },
+        );
+    });
+
+    it("refuses explicit payout carrier choices for a two-asset quote before disclosure", async () => {
+        const wallet = await acceptWallet();
+        const { client, transport } = await setup({ wallet, snapshot: [assetPairCard] });
+        const carriers: ArkadeCarrierChoice[] = [
+            { mode: "purchase" },
+            {
+                mode: "recycleReceiver",
+                quote: {
+                    quoteId: "taxi-quote",
+                    receiveAddress: externalRecipient,
+                    senderKey: hex.encode(await wallet.wallet.identity.xOnlyPublicKey()),
+                    assetId: EUR_ASSET_ID,
+                    physicalSats: 330n,
+                    loanSats: 330n,
+                    expiresAt: CLOCK.validUntil,
+                },
+                taxi: { url: "https://taxi.example", operatorKey: hex.encode(key(31)) },
+                inputExpiryFloor: { kind: "time", value: BigInt(CLOCK.validUntil + 500) },
+            },
+        ];
+        for (const carrier of carriers) {
+            await expect(
+                client.quote({
+                    give: USD,
+                    take: EUR,
+                    amount: 885n,
+                    amountOn: "take",
+                    assetPayment: { receiveAddress: externalRecipient, carrier },
+                }),
+            ).rejects.toThrow(/carrier.*BTC-to-asset/i);
+        }
+        expect(transport.sent).toHaveLength(0);
     });
 
     it("refuses a cross-asset solver choosing an unadvertised legacy contract", async () => {
