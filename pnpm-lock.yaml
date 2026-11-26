@@ -68,6 +68,9 @@ importers:
       '@marcbachmann/cel-js':
         specifier: 8.0.0
         version: 8.0.0
+      '@noble/ciphers':
+        specifier: 2.1.1
+        version: 2.1.1
       '@noble/curves':
         specifier: 2.4.0
         version: 2.4.0

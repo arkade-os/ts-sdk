@@ -2085,6 +2085,34 @@ style and have not been backfilled.
   2.4.0, already installed through other dependencies, is now a direct
   dependency.
 
+- **The Executor's `template/v1` engine, ported.** The Executor builds a
+  delegation's transaction from a template, and a wallet that executes the same
+  template itself must build it the same way, or their addresses and
+  transactions disagree. `src/arkade/template/` ports the Executor's
+  `pkg/template` v0.0.5. It covers decoding with the canonical template,
+  spend and artifact ids, compilation, binding, and instantiation. It builds
+  the unsigned PSBT that the Executor's `Build` emits for `proof`, `virtual` and
+  `onchain` templates, runs binding expressions in the arkade VM, and seals
+  sealed variables with ECIES, from fresh system randomness as Go's `Encrypt`
+  does. It is not exported yet. The Executor's 81
+  vectors, copied into `packages/sdk/test/fixtures/template-v1/`, and
+  differential runs against its Go API check it. It also follows the Executor's
+  template changes after v0.0.5, up to `a7e9ced` (v0.0.6-rc.1):
+  - the bounds and error codes of arkade-os/executor#18: names in a flattened
+    constructor total at most 1 MiB, delegation seconds fit a uint32, a
+    template has at most 65535 inputs and 65535 outputs, missing
+    service keys are refused before variables are opened, and an input that
+    cannot pay the fee is `unaffordable`;
+  - it refuses a supplied taptree that repeats a leaf (#19);
+  - it pairs covenant array arguments with their flattened fields (#20);
+  - it takes the key names of #23: `<OPERATOR_KEY>`, `<BATCH_COSIGNER_KEY>` and
+    `<SEALING_KEY>`, with the former `<SERVER_KEY>`, `<COSIGNER_KEY>` and
+    `<ENCRYPTION_KEY>` read as the same keys. A document keeps its spelling, so
+    its id holds. `ContractKeys` takes `operator`, `emulator` and `batchCosigner`.
+
+  `@noble/ciphers` 2.1.1, already installed for the swap package, is now an SDK
+  dependency.
+
 ## [0.1.13] - 2026-11-21
 
 ### Bug Fixes
