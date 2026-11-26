@@ -1,0 +1,156 @@
+{
+  "formatVersion": 1,
+  "contractName": "HTLC",
+  "constructorInputs": [
+    {
+      "name": "sender",
+      "type": "pubkey"
+    },
+    {
+      "name": "receiver",
+      "type": "pubkey"
+    },
+    {
+      "name": "preimageHash",
+      "type": "bytes20"
+    },
+    {
+      "name": "refundTime",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "claim",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "<CONTRACT:SingleSig(<receiver>)>",
+          "OP_1",
+          "OP_SWAP",
+          "OP_ROT",
+          "OP_EQUALVERIFY",
+          "OP_NUMEQUALVERIFY",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTOUTPUTVALUE",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTINPUTVALUE",
+          "OP_GREATERTHANOREQUAL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "claim",
+          "witness": [
+            {
+              "name": "preimage",
+              "type": "bytes",
+              "encoding": "raw"
+            },
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "OP_HASH160",
+            "<preimageHash>",
+            "OP_EQUAL",
+            "OP_VERIFY",
+            "<OPERATOR_KEY:claim>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "refund",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "<CONTRACT:SingleSig(<sender>)>",
+          "OP_1",
+          "OP_SWAP",
+          "OP_ROT",
+          "OP_EQUALVERIFY",
+          "OP_NUMEQUALVERIFY",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTOUTPUTVALUE",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTINPUTVALUE",
+          "OP_GREATERTHANOREQUAL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "refund",
+          "witness": [
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<refundTime>",
+            "OP_CHECKLOCKTIMEVERIFY",
+            "OP_DROP",
+            "<OPERATOR_KEY:refund>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateral",
+      "leaves": [
+        {
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "senderSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<OPERATOR_EXIT_DELAY>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<sender>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "contracts": {
+    "SingleSig": "sha256:7ba6a7c8c4dc7dcaa8ee2441541aa560d74ffb48a0c15a1df9c95664147c4d9e"
+  },
+  "codeHash": "sha256:0d25d22caa3f6f3cb9760249dd3044fedd1c72d00d0d576de3e8b9589d805ec1",
+  "source": {
+    "entry": "htlc/htlc.ark",
+    "files": {
+      "htlc/htlc.ark": "pragma arkade ^0.1.0;\n\nimport \"../single_sig/single_sig.ark\";\n\ncontract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes20 preimageHash,\n  int refundTime\n) {\n  // Covenants (operator-enforced): pin the payout to the right party for >= input value.\n  @allow(unsigned-spend-path, \"the claim leaf needs the preimage, and the output pays the receiver\")\n  function claim() {\n    require(tx.outputs[this.activeInputIndex].script == new SingleSig(receiver));\n    require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);\n  }\n  @allow(unsigned-spend-path, \"the refund leaf needs the timeout, and the output pays the sender\")\n  function refund() {\n    require(tx.outputs[this.activeInputIndex].script == new SingleSig(sender));\n    require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);\n  }\n\n  // L1 leaves, bound by name: the operator key tweaked by each function's Arkade Script.\n  function claim(bytes preimage, signature operatorSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(checkSig(operatorSig, tweak(operator, claim)));\n  }\n  function refund(signature operatorSig) tapscript {\n    require(after(refundTime));\n    require(checkSig(operatorSig, tweak(operator, refund)));\n  }\n\n  // Unilateral exit (CSV).\n  function unilateral(signature senderSig) tapscript {\n    require(older(operatorExitDelay));\n    require(checkSig(senderSig, sender));\n  }\n}\n",
+      "single_sig/single_sig.ark": "pragma arkade ^0.1.0;\n\ncontract SingleSig(\n  pubkey user\n) {\n  // Single signature spend path\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n\n  // Unilateral exit (CSV).\n  function unilateral(signature userSig) tapscript {\n    require(older(operatorExitDelay));\n    require(checkSig(userSig, user));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-20T21:24:20.025231+00:00",
+  "fingerprint": "sha256:de409d0d429e880777094b5cd473f119269786d3bbb16567c3dfad5fe681975e"
+}

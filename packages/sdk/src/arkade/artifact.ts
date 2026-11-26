@@ -4,13 +4,17 @@
  */
 
 import { hex } from "@scure/base";
+import { sha256 } from "@scure/btc-signer/utils.js";
 
 import { sequenceToCanonicalTimelock } from "../utils/timelock";
 import { ARKADE_OPS } from "./script";
 import {
     SUPPORTED_PROGRAM_VERSION,
     ARKADE_TYPE_ENCODINGS,
+    stringifyArtifact,
+    validateParamValue,
     type ArkadeArgType,
+    type ArkadeParamValue,
     type ArkadeFunction,
     type AsmToken,
     type InputDef,
@@ -61,7 +65,42 @@ export interface ContractArtifact {
     constructorInputs: ArtifactParameter[];
     structs?: ArtifactStruct[];
     functions: ArtifactGroup[];
+    /** The `codeHash` of each contract this one instantiates with `new`, by contract name. */
+    contracts?: Record<string, string>;
+    /** `sha256:<hex>` of the fields that determine the scripts. The SDK recomputes it instead. */
+    codeHash?: string;
     fingerprint?: string;
+}
+
+/** What {@link programFromArtifact} reads besides the artifact. */
+export interface ProgramFromArtifactOptions {
+    /** The build's debug file: each covenant segment then carries its `sourceMap`. */
+    debug?: ContractDebugInfo;
+    /**
+     * The artifact of every contract instantiated with `new`, directly or through another one, in
+     * any order. Each must match the `codeHash` its parent pins in `contracts`. That hash covers the
+     * fields in arkadec's order, so an artifact re-serialized with reordered keys (as Postgres
+     * `jsonb` does) is refused: keep the JSON arkadec wrote. At most 256 instantiations, with
+     * programs of at most 1,048,576 characters in all, are read, counting a child once per path
+     * that reaches it.
+     */
+    contracts?: readonly ContractArtifact[];
+}
+
+/** A contract a program instantiates; each constructor param is a parent param or a literal. */
+export interface Instantiation {
+    program: Program;
+    args: Record<string, string | ArkadeParamValue>;
+}
+
+const INSTANTIATED = Symbol("instantiated contracts");
+
+/**
+ * @internal The contracts `program` instantiates, keyed by the `bytes32` param that holds each
+ * one's witness program. In memory only: no serializer writes it, so a restored program has none.
+ */
+export function instantiatedContracts(program: Program): Record<string, Instantiation> {
+    return (program as { [INSTANTIATED]?: Record<string, Instantiation> })[INSTANTIATED] ?? {};
 }
 
 /** The compiler's debug file: each covenant's source map, keyed by spend group. */
@@ -71,6 +110,12 @@ export interface ContractDebugInfo {
     artifactFingerprint?: string;
     functions: Record<string, { sourceMap: SourceRange[] }>;
 }
+
+const ASSET_GROUP_RECORD: [string, string][] = [
+    ["type", "int"],
+    ["index", "int"],
+    ["amount", "int"],
+];
 
 /** Native result structs, in the field order the compiler flattens them. */
 const NATIVE_STRUCTS: Record<string, [string, string][]> = {
@@ -98,6 +143,8 @@ const NATIVE_STRUCTS: Record<string, [string, string][]> = {
         ["amount", "int"],
         ["found", "bool"],
     ],
+    AssetGroupInput: ASSET_GROUP_RECORD,
+    AssetGroupOutput: ASSET_GROUP_RECORD,
     G2Point: [
         ["xC1", "int"],
         ["xC0", "int"],
@@ -205,16 +252,15 @@ function argType(arkType: string): ArkadeArgType {
     return arkType as ArkadeArgType;
 }
 
+/** `int[2][3]` → `["int[3]", 2]`: the first size is the outermost. */
 function arrayParts(type: string): [string, number] {
-    const open = type.indexOf("[");
-    if (open < 0 || !type.endsWith("]")) return [type, 0];
-    const length = Number(type.slice(open + 1, -1));
-    return Number.isSafeInteger(length) && length > 0 && /^\d+$/.test(type.slice(open + 1, -1))
-        ? [type.slice(0, open), length]
-        : [type, 0];
+    const [, base, size, inner] = /^([^[\]]+)\[(\d+)\]((?:\[\d+\])*)$/.exec(type) ?? [];
+    const length = Number(size);
+    return Number.isSafeInteger(length) && length > 0 ? [base + inner, length] : [type, 0];
 }
 
-// One budget per artifact, charged per generated name: nesting and struct fan-out multiply.
+// One budget per artifact, charged per generated name and per array type parsed: nesting and
+// struct fan-out multiply.
 const MAX_LAYOUT_CHARS = 1 << 18;
 
 function flatten(
@@ -225,8 +271,9 @@ function flatten(
 ): InputDef[] {
     if (!isNamed(param)) fail("parameter needs a name and a type");
 
+    budget.left -= param.name.length + (param.type.includes("[") ? param.type.length : 0);
+    if (budget.left < 0) fail(`layouts exceed ${MAX_LAYOUT_CHARS} name characters`);
     const [element, length] = arrayParts(param.type);
-    budget.left -= param.name.length;
     if (budget.left < length) fail(`layouts exceed ${MAX_LAYOUT_CHARS} name characters`);
     if (length > 0) {
         return Array.from({ length }, (_, index) =>
@@ -290,7 +337,11 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
         if (inner.startsWith("VTXO:")) {
             fail(`'${token}' is not a placeholder; the compiler emits <CONTRACT:…>`);
         }
-        if (inner === "SERVER_KEY" || inner.startsWith("EMULATOR_KEY:")) {
+        if (
+            inner.startsWith("EMULATOR_KEY:") ||
+            inner === "OPERATOR_KEY" ||
+            inner.startsWith("OPERATOR_KEY:")
+        ) {
             fail(`${token} is a signer role and cannot appear in a covenant`);
         }
         return `$${inner}`;
@@ -302,6 +353,102 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
     } catch {
         fail(`unrecognized assembly token '${token}'`);
     }
+}
+
+/**
+ * The `codeHash` arkadec writes: SHA-256 of the compact JSON of every field but the five dropped
+ * here, in the artifact's own key order, and the artifact parsed back from that JSON, so what is
+ * read is exactly what was hashed.
+ */
+function codeHash(artifact: ContractArtifact): [string, ContractArtifact] {
+    const { source, compiler, updatedAt, fingerprint, codeHash, ...scripts } =
+        artifact as ContractArtifact & Record<string, unknown>;
+    const text = JSON.stringify(scripts);
+    return [`sha256:${hex.encode(sha256(new TextEncoder().encode(text)))}`, JSON.parse(text)];
+}
+
+/** A `<CONTRACT:…>` argument: a parent param, by name, or a literal of the child param's type. */
+function instantiationArg(
+    token: string,
+    def: InputDef,
+    params: ReadonlySet<string>,
+): string | ArkadeParamValue {
+    if (token.startsWith("<") && token.endsWith(">")) {
+        const name = token.slice(1, -1);
+        if (!params.has(name)) {
+            fail(`instantiation argument '${token}' is not a constructor parameter`);
+        }
+        return name;
+    }
+    const value = token.startsWith("0x")
+        ? hex.decode(token.slice(2))
+        : token === "true" || token === "false"
+          ? BigInt(token === "true")
+          : /^\d+$/.test(token)
+            ? BigInt(token)
+            : fail(`computed instantiation argument '${token}'`);
+    validateParamValue(def, value);
+    return value;
+}
+
+// ponytail: a child reached along several paths is read, and later compiled, once per path, so a
+// list that shares children across levels grows exponentially. These cap the expanded tree: its
+// children, for the fixed cost of each, and the size of their programs as `stringifyArtifact`
+// writes them, for the cost that grows with each. Memoize by code hash (and by mapped values when
+// compiling) if legitimate trees outgrow them.
+const MAX_INSTANTIATIONS = 256;
+const MAX_INSTANTIATED_CHARS = 1 << 20;
+
+/** Resolve `<CONTRACT:body>` in `parent` to the supplied artifact its pin names, read in turn. */
+function link(
+    parent: ContractArtifact,
+    params: ReadonlySet<string>,
+    body: string,
+    supplied: Map<string, ContractArtifact>,
+    stack: string[],
+    tree: { links: number; chars: number },
+): Instantiation {
+    const [, name, list] = body.match(/^([A-Za-z]\w*)\((.*)\)$/) ?? fail(`malformed '${body}'`);
+    if (--tree.links < 0) {
+        fail(`more than ${MAX_INSTANTIATIONS} instantiated contracts, counted once per path`);
+    }
+    const chain = [...stack, parent.contractName];
+    if (chain.includes(name)) fail(`instantiation loop ${[...chain, name].join(" → ")}`);
+    const pins = parent.contracts;
+    const pin = isRecord(pins) && Object.hasOwn(pins, name) ? pins[name] : undefined;
+    if (typeof pin !== "string") {
+        fail(
+            `${parent.contractName} pins no code hash for ${name}; recompile ${parent.contractName} with arkadec 0.1.0 or later`,
+        );
+    }
+    const child = supplied.get(pin);
+    if (child?.contractName !== name) {
+        fail(
+            [...supplied.values()].some((other) => other.contractName === name)
+                ? `the ${name} artifact in \`contracts\` does not have the code hash ${parent.contractName} pins (${pin}); pass the build it was compiled against, unedited and in arkadec's field order`
+                : `${parent.contractName} instantiates ${name}; pass its artifact in \`contracts\``,
+        );
+    }
+    const program = readArtifact(child, undefined, supplied, chain, tree);
+    if ((tree.chars -= stringifyArtifact(program).length) < 0) {
+        fail(
+            `instantiated programs exceed ${MAX_INSTANTIATED_CHARS} characters, counted once per path`,
+        );
+    }
+    const structs = new Map((child.structs ?? []).map((struct) => [struct.name, struct] as const));
+    const layout = { left: MAX_LAYOUT_CHARS };
+    const inputs = child.constructorInputs.flatMap((input) => flatten(input, structs, layout));
+    const values = list === "" ? [] : list.split(",");
+    if (values.length !== inputs.length) {
+        fail(
+            `${name} takes ${inputs.length} constructor argument(s); ${parent.contractName} passes ${values.length}`,
+        );
+    }
+    const args: Instantiation["args"] = Object.create(null);
+    inputs.forEach((input, i) => {
+        args[input.name] = instantiationArg(values[i], input, params);
+    });
+    return { program, args };
 }
 
 function providedWitness(witness: ArtifactWitnessElement[] | undefined): ArtifactWitnessElement[] {
@@ -332,6 +479,22 @@ function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegme
     return timelock;
 }
 
+/**
+ * Reads `<OPERATOR_KEY:f>` as the `f`-tweaked emulator key, preceded by the server key arkd requires
+ * in every non-CSV leaf unless the leaf already holds it.
+ * ponytail: temporary until arkd and the emulator move to the single operator key. Deleting it
+ * changes the Program, and so the address, of every 0.1.0 artifact read through it.
+ */
+function legacyOperatorLeaf(asm: string[]): string[] {
+    const skipServer = asm.includes("OP_CHECKSEQUENCEVERIFY") || asm.includes("<OPERATOR_KEY>");
+    const server = skipServer ? [] : ["<OPERATOR_KEY>", "OP_CHECKSIGVERIFY"];
+    return asm.flatMap((token) =>
+        token.startsWith("<OPERATOR_KEY:")
+            ? [...server, token.replace("OPERATOR_KEY:", "EMULATOR_KEY:")]
+            : [token],
+    );
+}
+
 /** `condition? · timelock? · N-of-N`. Anything else is refused. */
 function parseLeaf(
     leaf: ArtifactLeaf,
@@ -339,7 +502,7 @@ function parseLeaf(
     instantiations: Map<string, string>,
     extras: ArtifactWitnessElement[],
 ): TapscriptSegment {
-    const asm = leaf.asm;
+    const asm = legacyOperatorLeaf(leaf.asm);
     let index = 0;
 
     let condition: AsmToken[] | undefined;
@@ -358,10 +521,13 @@ function parseLeaf(
     let csv: TapscriptSegment["csv"];
     let cltv: TapscriptSegment["cltv"];
     if (asm.length >= index + 3 && asm[index + 2] === "OP_DROP") {
+        // Persisted bindings name the exit delay SERVER_EXIT_DELAY.
         const operand =
-            asm[index].startsWith("<") && asm[index].endsWith(">")
-                ? `$${asm[index].slice(1, -1)}`
-                : BigInt(asm[index]);
+            asm[index] === "<OPERATOR_EXIT_DELAY>"
+                ? "$SERVER_EXIT_DELAY"
+                : asm[index].startsWith("<") && asm[index].endsWith(">")
+                  ? `$${asm[index].slice(1, -1)}`
+                  : BigInt(asm[index]);
         if (asm[index + 1] === "OP_CHECKSEQUENCEVERIFY") csv = csvTimelock(leaf.name, operand);
         else if (asm[index + 1] === "OP_CHECKLOCKTIMEVERIFY") cltv = operand;
         else fail(`leaf '${leaf.name}': unexpected timelock opcode ${asm[index + 1]}`);
@@ -385,7 +551,7 @@ function parseLeaf(
             fail(`leaf '${leaf.name}': unsupported key operand '${key}'`);
         }
         const inner = key.slice(1, -1);
-        if (inner === "SERVER_KEY") signers.push("$server");
+        if (inner === "OPERATOR_KEY") signers.push("$server");
         else if (inner.startsWith("TWEAK:")) {
             const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
             if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
@@ -425,12 +591,40 @@ function parseLeaf(
 }
 
 /**
- * Adds `server`, and one param per child-output placeholder for the caller to bind to that output key.
- * With the build's `debug` file, each covenant segment also carries its `sourceMap`.
+ * Adds `server`, and one `bytes32` param per `<CONTRACT:Name(…)>` placeholder, which an
+ * `ArkadeContract` binds to that contract's witness program when it is built. Each `Name` needs its
+ * artifact in `options.contracts` and its pin in the artifact's own `contracts`, or this throws.
+ * With the build's `debug` file, passed bare or as `debug`, each covenant segment also carries its
+ * `sourceMap`.
+ *
+ * `<OPERATOR_KEY>` reads as `server` and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`.
+ * `<OPERATOR_KEY:f>` reads as the server key followed by the emulator key tweaked by `f`'s Arkade
+ * Script, or the tweaked emulator key alone in a CSV leaf, until arkd and the emulator share one
+ * operator key.
  */
 export function programFromArtifact(
     artifact: ContractArtifact,
-    debug?: ContractDebugInfo,
+    options?: ProgramFromArtifactOptions | ContractDebugInfo,
+): Program {
+    const { debug, contracts = [] }: ProgramFromArtifactOptions =
+        options && "functions" in options ? { debug: options } : (options ?? {});
+    const supplied = new Map<string, ContractArtifact>();
+    for (const child of contracts) {
+        if (!isContractArtifact(child)) fail("each of `contracts` must be an arkadec artifact");
+        supplied.set(...codeHash(child));
+    }
+    return readArtifact(artifact, debug, supplied, [], {
+        links: MAX_INSTANTIATIONS,
+        chars: MAX_INSTANTIATED_CHARS,
+    });
+}
+
+function readArtifact(
+    artifact: ContractArtifact,
+    debug: ContractDebugInfo | undefined,
+    supplied: Map<string, ContractArtifact>,
+    stack: string[],
+    tree: { links: number; chars: number },
 ): Program {
     if (!isContractArtifact(artifact)) {
         fail(
@@ -463,6 +657,15 @@ export function programFromArtifact(
     }
     const structsByName = new Map(structs.map((struct) => [struct.name, struct] as const));
     const budget = { left: MAX_LAYOUT_CHARS };
+    // rc.1 reserved SERVER_KEY for the server key; 0.1.0 frees it, and a constructor input of
+    // that name is then an ordinary key.
+    const serverRole = !artifact.constructorInputs.some(
+        (input) => isNamed(input) && input.name === "SERVER_KEY",
+    );
+    const roles = (asm: string[]) =>
+        serverRole
+            ? asm.map((token) => (token === "<SERVER_KEY>" ? "<OPERATOR_KEY>" : token))
+            : asm;
 
     const instantiations = new Map<string, string>();
     const functions: Record<string, ArkadeFunction> = Object.create(null);
@@ -486,7 +689,7 @@ export function programFromArtifact(
         const sourceMap = maps?.get(group.name);
         const arkadeScript = group.arkade
             ? {
-                  asm: group.arkade.asm.map((token) => asmToken(token, instantiations)),
+                  asm: roles(group.arkade.asm).map((token) => asmToken(token, instantiations)),
                   ...(covenantInputs.length > 0 ? { inputs: covenantInputs } : {}),
                   // Covenant witness is reverse declaration order.
                   witness: covenantInputs.map((field) => field.name as WitnessRef).reverse(),
@@ -519,7 +722,12 @@ export function programFromArtifact(
             }
             const witnessNames = new Set<string>();
             for (const item of leaf.witness ?? []) claim(witnessNames, item.name, "leaf witness");
-            const tapscript = parseLeaf(leaf, group.arkade !== undefined, instantiations, extras);
+            const tapscript = parseLeaf(
+                { ...leaf, asm: roles(leaf.asm) },
+                group.arkade !== undefined,
+                instantiations,
+                extras,
+            );
             if (
                 tapscript.emulator !== undefined &&
                 tapscript.emulator !== null &&
@@ -541,6 +749,13 @@ export function programFromArtifact(
         }
     }
 
+    // ponytail: 0.1.0 frees these names; they move to `operator`/`OPERATOR_EXIT_DELAY`, which it
+    // reserves, with the single operator key migration.
+    for (const input of artifact.constructorInputs) {
+        if (isNamed(input) && (input.name === "server" || input.name === "SERVER_EXIT_DELAY")) {
+            fail(`constructor input '${input.name}' is reserved by the SDK; rename it`);
+        }
+    }
     const params: InputDef[] = [
         ...artifact.constructorInputs.flatMap((input) => flatten(input, structsByName, budget)),
         { name: "server", type: "pubkey" },
@@ -554,11 +769,16 @@ export function programFromArtifact(
     ];
     const paramNames = new Set<string>();
     for (const param of params) claim(paramNames, param.name, "program parameter");
+    const linked: Record<string, Instantiation> = Object.create(null);
+    for (const [name, body] of instantiations) {
+        linked[name] = link(artifact, paramNames, body, supplied, stack, tree);
+    }
 
     return {
         version: SUPPORTED_PROGRAM_VERSION,
         name: artifact.contractName,
         params,
         functions,
+        ...(instantiations.size > 0 ? { [INSTANTIATED]: linked } : {}),
     };
 }

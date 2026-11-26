@@ -7,21 +7,16 @@
 
 import type {
     CompileInput,
-    CompileOptions as CompilerOptions,
+    CompileOptions,
     CompilerArtifact,
     DebugInfo,
     Diagnostic,
 } from "@arkade-os/compiler";
 
-import { programFromArtifact } from "./arkade/artifact";
+import { programFromArtifact, type ProgramFromArtifactOptions } from "./arkade/artifact";
 import type { Program } from "./arkade/program";
 
-export type { CompileInput, CompilerArtifact, DebugInfo, Diagnostic };
-
-export interface CompileOptions extends CompilerOptions {
-    /** Return the debug file and put its source maps on `program`. Defaults to `true`. */
-    debug?: boolean;
-}
+export type { CompileInput, CompileOptions, CompilerArtifact, DebugInfo, Diagnostic };
 
 export interface CompileOutput {
     program: Program;
@@ -51,10 +46,13 @@ export class CompileError extends Error {
 
 const PEER = "@arkade-os/compiler";
 
-/** Compile `input.entry` and its relative imports from `input.files` into a {@link Program}. */
+/**
+ * Compile `input.entry` and its relative imports from `input.files` into a {@link Program}.
+ * `contracts` takes the artifacts of the contracts it instantiates, as `programFromArtifact` does.
+ */
 export async function compile(
     input: CompileInput,
-    options?: CompileOptions,
+    options?: CompileOptions & Pick<ProgramFromArtifactOptions, "contracts">,
 ): Promise<CompileOutput> {
     let compiler: typeof import("@arkade-os/compiler");
     try {
@@ -73,16 +71,14 @@ export async function compile(
         }
         throw error;
     }
-    const { debug = true, ...compilerOptions } = options ?? {};
+    const { contracts, ...compilerOptions } = options ?? {};
     const result = await compiler.compile(input, compilerOptions);
     if (result.artifact === null) throw new CompileError(result.diagnostics);
-    // ponytail: the compiler always builds the debug file; it will take an option to skip it soon,
-    // until then `debug: false` only drops it.
-    const kept = debug ? result.debug : undefined;
+    const debug = result.debug ?? undefined;
     return {
-        program: programFromArtifact(result.artifact, kept),
+        program: programFromArtifact(result.artifact, { debug, contracts }),
         artifact: result.artifact,
-        ...(kept ? { debug: kept } : {}),
+        ...(debug ? { debug } : {}),
         diagnostics: result.diagnostics,
     };
 }

@@ -369,8 +369,15 @@ export function verifyTapscriptSignatures(
             }
         }
 
-        // Extract sighash type from signature
-        // Schnorr signatures are 64 bytes, with optional 1-byte sighash appended
+        // BIP-341: 64 bytes for SIGHASH_DEFAULT, or 65 ending in any other sighash type.
+        if (
+            signature.length !== 64 &&
+            (signature.length !== 65 || signature[64] === SigHash.DEFAULT)
+        ) {
+            throw new Error(
+                `Input ${inputIndex}: signature from ${pubKeyHex} is not a BIP-341 signature encoding (${signature.length} bytes)`,
+            );
+        }
         const sighashType = signature.length === 65 ? signature[64] : SigHash.DEFAULT;
         const sig = signature.subarray(0, 64);
 

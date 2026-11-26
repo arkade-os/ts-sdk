@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { RawWitness, Script } from "@scure/btc-signer";
@@ -18,6 +20,7 @@ import {
     type RelativeTimelock,
 } from "../src";
 import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
+import { compile, type CompileInput } from "../src/compiler";
 
 function xOnly(): Uint8Array {
     return schnorr.getPublicKey(schnorr.utils.randomSecretKey());
@@ -709,6 +712,90 @@ describe("arkade.Arkade / ArkadeContract", () => {
         ).toBe(0n);
     });
 
+    it("binds a compiled contract's nested arrays and asset group records", async () => {
+        const { ark } = await connect();
+        const { program } = await compile({
+            entry: "grid.ark",
+            files: {
+                "grid.ark": `pragma arkade ^0.1.0;
+struct Board { pubkey owner; int[2][2] cells; }
+contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
+  function spend(int[2][2] m, AssetGroupInput record) {
+    require(tx.outputs[0].value == grid[0][1] + grid[1][2] + board.cells[1][0] + expected.amount + m[1][0] + record.amount);
+  }
+}`,
+            },
+        });
+        const deployed = {
+            "grid.0.0": 1n,
+            "grid.0.1": 2n,
+            "grid.0.2": 3n,
+            "grid.1.0": 4n,
+            "grid.1.1": 5n,
+            "grid.1.2": 6n,
+            "board.owner": receiver,
+            "board.cells.0.0": 7n,
+            "board.cells.0.1": 8n,
+            "board.cells.1.0": 9n,
+            "board.cells.1.1": 10n,
+            "expected.type": 11n,
+            "expected.index": 12n,
+            "expected.amount": 13n,
+        };
+        expect(program.params!.map((p) => p.name)).toEqual([...Object.keys(deployed), "server"]);
+        const whole = {
+            grid: [
+                [1n, 2n, 3n],
+                [4n, 5n, 6n],
+            ],
+            board: {
+                owner: receiver,
+                cells: [
+                    [7n, 8n],
+                    [9n, 10n],
+                ],
+            },
+            expected: { type: 11n, index: 12n, amount: 13n },
+        };
+        const contract = ark.contract(program, whole);
+        expect({ ...contract.args }).toEqual({ ...deployed, server });
+        expect({ ...ark.contract(program, deployed).args }).toEqual({ ...deployed, server });
+        // The covenant pushes grid[0][1], grid[1][2], board.cells[1][0] and expected.amount.
+        const covenant = contract.vtxoScript.functionByName("spend")!.arkadeScript!;
+        const pushes = arkade.ArkadeScript.decode(covenant).slice(2, 8);
+        expect(pushes).toEqual([2, 6, "ADD", 9, "ADD", 13]);
+        expect(() =>
+            ark.contract(program, { ...whole, grid: [whole.grid[0], [...whole.grid[1], 7n]] }),
+        ).toThrow(/undeclared argument 'grid.1.3'/);
+        expect(() => ark.contract(program, { ...whole, grid: whole.grid.flat() })).toThrow(
+            /'grid.0.0' is declared but not bound/,
+        );
+
+        const called = {
+            "m.0.0": 1n,
+            "m.0.1": 2n,
+            "m.1.0": 3n,
+            "m.1.1": 4n,
+            "record.type": 0n,
+            "record.index": 1n,
+            "record.amount": 5n,
+        };
+        expect(program.functions.spend.arkadeScript!.witness).toEqual(
+            Object.keys(called).reverse(),
+        );
+        const record = { type: 0n, index: 1n, amount: 5n };
+        const m = [
+            [1n, 2n],
+            [3n, 4n],
+        ];
+        expect({
+            ...contract.unlock.spend({ arkadeScript: [m, record] }).args.arkadeScript,
+        }).toEqual(called);
+        expect(() => contract.unlock.spend({ arkadeScript: [[m[0], [3n]], record] })).toThrow(
+            /missing input 'm.1.1'/,
+        );
+    });
+
     it("fails locally when leaf signing needs another identity or a covenant tweak", async () => {
         const { ark, captured } = await connect({ identity: stubIdentity(receiver) });
         const external = ark.contract(
@@ -912,6 +999,257 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 network: networks.regtest,
             });
             expect(ark.checkpoint.params.timelock).toEqual(tenBlocks);
+        });
+    });
+
+    describe("instantiated contracts", () => {
+        // Compiled by arkadec v0.1.0 (4075d82c): htlc, single_sig and struct_vault from its
+        // examples, and relay beside copies of the last two. Each bundles its source.
+        const [HTLC, SINGLE_SIG, STRUCT_VAULT, RELAY] = [
+            "htlc",
+            "single_sig",
+            "struct_vault",
+            "relay",
+        ].map(
+            (name): arkade.ContractArtifact =>
+                JSON.parse(
+                    readFileSync(
+                        new URL(`./fixtures/arkadec/${name}.artifact.json`, import.meta.url),
+                        "utf8",
+                    ),
+                ),
+        );
+        type Args = Record<string, arkade.ArkadeNestedValue>;
+        const htlcArgs = { sender: xOnly(), receiver, preimageHash: HASH, refundTime: 900_000n };
+        const linked = () => arkade.programFromArtifact(HTLC, { contracts: [SINGLE_SIG] });
+        const covenant = (contract: arkade.ArkadeContract, fn: string) =>
+            hex.encode(contract.vtxoScript.functionByName(fn)!.arkadeScript!);
+        const key = (contract: arkade.ArkadeContract) => hex.encode(contract.pkScript.slice(2));
+
+        async function client() {
+            const { arkProvider, emulator } = stubProviders(server, emulatorKey);
+            const info = await arkProvider.getInfo();
+            return arkade.Arkade.connect({
+                arkade: { getInfo: async () => ({ ...info, unilateralExitDelay: 144n }) },
+                emulator,
+                network: networks.regtest,
+                emulatorPubkey: "02" + hex.encode(emulatorKey),
+            });
+        }
+
+        it("binds each one, matched by the compiler's code hash, to its witness program", async () => {
+            const ark = await client();
+            const build = (child: arkade.ContractArtifact, args: Args) =>
+                ark.contract(arkade.programFromArtifact(child), args);
+
+            expect(covenant(ark.contract(linked(), htlcArgs), "claim")).toContain(
+                key(build(SINGLE_SIG, { user: receiver })),
+            );
+            const policy = {
+                primary: { key: receiver, weight: 5n },
+                limits: [2n, 3n],
+                exitDelay: 144n,
+            };
+            const relay = covenant(
+                ark.contract(
+                    arkade.programFromArtifact(RELAY, { contracts: [STRUCT_VAULT, SINGLE_SIG] }),
+                    { policy },
+                ),
+                "relay",
+            );
+            expect(relay).toContain(key(build(STRUCT_VAULT, { policy })));
+            const literal = hex.decode(
+                "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            );
+            expect(relay).toContain(key(build(SINGLE_SIG, { user: literal })));
+        });
+
+        it("derives the key with the keys the contract is built against", async () => {
+            const ark = await client();
+            const keys = { serverKey: xOnly(), emulatorKey: ark.emulatorKey };
+            const reserved = { server: keys.serverKey, SERVER_EXIT_DELAY: 144n };
+            const parent = new arkade.ArkadeContract(
+                ark,
+                linked(),
+                { ...htlcArgs, ...reserved },
+                keys,
+            );
+            const child = new arkade.ArkadeContract(
+                ark,
+                arkade.programFromArtifact(SINGLE_SIG),
+                { user: receiver, ...reserved },
+                keys,
+            );
+            expect(covenant(parent, "claim")).toContain(key(child));
+        });
+
+        it("names the parent's param when a value it passes on is wrong", async () => {
+            const ark = await client();
+            const { receiver: _, ...unbound } = htlcArgs;
+            expect(() => ark.contract(linked(), unbound)).toThrow(
+                /'receiver' is declared but not bound/,
+            );
+            expect(() =>
+                ark.contract(linked(), { ...htlcArgs, receiver: new Uint8Array(33) }),
+            ).toThrow(/'receiver' expects a 32-byte pubkey/);
+        });
+
+        it.each([{}, { contracts: [] }])("reads %o as options, not as a debug file", (options) => {
+            expect(arkade.programFromArtifact(SINGLE_SIG, options)).toEqual(
+                arkade.programFromArtifact(SINGLE_SIG),
+            );
+        });
+
+        it("compiles a parent with the artifacts of the contracts it instantiates", async () => {
+            const ark = await client();
+            const input = (HTLC as { source?: CompileInput }).source!;
+            const child = await compile({ ...input, entry: "single_sig/single_sig.ark" });
+            const { program } = await compile(input, { contracts: [child.artifact] });
+            expect(ark.contract(program, htlcArgs).pkScript).toEqual(
+                ark.contract(linked(), htlcArgs).pkScript,
+            );
+        });
+
+        it.each([
+            ["a missing artifact", HTLC, [], /HTLC instantiates SingleSig; pass its artifact/],
+            [
+                "an unpinned parent",
+                { ...HTLC, contracts: undefined },
+                [SINGLE_SIG],
+                /HTLC pins no code hash for SingleSig; recompile HTLC/,
+            ],
+            [
+                "code edited under its code hash",
+                HTLC,
+                [{ ...SINGLE_SIG, functions: [...SINGLE_SIG.functions].reverse() }],
+                /SingleSig artifact .* does not have the code hash HTLC pins/,
+            ],
+            [
+                "a wrong argument count",
+                JSON.parse(JSON.stringify(HTLC).replace("(<receiver>)", "(<receiver>,<sender>)")),
+                [SINGLE_SIG],
+                /SingleSig takes 1 constructor argument\(s\); HTLC passes 2/,
+            ],
+            [
+                "a loop",
+                { ...HTLC, contractName: "SingleSig" },
+                [SINGLE_SIG],
+                /instantiation loop SingleSig → SingleSig/,
+            ],
+        ])("refuses %s", (_, parent, contracts, error) => {
+            expect(() => arkade.programFromArtifact(parent, { contracts })).toThrow(error);
+        });
+
+        const hash = (artifact: object) =>
+            `sha256:${createHash("sha256").update(JSON.stringify(artifact)).digest("hex")}`;
+        // One covenant `go` over `asm`, pinning `children`.
+        const covenantArtifact = (
+            contractName: string,
+            asm: string[],
+            children: arkade.ContractArtifact[] = [],
+        ): arkade.ContractArtifact => ({
+            contractName,
+            constructorInputs: [{ name: "k", type: "pubkey" }],
+            functions: [
+                {
+                    name: "go",
+                    arkade: { inputs: [], asm: [...asm, "OP_1"] },
+                    leaves: [
+                        {
+                            name: "go",
+                            asm: [
+                                "<SERVER_KEY>",
+                                "OP_CHECKSIGVERIFY",
+                                "<EMULATOR_KEY:go>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
+                },
+            ],
+            contracts: Object.fromEntries(
+                children.map((n) => [n.contractName, n.codeHash ?? hash(n)]),
+            ),
+        });
+        const pay = (children: arkade.ContractArtifact[], args: string) =>
+            children.flatMap((n) => [`<CONTRACT:${n.contractName}(${args})>`, "OP_DROP"]);
+
+        it("derives the keys of children's children", async () => {
+            const ark = await client();
+            // Only the grandchild, SingleSig, uses the exit delay.
+            const mid = covenantArtifact("Mid", pay([SINGLE_SIG], "<k>"), [SINGLE_SIG]);
+            const top = covenantArtifact("Top", pay([mid], "<k>"), [mid]);
+            const k = xOnly();
+            const build = (artifact: arkade.ContractArtifact, args: Args) =>
+                ark.contract(
+                    arkade.programFromArtifact(artifact, { contracts: [mid, SINGLE_SIG] }),
+                    args,
+                );
+            const child = build(mid, { k });
+            expect(covenant(build(top, { k }), "go")).toContain(key(child));
+            expect(covenant(child, "go")).toContain(key(build(SINGLE_SIG, { user: k })));
+        });
+
+        it("refuses a list whose shared children expand past the cap", () => {
+            // Eight levels of two contracts, each instantiating both of the next: 510 paths.
+            const all: arkade.ContractArtifact[] = [];
+            let level: arkade.ContractArtifact[] = [];
+            for (let depth = 8; depth >= 0; depth--) {
+                const next = level;
+                level = (depth ? [`A${depth}`, `B${depth}`] : ["Root"]).map((name) =>
+                    covenantArtifact(name, pay(next, "<k>"), next),
+                );
+                all.push(...next);
+            }
+            expect(() => arkade.programFromArtifact(level[0], { contracts: all })).toThrow(
+                /more than 256 instantiated contracts/,
+            );
+        });
+
+        it("refuses instantiated programs that add up past the size cap", () => {
+            // 255 paths to one child of 2,000 opcodes, each passing its own key.
+            const heavy = covenantArtifact("H", [
+                ...Array(1000).fill("OP_DUP"),
+                ...Array(1000).fill("OP_DROP"),
+            ]);
+            const keys = Array.from(
+                { length: 255 },
+                (_, i) => `0x${(i + 1).toString(16).padStart(64, "0")}`,
+            );
+            const root = covenantArtifact(
+                "Root",
+                keys.flatMap((key) => pay([heavy], key)),
+                [heavy],
+            );
+            expect(() => arkade.programFromArtifact(root, { contracts: [heavy] })).toThrow(
+                /instantiated programs exceed 1048576 characters/,
+            );
+        });
+
+        it("derives the key in new ArkadeContract too, and refuses a hand-passed mismatch", async () => {
+            const ark = await client();
+            const args = { ...htlcArgs, server, SERVER_EXIT_DELAY: 144n };
+            expect(new arkade.ArkadeContract(ark, linked(), args).pkScript).toEqual(
+                ark.contract(linked(), htlcArgs).pkScript,
+            );
+            expect(
+                () =>
+                    new arkade.ArkadeContract(ark, linked(), {
+                        ...args,
+                        contract_SingleSig_receiver: xOnly(),
+                    }),
+            ).toThrow(/'contract_SingleSig_receiver' must be the SingleSig witness program/);
+        });
+
+        it("restores a saved contract without the instantiated artifacts", async () => {
+            const ark = await client();
+            const contract = ark.contract(linked(), htlcArgs);
+            const { params } = contract.toContractParams();
+            const restored = arkade.ArkadeContract.fromContract(ark, {
+                type: "arkade",
+                params,
+            } as never);
+            expect(restored.pkScript).toEqual(contract.pkScript);
         });
     });
 

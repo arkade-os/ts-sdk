@@ -6,6 +6,8 @@ import { compile as compileRaw } from "@arkade-os/compiler";
 import { compile, CompileError } from "../src/compiler";
 import { programFromArtifact } from "../src/arkade/artifact";
 import { ArkadeProgramScript } from "../src/arkade/program";
+import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
+import { MultisigTapscript } from "../src/script/tapscript";
 
 const ENTRY = "contracts/vault.ark";
 const FILES = {
@@ -18,11 +20,11 @@ contract Vault(pubkey owner, int minimum, int unused) {
     require(tx.outputs[0].value >= amount, "output below amount");
   }
   function ownerWithdraw(signature ownerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(ownerSig, tweak(owner, withdraw)));
   }
   function unilateral(signature ownerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(ownerSig, owner));
   }
 }`,
@@ -54,13 +56,14 @@ describe("@arkade-os/sdk/compiler", () => {
             ["withdraw", ["withdraw", "ownerWithdraw"]],
             ["unilateral", ["unilateral"]],
         ]);
-        expect(diagnostics).toEqual([
+        expect(diagnostics).toContainEqual(
             expect.objectContaining({
                 severity: "warning",
                 message: expect.stringContaining("'unused'"),
             }),
-        ]);
+        );
 
+        const emulatorKey = hex.decode(`02${"02".repeat(32)}`);
         const script = new ArkadeProgramScript(
             program,
             {
@@ -70,13 +73,27 @@ describe("@arkade-os/sdk/compiler", () => {
                 server: key(0x01),
                 SERVER_EXIT_DELAY: 144n,
             },
-            { serverKey: key(0x01), emulatorKey: hex.decode(`02${"02".repeat(32)}`) },
+            { serverKey: key(0x01), emulatorKey },
         );
         expect(script.compiled.map((f) => f.name)).toEqual([
             "withdraw",
             "ownerWithdraw",
             "unilateral",
         ]);
+        // The default leaf signs with the server key and the emulator key tweaked by the covenant.
+        expect(artifact.functions[0].leaves[0].asm).toEqual([
+            "<OPERATOR_KEY:withdraw>",
+            "OP_CHECKSIG",
+        ]);
+        const withdraw = script.functionByName("withdraw")!;
+        expect(withdraw.leafScript).toEqual(
+            MultisigTapscript.encode({
+                pubkeys: [
+                    key(0x01),
+                    computeArkadeScriptPublicKey(emulatorKey, withdraw.arkadeScript!),
+                ],
+            }).script,
+        );
     });
 
     it("leaves the debug file out with debug: false", async () => {

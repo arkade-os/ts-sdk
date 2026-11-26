@@ -12,6 +12,12 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the server key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. rc.1's `<SERVER_KEY>` still reads as the server key, except in a contract that declares a constructor input named `SERVER_KEY`, which 0.1.0 no longer reserves: there it is that input, where it used to be silently replaced by the server key. A constructor input named `server` or `SERVER_EXIT_DELAY`, which 0.1.0 also no longer reserves, is refused as reserved by the SDK; it used to fail as a duplicate program parameter. Until arkd and the emulator move to a single operator key, `<OPERATOR_KEY:f>` is temporarily read as rc.1's server key plus `f`-tweaked emulator key (the emulator key alone in CSV leaves). Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
+
+- **`programFromArtifact` derives the key of each contract an artifact instantiates.** `new SingleSig(receiver)` compiles to a `<CONTRACT:SingleSig(<receiver>)>` placeholder that the caller had to fill with the child's key by hand, unchecked, so a wrong key made the covenant pay someone else. Pass the child artifacts instead, as `programFromArtifact(htlc, { contracts: [singleSig] })` or the same option to `compile()`: each must match the code hash its parent pins, and building the contract derives the child's key. An artifact with a placeholder now throws when a child is missing, does not match or is not pinned. To migrate, recompile the parent with arkadec 0.1.0 or later, pass its children in `contracts`, and stop passing the key. Saved contracts store only the resolved key and restore without the children.
+
 ### Features
 
 - **`getAddress()` shows the Executor's renewal contract for the receive key, so what lands there is renewed while the wallet is offline.** Registering renewal (`registerRenewal`) is the opt-in: once the displayed receive key has a live renewal watch under the current operator, `getAddress()` answers that contract, the key's delegated twin, and the wallet's own address otherwise: with no live watch, a watch that expired or is under another signer, or when the rows cannot be read. A payment to the address the wallet shows used to be covered only after the wallet's own first renewal moved it into a renewal contract, which needs the wallet online; a wallet that went offline first lost the coin to the sweep. Everything that follows `getAddress()` now lands delegated: `settle()` outputs, offboard and onboard change, asset issuance, a send's change when no input sits at a renewal contract (change still follows its inputs first), the wallet's own renewals, an arkade-cash sweep, and the payout and refund addresses `@arkade-os/swap` puts in offers and RFQs. A renewal still pays the wallet's own address for `maxFee + dust` or less, and when it spends a coin at a live renewal contract (the Executor missed that coin, and paying it back repeats the miss); a renewal of a coin that carries assets is the exception to both, since `settle()` places assets only at `getAddress()`, so it always pays the twin. The own address stays at `arkAddress`, and the Executor manager reads its hrp and operator key from it. **Behaviour change** for apps that already call `registerRenewal`: their address changes once, the first time a twin is live; an app that stores the output of `getAddress()` must not keep it, as it also changes when a watch ends and when the operator signer rotates (a warning says so, since delegations stay under the old signer until `registerRenewal` runs again). The wallet reads the rows on every call, so a watch registered from a page is followed by the service worker at once; a watch restored without a status shows the own address, with a one-time warning, until `registerRenewal` confirms it.
@@ -19,6 +25,14 @@ style and have not been backfilled.
   An HD wallet registers one twin per receive key. A receipt at the displayed twin, or at its own address, rotates the receive key: the new twin is registered before the address is shown, and if the Executor fails the own address is shown instead, the rotation still happens, and the poll registers the twin later, waiting ten minutes after a failed attempt. The poll also registers a new twin when the app registers renewal with other params, so the address shown follows them. The previous twins stay live. The displayed receive key is never the displayed boarding key, since a coin at the boarding key's renewal contract rotates the boarding address: the first time an HD wallet has a live renewal watch while both are its identity key, it rotates boarding once. The daily refresh also revives the displayed receive twin, and any older renewal watch whose contract holds an unspent coin, for instance after the Executor lost its state; an older twin that lapsed with no coin ends. Look-ahead addresses and `getNewAddresses` are not delegated; a payment there is covered from the wallet's own first renewal, as before. The Executor sees the amount and time of every receipt at a twin, and for an HD wallet it can link the addresses of one wallet; it can delay a renewal, not spend. An HD wallet's twins are found by `restore()` like its boarding keys', after `watchExecutorContracts` has restored the app's params.
 
 ### Bug Fixes
+
+- **Tapscript signature checks refuse encodings that BIP-341 rejects.**
+  `verifyTapscriptSignatures`, which checks the server's signatures on
+  checkpoint and ark transactions, accepted a 65-byte signature ending in
+  `0x00`. It also accepted any signature longer than 65 bytes, verifying only
+  its first 64. Consensus rejects both: BIP-341 allows 64 bytes, or 65 ending
+  in a sighash type other than default. A transaction carrying either could
+  not be broadcast, so the SDK now refuses both.
 
 - **The Executor script cache is capped.** It held one script per contract row, for every wallet in the process and past `dispose()`, and an HD wallet adds a row per receipt. It now keeps the 512 most recently built, first in first out. The set of restored watches already warned about is capped the same way.
 
@@ -34,6 +48,10 @@ style and have not been backfilled.
   without `skipLibCheck`.
 
 - **`Ramps.offboardExact` documents what a cosign that failed after signing leaves open.** The error is rethrown and the boarding coins stay held, but an operator that kept the signed transaction can still complete it. A batch offboard cannot spend those coins to conflict with it: arkd refuses an intent with onchain inputs and onchain outputs (`INVALID_INTENT_PROOF`). The README and the method's doc now describe the options, so the caller picks the strategy. The hold's 6-block release is named, and `isCosignFallback`'s doc says `offboardExact` rethrows regardless.
+
+### Internal
+
+- **The legacy delegator provider is marked `@deprecated`.** `DelegateProvider`, `RestDelegateProvider`, `DelegateInfo` and `DelegateOptions` talk to the retired delegator; `ExecutorProvider` and `RestExecutorProvider` replace them. Nothing is removed.
 
 ## [0.5.13] - 2026-11-23
 
@@ -215,6 +233,7 @@ style and have not been backfilled.
 
 ### Features
 
+- **`programFromArtifact` reads 0.1.0 nested arrays and asset group records.** It refused them as `invalid array type 'int[2][3]'` and `unknown type 'AssetGroupOutput'`. A nested array, as a constructor or Arkade Script input or a struct field, flattens outer index first (`grid.1.2`) and binds whole (`{ grid: [[1n, 2n, 3n], [4n, 5n, 6n]] }`) or by those names; `AssetGroupInput` and `AssetGroupOutput` flatten to `type`, `index` and `amount`.
 - **`@arkade-os/swap`: a quote says what an asset deposit funds as its carrier.** `Quote.depositCarrierSats` is the sats funded beside an asset give leg: the solver's verified carrier on a negotiated quote, the operator's dust on a feed-priced one. Subtract it from a BTC take for the net proceeds; it is absent when BTC is given.
 
 - **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier as `depositCarrierSats`. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.

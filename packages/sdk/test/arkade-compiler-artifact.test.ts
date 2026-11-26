@@ -160,6 +160,139 @@ describe("reading an arkadec artifact", () => {
         );
     });
 
+    it("reads 0.1.0 default leaves into the same escrow program", () => {
+        const operator: ContractArtifact = {
+            ...artifact,
+            functions: artifact.functions.map((group) =>
+                group.arkade
+                    ? {
+                          ...group,
+                          leaves: [
+                              {
+                                  name: group.name,
+                                  witness: [
+                                      {
+                                          name: "operatorSig",
+                                          type: "signature",
+                                          encoding: "schnorr-64",
+                                          injected: true,
+                                      },
+                                  ],
+                                  asm: [`<OPERATOR_KEY:${group.name}>`, "OP_CHECKSIG"],
+                              },
+                          ],
+                      }
+                    : group,
+            ),
+        };
+        expect(programFromArtifact(operator)).toEqual(programFromArtifact(artifact));
+    });
+
+    it.each([
+        [
+            "between other keys",
+            ["<owner>", "<OPERATOR_KEY:claim>", "<taker>"],
+            ["<owner>", "<SERVER_KEY>", "<EMULATOR_KEY:claim>", "<taker>"],
+            [],
+        ],
+        [
+            "beside the untweaked key",
+            ["<OPERATOR_KEY>", "<OPERATOR_KEY:claim>"],
+            ["<SERVER_KEY>", "<EMULATOR_KEY:claim>"],
+            [],
+        ],
+        [
+            "beside the rc.1 server key",
+            ["<SERVER_KEY>", "<OPERATOR_KEY:claim>"],
+            ["<SERVER_KEY>", "<EMULATOR_KEY:claim>"],
+            [],
+        ],
+        [
+            "in a CSV leaf",
+            ["<owner>", "<OPERATOR_KEY:claim>"],
+            ["<owner>", "<EMULATOR_KEY:claim>"],
+            ["144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"],
+        ],
+    ])("reads an operator key %s like its rc.1 leaf", (_label, keys, legacy, timelock) => {
+        const read = (operands: string[]) =>
+            programFromArtifact(
+                demo({
+                    constructorInputs: [
+                        { name: "owner", type: "pubkey" },
+                        { name: "taker", type: "pubkey" },
+                    ],
+                    functions: [
+                        {
+                            name: "claim",
+                            arkade: { inputs: [], asm: ["OP_1"] },
+                            leaves: [
+                                {
+                                    name: "claim",
+                                    asm: [
+                                        ...timelock,
+                                        ...operands.flatMap((operand, i) => [
+                                            operand,
+                                            i === operands.length - 1
+                                                ? "OP_CHECKSIG"
+                                                : "OP_CHECKSIGVERIFY",
+                                        ]),
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                }),
+            );
+        expect(read(keys)).toEqual(read(legacy));
+    });
+
+    it("reads a 0.1.0 constructor key named SERVER_KEY as that key, not the server", () => {
+        const program = programFromArtifact(
+            demo({
+                constructorInputs: [{ name: "SERVER_KEY", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "claim",
+                        arkade: { inputs: [], asm: ["<SERVER_KEY>", "OP_DROP", "OP_1"] },
+                        leaves: [
+                            {
+                                name: "claim",
+                                asm: [
+                                    "<SERVER_KEY>",
+                                    "OP_CHECKSIGVERIFY",
+                                    "<OPERATOR_KEY:claim>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                        ],
+                    },
+                    {
+                        name: "exit",
+                        leaves: [
+                            {
+                                name: "exit",
+                                asm: [
+                                    "<SERVER_KEY>",
+                                    "OP_CHECKSIGVERIFY",
+                                    "<OPERATOR_KEY>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }),
+        );
+        expect(program.params?.map((param) => param.name)).toEqual(["SERVER_KEY", "server"]);
+        expect(program.functions.claim.arkadeScript?.asm[0]).toBe("$SERVER_KEY");
+        expect(program.functions.claim.tapscript).toMatchObject({
+            signers: ["$SERVER_KEY", "$server"],
+            emulator: "claim",
+            emulatorIndex: 2,
+        });
+        expect(program.functions.exit.tapscript.signers).toEqual(["$SERVER_KEY", "$server"]);
+    });
+
     it("keeps every leaf in a multi-leaf covenant group", () => {
         const program = programFromArtifact(
             demo({
@@ -361,7 +494,7 @@ describe("reading an arkadec artifact", () => {
         expect(() => csvParamLeaf(sequence)).toThrow(/exitDelay.*canonical BIP68 sequence/);
     });
 
-    it("reads hash conditions and flattens structs, natives, arrays, and child outputs", () => {
+    it("reads hash conditions and flattens structs, natives and arrays", () => {
         const hash = programFromArtifact(
             demo({
                 constructorInputs: [
@@ -420,7 +553,7 @@ describe("reading an arkadec artifact", () => {
                         name: "spend",
                         arkade: {
                             inputs: [{ name: "request", type: "Policy" }],
-                            asm: ["<CONTRACT:SingleSig(<policy.owner>,<exit>)>", "OP_DROP"],
+                            asm: ["<policy.owner>", "OP_DROP"],
                         },
                         leaves: [collab("spend")],
                     },
@@ -436,7 +569,6 @@ describe("reading an arkadec artifact", () => {
             { name: "votes.1", type: "bool" },
             { name: "exit", type: "int" },
             { name: "server", type: "pubkey" },
-            { name: "contract_SingleSig_policy_owner_exit", type: "bytes32" },
         ]);
         expect(program.functions.spend.arkadeScript?.witness).toEqual([
             "request.threshold",
@@ -660,6 +792,10 @@ describe("reading an arkadec artifact", () => {
                     })),
                 })),
             }),
+            /name characters/,
+        ],
+        [
+            demo({ constructorInputs: [{ name: "x", type: `int${"[1]".repeat(4_000_000)}` }] }),
             /name characters/,
         ],
     ])("validates artifact boundaries %#", (artifact, error) => {
@@ -953,7 +1089,7 @@ describe("reading an arkadec artifact", () => {
                     { name: "server", type: "pubkey" },
                 ],
             },
-            /duplicate program parameter 'server'/,
+            /'server' is reserved by the SDK/,
         ],
         [
             "a struct named pubkey",
@@ -991,6 +1127,50 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
             /emulator or a tweaked constructor key/,
+        ],
+        [
+            "a constructor input named SERVER_EXIT_DELAY",
+            demo({ constructorInputs: [{ name: "SERVER_EXIT_DELAY", type: "int" }] }),
+            /'SERVER_EXIT_DELAY' is reserved by the SDK/,
+        ],
+        [
+            "an operator key in a covenant",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["<OPERATOR_KEY:spend>", "OP_DROP", "OP_1"] },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+            /signer role/,
+        ],
+        [
+            "an untweaked operator key in a covenant",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["<OPERATOR_KEY>", "OP_DROP", "OP_1"] },
+                        leaves: [collab("spend")],
+                    },
+                ],
+            }),
+            /signer role/,
+        ],
+        [
+            "an operator key tweaked by another group's covenant",
+            demo({
+                functions: [
+                    {
+                        name: "spend",
+                        arkade: { inputs: [], asm: ["OP_1"] },
+                        leaves: [{ name: "spend", asm: ["<OPERATOR_KEY:other>", "OP_CHECKSIG"] }],
+                    },
+                ],
+            }),
+            /must match group/,
         ],
         [
             "two child outputs that sanitize to one name",
