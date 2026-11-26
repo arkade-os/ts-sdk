@@ -31,8 +31,8 @@ export function executorStub() {
                     ...(template === "boarding"
                         ? { boardingExitDelay: num("boarding_exit_delay") }
                         : {}),
-                    cosignerPubKey: hex.decode(vectors.cosignerPubkey),
-                    serverPubKey: hex.decode(vectors.serverPubkey),
+                    batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
+                    operatorPubKey: hex.decode(vectors.operatorPubkey),
                     emulatorPubKey: hex.decode(vectors.emulatorPubkey),
                 }),
             );
@@ -50,7 +50,10 @@ export function executorStub() {
                             template === "boarding"
                                 ? script.onchainAddress(networks.mutinynet)
                                 : script
-                                      .address("tark", hex.decode(vectors.serverPubkey).subarray(1))
+                                      .address(
+                                          "tark",
+                                          hex.decode(vectors.operatorPubkey).subarray(1),
+                                      )
                                       .encode(),
                     },
                 ],
@@ -64,8 +67,8 @@ export function executorStub() {
     const getInfo = vi.fn(async () => ({
         version: "test",
         network: "mutinynet",
-        cosignerPubkey: vectors.cosignerPubkey,
-        serverPubkey: vectors.serverPubkey,
+        batchCosignerPubkey: vectors.batchCosignerPubkey,
+        operatorPubkey: vectors.operatorPubkey,
         emulatorPubkey: vectors.emulatorPubkey,
     }));
     return {

@@ -90,8 +90,8 @@ const executorBoarding = () => {
         renewalWindow: "86400",
         maxFee: "500",
         boardingExitDelay: "4194306",
-        cosignerPubKey: vectors.cosignerPubkey,
-        serverPubKey: vectors.serverPubkey,
+        batchCosignerPubKey: vectors.batchCosignerPubkey,
+        serverPubKey: vectors.operatorPubkey,
         emulatorPubKey: vectors.emulatorPubkey,
     };
     const executorScript = ExecutorContractHandler.createScript(params);
@@ -100,7 +100,7 @@ const executorBoarding = () => {
         params,
         script: hex.encode(executorScript.pkScript),
         address: executorScript
-            .address("tark", hex.decode(vectors.serverPubkey).subarray(1))
+            .address("tark", hex.decode(vectors.operatorPubkey).subarray(1))
             .encode(),
         scope: "onchain" as const,
         onchainAddress: executorScript.onchainAddress(networks.regtest),

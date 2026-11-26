@@ -35,7 +35,7 @@ describe("RestExecutorProvider", () => {
         const info = makeInfo();
         respond({
             ...info,
-            cosignerPubkey: info.cosignerPubkey,
+            batchCosignerPubkey: info.batchCosignerPubkey,
             renewalWindow: 1024,
             arkadeScript: "00",
         });
@@ -46,9 +46,9 @@ describe("RestExecutorProvider", () => {
     });
 
     it("rejects info with a non-compressed key", async () => {
-        respond({ ...makeInfo(), cosignerPubkey: hex.encode(ownerKey) });
+        respond({ ...makeInfo(), batchCosignerPubkey: hex.encode(ownerKey) });
         await expect(new RestExecutorProvider("https://executor.test").getInfo()).rejects.toThrow(
-            "cosignerPubkey is not compressed",
+            "batchCosignerPubkey is not compressed",
         );
     });
 
@@ -317,21 +317,21 @@ describe("RestExecutorProvider", () => {
         }
     });
 
-    it("reads the encryption key when the Executor has one, refusing one not compressed", async () => {
+    it("reads the sealing key when the Executor has one, refusing one not compressed", async () => {
         const provider = new RestExecutorProvider("https://executor.test");
-        const encryptionPubkey = hex.encode(compressedKey);
-        respond({ ...makeInfo(), encryptionPubkey });
-        await expect(provider.getInfo()).resolves.toEqual({ ...makeInfo(), encryptionPubkey });
-        for (const body of [makeInfo(), { ...makeInfo(), encryptionPubkey: "" }]) {
+        const sealingPubkey = hex.encode(compressedKey);
+        respond({ ...makeInfo(), sealingPubkey });
+        await expect(provider.getInfo()).resolves.toEqual({ ...makeInfo(), sealingPubkey });
+        for (const body of [makeInfo(), { ...makeInfo(), sealingPubkey: "" }]) {
             respond(body);
-            expect(await provider.getInfo()).not.toHaveProperty("encryptionPubkey");
+            expect(await provider.getInfo()).not.toHaveProperty("sealingPubkey");
         }
         for (const [key, error] of [
-            [hex.encode(ownerKey), "encryptionPubkey is not compressed"],
-            ["zz", "encryptionPubkey is not hex"],
-            [5, "missing encryptionPubkey"],
+            [hex.encode(ownerKey), "sealingPubkey is not compressed"],
+            ["zz", "sealingPubkey is not hex"],
+            [5, "missing sealingPubkey"],
         ] as const) {
-            respond({ ...makeInfo(), encryptionPubkey: key });
+            respond({ ...makeInfo(), sealingPubkey: key });
             await expect(provider.getInfo()).rejects.toThrow(error);
         }
     });
@@ -458,8 +458,8 @@ describe("ExecutorManagerImpl.register", () => {
             templateId: BOARDING_ID,
             variables: vectors.boarding.variables,
             keys: {
-                cosignerPubkey: vectors.cosignerPubkey,
-                serverPubkey: vectors.serverPubkey,
+                batchCosignerPubkey: vectors.batchCosignerPubkey,
+                operatorPubkey: vectors.operatorPubkey,
                 emulatorPubkey: vectors.emulatorPubkey,
             },
             params,
@@ -590,7 +590,7 @@ describe("ExecutorManagerImpl.register", () => {
 
     it("refuses a service whose operator key is not the wallet's", async () => {
         const provider = makeProvider();
-        provider.getInfo.mockResolvedValue({ ...makeInfo(), serverPubkey: vectors.owner });
+        provider.getInfo.mockResolvedValue({ ...makeInfo(), operatorPubkey: vectors.owner });
         const manager = new ExecutorManagerImpl(provider, wallet);
         await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
             "wallet's operator",
@@ -627,17 +627,17 @@ describe("ExecutorManagerImpl.register", () => {
         // the x-only key of 3G, the newest boarding key the wallet rotated to
         const rotated = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
         const descriptor = `tr(${rotated})`;
-        const server = hex.encode(ArkAddress.decode(vectors.renewal.address).serverPubKey);
+        const operator = hex.encode(ArkAddress.decode(vectors.renewal.address).serverPubKey);
         contractManager.getContracts.mockResolvedValueOnce([
             {
                 type: "boarding",
-                params: { pubKey: "11".repeat(32), serverPubKey: server },
+                params: { pubKey: "11".repeat(32), serverPubKey: operator },
                 metadata: { source: WALLET_RECEIVE_SOURCE, signingDescriptor: "tr(old)" },
                 createdAt: 1,
             },
             {
                 type: "boarding",
-                params: { pubKey: rotated, serverPubKey: server },
+                params: { pubKey: rotated, serverPubKey: operator },
                 metadata: { source: WALLET_RECEIVE_SOURCE, signingDescriptor: descriptor },
                 createdAt: 2,
             },
@@ -647,8 +647,8 @@ describe("ExecutorManagerImpl.register", () => {
                 template: "boarding",
                 owner: hex.decode(`02${rotated}`),
                 ...params,
-                cosignerPubKey: hex.decode(vectors.cosignerPubkey),
-                serverPubKey: hex.decode(vectors.serverPubkey),
+                batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
+                operatorPubKey: hex.decode(vectors.operatorPubkey),
                 emulatorPubKey: hex.decode(vectors.emulatorPubkey),
             }),
         );
@@ -710,14 +710,14 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
      * `fail` lists the owners and template ids it refuses, read at call time.
      */
     function derivingProvider({ fail = [] }: { fail?: string[] } = {}) {
-        const server = hex.decode(vectors.serverPubkey).subarray(1);
+        const operatorXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
         const num = (variables: Record<string, string>, name: string) =>
             Number(ScriptNum().decode(hex.decode(variables[name])));
         return {
             getInfo: vi.fn().mockResolvedValue({
                 ...makeInfo(),
-                cosignerPubkey: vectors.cosignerPubkey,
-                serverPubkey: vectors.serverPubkey,
+                batchCosignerPubkey: vectors.batchCosignerPubkey,
+                operatorPubkey: vectors.operatorPubkey,
                 emulatorPubkey: vectors.emulatorPubkey,
             }),
             registerDelegation: vi.fn(
@@ -736,8 +736,8 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                             ...(template === "boarding"
                                 ? { boardingExitDelay: num(variables, "boarding_exit_delay") }
                                 : {}),
-                            cosignerPubKey: hex.decode(vectors.cosignerPubkey),
-                            serverPubKey: hex.decode(vectors.serverPubkey),
+                            batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
+                            operatorPubKey: hex.decode(vectors.operatorPubkey),
                             emulatorPubKey: hex.decode(vectors.emulatorPubkey),
                         }),
                     );
@@ -758,7 +758,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                                       name: "renew",
                                       onchain: false,
                                       script: hex.encode(script.pkScript),
-                                      address: script.address("tark", server).encode(),
+                                      address: script.address("tark", operatorXOnly).encode(),
                                   },
                         ],
                     };
@@ -810,8 +810,8 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         await watchExecutorContracts(
             wallet,
             {
-                cosignerPubkey: vectors.cosignerPubkey,
-                serverPubkey: vectors.serverPubkey,
+                batchCosignerPubkey: vectors.batchCosignerPubkey,
+                operatorPubkey: vectors.operatorPubkey,
                 emulatorPubkey: vectors.emulatorPubkey,
                 ...held.keys,
             },
@@ -855,9 +855,9 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         return { ...ctx, executor };
     }
 
-    it("accepts an offchain input addressed as the v0 Ark address of (hrp, server key, tap key)", async () => {
+    it("accepts an offchain input addressed as the v0 address of (hrp, operator pubkey, tap key)", async () => {
         // the Executor's addressOf encodes offchain inputs as a version-0 Ark address
-        const server = hex.decode(vectors.serverPubkey).subarray(1);
+        const operatorXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
         const script = ExecutorContractHandler.createScript(
             ExecutorContractHandler.serializeParams({
                 template: "renewal",
@@ -865,12 +865,12 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                 exitDelay: params.exitDelay,
                 renewalWindow: params.renewalWindow,
                 maxFee: params.maxFee,
-                cosignerPubKey: hex.decode(vectors.cosignerPubkey),
-                serverPubKey: hex.decode(vectors.serverPubkey),
+                batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
+                operatorPubKey: hex.decode(vectors.operatorPubkey),
                 emulatorPubKey: hex.decode(vectors.emulatorPubkey),
             }),
         );
-        const address = new ArkAddress(server, script.tweakedPublicKey, "tark").encode();
+        const address = new ArkAddress(operatorXOnly, script.tweakedPublicKey, "tark").encode();
         expect(address).toBe(vectors.renewal.address);
         await expect(
             new ExecutorManagerImpl(
@@ -943,8 +943,8 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         await watchExecutorContracts(
             managed,
             {
-                cosignerPubkey: vectors.cosignerPubkey,
-                serverPubkey: vectors.serverPubkey,
+                batchCosignerPubkey: vectors.batchCosignerPubkey,
+                operatorPubkey: vectors.operatorPubkey,
                 emulatorPubkey: vectors.emulatorPubkey,
             },
             params,
@@ -996,8 +996,8 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
             await watchExecutorContracts(
                 managed,
                 {
-                    cosignerPubkey: vectors.cosignerPubkey,
-                    serverPubkey: vectors.serverPubkey,
+                    batchCosignerPubkey: vectors.batchCosignerPubkey,
+                    operatorPubkey: vectors.operatorPubkey,
                     emulatorPubkey: vectors.emulatorPubkey,
                 },
                 params,
@@ -1066,7 +1066,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         const { wallet: managed, manager, provider } = await managedWallet();
         // its coins sit in a contract the Executor's current emulator key does not derive
         await holdBoardingWatch(managed, `tr(${heldKeys[0]})`, {
-            keys: { emulatorPubkey: vectors.cosignerPubkey },
+            keys: { emulatorPubkey: vectors.batchCosignerPubkey },
         });
         await holdBoardingWatch(managed, `tr(${heldKeys[1]})`);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -1337,7 +1337,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         it("does not revive a watch under another emulator key than the Executor's", async () => {
             const { wallet: managed, manager, provider } = await managedWallet();
             await holdBoardingWatch(managed, `tr(${heldKeys[0]})`, {
-                keys: { emulatorPubkey: vectors.cosignerPubkey },
+                keys: { emulatorPubkey: vectors.batchCosignerPubkey },
             });
             answer(provider, { boarding: "expired" });
             const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -1353,7 +1353,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
             const { wallet: managed, provider } = await managedWallet();
             // as after a signer rotation: the row commits to the previous operator's key
             await holdBoardingWatch(managed, `tr(${heldKeys[0]})`, {
-                keys: { serverPubkey: vectors.cosignerPubkey },
+                keys: { operatorPubkey: vectors.batchCosignerPubkey },
             });
             answer(provider, { boarding: "expired" });
 
@@ -1434,16 +1434,16 @@ describe("watchExecutorContracts", () => {
             contractRepository: new InMemoryContractRepository(),
             walletRepository: new InMemoryWalletRepository(),
         });
-        const serverXOnly = hex.decode(vectors.serverPubkey).subarray(1);
+        const operatorXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
         const restored = {
             identity,
             getAddress: async () =>
-                new ArkAddress(serverXOnly, new Uint8Array(32).fill(1), "tark").encode(),
+                new ArkAddress(operatorXOnly, new Uint8Array(32).fill(1), "tark").encode(),
             getContractManager: async () => manager,
         } as unknown as Parameters<typeof watchExecutorContracts>[0];
         const keys = {
-            cosignerPubkey: vectors.cosignerPubkey,
-            serverPubkey: vectors.serverPubkey,
+            batchCosignerPubkey: vectors.batchCosignerPubkey,
+            operatorPubkey: vectors.operatorPubkey,
             emulatorPubkey: vectors.emulatorPubkey,
         };
 
@@ -1490,8 +1490,8 @@ function makeInfo() {
     return {
         version: "test",
         network: "regtest",
-        cosignerPubkey: hex.encode(compressedKey),
-        serverPubkey: hex.encode(compressedKey),
+        batchCosignerPubkey: hex.encode(compressedKey),
+        operatorPubkey: hex.encode(compressedKey),
         emulatorPubkey: hex.encode(compressedKey),
     };
 }
@@ -1553,8 +1553,8 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
     return {
         getInfo: vi.fn().mockResolvedValue({
             ...makeInfo(),
-            cosignerPubkey: vectors.cosignerPubkey,
-            serverPubkey: vectors.serverPubkey,
+            batchCosignerPubkey: vectors.batchCosignerPubkey,
+            operatorPubkey: vectors.operatorPubkey,
             emulatorPubkey: vectors.emulatorPubkey,
         }),
         registerDelegation: vi.fn().mockResolvedValue({

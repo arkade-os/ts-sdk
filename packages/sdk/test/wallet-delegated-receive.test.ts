@@ -38,8 +38,8 @@ async function boardingRow(owner: Uint8Array) {
         renewalWindow: 1000,
         maxFee: 100,
         boardingExitDelay: 144,
-        cosignerPubKey: hex.decode(vectors.cosignerPubkey),
-        serverPubKey: hex.decode(vectors.serverPubkey),
+        batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
+        operatorPubKey: hex.decode(vectors.operatorPubkey),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
     const script = ExecutorContractHandler.createScript(params);

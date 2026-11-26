@@ -34,7 +34,7 @@ vi.mock("../src/utils/fetch", async (importActual) => ({
     baseFetch: mockFetch,
 }));
 
-const otherSigner = hex.decode(vectors.cosignerPubkey);
+const otherSigner = hex.decode(vectors.batchCosignerPubkey);
 const rotatedKey = "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4";
 
 async function walletWith(rows: Row[], executorProvider: Partial<ExecutorProvider> = {}) {
@@ -87,7 +87,7 @@ describe("getAddress with an Executor watch", () => {
             { metadata: { [DELEGATION_STATUS_KEY]: "active", [DELEGATION_EXPIRES_KEY]: 1 } },
         ],
         ["local", { metadata: { [DELEGATION_STATUS_KEY]: "local" } }],
-        ["under another signer", { server: vectors.cosignerPubkey }],
+        ["under another signer", { operatorPubkey: vectors.batchCosignerPubkey }],
         [
             "a boarding key's",
             {
@@ -269,8 +269,8 @@ describe("where the wallet's own outputs go", () => {
         const getInfo = vi.fn(async () => ({
             version: "test",
             network: "mutinynet",
-            cosignerPubkey: vectors.cosignerPubkey,
-            serverPubkey: vectors.serverPubkey,
+            batchCosignerPubkey: vectors.batchCosignerPubkey,
+            operatorPubkey: vectors.operatorPubkey,
             emulatorPubkey: vectors.emulatorPubkey,
         }));
         const { wallet } = await walletWith([row], { getInfo });

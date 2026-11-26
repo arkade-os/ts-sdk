@@ -62,8 +62,8 @@ function twinRow() {
         exitDelay: 144,
         renewalWindow: 1000,
         maxFee: 100,
-        cosignerPubKey: hex.decode("02" + hex.encode(makerKey)),
-        serverPubKey: hex.decode("02" + signerKey),
+        batchCosignerPubKey: hex.decode("02" + hex.encode(makerKey)),
+        operatorPubKey: hex.decode("02" + signerKey),
         emulatorPubKey: hex.decode(emulatorPubkey),
     });
     const script = ExecutorContractHandler.createScript(params);

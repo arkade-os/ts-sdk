@@ -955,9 +955,9 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // the watch address commits to the service's operator key, so it must be the wallet's
         const { hrp, serverPubKey } = await ownAddress(this.wallet);
         const server = hex.encode(serverPubKey);
-        if (info.serverPubkey.slice(2).toLowerCase() !== server) {
+        if (info.operatorPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
-                `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${server}`,
+                `Executor's operator key ${info.operatorPubkey} is not the wallet's operator ${server}`,
             );
         }
         return {
@@ -995,8 +995,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const owner = await ownerKey(this.wallet.identity, descriptor);
         const params = resolveParams(options, operator, template);
         const keys: ExecutorContractKeys = {
-            cosignerPubkey: info.cosignerPubkey,
-            serverPubkey: info.serverPubkey,
+            batchCosignerPubkey: info.batchCosignerPubkey,
+            operatorPubkey: info.operatorPubkey,
             emulatorPubkey: info.emulatorPubkey,
         };
         const variables = defaultVariables(template, owner, params);
@@ -1015,9 +1015,10 @@ export class ExecutorManagerImpl implements IExecutorManager {
             signal: timeoutSignal(EXECUTOR_REQUEST_TIMEOUT_MS),
         });
         // The scripts derive from the owner, the params and the operator and emulator keys, not the
-        // cosigner key: a matching address proves those and commits to the same tapscripts, and
-        // says nothing of the cosigner key. That is safe while the cosigner key is in no leaf; a
-        // template that gives it one must check it here. Checked before anything is persisted.
+        // batch cosigner key: a matching address proves those and commits to the same tapscripts,
+        // and says nothing of the batch cosigner key. That is safe while the batch cosigner key is
+        // in no leaf; a template that gives it one must check it here. Checked before anything is
+        // persisted.
         const [input] = delegation.inputs;
         if (
             delegation.inputs.length !== 1 ||
