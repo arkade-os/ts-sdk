@@ -4,6 +4,7 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 import {
+    instantiatedContracts,
     programFromArtifact,
     type ContractArtifact,
     type ContractDebugInfo,
@@ -1457,6 +1458,42 @@ describe("singleOperatorKey", () => {
         const { tapscript } = programFromArtifact(art, { singleOperatorKey: true }).functions.claim;
         expect(tapscript.signers).toEqual(["$owner", { tweak: "$server", fn: "claim" }]);
         expect(tapscript.emulator).toBeNull();
+    });
+
+    it("refuses an operator key tweak in a leaf without a covenant, as the default read does", () => {
+        const art = demo({
+            functions: [
+                {
+                    name: "spend",
+                    leaves: [{ name: "spend", asm: ["<OPERATOR_KEY:spend>", "OP_CHECKSIG"] }],
+                },
+            ],
+        });
+        expect(() => programFromArtifact(art)).toThrow(/needs a covenant/);
+        expect(() => programFromArtifact(art, { singleOperatorKey: true })).toThrow(
+            /needs a covenant/,
+        );
+    });
+
+    it("reads a linked child contract's operator keys the same way", () => {
+        const fixture = (name: string): ContractArtifact =>
+            JSON.parse(
+                readFileSync(
+                    new URL(`./fixtures/arkadec/${name}.artifact.json`, import.meta.url),
+                    "utf8",
+                ),
+            );
+        const parent = programFromArtifact(fixture("htlc"), {
+            contracts: [fixture("single_sig")],
+            singleOperatorKey: true,
+        });
+        const children = Object.values(instantiatedContracts(parent));
+        expect(children).not.toHaveLength(0);
+        for (const { program } of children) {
+            expect(program).toEqual(
+                programFromArtifact(fixture("single_sig"), { singleOperatorKey: true }),
+            );
+        }
     });
 
     it("signs a covenant leaf with the server key tweaked by its function alone", () => {

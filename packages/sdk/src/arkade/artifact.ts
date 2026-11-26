@@ -422,6 +422,13 @@ function instantiationArg(
 const MAX_INSTANTIATIONS = 256;
 const MAX_INSTANTIATED_CHARS = 1 << 20;
 
+/** Budgets shared by every artifact one read reaches, and how all of them read operator keys. */
+interface ReadContext {
+    links: number;
+    chars: number;
+    singleOperatorKey: boolean;
+}
+
 /** Resolve `<CONTRACT:body>` in `parent` to the supplied artifact its pin names, read in turn. */
 function link(
     parent: ContractArtifact,
@@ -577,6 +584,7 @@ function parseLeaf(
         const inner = key.slice(1, -1);
         if (inner === "OPERATOR_KEY") signers.push("$server");
         else if (inner.startsWith("OPERATOR_KEY:")) {
+            if (!hasCovenant) fail(`leaf '${leaf.name}': ${key} needs a covenant`);
             signers.push({ tweak: "$server", fn: inner.slice("OPERATOR_KEY:".length) });
         } else if (inner.startsWith("TWEAK:")) {
             const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
@@ -648,13 +656,6 @@ export function programFromArtifact(
         chars: MAX_INSTANTIATED_CHARS,
         singleOperatorKey,
     });
-}
-
-/** Budgets shared by every artifact one read reaches, and how all of them read operator keys. */
-interface ReadContext {
-    links: number;
-    chars: number;
-    singleOperatorKey: boolean;
 }
 
 function readArtifact(
