@@ -95,8 +95,9 @@ style and have not been backfilled.
   every read, copied per read, and never persisted. A path arkd does not
   co-sign, such as a unilateral exit, carries none. More than 16 is refused, already by `Arkade.contract()`
   when any collaborative function's spend would need more, rather than at that
-  spend. Trees without such a leaf, swap offers included, build the same
-  PSBTs as before, and an arkd that predates the field ignores it.
+  spend. Trees without such a leaf, swap offers on the earlier contract
+  versions included, build the same PSBTs as before, and an arkd that predates
+  the field ignores it.
   `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
 
 - **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
@@ -112,7 +113,9 @@ style and have not been backfilled.
   serves keeps choosing the existing ones. Both nonce versions carry the same
   offer fields, so a deposit's version is the one whose script it was funded
   to: deposits under `asset-swap-directed-nonce` still restore, cancel and
-  fill as before, and a binding records which version it is.
+  fill as before, and a binding records which version it is. A spend of a v2
+  deposit other than `fulfill` reveals the `fulfill` script hash in
+  `ArkadeTweak`, since that leaf names the operator key only tweaked.
 
 ### Bug Fixes
 
