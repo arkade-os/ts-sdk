@@ -93,6 +93,9 @@ style and have not been backfilled.
   PSBTs as before, and an arkd that predates the field ignores it.
   `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
 
+- **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
+- **Two-asset RFQ swaps can pay a specified recipient.** Set `assetPayment.receiveAddress` on a directed quote or an exact-payout open RFQ. Explicit carrier modes require a BTC deposit.
+
 ### Bug Fixes
 
 - **Covenant co-signer routing uses the selected signing leaf.** Renewal
@@ -101,6 +104,8 @@ style and have not been backfilled.
   signing keys, so bytes in a condition cannot select the operator.
   Linked child contracts use the same signer rewrite as direct creation,
   so the parent commits to the child's directly derived address.
+  Unilateral CSV spends omit operator tweak hashes and remain buildable
+  when the contract's collaborative leaves reach the disclosure limit.
   Operator-routed covenant spends enforce arkd's input limit and require any
   other co-signers' PSBT signature entries before submission. arkd verifies
   the signatures before co-signing.

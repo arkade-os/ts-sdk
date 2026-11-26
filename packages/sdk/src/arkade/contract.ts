@@ -699,7 +699,7 @@ export class Arkade {
         );
         const { vtxoScript } = contract;
         for (const fn of vtxoScript.compiled) {
-            const count = fn.def.tapscript.csv ? 0 : vtxoScript.arkadeTweaks(fn).length;
+            const count = vtxoScript.arkadeTweaks(fn).length;
             if (count > MAX_ARKADE_TWEAKS) {
                 throw new Error(
                     `${fn.name}: a spend would reveal ${count} arkade tweak hashes; arkd accepts at most ${MAX_ARKADE_TWEAKS}`,

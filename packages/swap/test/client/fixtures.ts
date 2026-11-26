@@ -82,6 +82,7 @@ export const CHECKPOINT_TAPSCRIPT = hex.encode(
 export const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
     dust: 330n,
+    vtxoMinAmount: 0n,
     unilateralExitDelay: 4096n,
     network: "regtest",
     deprecatedSigners: [],
@@ -163,7 +164,7 @@ export const rivalLightningCard: DiscoveredMarket = {
 };
 
 export const USD_ASSET_ID = "f121ac9b7656797cc68d1e8fecacfbaa2069ec1461edf0bf2f3c37404cb9791a0000";
-/** A second arkade asset, for the pair no market prices. */
+/** A second Arkade asset. */
 export const EUR_ASSET_ID = "3c6b5f1d8ea47b2099c0d4e5f6a7b8c9dae1f2031425364758697a8b9cadbe0f0000";
 
 /** An arkade-to-arkade market: feed-priced, no rendezvous, no corridor. */
@@ -220,12 +221,22 @@ export const canonicalAssetCard: DiscoveredMarket = {
     transports: { nostr: { relays: ["wss://relay.example"] } },
 };
 
-/** A negotiated card for two assets: a pair no market prices. */
 export const assetPairCard: DiscoveredMarket = {
     ...assetCard,
     pair: "USD/EUR",
-    base_asset: { id: USD_ASSET_ID, name: "US Dollar", ticker: "USD", decimals: 2 },
-    quote_asset: { id: EUR_ASSET_ID, name: "Euro", ticker: "EUR", decimals: 2 },
+    price_decimals: 0,
+    base_asset: {
+        id: `arkade:regtest/asset:${USD_ASSET_ID}`,
+        name: "US Dollar",
+        ticker: "USD",
+        decimals: 2,
+    },
+    quote_asset: {
+        id: `arkade:regtest/asset:${EUR_ASSET_ID}`,
+        name: "Euro",
+        ticker: "EUR",
+        decimals: 2,
+    },
 };
 
 /** The wire pair for each direction of the negotiated asset market. */
@@ -512,6 +523,9 @@ export const arkadeAssetAnswer = (
     const profile = profileOf(payload);
     const from = BigInt(payload.amount as string);
     const buying = payload.pair === ASSET_BUY_PAIR;
+    const [give, take] = (payload.pair as string)
+        .split("->")
+        .map((leg) => leg.slice("arkade:".length));
     const plan = planOffer({
         market: assetCard,
         give: buying ? "base" : "quote",
@@ -520,7 +534,6 @@ export const arkadeAssetAnswer = (
         safetyBps: 0,
     });
     const to = over.toAmount ?? plan.receive.atomic;
-    const usd = asset.AssetId.fromString(USD_ASSET_ID);
     // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
     const version = (payload.contract_versions as string[] | undefined)?.find(
         (v) =>
@@ -537,7 +550,9 @@ export const arkadeAssetAnswer = (
             // The covenant binds what the fill must DELIVER, so the wanted
             // amount is this quote's own payout.
             wantAmount: to,
-            ...(buying ? { wantAsset: usd } : { offerAsset: usd }),
+            ...(take === "BTC"
+                ? { offerAsset: asset.AssetId.fromString(give) }
+                : { wantAsset: asset.AssetId.fromString(take) }),
             makerPkScript: hex.decode(profile.maker_pk_script as string),
             makerPublicKey: hex.decode(profile.maker_public_key as string),
             emulatorPubkey: cosignerOf(profile),

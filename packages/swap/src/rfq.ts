@@ -1414,12 +1414,14 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
     }
 };
 
-/** Falls back on absent AND zero: zero would fund an asset with no carrier. Throws a gate
- * error (`carrier_malformed`) on anything but a non-negative integer up to the operator's
- * `dust` (at least {@link ASSET_CARRIER_SATS}), the most an honest solver publishes. */
-export const quoteCarrierSats = (quote: RfqQuote, dust: bigint): bigint => {
+/** Two-asset quotes must publish the exact minimum output carrier. For BTC pairs, absent or zero
+ * uses the legacy fallback and a published carrier may not exceed the dust cap. */
+export const quoteCarrierSats = (quote: RfqQuote, dust: bigint, minVtxoAmount?: bigint): bigint => {
     const raw = quote.carrier_sats;
-    if (raw === undefined) return ASSET_CARRIER_SATS;
+    if (raw === undefined) {
+        if (minVtxoAmount === undefined) return ASSET_CARRIER_SATS;
+        throw gateError("carrier_malformed", "two-asset quote must publish carrier_sats");
+    }
     const canonical =
         typeof raw === "number"
             ? Number.isSafeInteger(raw) && raw >= 0
@@ -1431,6 +1433,16 @@ export const quoteCarrierSats = (quote: RfqQuote, dust: bigint): bigint => {
         );
     }
     const published = BigInt(raw);
+    if (minVtxoAmount !== undefined) {
+        const minimum = minVtxoAmount > dust ? minVtxoAmount : dust;
+        if (published <= 0n || published !== minimum) {
+            throw gateError(
+                "carrier_malformed",
+                `quote carrier_sats ${published} must equal the ${minimum}-sat minimum output`,
+            );
+        }
+        return published;
+    }
     const cap = dust > ASSET_CARRIER_SATS ? dust : ASSET_CARRIER_SATS;
     if (published > cap) {
         throw gateError(
@@ -1527,6 +1539,10 @@ export async function requestArkadeSwap(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
     );
+    const twoAssetSwap = params.offerAsset !== undefined && params.wantAsset !== undefined;
+    const contractVersions = twoAssetSwap
+        ? [ASSET_SWAP_DIRECTED_NONCE]
+        : ASSET_SWAP_CONTRACT_VERSIONS;
     const { quote, rfqId, contractVersion } = await requestVersionedQuote(
         transport,
         arkadeSwapRequest({
@@ -1537,10 +1553,10 @@ export async function requestArkadeSwap(
             amountSide,
             makerPkScript,
             makerPublicKey,
-            contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
+            contractVersions,
             emulatorPubkey: covenantCosigner(info, params.emulatorPubkey),
         }),
-        ASSET_SWAP_CONTRACT_VERSIONS,
+        contractVersions,
     );
     if (quote.pair !== pair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
@@ -1582,7 +1598,14 @@ export async function requestArkadeSwap(
             );
         }
     }
-    const carrierSats = params.offerAsset === undefined ? 0n : quoteCarrierSats(quote, info.dust);
+    const carrierSats =
+        params.offerAsset === undefined
+            ? 0n
+            : quoteCarrierSats(
+                  quote,
+                  info.dust,
+                  twoAssetSwap ? (info.vtxoMinAmount ?? 0n) : undefined,
+              );
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
         info,

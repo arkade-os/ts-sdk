@@ -663,6 +663,7 @@ export class ArkadeProgramScript extends VtxoScript {
      * names the server key only tweaked.
      */
     arkadeTweaks(spent: CompiledProgramFunction): Uint8Array[] {
+        if (spent.def.tapscript.csv) return [];
         const { serverKey } = this.keys;
         const scripts = new Map<string, Uint8Array>();
         for (const { arkadeScript } of this.compiled) {

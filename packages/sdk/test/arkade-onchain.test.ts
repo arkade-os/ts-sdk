@@ -181,6 +181,44 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(getArkPsbtFields(tx, 0, ArkadeTweak)).toEqual([[hash(sweep)]]);
     });
 
+    it("builds a unilateral CSV spend without revealing other covenant hashes", async () => {
+        const { ark, userKey } = await setup();
+        const covenants = Array.from({ length: 17 }, (_, i) => {
+            const name = `covenant${i}`;
+            return [
+                name,
+                {
+                    tapscript: { signers: [{ tweak: "$server", fn: name }], emulator: null },
+                    arkadeScript: { asm: [i + 2] },
+                },
+            ] as const;
+        });
+        const withExit = {
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
+            functions: {
+                ...Object.fromEntries(covenants),
+                exit: { tapscript: { signers: ["$user"], csv: { type: "blocks", value: 10n } } },
+            },
+        } satisfies arkade.Program;
+        const contract = new arkade.ArkadeContract(ark, withExit, {
+            server: ark.serverKey,
+            user: userKey,
+        });
+        const tx = await contract.functions
+            .exit()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .buildOnchain();
+
+        expect(tx.getInput(0).sequence).toBe(10);
+        expect(getArkPsbtFields(tx, 0, ArkadeTweak)).toEqual([]);
+    });
+
     it("covenant non-server leaf: emulator cosigns, then finalize and broadcast", async () => {
         const { contract, submitOnchainTx, cosignOnchainTx, broadcastTransaction } = await setup();
         const txid = await contract.functions

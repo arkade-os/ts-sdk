@@ -439,7 +439,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         // `marketBackendOf`.
         if (market.backend === "feed") {
             if (assetPayment !== undefined)
-                throw new Error("assetPayment needs a negotiated BTC-to-asset market");
+                throw new Error("assetPayment requires a negotiated quote");
             const operatorDust = async (): Promise<bigint> => {
                 const { dust } = await liveOperatorInfo(wallet);
                 if (
@@ -588,12 +588,11 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             if (receiveAddress !== undefined) {
                 if (
                     routed.pair !== "arkade->arkade" ||
-                    !isBtcAsset(routed.give.asset) ||
                     isBtcAsset(routed.take.asset) ||
                     routed.amount?.on !== "take"
                 )
                     throw new UnsupportedRoute(
-                        "open RFQ asset payments require an exact BTC-to-asset route",
+                        "open RFQ asset payments require an exact Arkade asset payout",
                     );
                 const info = await liveOperatorInfo(wallet, { requireLive: true });
                 if (info.network !== base.networkName)

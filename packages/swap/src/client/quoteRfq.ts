@@ -305,7 +305,7 @@ export const quoteViaRfq = async (
     });
 
     if (input.assetPayment !== undefined && input.route !== "arkade->arkade")
-        throw new Error("assetPayment supports BTC-to-asset only");
+        throw new Error("assetPayment requires an Arkade-to-Arkade RFQ");
     switch (input.route) {
         case "arkade->arkade":
             return quoteArkadeAsset(input);
@@ -341,8 +341,15 @@ const quoteArkadeAsset = async (
     const pinned = pinnedFor(input);
     const sides = assetSidesOf(input.legs);
     const payment = input.assetPayment;
+    const choice = payment?.carrier;
+    if (choice !== undefined && sides.offerAsset !== undefined)
+        throw new Error("assetPayment.carrier requires a BTC-to-asset quote");
     if (payment !== undefined && sides.wantAsset === undefined)
-        throw new Error("assetPayment supports BTC-to-asset only");
+        throw new Error("assetPayment requires an Arkade asset payout");
+    const twoAssetSwap = sides.offerAsset !== undefined && sides.wantAsset !== undefined;
+    const contractVersions = twoAssetSwap
+        ? [ASSET_SWAP_DIRECTED_NONCE]
+        : ASSET_SWAP_CONTRACT_VERSIONS;
     // The fee is measured against the card's own feed, so a card without one is refused before the
     // request discloses anything, not after the solver has already answered.
     if (input.candidate.card.price_feed === undefined) {
@@ -363,7 +370,6 @@ const quoteArkadeAsset = async (
         networkFromOperatorInfo(input.info).hrp,
         toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
     );
-    const choice = payment?.carrier;
     const carrierRequest =
         choice === undefined
             ? undefined
@@ -390,7 +396,7 @@ const quoteArkadeAsset = async (
         amountSide: toRfqAmountSide(pinned.on),
         makerPkScript: receivePkScript,
         makerPublicKey: maker.publicKey,
-        contractVersions: ASSET_SWAP_CONTRACT_VERSIONS,
+        contractVersions,
         emulatorPubkey: covenantCosigner(
             input.info,
             input.corridors.get("arkade").deps.emulatorPubkey,
@@ -411,7 +417,7 @@ const quoteArkadeAsset = async (
                     : { carrier: encodeCarrierRequest(carrierRequest) }),
             },
         },
-        ASSET_SWAP_CONTRACT_VERSIONS,
+        contractVersions,
     );
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire, input.policy);
@@ -475,7 +481,13 @@ const quoteArkadeAsset = async (
     // The solver's carrier for an asset deposit, parsed before anything is derived. A BTC
     // deposit funds none, so its wire `carrier_sats` is deliberately not read.
     const carrierSats =
-        sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire, input.info.dust);
+        sides.offerAsset === undefined
+            ? undefined
+            : verifiedCarrierSats(
+                  wire,
+                  input.info.dust,
+                  twoAssetSwap ? (input.info.vtxoMinAmount ?? 0n) : undefined,
+              );
     // The RFQ already disclosed amount, pair and maker script/key; feed failure may try another
     // solver before any covenant is derived or accepted. This asset path sends no invoice.
     const reference = await quoteAdvertisedPlan(
@@ -533,9 +545,12 @@ const quoteArkadeAsset = async (
             market: input.market,
             solver: parsed.solver,
             expiresAt: parsed.validUntil,
-            // Exactly one leg is BTC, so an asset deposit's carrier is on the payout's unit.
             fee: {
-                amount: feedSpread(reference, parsed.take, carrierSats),
+                amount: feedSpread(
+                    reference,
+                    parsed.take,
+                    sides.wantAsset === undefined ? carrierSats : undefined,
+                ),
                 asset: input.endpoints.take.asset,
             },
         },
@@ -560,36 +575,25 @@ const quoteArkadeAsset = async (
     };
 };
 
-/**
- * Which leg names an asset — the one thing the covenant commits to — and the
- * refusal when neither or both do.
- *
- * Exactly one leg must be BTC. Neither is the same asset twice, and both is a
- * pair no market prices: an asset is quoted against BTC, and a cross the solver
- * would have to warehouse two sides of is not a route it serves.
- */
 const assetSidesOf = (legs: {
     readonly give: DiscoveryLeg;
     readonly take: DiscoveryLeg;
 }): { wantAsset?: asset.AssetId; offerAsset?: asset.AssetId } => {
-    const giveIsBtc = legs.give.assetId === BTC_ASSET_ID;
-    const takeIsBtc = legs.take.assetId === BTC_ASSET_ID;
-    if (giveIsBtc && takeIsBtc) {
-        throw new UnsupportedRoute("give and take are both BTC, so the route swaps nothing", {
+    const { give, take } = legs;
+    if (give.assetId === take.assetId) {
+        throw new UnsupportedRoute("give and take name the same asset", {
             give: "arkade",
             take: "arkade",
         });
     }
-    if (!giveIsBtc && !takeIsBtc) {
-        throw new UnsupportedRoute(
-            `arkade:${legs.give.assetId} -> arkade:${legs.take.assetId}: an asset swap prices ` +
-                "one asset against BTC, so exactly one leg must be BTC",
-            { give: "arkade", take: "arkade" },
-        );
-    }
-    return giveIsBtc
-        ? { wantAsset: asset.AssetId.fromString(legs.take.assetId) }
-        : { offerAsset: asset.AssetId.fromString(legs.give.assetId) };
+    return {
+        ...(give.assetId === BTC_ASSET_ID
+            ? {}
+            : { offerAsset: asset.AssetId.fromString(give.assetId) }),
+        ...(take.assetId === BTC_ASSET_ID
+            ? {}
+            : { wantAsset: asset.AssetId.fromString(take.assetId) }),
+    };
 };
 
 /** The trader's own covenant position: the script a fill pays, and the key that
