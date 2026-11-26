@@ -794,6 +794,10 @@ describe("reading an arkadec artifact", () => {
             }),
             /name characters/,
         ],
+        [
+            demo({ constructorInputs: [{ name: "x", type: `int${"[1]".repeat(4_000_000)}` }] }),
+            /name characters/,
+        ],
     ])("validates artifact boundaries %#", (artifact, error) => {
         expect(() => programFromArtifact(artifact as ContractArtifact)).toThrow(error as RegExp);
     });

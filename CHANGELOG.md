@@ -225,6 +225,7 @@ style and have not been backfilled.
 
 ### Features
 
+- **`programFromArtifact` reads 0.1.0 nested arrays and asset group records.** It refused them as `invalid array type 'int[2][3]'` and `unknown type 'AssetGroupOutput'`. A nested array, as a constructor or Arkade Script input or a struct field, flattens outer index first (`grid.1.2`) and binds whole (`{ grid: [[1n, 2n, 3n], [4n, 5n, 6n]] }`) or by those names; `AssetGroupInput` and `AssetGroupOutput` flatten to `type`, `index` and `amount`.
 - **`@arkade-os/swap`: a quote says what an asset deposit funds as its carrier.** `Quote.depositCarrierSats` is the sats funded beside an asset give leg: the solver's verified carrier on a negotiated quote, the operator's dust on a feed-priced one. Subtract it from a BTC take for the net proceeds; it is absent when BTC is given.
 
 - **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier as `depositCarrierSats`. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.
