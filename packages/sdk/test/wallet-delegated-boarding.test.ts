@@ -35,7 +35,7 @@ vi.mock("../src/utils/fetch", async (importActual) => ({
     baseFetch: mockFetch,
 }));
 
-const SERVER_KEY_HEX = vectors.serverPubkey;
+const SERVER_KEY_HEX = vectors.operatorPubkey;
 const arkInfo = {
     signerPubkey: SERVER_KEY_HEX,
     forfeitPubkey: SERVER_KEY_HEX,
@@ -55,8 +55,8 @@ const identity = SingleKey.fromHex(
 const executorInfo = async () => ({
     version: "test",
     network: "mutinynet",
-    cosignerPubkey: vectors.cosignerPubkey,
-    serverPubkey: SERVER_KEY_HEX,
+    batchCosignerPubkey: vectors.batchCosignerPubkey,
+    operatorPubkey: SERVER_KEY_HEX,
     emulatorPubkey: vectors.emulatorPubkey,
 });
 // reports every watch active, so the startup refresh leaves them be
@@ -78,7 +78,7 @@ async function executorRow(
         renewalWindow: 1000,
         maxFee: 100,
         ...(template === "boarding" ? { boardingExitDelay: 144 } : {}),
-        cosignerPubKey: hex.decode(vectors.cosignerPubkey),
+        batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
         serverPubKey: hex.decode(SERVER_KEY_HEX),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
@@ -222,7 +222,7 @@ async function hdWalletWithWatch({
                     ...(template === "boarding"
                         ? { boardingExitDelay: num("boarding_exit_delay") }
                         : {}),
-                    cosignerPubKey: hex.decode(vectors.cosignerPubkey),
+                    batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
                     serverPubKey: hex.decode(SERVER_KEY_HEX),
                     emulatorPubKey: hex.decode(vectors.emulatorPubkey),
                 }),

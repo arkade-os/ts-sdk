@@ -328,7 +328,7 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
     });
 });
 
-// A watch no Executor serves: made-up cosigner and emulator keys, so no daemon boards its deposits
+// A watch no Executor serves: made-up batch cosigner and emulator keys, so no daemon boards its deposits
 // and the wallet's own hold-back and fallback can be seen.
 describe.skipIf(!reachable).sequential("Executor boarding fallback", () => {
     let alice: Wallet;
@@ -341,8 +341,10 @@ describe.skipIf(!reachable).sequential("Executor boarding fallback", () => {
         const seq = (delay: bigint) =>
             Number(timelockToSequence({ value: delay, type: delay < 512n ? "blocks" : "seconds" }));
         const keys = {
-            cosignerPubkey: hex.encode(await SingleKey.fromRandomBytes().compressedPublicKey()),
-            serverPubkey: info.signerPubkey,
+            batchCosignerPubkey: hex.encode(
+                await SingleKey.fromRandomBytes().compressedPublicKey(),
+            ),
+            operatorPubkey: info.signerPubkey,
             emulatorPubkey: hex.encode(await SingleKey.fromRandomBytes().compressedPublicKey()),
         };
         const contracts = await watchExecutorContracts(

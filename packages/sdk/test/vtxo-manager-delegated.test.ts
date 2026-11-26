@@ -13,7 +13,7 @@ import vectors from "./fixtures/executor/vectors.json";
 // The wallet's identity key and the operator's signer key the watches are registered under.
 const IDENTITY_X_ONLY = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 const ROTATED_X_ONLY = "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4";
-const SIGNER_PUBKEY = vectors.serverPubkey;
+const SIGNER_PUBKEY = vectors.operatorPubkey;
 // a retired operator signer, under which an older watch was registered
 const OTHER_SIGNER_PUBKEY = "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
 const DUST = 1000n;
@@ -33,7 +33,7 @@ function renewalRow(
         exitDelay: 144,
         renewalWindow,
         maxFee: MAX_FEE,
-        cosignerPubKey: hex.decode(vectors.cosignerPubkey),
+        batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
         serverPubKey: hex.decode(signerPubkey),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });

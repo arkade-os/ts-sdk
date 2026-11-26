@@ -26,7 +26,7 @@ vi.mock("../src/utils/fetch", async (importActual) => ({
     baseFetch: mockFetch,
 }));
 
-const SERVER_KEY_HEX = vectors.serverPubkey;
+const SERVER_KEY_HEX = vectors.operatorPubkey;
 const DUST = 1000;
 const MAX_FEE = 100;
 const ARK_TXID = "ee".repeat(32);
@@ -77,7 +77,7 @@ async function renewalRow({
         exitDelay: 144,
         renewalWindow: 1000,
         maxFee,
-        cosignerPubKey: hex.decode(vectors.cosignerPubkey),
+        batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
         serverPubKey: hex.decode(server),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
@@ -182,7 +182,7 @@ describe("a send's change from a delegated coin", () => {
     it.each([
         // other not-live cases are delegatedContracts', covered in vtxo-manager-delegated
         ["is local", { metadata: { [DELEGATION_STATUS_KEY]: "local" } }],
-        ["is under another signer", { server: vectors.cosignerPubkey }],
+        ["is under another signer", { server: vectors.batchCosignerPubkey }],
     ])("stays at the own address when the watch %s", async (_, options: RowOptions) => {
         const row = await renewalRow(options);
         const fx = await walletWith(row);

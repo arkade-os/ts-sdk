@@ -20,11 +20,11 @@ import { createMockIndexerProvider, createMockVtxo } from "../helpers";
 import type { DiscoveryDeps } from "../../../src/contracts/types";
 
 const keys = {
-    cosignerPubkey: vectors.cosignerPubkey,
-    serverPubkey: vectors.serverPubkey,
+    batchCosignerPubkey: vectors.batchCosignerPubkey,
+    operatorPubkey: vectors.operatorPubkey,
     emulatorPubkey: vectors.emulatorPubkey,
 };
-const serverXOnly = hex.decode(vectors.serverPubkey).subarray(1);
+const serverXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
 // the variables of the vectors: 512 s and 1024 s in BIP 68, a day, 500 sats
 const delegation = {
     exitDelay: 0x400001,
@@ -40,8 +40,8 @@ const params = (template: ExecutorDefault): Record<string, string> => ({
     renewalWindow: String(delegation.renewalWindow),
     maxFee: String(delegation.maxFee),
     ...(template === "boarding" ? { boardingExitDelay: String(delegation.boardingExitDelay) } : {}),
-    cosignerPubKey: vectors.cosignerPubkey,
-    serverPubKey: vectors.serverPubkey,
+    batchCosignerPubKey: vectors.batchCosignerPubkey,
+    serverPubKey: vectors.operatorPubkey,
     emulatorPubKey: vectors.emulatorPubkey,
 });
 
@@ -107,7 +107,7 @@ describe("ExecutorContractHandler", () => {
                                         {
                                             name: "pay",
                                             asm: [
-                                                "<SERVER_KEY>",
+                                                "<OPERATOR_KEY>",
                                                 "OP_CHECKSIGVERIFY",
                                                 "<EMULATOR_KEY:pay>",
                                                 "OP_CHECKSIG",
@@ -130,8 +130,17 @@ describe("ExecutorContractHandler", () => {
         const tweaked = computeArkadeScriptPublicKey(hex.decode(vectors.emulatorPubkey), covenant);
         const [leaf] = instantiate(doc, doc.inputs[0].contract, { owner }, keys).scripts;
         expect(hex.encode(leaf)).toBe(
-            `20${vectors.serverPubkey.slice(2)}ad20${hex.encode(tweaked)}ac`,
+            `20${vectors.operatorPubkey.slice(2)}ad20${hex.encode(tweaked)}ac`,
         );
+    });
+
+    it("reads a row stored before the key rename and writes it back under the new name", () => {
+        const { batchCosignerPubKey, ...rest } = params("renewal");
+        const typed = ExecutorContractHandler.deserializeParams({
+            ...rest,
+            cosignerPubKey: batchCosignerPubKey,
+        });
+        expect(ExecutorContractHandler.serializeParams(typed)).toEqual(params("renewal"));
     });
 
     it("round-trips its params and refuses unknown templates, x-only keys and bad numbers", () => {

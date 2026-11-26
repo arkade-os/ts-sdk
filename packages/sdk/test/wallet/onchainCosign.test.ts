@@ -485,8 +485,8 @@ describe("sendOnchain with explicit inputs", () => {
 
 describe("deposits at a delegated boarding address", () => {
     const keys = {
-        cosignerPubkey: vectors.cosignerPubkey,
-        serverPubkey: SERVER_PUBKEY_HEX,
+        batchCosignerPubkey: vectors.batchCosignerPubkey,
+        operatorPubkey: SERVER_PUBKEY_HEX,
         emulatorPubkey: vectors.emulatorPubkey,
     };
     const delegation = { renewalWindow: 1000, maxFee: 100, exitDelay: 144, boardingExitDelay: 144 };

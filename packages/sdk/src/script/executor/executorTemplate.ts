@@ -10,8 +10,8 @@ import renewDocument from "./renew.json";
 
 /** The Executor's keys a delegated contract derives from, compressed hex. */
 export interface ExecutorContractKeys {
-    cosignerPubkey: string;
-    serverPubkey: string;
+    batchCosignerPubkey: string;
+    operatorPubkey: string;
     emulatorPubkey: string;
 }
 
@@ -132,8 +132,8 @@ export function instantiate(
         throw new Error(
             `unknown artifact ${(construction.definition as { artifact: string }).artifact}`,
         );
-    const serverKey = hex.decode(keys.serverPubkey).subarray(1);
-    const args: Record<string, Value> = { server: serverKey };
+    const operatorKey = hex.decode(keys.operatorPubkey).subarray(1);
+    const args: Record<string, Value> = { server: operatorKey };
     for (const [field, binding] of Object.entries(construction.arguments)) {
         if (typeof binding === "string") {
             const value = variables[binding.slice(1, -1)];
@@ -151,7 +151,7 @@ export function instantiate(
         if (field.type === "pubkey") args[field.name] = (value as Uint8Array).subarray(1);
     }
     return new ArkadeProgramScript(programFromArtifact(def), args, {
-        serverKey,
+        serverKey: operatorKey,
         emulatorKey: hex.decode(keys.emulatorPubkey),
     });
 }
