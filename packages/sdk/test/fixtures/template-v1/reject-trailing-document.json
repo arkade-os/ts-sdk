@@ -2,9 +2,9 @@
   "artifacts": {},
   "bindings": {
     "keys": {
-      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "batch_cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
-      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+      "operator": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     },
     "variables": {}
   },
@@ -42,6 +42,6 @@
       }
     ]
   },
-  "template_text": "{\"format\": \"template/v1\", \"type\": \"onchain\", \"inputs\": [{\"name\": \"funds\", \"contract\": {\"definition\": {\"contractName\": \"Release\", \"constructorInputs\": [], \"structs\": [], \"functions\": [{\"name\": \"release\", \"leaves\": [{\"name\": \"release\", \"asm\": [\"<COSIGNER_KEY>\", \"OP_CHECKSIG\"], \"witness\": [{\"name\": \"delegateSig\", \"type\": \"signature\", \"encoding\": \"schnorr-64\", \"injected\": true}]}]}]}}, \"spend\": {\"function\": \"release\", \"leaf\": \"release\"}}], \"outputs\": [{\"name\": \"payment\", \"index\": 0, \"value\": {\"from\": \"funds\"}, \"locking\": \"5120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9\"}], \"fees\": {\"from\": \"funds\", \"max\": 1000}} {}",
+  "template_text": "{\"format\": \"template/v1\", \"type\": \"onchain\", \"inputs\": [{\"name\": \"funds\", \"contract\": {\"definition\": {\"contractName\": \"Release\", \"constructorInputs\": [], \"structs\": [], \"functions\": [{\"name\": \"release\", \"leaves\": [{\"name\": \"release\", \"asm\": [\"<BATCH_COSIGNER_KEY>\", \"OP_CHECKSIG\"], \"witness\": [{\"name\": \"delegateSig\", \"type\": \"signature\", \"encoding\": \"schnorr-64\", \"injected\": true}]}]}]}}, \"spend\": {\"function\": \"release\", \"leaf\": \"release\"}}], \"outputs\": [{\"name\": \"payment\", \"index\": 0, \"value\": {\"from\": \"funds\"}, \"locking\": \"5120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9\"}], \"fees\": {\"from\": \"funds\", \"max\": 1000}} {}",
   "artifact_version": "artifact/v1"
 }

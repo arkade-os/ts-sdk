@@ -1,12 +1,12 @@
 import { hex } from "@scure/base";
 
-import { HEX_TOKEN, isContextFree, PLACEHOLDER } from "../asm";
+import { HEX_TOKEN, isContextFree, PLACEHOLDER, serviceKey } from "../asm";
 import { compareGo } from "../jcs";
 import type * as schema from "../schema";
 import { bad, type Compiler, checkExpression, inputIndex, q, within } from "./compiler";
 import { type CaptureRule, contextFree, type Requirement, type Trigger, tokenName } from "./model";
 
-const SERVICE_KEYS = ["ENCRYPTION_KEY", "SERVER_KEY", "EMULATOR_KEY"];
+const SERVICE_KEYS = ["SEALING_KEY", "OPERATOR_KEY", "EMULATOR_KEY"];
 const OUTPUT_TAPTREE = "output:taptree";
 
 export function triggers(c: Compiler): void {
@@ -66,7 +66,7 @@ function requirement(c: Compiler, tr: Trigger, src: string, value: string): Requ
     if (!isSource(tr, src)) throw bad(`source ${q(src)} does not fit the rule`);
     const m = PLACEHOLDER.exec(value);
     if (HEX_TOKEN.test(value)) return { source: src, lit: hex.decode(value.slice(2)) };
-    if (m && SERVICE_KEYS.includes(m[1])) return { source: src, key: m[1] };
+    if (m && SERVICE_KEYS.includes(serviceKey(m[1]))) return { source: src, key: serviceKey(m[1]) };
     if (m) {
         if (!c.t.variables.has(m[1])) {
             throw bad(`require ${q(src)} names undeclared variable ${q(m[1])}`);

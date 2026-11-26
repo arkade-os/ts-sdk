@@ -3,7 +3,7 @@
   "bindings": {
     "keys": {
       "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
-      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+      "operator": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     },
     "variables": {
       "receiver_program": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
@@ -101,7 +101,7 @@
                       "<preimageHash>",
                       "OP_EQUAL",
                       "OP_VERIFY",
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIGVERIFY",
                       "<EMULATOR_KEY:claim>",
                       "OP_CHECKSIG"
@@ -113,7 +113,7 @@
                         "encoding": "raw"
                       },
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true

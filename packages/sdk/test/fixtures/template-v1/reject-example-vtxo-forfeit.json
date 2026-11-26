@@ -1,6 +1,6 @@
 {
   "artifacts": {
-    "faa3249b8a28e999963994e4020e832285351eb7ce3b4821bcb3b4498f5b8ef3": {
+    "65e0a8660aeff2ebf9a352846541b07bd14d5063e7f58434e0958af11fe572ef": {
       "contractName": "DelegatedVtxo",
       "constructorInputs": [
         {
@@ -30,7 +30,7 @@
               "asm": [
                 "<owner>",
                 "OP_CHECKSIGVERIFY",
-                "<SERVER_KEY>",
+                "<OPERATOR_KEY>",
                 "OP_CHECKSIG"
               ],
               "witness": [
@@ -40,7 +40,7 @@
                   "encoding": "schnorr-64"
                 },
                 {
-                  "name": "serverSig",
+                  "name": "operatorSig",
                   "type": "signature",
                   "encoding": "schnorr-64",
                   "injected": true
@@ -111,14 +111,14 @@
             {
               "name": "renew",
               "asm": [
-                "<SERVER_KEY>",
+                "<OPERATOR_KEY>",
                 "OP_CHECKSIGVERIFY",
                 "<EMULATOR_KEY:renew>",
                 "OP_CHECKSIG"
               ],
               "witness": [
                 {
-                  "name": "serverSig",
+                  "name": "operatorSig",
                   "type": "signature",
                   "encoding": "schnorr-64",
                   "injected": true
@@ -138,9 +138,9 @@
   },
   "bindings": {
     "keys": {
-      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "batch_cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
-      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+      "operator": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     },
     "variables": {
       "exit_delay": "010040",
@@ -202,7 +202,7 @@
         "name": "funds",
         "contract": {
           "definition": {
-            "artifact": "faa3249b8a28e999963994e4020e832285351eb7ce3b4821bcb3b4498f5b8ef3"
+            "artifact": "65e0a8660aeff2ebf9a352846541b07bd14d5063e7f58434e0958af11fe572ef"
           },
           "arguments": {
             "owner": "<owner>",

@@ -94,7 +94,10 @@ function resolve(s: string, vars: Record<string, string>): Uint8Array {
 
 const keysOf = (v: Json): ContractKeys =>
     Object.fromEntries(
-        Object.entries(v.bindings.keys).map(([k, h]) => [k, hex.decode(h as string)]),
+        Object.entries(v.bindings.keys).map(([k, h]) => [
+            k === "batch_cosigner" ? "batchCosigner" : k,
+            hex.decode(h as string),
+        ]),
     );
 
 function build(v: Json, c: Json): Contract {
@@ -120,7 +123,7 @@ const leafHex = ([cb, script]: TapLeafScript) => [
 ];
 
 describe("artifact/v1 identity", () => {
-    it("reads the 80 vectors", () => expect(files).toHaveLength(80));
+    it("reads the 81 vectors", () => expect(files).toHaveLength(81));
 
     it("files every artifact under its id, except the body reject-artifact-identity alters", () => {
         const mismatched: string[] = [];
@@ -133,7 +136,7 @@ describe("artifact/v1 identity", () => {
             }
         }
         expect(entries).toBe(40);
-        expect(mismatched).toEqual(["reject-artifact-identity/e3c0fa05"]);
+        expect(mismatched).toEqual(["reject-artifact-identity/bd476b8a"]);
     });
 
     it("gives the bundled artifacts the ids executorTemplate files them under", () => {
@@ -170,12 +173,12 @@ describe("artifact/v1 identity", () => {
             }
         }
         expect(unread).toEqual(["reject-trailing-document"]);
-        expect(constructions).toBe(87);
+        expect(constructions).toBe(89);
         // A DelegatedVtxo body filed under the boarding id, and two artifacts never supplied.
         expect(mismatched).toEqual([
-            "reject-artifact-identity/e3c0fa05",
-            "reject-missing-artifact/e3c0fa05",
-            "reject-missing-artifact/faa3249b",
+            "reject-artifact-identity/bd476b8a",
+            "reject-missing-artifact/bd476b8a",
+            "reject-missing-artifact/65e0a866",
         ]);
     });
 });
@@ -183,7 +186,7 @@ describe("artifact/v1 identity", () => {
 describe("contract build parity", () => {
     const builds = vectors.filter((v) => !v.expected.error);
 
-    it("covers the 23 build vectors", () => expect(builds).toHaveLength(23));
+    it("covers the 24 build vectors", () => expect(builds).toHaveLength(24));
 
     it.each(builds.map((v) => [v.name, v]))("%s: pkScripts, spent leaf and tree", (_, v) => {
         const t = templateOf(v);
@@ -247,7 +250,7 @@ describe("contract build parity", () => {
                 renewalWindow: sn(params.renewalWindow),
                 maxFee: sn(params.maxFee),
             },
-            { server, emulator },
+            { operator: server, emulator },
         );
         const board = buildContract(
             decodeArtifact(bytes(delegatedBoarding)).definition,
@@ -257,7 +260,7 @@ describe("contract build parity", () => {
                 renewalProgram: vtxo.script.pkScript.subarray(2),
                 maxFee: sn(params.maxFee),
             },
-            { server, emulator },
+            { operator: server, emulator },
         );
         for (const [ours, kind] of [
             [vtxo, "renewal"],
@@ -281,7 +284,7 @@ describe("contract build parity", () => {
         const sdk = new VHTLC.ScriptV2({
             sender: hex.decode(vars.sender).subarray(1),
             receiver: hex.decode(vars.receiver).subarray(1),
-            server: hex.decode(v.bindings.keys.server).subarray(1),
+            server: hex.decode(v.bindings.keys.operator).subarray(1),
             preimageHash: hash160(hex.decode(vars.preimage)),
             refundLocktime: num("refund_locktime"),
             unilateralClaimDelay: delay("unilateral_claim_delay"),
@@ -339,7 +342,7 @@ describe("contract build parity", () => {
         const ours = buildContract(
             decodeArtifact(bytes(artifact)).definition,
             { owner },
-            { server },
+            { operator: server },
         );
         const sdk = new ArkadeProgramScript(
             programFromArtifact(artifact),
@@ -360,9 +363,9 @@ describe("buildContract", () => {
         name,
         leaves: [{ name: leaf, asm, witness: [] }],
     });
-    const keys = { server: pub(1), emulator: pub(3) };
+    const keys = { operator: pub(1), emulator: pub(3) };
 
-    it("pushes the cosigner as hex text in a covenant and x-only in a leaf", () => {
+    it("pushes the batch cosigner as hex text in a covenant and x-only in a leaf", () => {
         const c = buildContract(
             def([
                 {
@@ -372,7 +375,7 @@ describe("buildContract", () => {
                 },
             ]),
             {},
-            { ...keys, cosigner: pub(4) },
+            { ...keys, batchCosigner: pub(4) },
         );
         const text = new TextEncoder().encode(hex.encode(pub(4)));
         expect(hex.encode(c.covenants.get("f") as Uint8Array)).toBe(`42${hex.encode(text)}87`);

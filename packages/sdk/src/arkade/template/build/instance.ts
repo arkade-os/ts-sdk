@@ -5,7 +5,14 @@ import { scriptFromTapLeafScript, type TapLeafScript } from "../../../script/bas
 import { BigNum, type Opcode, ScriptTokenizer } from "../../vm";
 import { decodeClosure } from "../../vm/closures";
 import { flatten } from "../abi";
-import { canonicalBytes, MAX_SCRIPT_NUM, parseScriptNum, type Value } from "../asm";
+import {
+    canonicalBytes,
+    MAX_SCRIPT_NUM,
+    PLACEHOLDER,
+    parseScriptNum,
+    serviceKey,
+    type Value,
+} from "../asm";
 import {
     allOutputs,
     type ByteTemplate,
@@ -360,11 +367,16 @@ function variablesOf(given: Readonly<Record<string, Uint8Array>>): Map<string, U
 
 function checkKeys(t: Template, keys: ContractKeys): void {
     const r = t.requiredKeys;
-    if (r.server && !keys.server) throw fail("unsupported", "missing server key");
+    if (r.operator && !keys.operator) throw fail("unsupported", "missing operator key");
     if (r.emulator && !keys.emulator) throw fail("unsupported", "missing emulator key");
-    if (r.cosigner && !keys.cosigner) throw fail("unsupported", "missing cosigner key");
-    for (const role of ["server", "emulator", "cosigner"] as const) {
-        const key = keys[role];
+    if (r.batchCosigner && !keys.batchCosigner) {
+        throw fail("unsupported", "missing batch cosigner key");
+    }
+    for (const [role, key] of [
+        ["operator", keys.operator],
+        ["emulator", keys.emulator],
+        ["batch cosigner", keys.batchCosigner],
+    ] as const) {
         try {
             if (key) canonicalBytes("pubkey", key);
         } catch {
@@ -374,9 +386,9 @@ function checkKeys(t: Template, keys: ContractKeys): void {
 }
 
 const copyKeys = (k: ContractKeys): ContractKeys => ({
-    server: k.server?.slice(),
+    operator: k.operator?.slice(),
     emulator: k.emulator?.slice(),
-    cosigner: k.cosigner?.slice(),
+    batchCosigner: k.batchCosigner?.slice(),
 });
 
 /** Without decrypt, sealed values are plaintexts already. */
@@ -613,8 +625,8 @@ function offlineInput(input: Input, directOnchain: boolean): void {
         if (n === 0) throw fail("unsupported", `input ${q(input.name)}: checksig has no key`);
         const key = leaf.asm[n - 1];
         const emulator = key.startsWith("<EMULATOR_KEY:") && key.endsWith(">");
-        const server = key === "<SERVER_KEY>";
-        if ((directOnchain && emulator) || (!directOnchain && (server || emulator))) return;
+        const operator = serviceKey(PLACEHOLDER.exec(key)?.[1] ?? "") === "OPERATOR_KEY";
+        if ((directOnchain && emulator) || (!directOnchain && (operator || emulator))) return;
         throw fail("unsupported", `input ${q(input.name)}: signer ${key} is not available offline`);
     });
 }

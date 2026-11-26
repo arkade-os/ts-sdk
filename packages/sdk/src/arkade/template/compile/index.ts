@@ -41,7 +41,7 @@ function compile(doc: Document, artifacts: Artifacts): Template {
             id,
             spendId,
             type: s.type as TemplateType,
-            requiredKeys: { server: false, emulator: false, cosigner: false },
+            requiredKeys: { operator: false, emulator: false, batchCosigner: false },
             variables: new Map(s.variables),
             sealed: new Set(),
             inputs: [],

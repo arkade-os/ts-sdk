@@ -18,7 +18,7 @@ export interface Template {
     id: string;
     spendId: string;
     type: TemplateType;
-    requiredKeys: { server: boolean; emulator: boolean; cosigner: boolean };
+    requiredKeys: { operator: boolean; emulator: boolean; batchCosigner: boolean };
     variables: Map<string, string>;
     sealed: Set<string>;
     /** In transaction order. */

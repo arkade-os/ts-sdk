@@ -3,7 +3,7 @@
   "bindings": {
     "keys": {
       "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
-      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+      "operator": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     },
     "variables": {
       "receiver": "02e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
@@ -129,7 +129,7 @@
                       "OP_VERIFY",
                       "<receiver>",
                       "OP_CHECKSIGVERIFY",
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIG"
                     ],
                     "witness": [
@@ -144,7 +144,7 @@
                         "encoding": "schnorr-64"
                       },
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true
@@ -163,7 +163,7 @@
                       "OP_CHECKSIGVERIFY",
                       "<receiver>",
                       "OP_CHECKSIGVERIFY",
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIG"
                     ],
                     "witness": [
@@ -178,7 +178,7 @@
                         "encoding": "schnorr-64"
                       },
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true
@@ -198,7 +198,7 @@
                       "OP_DROP",
                       "<sender>",
                       "OP_CHECKSIGVERIFY",
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIG"
                     ],
                     "witness": [
@@ -208,7 +208,7 @@
                         "encoding": "schnorr-64"
                       },
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true
@@ -331,7 +331,7 @@
                       "<preimageHash>",
                       "OP_EQUAL",
                       "OP_VERIFY",
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIGVERIFY",
                       "<EMULATOR_KEY:nonInteractiveClaim>",
                       "OP_CHECKSIG"
@@ -343,7 +343,7 @@
                         "encoding": "raw"
                       },
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true
@@ -380,7 +380,7 @@
                   {
                     "name": "nonInteractiveRefund",
                     "asm": [
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIGVERIFY",
                       "<receiver>",
                       "OP_CHECKSIGVERIFY",
@@ -389,7 +389,7 @@
                     ],
                     "witness": [
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true
@@ -413,14 +413,14 @@
                       "<refundLocktime>",
                       "OP_CHECKLOCKTIMEVERIFY",
                       "OP_DROP",
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIGVERIFY",
                       "<EMULATOR_KEY:nonInteractiveRefund>",
                       "OP_CHECKSIG"
                     ],
                     "witness": [
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true

@@ -1,6 +1,6 @@
 {
   "artifacts": {
-    "e3c0fa053fbb529a252a1025e3453a41f01949f4e49d50de7dfe5d3510470ed3": {
+    "bd476b8a5772a5aea317004a86f9c04f1257d96d141a96949b244024a5944823": {
       "contractName": "DelegatedBoarding",
       "constructorInputs": [
         {
@@ -30,7 +30,7 @@
               "asm": [
                 "<owner>",
                 "OP_CHECKSIGVERIFY",
-                "<SERVER_KEY>",
+                "<OPERATOR_KEY>",
                 "OP_CHECKSIG"
               ],
               "witness": [
@@ -40,7 +40,7 @@
                   "encoding": "schnorr-64"
                 },
                 {
-                  "name": "serverSig",
+                  "name": "operatorSig",
                   "type": "signature",
                   "encoding": "schnorr-64",
                   "injected": true
@@ -107,14 +107,14 @@
             {
               "name": "board",
               "asm": [
-                "<SERVER_KEY>",
+                "<OPERATOR_KEY>",
                 "OP_CHECKSIGVERIFY",
                 "<EMULATOR_KEY:board>",
                 "OP_CHECKSIG"
               ],
               "witness": [
                 {
-                  "name": "serverSig",
+                  "name": "operatorSig",
                   "type": "signature",
                   "encoding": "schnorr-64",
                   "injected": true
@@ -134,9 +134,9 @@
   },
   "bindings": {
     "keys": {
-      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "batch_cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
-      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+      "operator": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     },
     "variables": {
       "boarding_exit_delay": "020040",
@@ -193,7 +193,7 @@
         "name": "deposit",
         "contract": {
           "definition": {
-            "artifact": "e3c0fa053fbb529a252a1025e3453a41f01949f4e49d50de7dfe5d3510470ed3"
+            "artifact": "bd476b8a5772a5aea317004a86f9c04f1257d96d141a96949b244024a5944823"
           },
           "arguments": {
             "owner": "<owner>",

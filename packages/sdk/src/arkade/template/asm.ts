@@ -29,6 +29,19 @@ export const HEX_TOKEN = /^0x([0-9a-f]{2})+$/;
 export const SPLICE = /^<!([^<>!]+)>$/;
 export const PLACEHOLDER = /^<([^<>]+)>$/;
 
+const KEY_ALIASES: Readonly<Record<string, string>> = {
+    SERVER_KEY: "OPERATOR_KEY",
+    COSIGNER_KEY: "BATCH_COSIGNER_KEY",
+    ENCRYPTION_KEY: "SEALING_KEY",
+};
+
+/**
+ * The service key a placeholder name stands for, so that documents written with a former name of a
+ * key keep their id and their scripts. Any other name is returned as is.
+ */
+export const serviceKey = (name: string): string =>
+    Object.hasOwn(KEY_ALIASES, name) ? KEY_ALIASES[name] : name;
+
 export interface Value {
     type: string;
     raw: Uint8Array;

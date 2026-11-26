@@ -1,7 +1,15 @@
 import { hex } from "@scure/base";
 import { sha256 } from "@scure/btc-signer/utils.js";
 
-import { DECIMAL_TOKEN, HEX_TOKEN, opcode, PLACEHOLDER, parseDecimal, SCALAR_TYPES } from "./asm";
+import {
+    DECIMAL_TOKEN,
+    HEX_TOKEN,
+    opcode,
+    PLACEHOLDER,
+    parseDecimal,
+    SCALAR_TYPES,
+    serviceKey,
+} from "./asm";
 import { fail } from "./errors";
 import { canonical, decode, type JsonObject, type JsonValue } from "./jcs";
 
@@ -273,7 +281,7 @@ function checkAsm(
         const p = PLACEHOLDER.exec(tok)?.[1];
         if (p === undefined) throw invalid(`unsupported token "${tok}"`);
         const parts = p.split(":");
-        if (p === "SERVER_KEY" || p === "COSIGNER_KEY") continue;
+        if (serviceKey(p) === "OPERATOR_KEY" || serviceKey(p) === "BATCH_COSIGNER_KEY") continue;
         if (parts[0] === "EMULATOR_KEY" && parts.length === 2) {
             if (!covenant(parts[1])) throw invalid(`"${tok}" names no function with arkade`);
         } else if (parts[0] === "TWEAK" && parts.length === 3) {

@@ -2,9 +2,9 @@
   "artifacts": {},
   "bindings": {
     "keys": {
-      "cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "batch_cosigner": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "emulator": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
-      "server": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+      "operator": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     },
     "variables": {}
   },
@@ -73,12 +73,12 @@
                       "4194306",
                       "OP_CHECKSEQUENCEVERIFY",
                       "OP_DROP",
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIG"
                     ],
                     "witness": [
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true
@@ -110,7 +110,7 @@
                     "0x636f7369676e6572735f7075626c69635f6b6579732e30",
                     "OP_INSPECTINTENTMESSAGE",
                     "OP_VERIFY",
-                    "<COSIGNER_KEY>",
+                    "<BATCH_COSIGNER_KEY>",
                     "OP_EQUALVERIFY",
                     "0x636f7369676e6572735f7075626c69635f6b6579732e31",
                     "OP_INSPECTINTENTMESSAGE",
@@ -150,14 +150,14 @@
                   {
                     "name": "renew",
                     "asm": [
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIGVERIFY",
                       "<EMULATOR_KEY:renew>",
                       "OP_CHECKSIG"
                     ],
                     "witness": [
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true
@@ -197,12 +197,12 @@
                       "4194306",
                       "OP_CHECKSEQUENCEVERIFY",
                       "OP_DROP",
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIG"
                     ],
                     "witness": [
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true
@@ -236,7 +236,7 @@
                     "0x636f7369676e6572735f7075626c69635f6b6579732e30",
                     "OP_INSPECTINTENTMESSAGE",
                     "OP_VERIFY",
-                    "<COSIGNER_KEY>",
+                    "<BATCH_COSIGNER_KEY>",
                     "OP_EQUALVERIFY",
                     "0x636f7369676e6572735f7075626c69635f6b6579732e31",
                     "OP_INSPECTINTENTMESSAGE",
@@ -262,14 +262,14 @@
                   {
                     "name": "renew",
                     "asm": [
-                      "<SERVER_KEY>",
+                      "<OPERATOR_KEY>",
                       "OP_CHECKSIGVERIFY",
                       "<EMULATOR_KEY:renew>",
                       "OP_CHECKSIG"
                     ],
                     "witness": [
                       {
-                        "name": "serverSig",
+                        "name": "operatorSig",
                         "type": "signature",
                         "encoding": "schnorr-64",
                         "injected": true

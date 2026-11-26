@@ -18,6 +18,7 @@ import {
     parseDecimal,
     parseScriptNum,
     scriptNum,
+    serviceKey,
     type Value,
 } from "../src/arkade/template/asm";
 import { buildContract, type Contract } from "../src/arkade/template/contract";
@@ -44,7 +45,7 @@ function caught(f: () => unknown): AsmError | undefined {
 // Ported from the executor's pkg/template/internal/asm/asm_test.go.
 describe("assemble", () => {
     const values: Record<string, Value> = {
-        SERVER_KEY: { type: "bytes32", raw: new Uint8Array(32).fill(0x11) },
+        OPERATOR_KEY: { type: "bytes32", raw: new Uint8Array(32).fill(0x11) },
         delay: { type: "int", raw: scriptNum(4194306) },
         zero: { type: "int", raw: new Uint8Array() },
         empty: { type: "bytes", raw: new Uint8Array() },
@@ -61,7 +62,7 @@ describe("assemble", () => {
 
     it("pushes placeholders, decimals and hex as btcd's ScriptBuilder", () => {
         expect(
-            asm(["<delay>", "OP_CHECKSEQUENCEVERIFY", "OP_DROP", "<SERVER_KEY>", "OP_CHECKSIG"]),
+            asm(["<delay>", "OP_CHECKSEQUENCEVERIFY", "OP_DROP", "<OPERATOR_KEY>", "OP_CHECKSIG"]),
         ).toBe(`03020040b27520${"11".repeat(32)}ac`);
         expect(
             asm(["4194306", "0x74797065", "OP_INSPECTINTENTMESSAGE", "<zero>", "16", "17", "-1"]),
@@ -140,6 +141,23 @@ describe("assemble", () => {
 });
 
 // Ported from expr_test.go.
+describe("serviceKey (keys_test.go TestServiceKey)", () => {
+    it.each([
+        ["OPERATOR_KEY", "OPERATOR_KEY"],
+        ["SERVER_KEY", "OPERATOR_KEY"],
+        ["BATCH_COSIGNER_KEY", "BATCH_COSIGNER_KEY"],
+        ["COSIGNER_KEY", "BATCH_COSIGNER_KEY"],
+        ["SEALING_KEY", "SEALING_KEY"],
+        ["ENCRYPTION_KEY", "SEALING_KEY"],
+        ["EMULATOR_KEY", "EMULATOR_KEY"],
+        ["owner", "owner"],
+        ["server_key", "server_key"],
+        ["constructor", "constructor"],
+    ])("reads %s as %s", (given, want) => {
+        expect(serviceKey(given)).toBe(want);
+    });
+});
+
 describe("checkExpression and checkScript", () => {
     it("counts every occurrence against the compute limits", () => {
         const modexp = (n: number) => "2 3 5 OP_MODEXP OP_DROP ".repeat(n).trim().split(" ");
@@ -554,15 +572,16 @@ function expressionsOf(v: Json): { at: string; tokens: string[] }[] {
 }
 
 // The VM's hash and introspection ops are not ported yet, so each value is derived here.
-describe("the 9 expressions of the 23 build vectors", () => {
+describe("the 10 expressions of the 24 build vectors", () => {
     const all = builds.flatMap(expressionsOf);
     const shaped = (body: string) => all.filter((e) => e.tokens.join(" ") === body);
 
     it("are these", () => {
-        expect(builds).toHaveLength(23);
+        expect(builds).toHaveLength(24);
         expect(all.map((e) => `${e.at}: ${e.tokens.join(" ")}`)).toEqual([
             "counter/packets/rules/0/data: 2 OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTPACKET OP_VERIFY OP_BIN2NUM OP_1ADD 8 OP_NUM2BIN",
             "example-vhtlc-non-interactive-claim/inputs/0/contract/arguments/preimageHash: <preimage> OP_HASH160",
+            "former-key-names-counter/packets/rules/0/data: 2 OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTPACKET OP_VERIFY OP_BIN2NUM OP_1ADD 8 OP_NUM2BIN",
             "splice-locking/inputs/0/contract/arguments/preimageHash: <preimage> OP_HASH160",
             "splice-locking/outputs/0/locking: <!terms> OP_VERIFY <receiver_program>",
             "supplied-taptree-undelegated/inputs/0/contract/arguments/preimageHash: <preimage> OP_HASH160",
@@ -658,7 +677,10 @@ function build(v: Json, c: Json): Contract {
         Object.entries<Json>(c.arguments ?? {}).map(([field, b]) => [field, argument(v, b)]),
     );
     const keys = Object.fromEntries(
-        Object.entries<string>(v.bindings.keys).map(([k, h]) => [k, bytes(h)]),
+        Object.entries<string>(v.bindings.keys).map(([k, h]) => [
+            k === "batch_cosigner" ? "batchCosigner" : k,
+            bytes(h),
+        ]),
     );
     const taptree = c.taptree && bytes(v.bindings.variables[c.taptree.slice(1, -1)]);
     return buildContract(definitionOf(v, c), args, keys, taptree);
@@ -722,22 +744,22 @@ function gate(v: Json): Tally {
     return tally;
 }
 
-describe("leaf and covenant scripts of the 23 build vectors", () => {
+describe("leaf and covenant scripts of the 24 build vectors", () => {
     it.each(builds.map((v) => [v.name, v]))("%s", (_, v) => {
         gate(v);
     });
 
-    it("covers all 128 asm arrays, in its PSBT or committed by a key found there", () => {
+    it("covers all 134 asm arrays, in its PSBT or committed by a key found there", () => {
         const total = builds.map(gate).reduce((a, b) => ({
             inTaptree: a.inTaptree + b.inTaptree,
             inEmulatorPacket: a.inEmulatorPacket + b.inEmulatorPacket,
             tweakedIntoLeaf: a.tweakedIntoLeaf + b.tweakedIntoLeaf,
             inOutputKey: a.inOutputKey + b.inOutputKey,
         }));
-        expect(Object.values(total).reduce((a, b) => a + b)).toBe(128);
+        expect(Object.values(total).reduce((a, b) => a + b)).toBe(134);
         expect(total).toEqual({
-            inTaptree: 88,
-            inEmulatorPacket: 21,
+            inTaptree: 92,
+            inEmulatorPacket: 23,
             tweakedIntoLeaf: 7,
             inOutputKey: 12,
         });

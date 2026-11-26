@@ -95,8 +95,8 @@ const edited = (name: string, edit: (doc: any) => void) => {
 };
 
 describe("decode", () => {
-    it("reads all 80 vectors: 23 builds, 57 rejects", () => {
-        expect([vectors.length, builds.length]).toEqual([80, 23]);
+    it("reads all 81 vectors: 24 builds, 57 rejects", () => {
+        expect([vectors.length, builds.length]).toEqual([81, 24]);
     });
 
     for (const v of rejects("decode")) {
@@ -420,7 +420,7 @@ describe("compile", () => {
         ],
         [
             "witness-order",
-            (d) => (in0(d).spend.witness.serverSig = "00"),
+            (d) => (in0(d).spend.witness.operatorSig = "00"),
             'invalid_template: spend binds witness items that are signatures or absent from leaf "claim"',
         ],
         [
@@ -652,8 +652,8 @@ describe("compile", () => {
         ],
         [
             "supplied-taptree",
-            (d) => (trigger(d).require = { "tlv:3": "<COSIGNER_KEY>" }),
-            'invalid_template: trigger of "htlc": require "tlv:3" names undeclared variable "COSIGNER_KEY"',
+            (d) => (trigger(d).require = { "tlv:3": "<BATCH_COSIGNER_KEY>" }),
+            'invalid_template: trigger of "htlc": require "tlv:3" names undeclared variable "BATCH_COSIGNER_KEY"',
         ],
         [
             "supplied-taptree",
@@ -1007,9 +1007,9 @@ describe("build", () => {
         const key = (h: string) => (h ? hex.decode(h) : undefined);
         return {
             keys: {
-                server: key(keys.server),
+                operator: key(keys.operator),
                 emulator: key(keys.emulator),
-                cosigner: key(keys.cosigner),
+                batchCosigner: key(keys.batch_cosigner),
             },
             variables: Object.fromEntries(
                 Object.entries(variables as Record<string, string>).map(([n, h]) => [

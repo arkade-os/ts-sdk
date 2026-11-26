@@ -1,4 +1,5 @@
 import { copyDefinition, type Definition, flatten } from "../abi";
+import { PLACEHOLDER, serviceKey } from "../asm";
 import { fail } from "../errors";
 import { compareGo } from "../jcs";
 import type * as schema from "../schema";
@@ -70,9 +71,12 @@ function requireKeys(c: Compiler, def: Definition): void {
     for (const fn of def.functions) {
         for (const tokens of [fn.arkade?.asm ?? [], ...fn.leaves.map((l) => l.asm)]) {
             for (const tok of tokens) {
-                if (tok === "<SERVER_KEY>") keys.server = true;
-                else if (tok === "<COSIGNER_KEY>") keys.cosigner = true;
-                else if (tok.startsWith("<EMULATOR_KEY:")) keys.emulator = true;
+                const m = PLACEHOLDER.exec(tok);
+                if (!m) continue;
+                const name = serviceKey(m[1]);
+                if (name === "OPERATOR_KEY") keys.operator = true;
+                else if (name === "BATCH_COSIGNER_KEY") keys.batchCosigner = true;
+                else if (name.startsWith("EMULATOR_KEY:")) keys.emulator = true;
             }
         }
     }

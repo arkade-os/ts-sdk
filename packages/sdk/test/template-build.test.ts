@@ -24,9 +24,9 @@ const vector = (name: string) => JSON.parse(readFileSync(new URL(`${name}.json`,
 const keys = (() => {
     const k = vector("onchain").bindings.keys;
     return {
-        server: hex.decode(k.server),
+        operator: hex.decode(k.operator),
         emulator: hex.decode(k.emulator),
-        cosigner: hex.decode(k.cosigner),
+        batchCosigner: hex.decode(k.batch_cosigner),
     };
 })();
 const P2TR = "5120f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
@@ -111,7 +111,7 @@ describe("coins (coins_test.go TestEachCoin)", () => {
                     funds: {
                         packet: 7,
                         decode: "tlv",
-                        require: { "tlv:0": "<SERVER_KEY>" },
+                        require: { "tlv:0": "<OPERATOR_KEY>" },
                         capture: { note: "tlv:1" },
                         expires_after_seconds: 60,
                         all_outputs: true,
@@ -171,7 +171,7 @@ describe("locks (positions_test.go TestLeafTimelocks)", () => {
         edited("onchain", (d) => {
             d.inputs[0].contract.definition.functions[0].leaves[0].asm = [
                 ...["700", "OP_CHECKLOCKTIMEVERIFY", "OP_DROP", "144", "OP_CHECKSEQUENCEVERIFY"],
-                ...["OP_DROP", "<COSIGNER_KEY>", "OP_CHECKSIG"],
+                ...["OP_DROP", "<BATCH_COSIGNER_KEY>", "OP_CHECKSIG"],
             ];
             edit(d);
         });
@@ -266,9 +266,9 @@ describe("caller inputs Go cannot express", () => {
 
     it("refuses at bind a key that is not a compressed point, as it does a missing one", () => {
         const bound = (k: object) => () => bind(t, { keys: { ...keys, ...k }, variables: {} });
-        expect(thrown(bound({ cosigner: undefined }))).toBe("bind/unsupported");
-        for (const bad of [new Uint8Array(33), keys.server.subarray(1), new Uint8Array(65)]) {
-            for (const role of ["server", "emulator", "cosigner"]) {
+        expect(thrown(bound({ batchCosigner: undefined }))).toBe("bind/unsupported");
+        for (const bad of [new Uint8Array(33), keys.operator.subarray(1), new Uint8Array(65)]) {
+            for (const role of ["operator", "emulator", "batchCosigner"]) {
                 expect(thrown(bound({ [role]: bad }))).toBe("bind/unsupported");
             }
         }
@@ -317,13 +317,13 @@ describe("what a compiled template or instance shares with its caller", () => {
     });
 
     it("copies the keys it is instantiated with", () => {
-        const k = { ...keys, cosigner: keys.cosigner.slice() };
+        const k = { ...keys, batchCosigner: keys.batchCosigner.slice() };
         const i = instantiate(
             edited("onchain", () => {}),
             { keys: k, variables: {} },
         );
-        k.cosigner[1] ^= 1;
-        expect(i.keys.cosigner).toEqual(keys.cosigner);
+        k.batchCosigner[1] ^= 1;
+        expect(i.keys.batchCosigner).toEqual(keys.batchCosigner);
     });
 });
 
@@ -356,7 +356,7 @@ describe("bounds and codes from arkade-os/executor#18", () => {
         const t = edited("onchain", () => {});
         const watch = () =>
             instantiate(t, {
-                keys: { ...keys, cosigner: undefined },
+                keys: { ...keys, batchCosigner: undefined },
                 variables: { nope: Uint8Array.of(1) },
             });
         expect(thrown(watch)).toBe("instantiate/unsupported");
@@ -389,7 +389,7 @@ it("spends offline only through service and emulator signers (locks.go OfflineSp
         const i = instantiate(t, { keys, variables: {} });
         return thrown(() => i.offlineSpend(direct)) ?? "ok";
     };
-    // pay: <SERVER_KEY> and <EMULATOR_KEY:pay>; spend: <SERVER_KEY> and <owner>
+    // pay: <OPERATOR_KEY> and <EMULATOR_KEY:pay>; spend: <OPERATOR_KEY> and <owner>
     expect([offline("pay", false), offline("pay", true), offline("spend", false)]).toEqual([
         "ok",
         "spend/unsupported",

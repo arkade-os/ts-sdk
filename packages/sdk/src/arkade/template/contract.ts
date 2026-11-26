@@ -5,14 +5,14 @@ import { TapTreeCoder, VtxoScript, type TapLeafScript } from "../../script/base"
 import { computeArkadeScriptPublicKey } from "../tweak";
 import { decodeClosure } from "../vm/closures";
 import { type Definition, flatten } from "./abi";
-import { assemble, type Lookup, type Value } from "./asm";
+import { assemble, type Lookup, serviceKey, type Value } from "./asm";
 import { fail } from "./errors";
 
 /** The service keys a contract is resolved under, each a 33-byte compressed key. */
 export interface ContractKeys {
-    server?: Uint8Array;
+    operator?: Uint8Array;
     emulator?: Uint8Array;
-    cosigner?: Uint8Array;
+    batchCosigner?: Uint8Array;
 }
 
 /** A built taproot output: leaves in the given tree's order if any, else function then leaf order. */
@@ -29,7 +29,7 @@ const MAX_LEAVES = 400;
 const utf8 = new TextEncoder();
 const bytes32 = (raw: Uint8Array): Value => ({ type: "bytes32", raw });
 
-// contract.go wraps every lookup error with %v, so even a missing cosigner reports a bad leaf.
+// contract.go wraps every lookup error with %v, so even a missing batch cosigner reports a bad leaf.
 const badLeaf = (message: string) => fail("invalid_template", `bad leaf: ${message}`);
 const badTree = (message: string) => fail("ineligible", `bad taptree: ${message}`);
 
@@ -59,9 +59,12 @@ export function buildContract(
     for (const fn of def.functions) {
         if (!fn.arkade) continue;
         const script = assembled(fn.arkade.asm, `function "${fn.name}"`, (name) => {
-            if (name !== "COSIGNER_KEY") return field(name);
-            xOnly(keys.cosigner, "cosigner key");
-            return { type: "bytes", raw: utf8.encode(hex.encode(keys.cosigner as Uint8Array)) };
+            if (serviceKey(name) !== "BATCH_COSIGNER_KEY") return field(name);
+            xOnly(keys.batchCosigner, "batch cosigner key");
+            return {
+                type: "bytes",
+                raw: utf8.encode(hex.encode(keys.batchCosigner as Uint8Array)),
+            };
         });
         covenants.set(fn.name, script);
     }
@@ -72,8 +75,11 @@ export function buildContract(
     };
     const leafLookup: Lookup = (name) => {
         const parts = name.split(":");
-        if (name === "SERVER_KEY") return bytes32(xOnly(keys.server, "server key"));
-        if (name === "COSIGNER_KEY") return bytes32(xOnly(keys.cosigner, "cosigner key"));
+        const key = serviceKey(name);
+        if (key === "OPERATOR_KEY") return bytes32(xOnly(keys.operator, "operator key"));
+        if (key === "BATCH_COSIGNER_KEY") {
+            return bytes32(xOnly(keys.batchCosigner, "batch cosigner key"));
+        }
         if (parts[0] === "EMULATOR_KEY" && parts.length === 2) {
             return bytes32(tweak(xOnly(keys.emulator, "emulator key"), parts[1]));
         }
