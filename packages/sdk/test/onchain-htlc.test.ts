@@ -219,7 +219,29 @@ describe("OnchainHTLC", () => {
         expect(() =>
             OnchainHTLC.args({ ...SATS, minExitDelay: { type: "blocks", value: 1n } }),
         ).toThrow(/minExitDelay/);
-        expect(() => OnchainHTLC.args({ ...SATS, minExitDelay: SATS.refundDelay })).not.toThrow();
+        const timestamp = 1_800_000_000n;
+        expect(() =>
+            OnchainHTLC.args({
+                ...SATS,
+                refundLocktime: timestamp,
+                minExitDelay: SATS.refundDelay,
+            }),
+        ).not.toThrow();
+    });
+
+    it("refuses a block-height refundLocktime when arkd's exit delay is in seconds", () => {
+        expect(() => OnchainHTLC.args({ ...SATS, minExitDelay: SATS.refundDelay })).toThrow(
+            /refundLocktime must be a timestamp/,
+        );
+        const blocks = (value: bigint) => ({ type: "blocks" as const, value });
+        expect(() =>
+            OnchainHTLC.args({
+                ...SATS,
+                refundDelay: blocks(40n),
+                claimDelay: blocks(50n),
+                minExitDelay: blocks(40n),
+            }),
+        ).not.toThrow();
     });
 
     it("refuses a timelock that opens at once, an amount that is not positive, or a negative fee", () => {

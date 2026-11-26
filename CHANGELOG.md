@@ -108,7 +108,9 @@ style and have not been backfilled.
   still claim this one. `OnchainHTLC.args` refuses a `refundDelay` that does
   not open before `claimDelay` in the same unit, or that is shorter than an
   optional `minExitDelay`, arkd's `boardingExitDelay`, below which arkd
-  co-signs no spend of the coin. `OnchainHTLC.script(options)` derives the
+  co-signs no spend of the coin. With a `minExitDelay` in seconds it also
+  refuses a block-height `refundLocktime`, which such an arkd will not
+  co-sign. `OnchainHTLC.script(options)` derives the
   lockup without a client. Nothing uses it yet.
 
 - **Arkade spends reveal the script hashes of a contract's other covenants.**

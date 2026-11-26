@@ -59,6 +59,12 @@ export namespace OnchainHTLC {
         ) {
             throw new Error("OnchainHTLC: refundDelay must reach minExitDelay, in the same unit");
         }
+        // BIP 65 reads a locktime below 500,000,000 as a block height, which arkd on seconds refuses.
+        if (minExitDelay?.type === "seconds" && options.refundLocktime < 500_000_000n) {
+            throw new Error(
+                "OnchainHTLC: refundLocktime must be a timestamp when arkd uses seconds",
+            );
+        }
         return {
             sender: options.sender,
             receiver: options.receiver,
