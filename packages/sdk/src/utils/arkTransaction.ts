@@ -1073,6 +1073,20 @@ export async function signAndSubmitOffchainTx(params: {
     return arkTxid;
 }
 
+/** Immutable base64 PSBTs and transaction ID captured before emulator dispatch. */
+export type EmulatorSubmitProposal = Readonly<{
+    txid: string;
+    arkTx: string;
+    checkpointTxs: readonly string[];
+}>;
+
+export interface EmulatorSubmitOptions {
+    /** Await caller-owned persistence; rejection prevents dispatch. Preparation is not acceptance.
+     * Caller owns reconciliation; do not await re-entry into the same wallet's native execution queue.
+     */
+    beforeEmulatorSubmit?: (proposal: EmulatorSubmitProposal) => void | Promise<void>;
+}
+
 /**
  * Sign the caller's inputs of a pre-built offchain tx and submit it through the emulator, which
  * co-signs and finalizes it with arkd. The checkpoints of `inputIndexes` are signed up front: the
@@ -1083,9 +1097,9 @@ export async function submitViaEmulator(
     emulator: Pick<EmulatorProvider, "submitTx">,
     offchainTx: OffchainTx,
     signer: { sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> } | undefined,
-    opts: { inputIndexes: number[] },
+    opts: { inputIndexes: number[] } & EmulatorSubmitOptions,
 ): Promise<{ txid: string; signedArkTx: string; signedCheckpointTxs: string[] }> {
-    const { inputIndexes } = opts;
+    const { inputIndexes, beforeEmulatorSubmit } = opts;
     let { arkTx, checkpoints } = offchainTx;
     if (inputIndexes.length > 0) {
         if (!signer) {
@@ -1096,13 +1110,29 @@ export async function submitViaEmulator(
             checkpoints.map((c, i) => (inputIndexes.includes(i) ? signer.sign(c, [0]) : c)),
         );
     }
-    const res = await emulator.submitTx(
-        base64.encode(arkTx.toPSBT()),
-        checkpoints.map((c) => base64.encode(c.toPSBT())),
-    );
+    const encodedArkTx = base64.encode(arkTx.toPSBT());
+    const checkpointTxs = checkpoints.map((c) => base64.encode(c.toPSBT()));
+    // Decoded back so the reply is validated against the exact request, even if the callback's
+    // await window is used to mutate `arkTx` or `checkpoints`.
+    const submittedArkTx = beforeEmulatorSubmit
+        ? Transaction.fromPSBT(base64.decode(encodedArkTx))
+        : arkTx;
+    const submittedCheckpoints = beforeEmulatorSubmit
+        ? checkpointTxs.map((encoded) => Transaction.fromPSBT(base64.decode(encoded)))
+        : checkpoints;
+    if (beforeEmulatorSubmit) {
+        await beforeEmulatorSubmit(
+            Object.freeze({
+                txid: submittedArkTx.id,
+                arkTx: encodedArkTx,
+                checkpointTxs: Object.freeze([...checkpointTxs]),
+            }),
+        );
+    }
+    const res = await emulator.submitTx(encodedArkTx, checkpointTxs);
     const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
-    assertSubmittedArkTxid({ arkTxid: txid }, arkTx, "emulator submitTx");
-    matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "emulator submitTx");
+    assertSubmittedArkTxid({ arkTxid: txid }, submittedArkTx, "emulator submitTx");
+    matchServerCheckpoints(res.signedCheckpointTxs, submittedCheckpoints, "emulator submitTx");
     return { txid, signedArkTx: res.signedArkTx, signedCheckpointTxs: res.signedCheckpointTxs };
 }
 

@@ -114,7 +114,9 @@ jobs:
               test/e2e/digestMismatch.test.ts
           - package: sdk-executor
             group: executor
-            test_files: test/e2e/executor.test.ts
+            test_files: >-
+              test/e2e/executor.test.ts
+              test/e2e/nativeExecutor.test.ts
           # Needs an arkd with CosignOnchainTx (ArkLabsHQ/arkd#124, #173).
           - package: sdk
             group: onchain-cosign

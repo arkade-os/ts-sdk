@@ -17,6 +17,24 @@
 // Re-export standard Bitcoin Script and opcodes from @scure/btc-signer
 import { OP, Script, type ScriptType } from "@scure/btc-signer";
 export { OP, Script, type ScriptType };
+import type {
+    EmulatorSubmitOptions as SubmitOptions,
+    EmulatorSubmitProposal as SubmitProposal,
+} from "../utils/arkTransaction";
+import type {
+    NativeExecutionObservation as ExecutionObservation,
+    NativeExecutionReceipt as ExecutionReceipt,
+    NativeExecutionRecord as ExecutionRecord,
+} from "./executionJournal";
+import type { NativeExecution as Execution } from "./executor";
+
+// Local aliases keep namespace declaration bundling from treating shared-chunk types as values.
+export type EmulatorSubmitProposal = SubmitProposal;
+export type EmulatorSubmitOptions = SubmitOptions;
+export type NativeExecution = Execution;
+export type NativeExecutionRecord = ExecutionRecord;
+export type NativeExecutionObservation = ExecutionObservation;
+export type NativeExecutionReceipt = ExecutionReceipt;
 
 export {
     ARKADE_OP,
@@ -48,6 +66,8 @@ export {
     type ContractArtifact,
     type ContractDebugInfo,
 } from "./artifact";
+export { NativeExecutor } from "./executor";
+export { NativeExecutionJournal } from "./executionJournal";
 export {
     ArkadeProgramScript,
     stringifyArtifact,

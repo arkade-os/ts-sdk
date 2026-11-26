@@ -183,6 +183,18 @@ style and have not been backfilled.
 
 ### Features
 
+- **`ExecutorProvider` can register and read the Executor's templates and
+  artifacts.** The SDK's Executor client covered only delegations, so a caller
+  delegating its own template needed a second client to upload it.
+  `RestExecutorProvider` adds `registerArtifact`, `getArtifact`,
+  `registerTemplate` and `getTemplate`, optional on the `ExecutorProvider`
+  interface so existing implementations still conform. A 404 from these calls
+  counts as the Executor's only when its body is the gRPC NOT_FOUND status.
+  `ExecutorInfo` reports the service's `encryptionPubkey` when it advertises
+  one, validated as a compressed key, so `getInfo()` now refuses a malformed
+  one. Executor v0.0.5 takes uploads on its admin port only, and its public
+  port answers 403 unless it runs with `EXECUTOR_PUBLIC_REGISTRY=true`.
+
 - **Non-interactive boarding through the Executor.** `executorProvider` on
   `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
   worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
@@ -519,6 +531,14 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **A full Executor store no longer pauses every request to that Executor.**
+  An Executor at its delegation cap answers `registerDelegation` with gRPC
+  `RESOURCE_EXHAUSTED`, which its gateway serves as a 429 without
+  `Retry-After`. `RestExecutorProvider` reported that to the shared rate gate
+  as a rate limit, so every request to that Executor then waited out the
+  default cooldown. A 429 carrying that status is now only an error, and any
+  other 429 still pauses the origin.
+
 - **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
 
 - **Boarding inputs in a commitment transaction are signed with the default sighash**, whatever sighash type the operator's PSBT declares, as forfeits already were.
@@ -766,6 +786,49 @@ style and have not been backfilled.
   `Arkade` client takes `ArkadeConnectOptions.oneShotSubmit` and the helpers
   `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
+
+- **Prepared native requests can be persisted and reconciled.** An opt-in
+  NativeExecutionJournal requires asserted persistent atomic storage, admits one
+  exact immutable proposal and keeps the slot occupied. Public indexer evidence
+  must match the saved source, signed checkpoint and full-principal payout. A
+  historical receipt commits only if the exact prepared request still matches;
+  cached reads use no RPC. There is no release, replay or shared coin ownership.
+  The caller admits from `NativeExecutor.execute()`'s `beforeEmulatorSubmit`
+  hook; the executor does not do it itself. The slot never clears, even after
+  reconciliation or for a retry of the same proposal, so a wallet repository
+  journals exactly one native execution. That limit is intentional for now.
+
+- **Opt-in SDK-native execution of Executor `template/v1` templates.**
+  NativeExecutor imports a one-input, full-principal `virtual` template that the
+  server and the emulator sign alone, builds its spend with the SDK's port of
+  the Executor's template engine, and dry-runs the covenant through its port of
+  the emulator VM before funding and before each emulator submission, which
+  carries no wallet signature. Hash-conditioned leaves, such as a VHTLC's
+  non-interactive claim, are supported; `proof` and `onchain` templates, a
+  cosigner key, a supplied taptree and a leaf with a relative timelock (which
+  arkd refuses in a virtual spend) are refused at import. Funding, restore
+  and the locked contract go through the existing wallet, builder and
+  ContractManager. A position funded from asset-bearing coins stays spendable
+  when the funding transaction's asset packet assigns nothing to it. Funding
+  refuses a covenant that opens only once its coin has expired, since arkd
+  refuses an expired input offchain. A position that expires at a block height
+  executes only when a chain tip can be read.
+  `delegate()` seals the template's sealed variables to the Executor's
+  encryption key and registers a delegation, uploading the artifacts and the
+  template only when the Executor lacks them; when it refuses uploads (v0.0.5
+  accepts them on its admin port only by default), the error names the template
+  its operator must install. Only that copy is sealed: the wallet's contract
+  metadata keeps every variable, sealed ones included, as plaintext, so wallet
+  storage is what protects a secret such as a preimage locally.
+  NativeExecutor loads the VM and the template engine
+  through a dynamic import on first use, so the package entry does not carry
+  them: a bundler that splits code keeps them, about 150 KB of minified code, in
+  a chunk an app that never calls NativeExecutor does not load.
+
+- **Native execution can await persistence before emulator dispatch.** The
+  optional beforeEmulatorSubmit callback receives immutable exact proposal bytes;
+  rejection prevents submission. It does not establish server acceptance or retry
+  authority, and the caller owns reconciliation.
 
 - **Wallet-state updates can use an optional backend transaction.** Repository
   implementations expose `atomicWalletState`, which `updateWalletState` uses
@@ -1132,6 +1195,44 @@ style and have not been backfilled.
   and failsafe polling outlived the failure. The start-up now disposes it
   before the rejection reaches the caller, which can retry as before.
 
+- **Native journal observation bounds REST bodies before parsing.** Observation
+  requests one explicit two-item page with an opt-in 4 MiB cap on the decoded body,
+  including error bodies. Oversized or unstreamable replies remain unknown; legacy indexer
+  reads keep their existing defaults. Pagination whose current page exceeds its
+  total cannot acknowledge a receipt or release the occupied prepared slot.
+
+- **Indexer read limits stay fixed through pagination and journal validation.**
+  Automatic VTXO pages retain the caller's initial response-byte cap even if its
+  options change while a page is pending. Journal observations measure serialized
+  replies in UTF-8 bytes, so multibyte payloads cannot exceed the 4 MiB policy
+  while passing a string-length check.
+
+- **Native recovery accepts the indexer's final-page cursor.** A complete single
+  page may repeat its final index in `next`; malformed or nonterminal cursors still
+  leave the journal unresolved. Unreadable bounded error bodies retain status-only
+  availability retries for 429/5xx, while terminal status errors keep the bounded
+  read failure. Response byte limits and legacy defaults are unchanged.
+
+- **Native journal admission rejects an orphan receipt; observation requires a
+  1-based page.** `admit()` checked only the prepared slot, so a stored receipt
+  without a record admitted a new proposal and let it dispatch, after which every
+  read rejected it as conflicting. Admission now validates the receipt snapshot
+  first. Observation pagination must now be `{current: 1, total: 1}` with `next`
+  0 or 1; zero-based headers no longer reconcile.
+
+- **Native execution preserves its imported payout and delegation binding.**
+  Mutating a handle's destination no longer changes its spend. Remote watches
+  must match the captured template, artifact and variables; restored handles
+  require re-import before delegation. Post-submit refresh failures are reported
+  without hiding the accepted transaction result; submission failures still reject.
+  Importing onto a contract already registered without a plan, e.g. by `on()`,
+  now persists the plan, so `restore()` works after a restart.
+
+- **Native template validation rejects invalid requests before avoidable work.**
+  Missing `packets` policy is named explicitly, and delegation rejects invalid
+  expiries before any provider call. Non-covenant spends reject
+  `beforeEmulatorSubmit` before transaction assembly.
+
 - **IndexedDB wallet-state read failures no longer look like an empty wallet.**
   Read errors propagate before updates can replace persisted pending-submit, cursor
   or unrelated settings. Genuine absence still returns null.
@@ -1194,6 +1295,15 @@ style and have not been backfilled.
   transaction instead of joining it. A repository or serialized-executor call
   made inside a `runInTransaction` callback therefore deadlocks; after 10s the
   SDK warns with that call's stack.
+
+- **Native reconciliation accepts complete unpaged indexer replies.** The
+  server's page:null envelope is accepted without stripping metadata; malformed
+  or incomplete pagination still leaves the request unresolved.
+
+- **Queued native execution keeps its selected source.** Snapshot and validate
+  the outpoint before any wait, then use it for selection and refreshes. Native
+  executors sharing one wallet object serialize attempts; this does not coordinate
+  ordinary Wallet spends, other processes or duplicate SDK modules.
 
 - **Swap SQLite repositories accept the SDK's serialized executor.** Transaction
   callbacks use the supplied raw executor instead of enqueueing statements behind

@@ -297,12 +297,15 @@ import {
 } from "./providers/delegate";
 import {
     DelegatedOutput,
+    ExecutorArtifact,
     ExecutorDelegation,
     ExecutorDelegationDetails,
     ExecutorInfo,
     ExecutorProvider,
     ExecutorRequestError,
     ExecutorTemplate,
+    ExecutorTemplateDetails,
+    ExecutorTemplateParam,
     RestExecutorProvider,
 } from "./providers/executor";
 import {
@@ -328,6 +331,8 @@ import {
     submitViaEmulator,
     ArkTxInput,
     OffchainTx,
+    EmulatorSubmitProposal,
+    EmulatorSubmitOptions,
     VerifyServerSignatures,
     combineTapscriptSigs,
     isValidArkAddress,
@@ -404,6 +409,7 @@ import {
     Tx,
     Vtxo,
     PaginationOptions,
+    IndexerReadOptions,
     DEFAULT_VTXO_PAGE_SIZE,
     SubscriptionResponse,
     SubscriptionHeartbeat,
@@ -1019,6 +1025,13 @@ export {
     AssetManager,
 };
 
+export {
+    NativeExecutionJournal,
+    type NativeExecutionRecord,
+    type NativeExecutionObservation,
+    type NativeExecutionReceipt,
+} from "./arkade/executionJournal";
+
 export type {
     // Types and Interfaces
     RecipientArkadeAddressContext,
@@ -1062,6 +1075,8 @@ export type {
     TapscriptType,
     ArkTxInput,
     OffchainTx,
+    EmulatorSubmitProposal,
+    EmulatorSubmitOptions,
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
@@ -1130,6 +1145,7 @@ export type {
     TreeSignatureEvent,
     ScheduledSession,
     PaginationOptions,
+    IndexerReadOptions,
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
@@ -1275,6 +1291,9 @@ export type {
     ExecutorDelegation,
     ExecutorDelegationDetails,
     ExecutorTemplate,
+    ExecutorTemplateDetails,
+    ExecutorTemplateParam,
+    ExecutorArtifact,
     DelegatedOutput,
     DelegatedWallet,
     DelegationOptions,
