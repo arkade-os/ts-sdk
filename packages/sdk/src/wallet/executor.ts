@@ -402,6 +402,19 @@ export function reRegistrationOf(watch: DelegatedContractWatch): {
     };
 }
 
+/** Whether two watches register with the same options and emulator key, whatever their owners. */
+export function sameDelegation(a: DelegatedContractWatch, b: DelegatedContractWatch): boolean {
+    const p = ExecutorContractHandler.deserializeParams(a.contract.params);
+    const q = ExecutorContractHandler.deserializeParams(b.contract.params);
+    return (
+        p.renewalWindow === q.renewalWindow &&
+        p.maxFee === q.maxFee &&
+        p.exitDelay === q.exitDelay &&
+        p.boardingExitDelay === q.boardingExitDelay &&
+        equalBytes(p.emulatorPubKey, q.emulatorPubKey)
+    );
+}
+
 /** The script of `owner`'s renewal contract under `keys` and `params`. */
 function renewalScript(
     owner: Uint8Array,

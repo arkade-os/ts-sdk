@@ -208,6 +208,7 @@ import {
     type IExecutorManager,
     receiveTwin,
     reRegistrationOf,
+    sameDelegation,
 } from "./executor";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
@@ -3153,7 +3154,7 @@ export class Wallet
 
     /**
      * @internal Register the Executor twin of the receive key at `descriptor`, under the params
-     * of the newest live renewal watch: none means the app never opted in, and nothing is done.
+     * of {@link delegationSource}: none means the app never opted in, and nothing is done.
      * Only the displayed key gets one: look-ahead addresses may have been issued to others and
      * are not delegated. Never throws: on failure the own address is shown until
      * {@link syncReceiveDelegation} registers the twin.
@@ -3162,8 +3163,10 @@ export class Wallet
         const executor = this._executorManager;
         if (!executor) return;
         try {
-            const [watch] = await this.liveRenewalWatches(
-                toXOnlySignerHex(hex.encode(this.arkServerPublicKey)),
+            const watch = this.delegationSource(
+                await this.liveRenewalWatches(
+                    toXOnlySignerHex(hex.encode(this.arkServerPublicKey)),
+                ),
             );
             if (!watch) return;
             const { options, registration } = reRegistrationOf(watch);
@@ -3173,6 +3176,17 @@ export class Wallet
         }
     }
 
+    /**
+     * The live renewal watch whose params a twin copies: the displayed boarding key's, which
+     * `registerRenewal` registers with the app's params, else the newest.
+     */
+    private delegationSource(
+        watches: DelegatedContractWatch[],
+    ): DelegatedContractWatch | undefined {
+        const boarding = hex.encode(this._boardingTapscript.options.pubKey);
+        return watches.find((w) => w.owner === boarding) ?? watches[0];
+    }
+
     private _receiveSyncFailedAt = 0;
 
     /**
@@ -3180,7 +3194,8 @@ export class Wallet
      * and at boot, and never throwing:
      * - the receive key never is the displayed boarding key, as a payment at the twin would
      *   rotate boarding: it rotates boarding first, once, when they coincide;
-     * - the displayed receive key gets its twin when a rotation could not register one.
+     * - the displayed receive key gets its twin when a rotation could not register one, or a new
+     *   one when the app registered renewal with other params since.
      *
      * A failure is not tried again for a few minutes, as the Executor may be down.
      */
@@ -3202,12 +3217,14 @@ export class Wallet
             if (key === hex.encode(this._boardingTapscript.options.pubKey)) {
                 await this.rotateBoarding();
             }
-            if (watches.some((w) => w.owner === key)) return;
+            const source = this.delegationSource(watches)!;
+            const twin = watches.find((w) => w.owner === key);
+            if (twin && sameDelegation(twin, source)) return;
             const [row] = await (await this.getContractManager()).getContracts({
                 script: this.defaultContractScript,
             });
             const descriptor = row?.metadata?.signingDescriptor;
-            const { options, registration } = reRegistrationOf(watches[0]);
+            const { options, registration } = reRegistrationOf(source);
             await executor.registerRenewalAt(
                 typeof descriptor === "string"
                     ? descriptor

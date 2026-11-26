@@ -174,6 +174,30 @@ describe("an HD wallet's receive address under an Executor", () => {
         await wallet.dispose();
     });
 
+    it("registers a new twin when the app registers renewal with other params", async () => {
+        const { wallet, executor } = await hdWallet();
+        const manager = (await wallet.getExecutorManager())!;
+        const key = wallet.offchainTapscript.options.pubKey;
+        const before = await twinOf(wallet, key);
+        const options = { renewalWindow: 2000, maxFee: 100, exitDelay: 144 };
+        const registration = { emulatorPubkey: vectors.emulatorPubkey };
+
+        await manager.registerBoarding(options, registration);
+        await manager.registerRenewal(options, registration);
+        await wallet.refreshExecutorWatches();
+        executor.registerDelegation.mockClear();
+        await wallet.refreshExecutorWatches();
+
+        const twins = (await renewalsOf(wallet)).filter(
+            (c) => c.params.owner.slice(2) === hex.encode(key),
+        );
+        const after = twins.find((c) => c.params.renewalWindow === "2000")!;
+        expect(after.script).not.toBe(before.script);
+        expect(await wallet.getAddress()).toBe(after.address);
+        expect(executor.registerDelegation).not.toHaveBeenCalled();
+        await wallet.dispose();
+    });
+
     it("rotates the receive key once on a receipt at its twin, registering the new twin first", async () => {
         const { wallet, executor } = await hdWallet();
         const before = await twinOf(wallet, wallet.offchainTapscript.options.pubKey);
