@@ -16,6 +16,10 @@ style and have not been backfilled.
 
 - **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the server key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. rc.1's `<SERVER_KEY>` still reads as the server key, except in a contract that declares a constructor input named `SERVER_KEY`, which 0.1.0 no longer reserves: there it is that input, where it used to be silently replaced by the server key. A constructor input named `server` or `SERVER_EXIT_DELAY`, which 0.1.0 also no longer reserves, is refused as reserved by the SDK; it used to fail as a duplicate program parameter. Until arkd and the emulator move to a single operator key, `<OPERATOR_KEY:f>` is temporarily read as rc.1's server key plus `f`-tweaked emulator key (the emulator key alone in CSV leaves). Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
 
+### Features
+
+- **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
+
 ### Bug Fixes
 
 - **Tapscript signature checks refuse encodings that BIP-341 rejects.**

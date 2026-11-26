@@ -13,8 +13,10 @@ import { ASSET_SWAP_DIRECTED_NONCE } from "../../src/protocol";
 import {
     acceptWallet,
     assetCard,
+    assetPairCard,
     clockAt,
     EMULATOR_PUBKEY_HEX,
+    EUR_ASSET_ID,
     feedServing,
     hdWallet,
     NETWORK,
@@ -104,6 +106,7 @@ const setup = async (
         quoteDelaySeconds?: number;
         directedExpiresAt?: number;
         answer?: SolverAnswer;
+        price?: number;
         corridors?: Parameters<typeof createSwapClient>[0]["corridors"];
     } = {},
 ) => {
@@ -114,7 +117,7 @@ const setup = async (
         repository: new InMemoryAssetSwapRepository(),
         discovery: { snapshot: over.snapshot ?? [] },
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
-        fetchImpl: feedServing().fetch,
+        fetchImpl: feedServing(over.price).fetch,
         ...(over.corridors === undefined ? {} : { corridors: over.corridors }),
         policy: {
             drive: "manual",
@@ -507,6 +510,42 @@ describe("open RFQ selection", () => {
         ).rejects.toThrow("original issued quote");
         await client[Symbol.asyncDispose]();
     });
+
+    it("requests a binding quote for a public asset-to-asset bid", async () => {
+        const { client } = await setup({
+            price: 1,
+            answer: (payload) =>
+                arkadeAssetAnswer(payload, clockAt(NOW), {
+                    supportsNonce: true,
+                    taker: hex.decode(pubkey),
+                    toAmount: 25_000n,
+                    quote: { carrier_sats: "330" },
+                }),
+        });
+        const eur = `arkade:regtest/asset:${EUR_ASSET_ID}` as const;
+        const pair = `${eur}->${take}`;
+        const card = rawCard(assetPairCard);
+        delete card.markets![0].pair;
+        card.sig = hex.encode(schnorr.sign(digestCard(card), key));
+        vi.mocked(collectOpenRfqBids).mockImplementation(async (request) => [
+            {
+                ...bid(25_000n),
+                openId: request.openId,
+                pair,
+                card,
+            },
+        ]);
+
+        const auction = await client.openRfq({ ...input, give: eur }, options);
+        expect(auction.pair).toBe(pair);
+        expect(auction.bids).toHaveLength(1);
+        const quote = await client.quoteBid(auction, auction.bids[0]);
+        expect(quote.give).toEqual({ asset: eur, amount: 25_000n });
+        expect(quote.take).toEqual({ asset: take, amount: 25_000n });
+        expect(quote.market.backend).toBe("rfq");
+        await client[Symbol.asyncDispose]();
+    });
+
     it("drops an offer that expires while later bids are checked", async () => {
         let reads = 0;
         const { client } = await setup({
