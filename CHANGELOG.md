@@ -71,6 +71,12 @@ style and have not been backfilled.
   `contract()`, instead of restoring its row, gets the new address once the
   co-signer is the operator.
 
+- **`programFromArtifact` reads arkd's single co-signer key on request.** With
+  `{ singleOperatorKey: true }`, a compiled `<OPERATOR_KEY:f>` reads as
+  `{ tweak: "$server", fn: f }` alone, the program `Arkade.contract()`'s rewrite
+  gives, so `new ArkadeContract(...)` derives it too, whatever the client's
+  co-signer key. Without the option every artifact reads as before.
+
 - **Arkade spends reveal the script hashes of a contract's other covenants.**
   arkd checks that every forfeit leaf of a spent VTXO's tree names its signer
   key, plain or tweaked by an arkade script hash it knows, and the emulator

@@ -87,6 +87,8 @@ export interface ProgramFromArtifactOptions {
      * that reaches it.
      */
     contracts?: readonly ContractArtifact[];
+    /** Read `<OPERATOR_KEY:f>` as the server key tweaked by `f` alone, arkd's single co-signer. */
+    singleOperatorKey?: boolean;
 }
 
 /** A contract a program instantiates; each constructor param is a parent param or a literal. */
@@ -427,7 +429,7 @@ function link(
     body: string,
     supplied: Map<string, ContractArtifact>,
     stack: string[],
-    tree: { links: number; chars: number },
+    tree: ReadContext,
 ): Instantiation {
     const [, name, list] = body.match(/^([A-Za-z]\w*)\((.*)\)$/) ?? fail(`malformed '${body}'`);
     if (--tree.links < 0) {
@@ -522,8 +524,9 @@ function parseLeaf(
     hasCovenant: boolean,
     instantiations: Map<string, string>,
     extras: ArtifactWitnessElement[],
+    singleOperatorKey: boolean,
 ): TapscriptSegment {
-    const asm = legacyOperatorLeaf(leaf.asm);
+    const asm = singleOperatorKey ? leaf.asm : legacyOperatorLeaf(leaf.asm);
     let index = 0;
 
     let condition: AsmToken[] | undefined;
@@ -573,7 +576,9 @@ function parseLeaf(
         }
         const inner = key.slice(1, -1);
         if (inner === "OPERATOR_KEY") signers.push("$server");
-        else if (inner.startsWith("TWEAK:")) {
+        else if (inner.startsWith("OPERATOR_KEY:")) {
+            signers.push({ tweak: "$server", fn: inner.slice("OPERATOR_KEY:".length) });
+        } else if (inner.startsWith("TWEAK:")) {
             const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
             if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
             signers.push({ tweak: `$${base}`, fn });
@@ -620,15 +625,19 @@ function parseLeaf(
  *
  * `<OPERATOR_KEY>` reads as `server` and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`.
  * `<OPERATOR_KEY:f>` reads as the server key followed by the emulator key tweaked by `f`'s Arkade
- * Script, or the tweaked emulator key alone in a CSV leaf, until arkd and the emulator share one
- * operator key.
+ * Script, or the tweaked emulator key alone in a CSV leaf, unless `singleOperatorKey` is set.
  */
 export function programFromArtifact(
     artifact: ContractArtifact,
     options?: ProgramFromArtifactOptions | ContractDebugInfo,
 ): Program {
-    const { debug, contracts = [] }: ProgramFromArtifactOptions =
-        options && "functions" in options ? { debug: options } : (options ?? {});
+    const {
+        debug,
+        contracts = [],
+        singleOperatorKey = false,
+    }: ProgramFromArtifactOptions = options && "functions" in options
+        ? { debug: options }
+        : (options ?? {});
     const supplied = new Map<string, ContractArtifact>();
     for (const child of contracts) {
         if (!isContractArtifact(child)) fail("each of `contracts` must be an arkadec artifact");
@@ -637,7 +646,15 @@ export function programFromArtifact(
     return readArtifact(artifact, debug, supplied, [], {
         links: MAX_INSTANTIATIONS,
         chars: MAX_INSTANTIATED_CHARS,
+        singleOperatorKey,
     });
+}
+
+/** Budgets shared by every artifact one read reaches, and how all of them read operator keys. */
+interface ReadContext {
+    links: number;
+    chars: number;
+    singleOperatorKey: boolean;
 }
 
 function readArtifact(
@@ -645,7 +662,7 @@ function readArtifact(
     debug: ContractDebugInfo | undefined,
     supplied: Map<string, ContractArtifact>,
     stack: string[],
-    tree: { links: number; chars: number },
+    tree: ReadContext,
 ): Program {
     if (!isContractArtifact(artifact)) {
         fail(
@@ -748,6 +765,7 @@ function readArtifact(
                 group.arkade !== undefined,
                 instantiations,
                 extras,
+                tree.singleOperatorKey,
             );
             if (
                 tapscript.emulator !== undefined &&

@@ -1412,3 +1412,65 @@ describe("tweakServerSigners", () => {
         );
     });
 });
+
+describe("singleOperatorKey", () => {
+    const server = schnorr.getPublicKey(new Uint8Array(32).fill(0x11));
+    const asServer = { serverKey: server, emulatorKey: hex.decode(`03${hex.encode(server)}`) };
+    const claimLeaf = (operands: string[], timelock: string[] = []) =>
+        demo({
+            constructorInputs: [{ name: "owner", type: "pubkey" }],
+            functions: [
+                {
+                    name: "claim",
+                    arkade: { inputs: [], asm: ["OP_1"] },
+                    leaves: [
+                        {
+                            name: "claim",
+                            asm: [
+                                ...timelock,
+                                ...operands.flatMap((operand, i) => [
+                                    operand,
+                                    i === operands.length - 1 ? "OP_CHECKSIG" : "OP_CHECKSIGVERIFY",
+                                ]),
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+
+    it.each([
+        ["alone", ["<OPERATOR_KEY:claim>"]],
+        ["beside a constructor key", ["<owner>", "<OPERATOR_KEY:claim>"]],
+    ])("reads an operator key %s as the program the server tweak rewrite gives", (_label, keys) => {
+        const art = claimLeaf(keys);
+        expect(programFromArtifact(art, { singleOperatorKey: true })).toEqual(
+            tweakServerSigners(programFromArtifact(art), asServer),
+        );
+    });
+
+    it("reads an operator key in a CSV leaf as the server tweaked by its function", () => {
+        const art = claimLeaf(
+            ["<owner>", "<OPERATOR_KEY:claim>"],
+            ["144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"],
+        );
+        const { tapscript } = programFromArtifact(art, { singleOperatorKey: true }).functions.claim;
+        expect(tapscript.signers).toEqual(["$owner", { tweak: "$server", fn: "claim" }]);
+        expect(tapscript.emulator).toBeNull();
+    });
+
+    it("signs a covenant leaf with the server key tweaked by its function alone", () => {
+        const program = programFromArtifact(claimLeaf(["<OPERATOR_KEY:claim>"]), {
+            singleOperatorKey: true,
+        });
+        const owner = schnorr.getPublicKey(new Uint8Array(32).fill(0x22));
+        const compiled = new ArkadeProgramScript(
+            program,
+            { server, owner },
+            asServer,
+        ).functionByName("claim")!;
+        expect(MultisigTapscript.decode(compiled.leafScript).params.pubkeys).toEqual([
+            computeArkadeScriptPublicKey(server, compiled.arkadeScript!),
+        ]);
+    });
+});
