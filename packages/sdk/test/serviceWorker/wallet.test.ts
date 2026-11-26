@@ -289,6 +289,42 @@ describe("ServiceWorkerReadonlyWallet", () => {
         );
     });
 
+    describe("getOwnAddress", () => {
+        it("answers GET_ADDRESS, whose answer is returned, from a worker that predates it", async () => {
+            const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(
+                (message) =>
+                    message.type === "GET_OWN_ADDRESS"
+                        ? { id: message.id, tag: messageTag, error: new Error("Unknown message") }
+                        : {
+                              id: message.id,
+                              tag: messageTag,
+                              type: "ADDRESS",
+                              payload: { address: "bc1-own" },
+                          },
+            );
+            vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+            const wallet = createWallet(serviceWorker as any, messageTag);
+            await expect(wallet.getOwnAddress()).resolves.toBe("bc1-own");
+            expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+                scopedRequestMatching(expect.objectContaining({ type: "GET_ADDRESS" })),
+            );
+        });
+
+        it("throws any other error, without asking GET_ADDRESS", async () => {
+            const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(
+                (message) => ({ id: message.id, tag: messageTag, error: new Error("boom") }),
+            );
+            vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+            const wallet = createWallet(serviceWorker as any, messageTag);
+            await expect(wallet.getOwnAddress()).rejects.toThrow("Failed to get own address");
+            expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
+                scopedRequestMatching(expect.objectContaining({ type: "GET_ADDRESS" })),
+            );
+        });
+    });
+
     it("returns boarding UTXOs from BOARDING_UTXOS payload", async () => {
         const utxos = [{ txid: "tx", vout: 0, value: 1, status: { confirmed: true } }];
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({

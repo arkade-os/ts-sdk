@@ -72,6 +72,15 @@ describe("getAddress with an Executor watch", () => {
         await wallet.dispose();
     });
 
+    it("keeps the own address at getOwnAddress() while a twin is live", async () => {
+        const row = await renewalRow();
+        const { wallet } = await walletWith([row]);
+
+        expect(await wallet.getOwnAddress()).toBe(wallet.arkAddress.encode());
+        expect(await wallet.getOwnAddress()).not.toBe(await wallet.getAddress());
+        await wallet.dispose();
+    });
+
     it.each<[string, RowOptions]>([
         [
             "expired",

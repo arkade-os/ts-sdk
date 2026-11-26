@@ -84,6 +84,7 @@ describe("getAddress through the service worker", () => {
             await contractRepository.saveContract(row.contract);
 
             expect(await page.getAddress()).toBe(row.contract.address);
+            expect(await page.getOwnAddress()).toBe(inner.arkAddress.encode());
         } finally {
             await inner.dispose();
         }

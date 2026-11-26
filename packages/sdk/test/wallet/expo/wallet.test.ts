@@ -42,6 +42,7 @@ const createWalletStub = () => ({
         },
     },
     getAddress: vi.fn().mockResolvedValue("arkade1-address"),
+    getOwnAddress: vi.fn().mockResolvedValue("arkade1-own"),
     getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
     getOperatorInfo: vi.fn().mockResolvedValue({ network: "regtest", dust: 1n }),
     getArkadeReader: vi.fn().mockResolvedValue({ id: "reader" }),
@@ -200,6 +201,8 @@ describe("ExpoWallet", () => {
         } as any);
 
         await expect(wallet.getAddress()).resolves.toBe("arkade1-address");
+        // a sentinel of its own, so a forward to getAddress() fails here
+        await expect(wallet.getOwnAddress()).resolves.toBe("arkade1-own");
         await expect(wallet.getBoardingAddress()).resolves.toBe("bc1-boarding");
         await expect(wallet.getOperatorInfo()).resolves.toEqual({
             network: "regtest",
@@ -232,6 +235,7 @@ describe("ExpoWallet", () => {
         await expect(wallet.settle()).resolves.toBe("settle-txid");
 
         expect(walletStub.getAddress).toHaveBeenCalledTimes(1);
+        expect(walletStub.getOwnAddress).toHaveBeenCalledTimes(1);
         expect(walletStub.getBoardingAddress).toHaveBeenCalledTimes(1);
         expect(walletStub.getBalance).toHaveBeenCalledTimes(1);
         expect(walletStub.getVtxos).toHaveBeenCalledTimes(1);

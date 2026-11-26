@@ -406,6 +406,7 @@ describe("wallet request scope", () => {
         "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK",
         "INIT_WALLET",
         "GET_ADDRESS",
+        "GET_OWN_ADDRESS",
         "GET_BOARDING_ADDRESS",
         "GET_OPERATOR_INFO",
         "GET_CURRENT_SIGNING_DESCRIPTOR",

@@ -308,6 +308,10 @@ export class ExpoWallet
         return this.wallet.getAddress();
     }
 
+    getOwnAddress(): Promise<string> {
+        return this.wallet.getOwnAddress();
+    }
+
     getBoardingAddress(): Promise<string> {
         return this.wallet.getBoardingAddress();
     }
