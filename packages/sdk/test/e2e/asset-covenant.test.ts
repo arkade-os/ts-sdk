@@ -55,6 +55,7 @@ import {
     RestOperatorProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
+    REGTEST_EMULATOR_PUBKEY,
 } from "../../src";
 import { beforeEachFaucet, createTestArkWallet, faucetOffchain, randomP2TR } from "./utils";
 
@@ -286,6 +287,7 @@ describe("asset-denominated non-interactive covenant", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             indexer: indexerProvider,
             network: networks.regtest,
         });
@@ -486,6 +488,7 @@ describe("asset-denominated non-interactive covenant", () => {
             indexer: indexerProvider,
             identity: alice.identity,
             emulator,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             network: networks.regtest,
         });
         const contract = ark.contract(scriptV2Shaped, {

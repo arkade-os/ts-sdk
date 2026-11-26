@@ -6,6 +6,7 @@ import {
     RestOperatorProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
+    REGTEST_EMULATOR_PUBKEY,
 } from "../../src";
 import { beforeEachFaucet, faucetOffchain, randomP2TR } from "./utils";
 
@@ -85,6 +86,7 @@ describe("non-interactive vHTLC", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             indexer: indexerProvider,
             network: networks.regtest,
         });
