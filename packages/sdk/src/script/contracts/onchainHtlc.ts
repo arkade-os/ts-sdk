@@ -23,7 +23,10 @@ export namespace OnchainHTLC {
         fee: bigint;
         /** As `ArkadeHTLC.Options.asset`; onchain it depends on arkd tracking assets, arkd#202. */
         asset?: { txid: Uint8Array; groupIndex: number; amount: bigint };
-        /** arkd's `boardingExitDelay`, never bound: arkd co-signs no spend if `refundDelay` is shorter. */
+        /**
+         * arkd's `boardingExitDelay`, never bound: arkd co-signs no spend if `refundDelay` is shorter.
+         * Omitted, neither that nor the `refundLocktime` unit is checked.
+         */
         minExitDelay?: RelativeTimelock;
     }
 

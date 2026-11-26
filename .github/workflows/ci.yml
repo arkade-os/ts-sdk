@@ -122,9 +122,11 @@ jobs:
           # Needs an arkd with CosignOnchainTx (ArkLabsHQ/arkd#124, #173).
           - package: sdk
             group: onchain-cosign
-            test_files: >-
-              test/e2e/onchain-cosign.test.ts
-              test/e2e/onchain-htlc.test.ts
+            test_files: test/e2e/onchain-cosign.test.ts
+          # Needs an arkd with CosignOnchainTx whose signer runs Arkade Script (ArkLabsHQ/arkd#127).
+          - package: sdk
+            group: onchain-htlc
+            test_files: test/e2e/onchain-htlc.test.ts
           - package: swap
             group: all
             test_files: ""
