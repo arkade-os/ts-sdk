@@ -336,7 +336,11 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 
-    it("refuses one renewal mixing covenants co-signed by arkd and by the emulator", async () => {
+    it.each([
+        ["renew", "renew them separately"],
+        ["missing", "missing is not a covenant function"],
+        ["unilateral", "unilateral is not a covenant function"],
+    ])("rejects mixed co-signer targets with second function %s", async (fn, error) => {
         const { ark, target, registerIntent } = await keeper(() => (async function* () {})());
         const viaArkd = new arkade.ArkadeContract(ark, renewable, target.contract.args, {
             serverKey: ark.serverKey,
@@ -349,8 +353,8 @@ describe("renewProgramContractOutputs", () => {
         } as unknown as VirtualCoin;
 
         await expect(
-            arkade.renewProgramContractOutputs(ark, [target, { contract: viaArkd, coin }]),
-        ).rejects.toThrow("renew them separately");
+            arkade.renewProgramContractOutputs(ark, [target, { contract: viaArkd, coin, fn }]),
+        ).rejects.toThrow(error);
         expect(registerIntent).not.toHaveBeenCalled();
     });
 

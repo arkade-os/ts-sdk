@@ -92,6 +92,14 @@ style and have not been backfilled.
   `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
 ### Bug Fixes
 
+- **Covenant co-signer routing uses the selected signing leaf.** Renewal
+  rejects missing or Bitcoin-only functions before choosing a co-signer.
+  Onchain routing compares the tweaked operator key with the leaf's decoded
+  signing keys, so bytes in a condition cannot select the operator.
+
+- **Signer classification accepts operator info without deprecated signers.**
+  Providers that omit the list are treated as advertising only the active signer.
+
 - **Tapscript signature checks refuse encodings that BIP-341 rejects.**
   `verifyTapscriptSignatures`, which checks the server's signatures on
   checkpoint and ark transactions, accepted a 65-byte signature ending in

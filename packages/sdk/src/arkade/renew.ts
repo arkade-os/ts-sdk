@@ -59,9 +59,16 @@ export async function renewProgramContractOutputs(
 ): Promise<{ commitmentTxid: string; intentId: string }> {
     const { indexer, network } = client;
     const arkProvider = client.arkProvider as OperatorProvider;
+    const renewals = targets.map(({ contract, coin, fn = "renew" }) => {
+        const compiled = contract.vtxoScript.functionByName(fn);
+        if (!compiled?.arkadeScript) {
+            throw new Error(`renewProgramContractOutputs: ${fn} is not a covenant function`);
+        }
+        return { contract, coin, fn, compiled, arkadeScript: compiled.arkadeScript };
+    });
     // arkd signs the intent and the forfeits itself when it holds every leg's co-signer.
-    const operated = targets.filter(({ contract, fn = "renew" }) =>
-        client.operatorCosignsLeaf(contract, contract.vtxoScript.functionByName(fn)),
+    const operated = renewals.filter(({ contract, compiled }) =>
+        client.operatorCosignsLeaf(contract, compiled),
     ).length;
     const viaOperator = operated === targets.length;
     if (operated > 0 && !viaOperator) {
@@ -87,16 +94,12 @@ export async function renewProgramContractOutputs(
     const twice = outpoints.find((o, i) => outpoints.indexOf(o) !== i);
     if (twice) throw new Error(`renewProgramContractOutputs: coin ${twice} listed twice`);
 
-    const legs = targets.map(({ contract, coin, fn = "renew" }) => {
+    const legs = renewals.map(({ contract, coin, fn, compiled, arkadeScript }) => {
         // The proof spends it through the contract's tree, so a mismatch fails at arkd unclearly.
         if (coin.script.toLowerCase() !== hex.encode(contract.pkScript)) {
             throw new Error(
                 `renewProgramContractOutputs: coin ${coin.txid}:${coin.vout} is not locked by its contract`,
             );
-        }
-        const compiled = contract.vtxoScript.functionByName(fn);
-        if (!compiled?.arkadeScript) {
-            throw new Error(`renewProgramContractOutputs: ${fn} is not a covenant function`);
         }
         // No owner signs a renewal: a leaf naming any key but the server's could never complete.
         if (
@@ -124,6 +127,7 @@ export async function renewProgramContractOutputs(
             contract,
             coin,
             compiled,
+            arkadeScript,
             condition,
             witness: RawWitness.encode(stack),
             tweaks: contract.vtxoScript.arkadeTweaks(compiled),
@@ -175,9 +179,9 @@ export async function renewProgramContractOutputs(
     }
     packets.push(
         EmulatorPacket.create(
-            legs.map(({ compiled, witness }, k) => ({
+            legs.map(({ arkadeScript, witness }, k) => ({
                 vin: k + 1,
-                script: compiled.arkadeScript!,
+                script: arkadeScript,
                 witness,
             })),
         ) as ExtensionPacket,
@@ -230,7 +234,7 @@ export async function renewProgramContractOutputs(
             intentId,
             coins.map((coin, k) => ({
                 ...coin,
-                arkadeScriptBytes: legs[k].compiled.arkadeScript!,
+                arkadeScriptBytes: legs[k].arkadeScript,
             })),
             undefined,
             signedProof,

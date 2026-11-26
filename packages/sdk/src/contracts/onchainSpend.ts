@@ -32,7 +32,7 @@ import { ExecutorContractHandler } from "./handlers/executor";
 import { isOnchainScoped, scopeOf } from "./scope";
 import { isExplorerCoin } from "./onchainCoins";
 import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
-import type { RelativeTimelock } from "../script/tapscript";
+import { decodeTapscript, type RelativeTimelock } from "../script/tapscript";
 
 export const DEFAULT_COSIGN_MARGIN_BLOCKS = 6;
 
@@ -129,9 +129,16 @@ export function operatorCosignedInputs(tx: Transaction, operatorKeys: Uint8Array
     for (const { vin, script } of entries) {
         const leaf = tx.getInput(vin)?.tapLeafScript?.[0];
         if (!leaf) continue;
-        const leafHex = hex.encode(scriptFromTapLeafScript(leaf));
-        const named = (key: Uint8Array) =>
-            leafHex.includes(hex.encode(computeArkadeScriptPublicKey(key, script)));
+        let leafKeys: Uint8Array[];
+        try {
+            leafKeys = decodeTapscript(scriptFromTapLeafScript(leaf)).params.pubkeys;
+        } catch {
+            continue;
+        }
+        const named = (key: Uint8Array) => {
+            const tweakedKey = computeArkadeScriptPublicKey(key, script);
+            return leafKeys.some((leafKey) => equalBytes(leafKey, tweakedKey));
+        };
         if (operatorKeys.some(named)) held.add(vin);
     }
     return held;

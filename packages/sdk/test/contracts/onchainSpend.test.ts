@@ -443,6 +443,23 @@ describe("emulator inputs", () => {
         expect(operatorCosignedInputs(tx, [keyA])).toEqual(new Set());
     });
 
+    it("ignores tweaked operator key bytes in the leaf condition", () => {
+        const tweakedB = computeArkadeScriptPublicKey(keyB, new Uint8Array([0x51]));
+        const leaf = ConditionMultisigTapscript.encode({
+            conditionScript: Script.encode([
+                tweakedB,
+                "DROP",
+                new Uint8Array([0x20, ...tweakedB]),
+                "DROP",
+                1,
+            ]),
+            pubkeys: [keyA, keyB],
+        });
+        const tx = emulatorTx(new VtxoScript([leaf.script]));
+
+        expect(operatorCosignedInputs(tx, [keyB])).toEqual(new Set());
+    });
+
     it("finalizes a condition leaf on the direct broadcast path too", async () => {
         const tx = new Transaction({ version: 2 });
         tx.addInput({ txid: hex.decode(coin.txid), index: 0 });

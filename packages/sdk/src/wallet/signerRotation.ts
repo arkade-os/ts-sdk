@@ -61,7 +61,7 @@ export function toXOnlySignerHex(pubkeyHex: string): string {
 export function signerSetFromInfo(info: OperatorInfo): SignerSet {
     const active = toXOnlySignerHex(info.signerPubkey);
     const deprecated = new Map<string, bigint>();
-    for (const signer of info.deprecatedSigners) {
+    for (const signer of info.deprecatedSigners ?? []) {
         if (!signer.pubkey) continue;
         deprecated.set(toXOnlySignerHex(signer.pubkey), signer.cutoffDate);
     }
