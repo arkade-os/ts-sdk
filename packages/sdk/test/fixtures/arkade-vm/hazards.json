@@ -1,0 +1,410 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "hazards": [
+        {
+            "id": "2.6/fetcher-nil",
+            "text": "fetcher misses: hard ErrInvalidIndex, OP_TUNNEL soft fallback, INSPECTINPUTPACKET stack error, Execute fails closed"
+        },
+        {
+            "id": "2.7/witness-unchecked",
+            "text": "witness items over 520 bytes enter the stack unchecked"
+        },
+        {
+            "id": "2.9/charge",
+            "text": "per-input compute limits: executing branches only, inside a taproot context, exact-replace limits"
+        },
+        {
+            "id": "2.9/no-65535-case",
+            "text": "checkMinimalDataPush has no PUSHDATA4 case, so an executed PUSHDATA4 is never minimal"
+        },
+        {
+            "id": "2.9/order",
+            "text": "illegal and oversized pushes fail in dead branches, minimal-push only when executing"
+        },
+        {
+            "id": "2.9/post-step-limits",
+            "text": "1000 elements and 128 KiB over data plus alt stack, checked after each step"
+        },
+        {
+            "id": "3.1/asbool-negative-zero",
+            "text": "0x80 is false only as the last byte"
+        },
+        {
+            "id": "3.1/bignum-operands",
+            "text": "arithmetic is BigNum up to 520 bytes, minimal encoding enforced"
+        },
+        {
+            "id": "3.1/bin2num-normalises",
+            "text": "OP_BIN2NUM minimally encodes raw bytes; [0x80] becomes []"
+        },
+        {
+            "id": "3.1/div-mod-truncate",
+            "text": "DIV/MOD truncate toward zero"
+        },
+        {
+            "id": "3.1/lshift-cap",
+            "text": "LSHIFT rejects shifts over 4160 and re-checks size; negative counts are ErrInvalidIndex"
+        },
+        {
+            "id": "3.1/mixed-width",
+            "text": "scriptNum operands beside BigNum values (NUM2BIN size, shift counts)"
+        },
+        {
+            "id": "3.1/num2bin-fixedbytes",
+            "text": "NUM2BIN moves the sign bit to the last byte"
+        },
+        {
+            "id": "3.1/pushexpiry-minint64",
+            "text": "scriptNum.Bytes panics on MinInt64 via OP_PUSHEXPIRY"
+        },
+        {
+            "id": "3.1/pushint-poison",
+            "text": "PushInt results over 4 bytes break a later PopInt"
+        },
+        {
+            "id": "3.1/rshift-floor",
+            "text": "RSHIFT rounds toward minus infinity"
+        },
+        {
+            "id": "3.1/scriptnum-operands",
+            "text": "indices and selectors are 4-byte minimal scriptNums"
+        },
+        {
+            "id": "3.1/usebig",
+            "text": "useBig at CLTV/CSV/curve id: unobservable once values round-trip through stack bytes"
+        },
+        {
+            "id": "3.1/within-half-open",
+            "text": "OP_WITHIN is min <= x < max"
+        },
+        {
+            "id": "3.10/checktime",
+            "text": "CHECKTIME pushes bool(n <= now), negative is ErrNegativeLockTime"
+        },
+        {
+            "id": "3.10/cltv",
+            "text": "CLTV peeks, same kind across 5e8, final input fails"
+        },
+        {
+            "id": "3.10/csv",
+            "text": "CSV disable bit is a NOP, version >= 2, masked comparison"
+        },
+        {
+            "id": "3.10/pushexpiry",
+            "text": "PUSHEXPIRY needs a host expiry, values unvalidated"
+        },
+        {
+            "id": "3.11/assetid-internal-order",
+            "text": "asset ids compare in internal byte order"
+        },
+        {
+            "id": "3.11/count-not-bound-checked",
+            "text": "IN/OUTASSETCOUNT do not bound-check the index"
+        },
+        {
+            "id": "3.11/lookup-flag",
+            "text": "lookup misses collide with real hits, the flag disambiguates"
+        },
+        {
+            "id": "3.11/no-packet",
+            "text": "every asset opcode fails without an asset packet"
+        },
+        {
+            "id": "3.11/pop-orders",
+            "text": "asset opcodes pop the later operand first"
+        },
+        {
+            "id": "3.11/resolve-asset-id",
+            "text": "a fresh issuance is (tx hash, position)"
+        },
+        {
+            "id": "3.11/sum-bigint",
+            "text": "INSPECTASSETGROUPSUM sums without wrapping"
+        },
+        {
+            "id": "3.11/variable-pushes",
+            "text": "INSPECTASSETGROUP pushes a txid only for intent inputs"
+        },
+        {
+            "id": "3.12/emulator-packet-validation",
+            "text": "emulator packet rules checked by Execute before the script runs"
+        },
+        {
+            "id": "3.12/extension",
+            "text": "zero-packet and duplicate-type extensions rejected, first extension output only"
+        },
+        {
+            "id": "3.12/inspectinputpacket",
+            "text": "index popped first, missing previous tx is an error"
+        },
+        {
+            "id": "3.12/inspectpacket",
+            "text": "re-serialised content and a flag, malformed extension is an error"
+        },
+        {
+            "id": "3.12/intent",
+            "text": "gjson queries: path grammar, number rules, verbatim objects, explicit null reads as a miss"
+        },
+        {
+            "id": "3.12/tunnel",
+            "text": "pop order, depth guard, flag subset, assets compared exactly"
+        },
+        {
+            "id": "3.13/discouraged-nops",
+            "text": "NOP1, NOP5-10 fail; only OP_NOP succeeds"
+        },
+        {
+            "id": "3.13/no-op-success",
+            "text": "unknown opcodes fail, there is no OP_SUCCESS"
+        },
+        {
+            "id": "3.13/nop4-is-merkle",
+            "text": "0xb3 is OP_MERKLEBRANCHROOT"
+        },
+        {
+            "id": "3.13/reenabled",
+            "text": "CAT and the other disabled-in-Bitcoin opcodes are live"
+        },
+        {
+            "id": "3.13/reserved-codes",
+            "text": "reserved and invalid slots fail with ErrReservedOpcode when executed"
+        },
+        {
+            "id": "3.13/return-fails",
+            "text": "OP_RETURN fails when executed; a dead branch skips it"
+        },
+        {
+            "id": "3.13/verif-dead-branch",
+            "text": "VERIF/VERNOTIF fail even in a dead branch"
+        },
+        {
+            "id": "3.2/alt-limits",
+            "text": "the alt stack counts toward both post-step limits"
+        },
+        {
+            "id": "3.2/depth-before-push",
+            "text": "OP_DEPTH pushes the depth read before the push"
+        },
+        {
+            "id": "3.2/minimal-if",
+            "text": "IF/NOTIF require [] or [0x01]"
+        },
+        {
+            "id": "3.2/nipn-branches",
+            "text": "PICK/ROLL bounds and the top, bottom and middle branches of nipN"
+        },
+        {
+            "id": "3.2/put",
+            "text": "OP_PUT overwrites in place, PutN(0) replaces the top"
+        },
+        {
+            "id": "3.2/same-slice",
+            "text": "duplicated elements are copies to a port that mutates in place"
+        },
+        {
+            "id": "3.3/aliasing",
+            "text": "splice results must not alias their source"
+        },
+        {
+            "id": "3.3/bitwise-equal-length",
+            "text": "AND/OR/XOR require equal lengths"
+        },
+        {
+            "id": "3.3/cat-limit",
+            "text": "OP_CAT rejects results over 520 bytes"
+        },
+        {
+            "id": "3.3/left-right-bounds",
+            "text": "LEFT/RIGHT reject n < 0 or n > len"
+        },
+        {
+            "id": "3.3/substr-no-clamp",
+            "text": "SUBSTR is not clamped and its bound uses int64"
+        },
+        {
+            "id": "3.4/digest-selectors",
+            "text": "OP_DIGEST selectors 1..5, keccak distinct from sha3, selector popped first"
+        },
+        {
+            "id": "3.4/sha256-midstate-framing",
+            "text": "gob-framed midstate: exact length and prefix, h words free, pending count from length"
+        },
+        {
+            "id": "3.4/sha256-pop-order",
+            "text": "SHA256UPDATE/FINALIZE pop data first, then state"
+        },
+        {
+            "id": "3.5/computes-not-verifies",
+            "text": "OP_MERKLEBRANCHROOT pushes a root, it verifies nothing"
+        },
+        {
+            "id": "3.5/empty-proof",
+            "text": "an empty proof yields the leaf hash"
+        },
+        {
+            "id": "3.5/lexicographic",
+            "text": "siblings are ordered by bytes.Compare, no direction bits"
+        },
+        {
+            "id": "3.5/metadata-tree-differs",
+            "text": "asset metadata root is plain sha256, unsorted, odd leaf carried"
+        },
+        {
+            "id": "3.5/pop-order",
+            "text": "leaf_data, proof, branch_tag, leaf_tag; empty branch tag rejected"
+        },
+        {
+            "id": "3.5/proof-multiple-of-32",
+            "text": "the proof is one element whose length is a multiple of 32"
+        },
+        {
+            "id": "3.5/raw-hash-mode",
+            "text": "empty leaf tag means a raw 32-byte leaf"
+        },
+        {
+            "id": "3.6/2mul-2div",
+            "text": "2MUL is n+n, 2DIV truncates"
+        },
+        {
+            "id": "3.6/modulus-nonpositive",
+            "text": "MODEXP rejects a zero or negative modulus"
+        },
+        {
+            "id": "3.6/negative-base",
+            "text": "MODEXP normalises into [0, modulus) and accepts a negative base"
+        },
+        {
+            "id": "3.6/negative-exponent",
+            "text": "MODEXP rejects a negative exponent"
+        },
+        {
+            "id": "3.6/operand-64-bytes",
+            "text": "MODEXP operands are at most 64 encoded bytes, sign byte included"
+        },
+        {
+            "id": "3.6/pop-order",
+            "text": "MODEXP pops modulus, exp, base"
+        },
+        {
+            "id": "3.7/coord-bignum-encoding",
+            "text": "EC coordinates are minimal LE BigNums"
+        },
+        {
+            "id": "3.7/coord-range",
+            "text": "coordinates below p, scalars below n, non-negative"
+        },
+        {
+            "id": "3.7/curves",
+            "text": "curve ids 0 secp256k1, 1 P-256, 2 bn254"
+        },
+        {
+            "id": "3.7/ecmulscalarverify",
+            "text": "32-byte BE k, 33-byte compressed P, byte-compared Q, infinity rejected"
+        },
+        {
+            "id": "3.7/infinity",
+            "text": "infinity is (0,0) on all curves"
+        },
+        {
+            "id": "3.7/pairing",
+            "text": "bn254 only, 1..16 pairs, c1 before c0, pairs filled last-first"
+        },
+        {
+            "id": "3.7/pop-orders",
+            "text": "ECADD pops y2 x2 y1 x1 after the curve id"
+        },
+        {
+            "id": "3.7/tweakverify",
+            "text": "x-only P lifted even, k*G added, infinity rejected"
+        },
+        {
+            "id": "3.8/checkmultisig-disabled",
+            "text": "CHECKMULTISIG(VERIFY) always fail when executed"
+        },
+        {
+            "id": "3.8/checksig-behaviour",
+            "text": "pubkey popped first, empty sig pushes [], invalid sig is ErrNullFail"
+        },
+        {
+            "id": "3.8/checksigadd",
+            "text": "CHECKSIGADD pops pubkey, n, sig"
+        },
+        {
+            "id": "3.8/csfs",
+            "text": "CHECKSIGFROMSTACK: no context, raw 32-byte message, empty sig skips key parsing"
+        },
+        {
+            "id": "3.8/low-s",
+            "text": "both ECDSA schemes require low S"
+        },
+        {
+            "id": "3.8/output-masking",
+            "text": "sha_outputs over the emulator packet with witness blobs dropped"
+        },
+        {
+            "id": "3.8/pubkey-schemes",
+            "text": "32-byte schnorr, 0x10/0x11 + 33-byte ECDSA, anything else discouraged"
+        },
+        {
+            "id": "3.8/sighash-byte",
+            "text": "64 bytes is DEFAULT, 65 needs a non-zero type, 0x80 rejected"
+        },
+        {
+            "id": "3.8/sighash-opcode",
+            "text": "OP_SIGHASH validates the flag and the SINGLE output"
+        },
+        {
+            "id": "3.8/tag-arkade-tapsighash",
+            "text": "the digest is tagged ArkadeTapSighash and commits to the spending leaf"
+        },
+        {
+            "id": "3.9/arkadescripthash-by-vin",
+            "text": "emulator entries are found by vin, not position"
+        },
+        {
+            "id": "3.9/codesep-opcode-position",
+            "text": "OP_CODESEPARATOR records the opcode position, not the byte offset"
+        },
+        {
+            "id": "3.9/ctx-gated",
+            "text": "CHECKSIG, CHECKSIGVERIFY, CHECKSIGADD, SIGHASH, CODESEPARATOR need a taproot context"
+        },
+        {
+            "id": "3.9/index-negative",
+            "text": "introspection indices reject negatives with ErrInvalidIndex"
+        },
+        {
+            "id": "3.9/inspectversion-uint32",
+            "text": "OP_INSPECTVERSION pushes the uint32 view of the version"
+        },
+        {
+            "id": "3.9/outpoint-internal-order",
+            "text": "INSPECTINPUTOUTPOINT pushes the txid in internal order, then the vout"
+        },
+        {
+            "id": "3.9/pushscriptpubkey-sentinel",
+            "text": "witness program then version, otherwise sha256(script) then -1"
+        },
+        {
+            "id": "3.9/txweight-txid-stripped",
+            "text": "TXWEIGHT is stripped size times four, TXID is the stripped hash"
+        },
+        {
+            "id": "3.9/value-range",
+            "text": "satoshi values outside [0, 21e14] are ErrInvalidStackOperation"
+        },
+        {
+            "id": "3.9/value-vs-script-sources",
+            "text": "INSPECTINPUTVALUE uses FetchPrevOutput, SCRIPTPUBKEY uses FetchVtxoPrevOutPkScript"
+        },
+        {
+            "id": "3.9/witnesshash-empty",
+            "text": "an empty emulator witness hashes to 32 zero bytes"
+        }
+    ]
+}

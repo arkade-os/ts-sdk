@@ -1,0 +1,1546 @@
+{
+    "format": "arkade-vm-oracle/v1",
+    "pin": {
+        "emulator": "30a59c7",
+        "module": "v0.2.0",
+        "go": "go1.27.3"
+    },
+    "opcodes": [
+        {
+            "value": 0,
+            "name": "OP_0",
+            "length": 1,
+            "aliases": ["OP_FALSE"]
+        },
+        {
+            "value": 1,
+            "name": "OP_DATA_1",
+            "length": 2,
+            "aliases": []
+        },
+        {
+            "value": 2,
+            "name": "OP_DATA_2",
+            "length": 3,
+            "aliases": []
+        },
+        {
+            "value": 3,
+            "name": "OP_DATA_3",
+            "length": 4,
+            "aliases": []
+        },
+        {
+            "value": 4,
+            "name": "OP_DATA_4",
+            "length": 5,
+            "aliases": []
+        },
+        {
+            "value": 5,
+            "name": "OP_DATA_5",
+            "length": 6,
+            "aliases": []
+        },
+        {
+            "value": 6,
+            "name": "OP_DATA_6",
+            "length": 7,
+            "aliases": []
+        },
+        {
+            "value": 7,
+            "name": "OP_DATA_7",
+            "length": 8,
+            "aliases": []
+        },
+        {
+            "value": 8,
+            "name": "OP_DATA_8",
+            "length": 9,
+            "aliases": []
+        },
+        {
+            "value": 9,
+            "name": "OP_DATA_9",
+            "length": 10,
+            "aliases": []
+        },
+        {
+            "value": 10,
+            "name": "OP_DATA_10",
+            "length": 11,
+            "aliases": []
+        },
+        {
+            "value": 11,
+            "name": "OP_DATA_11",
+            "length": 12,
+            "aliases": []
+        },
+        {
+            "value": 12,
+            "name": "OP_DATA_12",
+            "length": 13,
+            "aliases": []
+        },
+        {
+            "value": 13,
+            "name": "OP_DATA_13",
+            "length": 14,
+            "aliases": []
+        },
+        {
+            "value": 14,
+            "name": "OP_DATA_14",
+            "length": 15,
+            "aliases": []
+        },
+        {
+            "value": 15,
+            "name": "OP_DATA_15",
+            "length": 16,
+            "aliases": []
+        },
+        {
+            "value": 16,
+            "name": "OP_DATA_16",
+            "length": 17,
+            "aliases": []
+        },
+        {
+            "value": 17,
+            "name": "OP_DATA_17",
+            "length": 18,
+            "aliases": []
+        },
+        {
+            "value": 18,
+            "name": "OP_DATA_18",
+            "length": 19,
+            "aliases": []
+        },
+        {
+            "value": 19,
+            "name": "OP_DATA_19",
+            "length": 20,
+            "aliases": []
+        },
+        {
+            "value": 20,
+            "name": "OP_DATA_20",
+            "length": 21,
+            "aliases": []
+        },
+        {
+            "value": 21,
+            "name": "OP_DATA_21",
+            "length": 22,
+            "aliases": []
+        },
+        {
+            "value": 22,
+            "name": "OP_DATA_22",
+            "length": 23,
+            "aliases": []
+        },
+        {
+            "value": 23,
+            "name": "OP_DATA_23",
+            "length": 24,
+            "aliases": []
+        },
+        {
+            "value": 24,
+            "name": "OP_DATA_24",
+            "length": 25,
+            "aliases": []
+        },
+        {
+            "value": 25,
+            "name": "OP_DATA_25",
+            "length": 26,
+            "aliases": []
+        },
+        {
+            "value": 26,
+            "name": "OP_DATA_26",
+            "length": 27,
+            "aliases": []
+        },
+        {
+            "value": 27,
+            "name": "OP_DATA_27",
+            "length": 28,
+            "aliases": []
+        },
+        {
+            "value": 28,
+            "name": "OP_DATA_28",
+            "length": 29,
+            "aliases": []
+        },
+        {
+            "value": 29,
+            "name": "OP_DATA_29",
+            "length": 30,
+            "aliases": []
+        },
+        {
+            "value": 30,
+            "name": "OP_DATA_30",
+            "length": 31,
+            "aliases": []
+        },
+        {
+            "value": 31,
+            "name": "OP_DATA_31",
+            "length": 32,
+            "aliases": []
+        },
+        {
+            "value": 32,
+            "name": "OP_DATA_32",
+            "length": 33,
+            "aliases": []
+        },
+        {
+            "value": 33,
+            "name": "OP_DATA_33",
+            "length": 34,
+            "aliases": []
+        },
+        {
+            "value": 34,
+            "name": "OP_DATA_34",
+            "length": 35,
+            "aliases": []
+        },
+        {
+            "value": 35,
+            "name": "OP_DATA_35",
+            "length": 36,
+            "aliases": []
+        },
+        {
+            "value": 36,
+            "name": "OP_DATA_36",
+            "length": 37,
+            "aliases": []
+        },
+        {
+            "value": 37,
+            "name": "OP_DATA_37",
+            "length": 38,
+            "aliases": []
+        },
+        {
+            "value": 38,
+            "name": "OP_DATA_38",
+            "length": 39,
+            "aliases": []
+        },
+        {
+            "value": 39,
+            "name": "OP_DATA_39",
+            "length": 40,
+            "aliases": []
+        },
+        {
+            "value": 40,
+            "name": "OP_DATA_40",
+            "length": 41,
+            "aliases": []
+        },
+        {
+            "value": 41,
+            "name": "OP_DATA_41",
+            "length": 42,
+            "aliases": []
+        },
+        {
+            "value": 42,
+            "name": "OP_DATA_42",
+            "length": 43,
+            "aliases": []
+        },
+        {
+            "value": 43,
+            "name": "OP_DATA_43",
+            "length": 44,
+            "aliases": []
+        },
+        {
+            "value": 44,
+            "name": "OP_DATA_44",
+            "length": 45,
+            "aliases": []
+        },
+        {
+            "value": 45,
+            "name": "OP_DATA_45",
+            "length": 46,
+            "aliases": []
+        },
+        {
+            "value": 46,
+            "name": "OP_DATA_46",
+            "length": 47,
+            "aliases": []
+        },
+        {
+            "value": 47,
+            "name": "OP_DATA_47",
+            "length": 48,
+            "aliases": []
+        },
+        {
+            "value": 48,
+            "name": "OP_DATA_48",
+            "length": 49,
+            "aliases": []
+        },
+        {
+            "value": 49,
+            "name": "OP_DATA_49",
+            "length": 50,
+            "aliases": []
+        },
+        {
+            "value": 50,
+            "name": "OP_DATA_50",
+            "length": 51,
+            "aliases": []
+        },
+        {
+            "value": 51,
+            "name": "OP_DATA_51",
+            "length": 52,
+            "aliases": []
+        },
+        {
+            "value": 52,
+            "name": "OP_DATA_52",
+            "length": 53,
+            "aliases": []
+        },
+        {
+            "value": 53,
+            "name": "OP_DATA_53",
+            "length": 54,
+            "aliases": []
+        },
+        {
+            "value": 54,
+            "name": "OP_DATA_54",
+            "length": 55,
+            "aliases": []
+        },
+        {
+            "value": 55,
+            "name": "OP_DATA_55",
+            "length": 56,
+            "aliases": []
+        },
+        {
+            "value": 56,
+            "name": "OP_DATA_56",
+            "length": 57,
+            "aliases": []
+        },
+        {
+            "value": 57,
+            "name": "OP_DATA_57",
+            "length": 58,
+            "aliases": []
+        },
+        {
+            "value": 58,
+            "name": "OP_DATA_58",
+            "length": 59,
+            "aliases": []
+        },
+        {
+            "value": 59,
+            "name": "OP_DATA_59",
+            "length": 60,
+            "aliases": []
+        },
+        {
+            "value": 60,
+            "name": "OP_DATA_60",
+            "length": 61,
+            "aliases": []
+        },
+        {
+            "value": 61,
+            "name": "OP_DATA_61",
+            "length": 62,
+            "aliases": []
+        },
+        {
+            "value": 62,
+            "name": "OP_DATA_62",
+            "length": 63,
+            "aliases": []
+        },
+        {
+            "value": 63,
+            "name": "OP_DATA_63",
+            "length": 64,
+            "aliases": []
+        },
+        {
+            "value": 64,
+            "name": "OP_DATA_64",
+            "length": 65,
+            "aliases": []
+        },
+        {
+            "value": 65,
+            "name": "OP_DATA_65",
+            "length": 66,
+            "aliases": []
+        },
+        {
+            "value": 66,
+            "name": "OP_DATA_66",
+            "length": 67,
+            "aliases": []
+        },
+        {
+            "value": 67,
+            "name": "OP_DATA_67",
+            "length": 68,
+            "aliases": []
+        },
+        {
+            "value": 68,
+            "name": "OP_DATA_68",
+            "length": 69,
+            "aliases": []
+        },
+        {
+            "value": 69,
+            "name": "OP_DATA_69",
+            "length": 70,
+            "aliases": []
+        },
+        {
+            "value": 70,
+            "name": "OP_DATA_70",
+            "length": 71,
+            "aliases": []
+        },
+        {
+            "value": 71,
+            "name": "OP_DATA_71",
+            "length": 72,
+            "aliases": []
+        },
+        {
+            "value": 72,
+            "name": "OP_DATA_72",
+            "length": 73,
+            "aliases": []
+        },
+        {
+            "value": 73,
+            "name": "OP_DATA_73",
+            "length": 74,
+            "aliases": []
+        },
+        {
+            "value": 74,
+            "name": "OP_DATA_74",
+            "length": 75,
+            "aliases": []
+        },
+        {
+            "value": 75,
+            "name": "OP_DATA_75",
+            "length": 76,
+            "aliases": []
+        },
+        {
+            "value": 76,
+            "name": "OP_PUSHDATA1",
+            "length": -1,
+            "aliases": []
+        },
+        {
+            "value": 77,
+            "name": "OP_PUSHDATA2",
+            "length": -2,
+            "aliases": []
+        },
+        {
+            "value": 78,
+            "name": "OP_PUSHDATA4",
+            "length": -4,
+            "aliases": []
+        },
+        {
+            "value": 79,
+            "name": "OP_1NEGATE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 80,
+            "name": "OP_RESERVED",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 81,
+            "name": "OP_1",
+            "length": 1,
+            "aliases": ["OP_TRUE"]
+        },
+        {
+            "value": 82,
+            "name": "OP_2",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 83,
+            "name": "OP_3",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 84,
+            "name": "OP_4",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 85,
+            "name": "OP_5",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 86,
+            "name": "OP_6",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 87,
+            "name": "OP_7",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 88,
+            "name": "OP_8",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 89,
+            "name": "OP_9",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 90,
+            "name": "OP_10",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 91,
+            "name": "OP_11",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 92,
+            "name": "OP_12",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 93,
+            "name": "OP_13",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 94,
+            "name": "OP_14",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 95,
+            "name": "OP_15",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 96,
+            "name": "OP_16",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 97,
+            "name": "OP_NOP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 98,
+            "name": "OP_VER",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 99,
+            "name": "OP_IF",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 100,
+            "name": "OP_NOTIF",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 101,
+            "name": "OP_VERIF",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 102,
+            "name": "OP_VERNOTIF",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 103,
+            "name": "OP_ELSE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 104,
+            "name": "OP_ENDIF",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 105,
+            "name": "OP_VERIFY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 106,
+            "name": "OP_RETURN",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 107,
+            "name": "OP_TOALTSTACK",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 108,
+            "name": "OP_FROMALTSTACK",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 109,
+            "name": "OP_2DROP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 110,
+            "name": "OP_2DUP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 111,
+            "name": "OP_3DUP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 112,
+            "name": "OP_2OVER",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 113,
+            "name": "OP_2ROT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 114,
+            "name": "OP_2SWAP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 115,
+            "name": "OP_IFDUP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 116,
+            "name": "OP_DEPTH",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 117,
+            "name": "OP_DROP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 118,
+            "name": "OP_DUP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 119,
+            "name": "OP_NIP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 120,
+            "name": "OP_OVER",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 121,
+            "name": "OP_PICK",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 122,
+            "name": "OP_ROLL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 123,
+            "name": "OP_ROT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 124,
+            "name": "OP_SWAP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 125,
+            "name": "OP_TUCK",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 126,
+            "name": "OP_CAT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 127,
+            "name": "OP_SUBSTR",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 128,
+            "name": "OP_LEFT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 129,
+            "name": "OP_RIGHT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 130,
+            "name": "OP_SIZE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 131,
+            "name": "OP_INVERT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 132,
+            "name": "OP_AND",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 133,
+            "name": "OP_OR",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 134,
+            "name": "OP_XOR",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 135,
+            "name": "OP_EQUAL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 136,
+            "name": "OP_EQUALVERIFY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 137,
+            "name": "OP_RESERVED1",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 138,
+            "name": "OP_RESERVED2",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 139,
+            "name": "OP_1ADD",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 140,
+            "name": "OP_1SUB",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 141,
+            "name": "OP_2MUL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 142,
+            "name": "OP_2DIV",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 143,
+            "name": "OP_NEGATE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 144,
+            "name": "OP_ABS",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 145,
+            "name": "OP_NOT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 146,
+            "name": "OP_0NOTEQUAL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 147,
+            "name": "OP_ADD",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 148,
+            "name": "OP_SUB",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 149,
+            "name": "OP_MUL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 150,
+            "name": "OP_DIV",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 151,
+            "name": "OP_MOD",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 152,
+            "name": "OP_LSHIFT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 153,
+            "name": "OP_RSHIFT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 154,
+            "name": "OP_BOOLAND",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 155,
+            "name": "OP_BOOLOR",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 156,
+            "name": "OP_NUMEQUAL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 157,
+            "name": "OP_NUMEQUALVERIFY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 158,
+            "name": "OP_NUMNOTEQUAL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 159,
+            "name": "OP_LESSTHAN",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 160,
+            "name": "OP_GREATERTHAN",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 161,
+            "name": "OP_LESSTHANOREQUAL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 162,
+            "name": "OP_GREATERTHANOREQUAL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 163,
+            "name": "OP_MIN",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 164,
+            "name": "OP_MAX",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 165,
+            "name": "OP_WITHIN",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 166,
+            "name": "OP_RIPEMD160",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 167,
+            "name": "OP_SHA1",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 168,
+            "name": "OP_SHA256",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 169,
+            "name": "OP_HASH160",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 170,
+            "name": "OP_HASH256",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 171,
+            "name": "OP_CODESEPARATOR",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 172,
+            "name": "OP_CHECKSIG",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 173,
+            "name": "OP_CHECKSIGVERIFY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 174,
+            "name": "OP_CHECKMULTISIG",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 175,
+            "name": "OP_CHECKMULTISIGVERIFY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 176,
+            "name": "OP_NOP1",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 177,
+            "name": "OP_CHECKLOCKTIMEVERIFY",
+            "length": 1,
+            "aliases": ["OP_NOP2"]
+        },
+        {
+            "value": 178,
+            "name": "OP_CHECKSEQUENCEVERIFY",
+            "length": 1,
+            "aliases": ["OP_NOP3"]
+        },
+        {
+            "value": 179,
+            "name": "OP_MERKLEBRANCHROOT",
+            "length": 1,
+            "aliases": ["OP_MERKLEBRANCHVERIFY"]
+        },
+        {
+            "value": 180,
+            "name": "OP_NOP5",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 181,
+            "name": "OP_NOP6",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 182,
+            "name": "OP_NOP7",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 183,
+            "name": "OP_NOP8",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 184,
+            "name": "OP_NOP9",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 185,
+            "name": "OP_NOP10",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 186,
+            "name": "OP_CHECKSIGADD",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 187,
+            "name": "OP_PUT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 188,
+            "name": "OP_UNKNOWN188",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 189,
+            "name": "OP_UNKNOWN189",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 190,
+            "name": "OP_UNKNOWN190",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 191,
+            "name": "OP_UNKNOWN191",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 192,
+            "name": "OP_UNKNOWN192",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 193,
+            "name": "OP_UNKNOWN193",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 194,
+            "name": "OP_UNKNOWN194",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 195,
+            "name": "OP_DIGEST",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 196,
+            "name": "OP_SHA256INITIALIZE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 197,
+            "name": "OP_SHA256UPDATE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 198,
+            "name": "OP_SHA256FINALIZE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 199,
+            "name": "OP_INSPECTINPUTOUTPOINT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 200,
+            "name": "OP_INSPECTINPUTARKADESCRIPTHASH",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 201,
+            "name": "OP_INSPECTINPUTVALUE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 202,
+            "name": "OP_INSPECTINPUTSCRIPTPUBKEY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 203,
+            "name": "OP_INSPECTINPUTSEQUENCE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 204,
+            "name": "OP_CHECKSIGFROMSTACK",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 205,
+            "name": "OP_PUSHCURRENTINPUTINDEX",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 206,
+            "name": "OP_INSPECTINPUTARKADEWITNESSHASH",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 207,
+            "name": "OP_INSPECTOUTPUTVALUE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 208,
+            "name": "OP_UNKNOWN208",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 209,
+            "name": "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 210,
+            "name": "OP_INSPECTVERSION",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 211,
+            "name": "OP_INSPECTLOCKTIME",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 212,
+            "name": "OP_INSPECTNUMINPUTS",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 213,
+            "name": "OP_INSPECTNUMOUTPUTS",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 214,
+            "name": "OP_TXWEIGHT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 215,
+            "name": "OP_NUM2BIN",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 216,
+            "name": "OP_BIN2NUM",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 217,
+            "name": "OP_REVERSEBYTES",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 218,
+            "name": "OP_MODEXP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 219,
+            "name": "OP_PUSHEXPIRY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 220,
+            "name": "OP_CHECKTIME",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 221,
+            "name": "OP_UNKNOWN221",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 222,
+            "name": "OP_UNKNOWN222",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 223,
+            "name": "OP_UNKNOWN223",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 224,
+            "name": "OP_ECADD",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 225,
+            "name": "OP_ECMUL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 226,
+            "name": "OP_ECPAIRING",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 227,
+            "name": "OP_ECMULSCALARVERIFY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 228,
+            "name": "OP_TWEAKVERIFY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 229,
+            "name": "OP_INSPECTNUMASSETGROUPS",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 230,
+            "name": "OP_INSPECTASSETGROUPASSETID",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 231,
+            "name": "OP_INSPECTASSETGROUPCTRL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 232,
+            "name": "OP_FINDASSETGROUPBYASSETID",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 233,
+            "name": "OP_INSPECTASSETGROUPMETADATAHASH",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 234,
+            "name": "OP_INSPECTASSETGROUPNUM",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 235,
+            "name": "OP_INSPECTASSETGROUP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 236,
+            "name": "OP_INSPECTASSETGROUPSUM",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 237,
+            "name": "OP_INSPECTOUTASSETCOUNT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 238,
+            "name": "OP_INSPECTOUTASSETAT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 239,
+            "name": "OP_INSPECTOUTASSETLOOKUP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 240,
+            "name": "OP_INSPECTINASSETCOUNT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 241,
+            "name": "OP_INSPECTINASSETAT",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 242,
+            "name": "OP_INSPECTINASSETLOOKUP",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 243,
+            "name": "OP_TXID",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 244,
+            "name": "OP_INSPECTPACKET",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 245,
+            "name": "OP_INSPECTINPUTPACKET",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 246,
+            "name": "OP_SIGHASH",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 247,
+            "name": "OP_TUNNEL",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 248,
+            "name": "OP_INSPECTINTENTMESSAGE",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 249,
+            "name": "OP_UNKNOWN249",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 250,
+            "name": "OP_SMALLINTEGER",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 251,
+            "name": "OP_PUBKEYS",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 252,
+            "name": "OP_UNKNOWN252",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 253,
+            "name": "OP_PUBKEYHASH",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 254,
+            "name": "OP_PUBKEY",
+            "length": 1,
+            "aliases": []
+        },
+        {
+            "value": 255,
+            "name": "OP_INVALIDOPCODE",
+            "length": 1,
+            "aliases": []
+        }
+    ]
+}

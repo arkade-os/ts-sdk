@@ -1,0 +1,516 @@
+# name | tokens. n:num x:data s:ascii st:magic|h|buf|len raw:bytes; w:/wn:/wst: seed the stack bottom-first.
+
+# ---- flow control
+flow/nop | n:1 NOP
+flow/nop1 | NOP1
+flow/nop5 | NOP5
+flow/nop6 | NOP6
+flow/nop7 | NOP7
+flow/nop8 | NOP8
+flow/nop9 | NOP9
+flow/nop10 | NOP10
+flow/nop1-dead-branch | n:0 IF NOP1 NOP10 RETURN ENDIF n:1
+flow/if-true | n:1 IF n:2 ELSE n:3 ENDIF
+flow/if-false | n:0 IF n:2 ELSE n:3 ENDIF
+flow/notif-true | n:1 NOTIF n:2 ELSE n:3 ENDIF
+flow/notif-false | n:0 NOTIF n:2 ELSE n:3 ENDIF
+flow/if-minimal-2bytes | x:0100 IF n:1 ENDIF
+flow/if-minimal-02 | n:2 IF n:1 ENDIF
+flow/if-minimal-80 | x:80 IF n:1 ENDIF
+flow/if-minimal-00 | x:00 IF n:1 ENDIF
+flow/notif-minimal-02 | n:2 NOTIF n:1 ENDIF
+flow/notif-minimal-0001 | x:0001 NOTIF n:1 ENDIF
+flow/if-empty | IF ENDIF
+flow/notif-empty | NOTIF ENDIF
+flow/if-nested-dead | n:0 IF n:2 IF n:3 ENDIF ELSE n:4 ENDIF
+flow/if-dead-no-pop | n:7 n:0 IF IF ENDIF NOTIF ENDIF ENDIF
+flow/else-twice | n:1 IF n:2 ELSE n:3 ELSE n:4 ENDIF
+flow/else-unbalanced | n:1 ELSE
+flow/endif-unbalanced | n:1 ENDIF
+flow/if-unterminated | n:1 IF n:1
+flow/verify-true | n:1 n:1 VERIFY
+flow/verify-false | n:0 VERIFY
+flow/verify-neg-zero | x:80 VERIFY
+flow/verify-0080 | x:0080 VERIFY
+flow/verify-8000 | x:8000 VERIFY n:1
+flow/verify-empty | VERIFY
+flow/return | n:1 RETURN
+flow/return-dead-branch | n:0 IF RETURN ENDIF n:1
+
+# ---- stack
+stack/toalt-fromalt | n:1 n:2 TOALTSTACK n:3 FROMALTSTACK
+stack/toalt-empty | TOALTSTACK
+stack/fromalt-empty | n:1 FROMALTSTACK
+stack/depth-ignores-alt | n:1 n:2 TOALTSTACK DEPTH
+stack/depth-empty | DEPTH
+stack/depth-limit | n:1 DUP*999 DEPTH
+stack/2drop | n:1 n:2 n:3 2DROP
+stack/2drop-short | n:1 2DROP
+stack/2dup | n:1 n:2 2DUP
+stack/2dup-short | n:1 2DUP
+stack/3dup | n:1 n:2 n:3 3DUP
+stack/3dup-short | n:1 n:2 3DUP
+stack/3dup-limit-ok | n:1 n:2 n:3 3DUP*332 DEPTH TOALTSTACK 2DROP*499 DROP FROMALTSTACK
+stack/3dup-limit-over | n:1 n:2 n:3 3DUP*333
+stack/2over | n:1 n:2 n:3 n:4 2OVER
+stack/2over-short | n:1 n:2 n:3 2OVER
+stack/2rot | n:1 n:2 n:3 n:4 n:5 n:6 2ROT
+stack/2rot-short | n:1 n:2 n:3 n:4 n:5 2ROT
+stack/2swap | n:1 n:2 n:3 n:4 2SWAP
+stack/2swap-short | n:1 n:2 n:3 2SWAP
+stack/ifdup-true | n:5 IFDUP
+stack/ifdup-false | n:0 IFDUP
+stack/ifdup-neg-zero | x:80 IFDUP
+stack/ifdup-8000 | x:8000 IFDUP
+stack/ifdup-empty | IFDUP
+stack/drop | n:1 n:2 DROP
+stack/drop-empty | DROP
+stack/dup | n:7 DUP
+stack/dup-empty | DUP
+stack/dup-bytes-limit | x:ff*520 DUP*251 2DROP*126 DEPTH
+stack/dup-bytes-over | x:ff*520 DUP*252
+stack/alt-counts-toward-limit | n:1 DUP*998 TOALTSTACK DUP DUP
+stack/nip-middle | n:1 n:2 n:3 NIP
+stack/nip-bottom | n:1 n:2 NIP
+stack/nip-short | n:1 NIP
+stack/over | n:1 n:2 OVER
+stack/over-short | n:1 OVER
+stack/pick | n:1 n:2 n:3 n:2 PICK
+stack/pick-0 | n:7 n:0 PICK
+stack/pick-out-of-range | n:1 n:1 PICK
+stack/pick-negative | n:1 n:-1 PICK
+stack/pick-max-int32 | n:1 n:2147483647 PICK
+stack/pick-5-bytes | n:1 n:4294967296 PICK
+stack/pick-non-minimal | n:1 x:0100 PICK
+stack/pick-neg-zero | n:1 x:80 PICK
+stack/pick-empty | PICK
+stack/roll | n:1 n:2 n:3 n:2 ROLL
+stack/roll-0 | n:1 n:2 n:0 ROLL
+stack/roll-1 | n:1 n:2 n:3 n:1 ROLL
+stack/roll-out-of-range | n:1 n:2 n:2 ROLL
+stack/roll-negative | n:1 n:-1 ROLL
+stack/roll-empty | ROLL
+stack/put | n:1 n:2 n:3 n:9 n:2 PUT
+stack/put-0 | n:1 n:2 n:9 n:0 PUT
+stack/put-shared-element | n:5 DUP n:7 n:0 PUT
+stack/put-out-of-range | n:1 n:9 n:1 PUT
+stack/put-negative | n:1 n:9 n:-1 PUT
+stack/put-no-value | n:0 PUT
+stack/put-empty | PUT
+stack/put-non-minimal | n:1 n:9 x:0000 PUT
+stack/rot | n:1 n:2 n:3 ROT
+stack/rot-short | n:1 n:2 ROT
+stack/swap | n:1 n:2 SWAP
+stack/swap-short | n:1 SWAP
+stack/tuck | n:1 n:2 TUCK
+stack/tuck-short | n:1 TUCK
+
+# ---- splice
+splice/cat | x:aabb x:cc CAT
+splice/cat-empty | n:0 n:0 CAT
+splice/cat-at-limit | x:01*260 x:02*260 CAT
+splice/cat-over-limit | x:01*260 x:02*261 CAT
+splice/cat-witness-over-limit | w:01*600 n:0 CAT
+splice/cat-shared | x:aabb DUP CAT
+splice/cat-short | x:aa CAT
+splice/substr | x:0102030405 n:1 n:3 SUBSTR
+splice/substr-full | x:010203 n:0 n:3 SUBSTR
+splice/substr-empty-at-end | x:010203 n:3 n:0 SUBSTR
+splice/substr-past-end | x:010203 n:2 n:2 SUBSTR
+splice/substr-begin-past-end | x:010203 n:4 n:0 SUBSTR
+splice/substr-negative-begin | x:010203 n:-1 n:1 SUBSTR
+splice/substr-negative-size | x:010203 n:0 n:-1 SUBSTR
+splice/substr-int32-sum | x:010203 n:2147483647 n:2147483647 SUBSTR
+splice/substr-5-byte-size | x:01 n:0 n:4294967296 SUBSTR
+splice/substr-non-minimal-begin | x:010203 x:0100 n:1 SUBSTR
+splice/substr-witness | w:01*590+02*10 n:590 n:10 SUBSTR
+splice/substr-short | n:0 n:0 SUBSTR
+splice/left | x:010203 n:2 LEFT
+splice/left-0 | x:010203 n:0 LEFT
+splice/left-all | x:010203 n:3 LEFT
+splice/left-past-end | x:010203 n:4 LEFT
+splice/left-negative | x:010203 n:-1 LEFT
+splice/left-short | n:1 LEFT
+splice/left-shared-then-reverse | x:010203 DUP n:2 LEFT REVERSEBYTES
+splice/right | x:010203 n:2 RIGHT
+splice/right-0 | x:010203 n:0 RIGHT
+splice/right-all | x:010203 n:3 RIGHT
+splice/right-past-end | x:010203 n:4 RIGHT
+splice/right-negative | x:010203 n:-1 RIGHT
+splice/right-short | n:1 RIGHT
+splice/right-shared-then-invert | x:010203 DUP n:2 RIGHT INVERT
+splice/size | x:010203 SIZE
+splice/size-empty | n:0 SIZE
+splice/size-number | n:-1 SIZE
+splice/size-520 | x:ff*520 SIZE
+splice/size-witness | w:00*600 SIZE
+splice/size-short | SIZE
+
+# ---- bitwise and equality
+bit/invert | x:00ff0f INVERT
+bit/invert-empty | n:0 INVERT
+bit/invert-shared | x:00ff DUP INVERT
+bit/invert-short | INVERT
+bit/and | x:0f0f x:ff00 AND
+bit/or | x:0f0f x:ff00 OR
+bit/xor | x:0f0f x:ff00 XOR
+bit/and-empty | n:0 n:0 AND
+bit/and-mismatch | x:0f0f x:ff AND
+bit/or-mismatch | x:0f x:ff00 OR
+bit/xor-mismatch | n:0 x:ff XOR
+bit/xor-shared | x:0f0f DUP XOR
+bit/and-short | x:0f AND
+bit/or-short | OR
+bit/xor-short | x:0f XOR
+eq/equal | x:0102 x:0102 EQUAL
+eq/equal-false | x:0102 x:0103 EQUAL
+eq/equal-bytes-not-numbers | x:01 x:0100 EQUAL
+eq/equal-empty | n:0 n:0 EQUAL
+eq/equal-short | x:01 EQUAL
+eq/equalverify | x:0102 x:0102 EQUALVERIFY n:1
+eq/equalverify-false | x:0102 x:0103 EQUALVERIFY
+eq/equalverify-short | EQUALVERIFY
+
+# ---- unary arithmetic
+arith/1add | n:5 1ADD
+arith/1add-to-zero | n:-1 1ADD
+arith/1add-127 | n:127 1ADD
+arith/1add-int64-max | n:2^63-1 1ADD
+arith/1add-9-byte-min | n:-2^63 1ADD
+arith/1add-non-minimal | x:0500 1ADD
+arith/1add-neg-zero | x:80 1ADD
+arith/1add-neg-zero-2 | x:0080 1ADD
+arith/1add-ff00-minimal | x:ff00 1ADD
+arith/1add-ff80-minimal | x:ff80 1ADD
+arith/1add-520-max | w:ff*519+7f 1ADD
+arith/1add-520-ok | w:ff*519+3f 1ADD
+arith/1add-521 | w:01*521 1ADD
+arith/1add-520-non-minimal | w:01*519+00 1ADD
+arith/1add-520-sign-extension | w:ff*519+00 1ADD
+arith/1add-empty | 1ADD
+arith/1sub | n:0 1SUB
+arith/1sub-to-int64-min | n:-2^63+1 1SUB
+arith/1sub-9-byte | n:-2^63 1SUB
+arith/1sub-non-minimal | x:0000 1SUB
+arith/negate | n:5 NEGATE
+arith/negate-zero | n:0 NEGATE
+arith/negate-int64-min | n:-2^63 NEGATE
+arith/negate-int64-max | n:2^63-1 NEGATE
+arith/negate-empty | NEGATE
+arith/abs-neg | n:-5 ABS
+arith/abs-pos | n:5 ABS
+arith/abs-int64-min | n:-2^63 ABS
+arith/abs-big | n:-2^100 ABS
+arith/abs-neg-zero | x:80 ABS
+arith/not-zero | n:0 NOT
+arith/not-five | n:5 NOT
+arith/not-neg | n:-1 NOT
+arith/not-big | n:2^70 NOT
+arith/not-non-minimal | x:0100 NOT
+arith/not-520 | w:00*519+40 NOT
+arith/0notequal-zero | n:0 0NOTEQUAL
+arith/0notequal-seven | n:7 0NOTEQUAL
+arith/0notequal-big | n:-2^64 0NOTEQUAL
+arith/0notequal-empty | 0NOTEQUAL
+arith/2mul | n:5 2MUL
+arith/2mul-neg | n:-64 2MUL
+arith/2mul-int64-overflow | n:2^62 2MUL
+arith/2mul-9-byte | n:2^63 2MUL
+arith/2mul-520-overflow | w:ff*519+7f 2MUL
+arith/2mul-empty | 2MUL
+arith/2div | n:7 2DIV
+arith/2div-neg-truncates | n:-7 2DIV
+arith/2div-neg-one | n:-1 2DIV
+arith/2div-9-byte | n:-2^63 2DIV
+arith/2div-non-minimal | x:0700 2DIV
+
+# ---- binary arithmetic
+arith/add | n:2 n:3 ADD
+arith/add-neg | n:-5 n:3 ADD
+arith/add-int64-overflow | n:2^63-1 n:2^63-1 ADD
+arith/add-int64-min | n:-2^63+1 n:-1 ADD
+arith/add-9-byte-back-to-small | n:2^63 n:-1 ADD
+arith/add-520-overflow | w:ff*519+7f n:1 ADD
+arith/add-short | n:1 ADD
+arith/add-non-minimal-top | n:1 x:0200 ADD
+arith/add-non-minimal-second | x:0200 n:1 ADD
+arith/sub | n:2 n:3 SUB
+arith/sub-int64-min | n:-2^63+1 n:1 SUB
+arith/sub-overflow | n:-2^63+1 n:2^63-1 SUB
+arith/sub-short | SUB
+arith/mul | n:-3 n:4 MUL
+arith/mul-zero-big | n:0 n:2^100 MUL
+arith/mul-int64-overflow | n:2^62 n:4 MUL
+arith/mul-neg-one-int64-min | n:-1 n:-2^63 MUL
+arith/mul-int64-min-neg-one | n:-2^63 n:-1 MUL
+arith/mul-int64-edge | n:2^32 n:2^31-1 MUL
+arith/mul-520-overflow | w:ff*259+7f w:ff*260+7f MUL
+arith/mul-short | n:3 MUL
+arith/div | n:7 n:2 DIV
+arith/div-neg-dividend | n:-7 n:2 DIV
+arith/div-neg-divisor | n:7 n:-2 DIV
+arith/div-both-neg | n:-7 n:-2 DIV
+arith/div-by-zero | n:7 n:0 DIV
+arith/div-zero-by-zero | n:0 n:0 DIV
+arith/div-int64-min-neg-one | n:-2^63 n:-1 DIV
+arith/div-big | n:2^100 n:2^36 DIV
+arith/div-short | n:2 DIV
+arith/mod | n:7 n:2 MOD
+arith/mod-neg-dividend | n:-7 n:2 MOD
+arith/mod-neg-divisor | n:7 n:-2 MOD
+arith/mod-by-zero | n:7 n:0 MOD
+arith/mod-int64-min-neg-one | n:-2^63 n:-1 MOD
+arith/mod-big | n:2^100+5 n:2^64 MOD
+arith/mod-short | MOD
+
+# ---- boolean and comparison
+cmp/booland-00 | n:0 n:0 BOOLAND
+cmp/booland-50 | n:5 n:0 BOOLAND
+cmp/booland-07 | n:0 n:7 BOOLAND
+cmp/booland-48 | n:4 n:8 BOOLAND
+cmp/booland-big | n:2^70 n:-1 BOOLAND
+cmp/booland-non-minimal | n:1 x:0100 BOOLAND
+cmp/boolor-00 | n:0 n:0 BOOLOR
+cmp/boolor-50 | n:5 n:0 BOOLOR
+cmp/boolor-short | n:5 BOOLOR
+cmp/numequal | n:5 n:5 NUMEQUAL
+cmp/numequal-false | n:5 n:-5 NUMEQUAL
+cmp/numequal-big | n:2^64 n:2^64 NUMEQUAL
+cmp/numequal-non-minimal-zero | n:0 x:00 NUMEQUAL
+cmp/numequalverify | n:5 n:5 NUMEQUALVERIFY n:1
+cmp/numequalverify-false | n:5 n:6 NUMEQUALVERIFY
+cmp/numequalverify-short | n:5 NUMEQUALVERIFY
+cmp/numnotequal | n:5 n:6 NUMNOTEQUAL
+cmp/numnotequal-false | n:6 n:6 NUMNOTEQUAL
+cmp/numnotequal-short | NUMNOTEQUAL
+cmp/lessthan | n:-2^64 n:5 LESSTHAN
+cmp/lessthan-equal | n:5 n:5 LESSTHAN
+cmp/lessthan-short | n:5 LESSTHAN
+cmp/greaterthan | n:2^64 n:2^64-1 GREATERTHAN
+cmp/greaterthan-false | n:-1 n:0 GREATERTHAN
+cmp/greaterthan-non-minimal | n:1 x:80 GREATERTHAN
+cmp/lessthanorequal | n:5 n:5 LESSTHANOREQUAL
+cmp/lessthanorequal-false | n:6 n:5 LESSTHANOREQUAL
+cmp/lessthanorequal-short | LESSTHANOREQUAL
+cmp/greaterthanorequal | n:5 n:5 GREATERTHANOREQUAL
+cmp/greaterthanorequal-false | n:-2^63 n:2^63-1 GREATERTHANOREQUAL
+cmp/greaterthanorequal-short | n:1 GREATERTHANOREQUAL
+cmp/min | n:3 n:-3 MIN
+cmp/min-equal | n:2 n:2 MIN
+cmp/min-big | n:2^100 n:2^99 MIN
+cmp/min-short | n:3 MIN
+cmp/max | n:3 n:-3 MAX
+cmp/max-big | n:-2^100 n:-2^99 MAX
+cmp/max-short | MAX
+cmp/within-min | n:5 n:5 n:10 WITHIN
+cmp/within-max-exclusive | n:10 n:5 n:10 WITHIN
+cmp/within-below | n:4 n:5 n:10 WITHIN
+cmp/within-inverted-range | n:5 n:10 n:5 WITHIN
+cmp/within-negative | n:-1 n:-5 n:0 WITHIN
+cmp/within-big | n:2^80 n:2^79 n:2^81 WITHIN
+cmp/within-short | n:1 n:2 WITHIN
+cmp/within-non-minimal-x | x:0500 n:1 n:9 WITHIN
+
+# ---- shifts
+shift/lshift | n:1 n:3 LSHIFT
+shift/lshift-neg | n:-1 n:3 LSHIFT
+shift/lshift-zero-count | n:77 n:0 LSHIFT
+shift/lshift-zero-value-huge-count | n:0 n:2147483647 LSHIFT
+shift/lshift-4158 | n:1 n:4158 LSHIFT
+shift/lshift-4159 | n:1 n:4159 LSHIFT
+shift/lshift-4160 | n:1 n:4160 LSHIFT
+shift/lshift-4161 | n:1 n:4161 LSHIFT
+shift/lshift-max-int32 | n:1 n:2147483647 LSHIFT
+shift/lshift-520-zero-count | w:ff*519+7f n:0 LSHIFT
+shift/lshift-negative-count | n:1 n:-1 LSHIFT
+shift/lshift-count-before-value | x:0100 n:-1 LSHIFT
+shift/lshift-non-minimal-value | x:0100 n:1 LSHIFT
+shift/lshift-5-byte-count | n:1 n:4294967296 LSHIFT
+shift/lshift-non-minimal-count | n:1 x:0100 LSHIFT
+shift/lshift-short | n:1 LSHIFT
+shift/rshift | n:8 n:3 RSHIFT
+shift/rshift-floor | n:-7 n:1 RSHIFT
+shift/rshift-neg-even | n:-8 n:1 RSHIFT
+shift/rshift-neg-one | n:-1 n:100 RSHIFT
+shift/rshift-pos-to-zero | n:5 n:100 RSHIFT
+shift/rshift-neg-huge | n:-1 n:2147483647 RSHIFT
+shift/rshift-pos-huge | n:2^100 n:2147483647 RSHIFT
+shift/rshift-9-byte-floor | n:-2^63-1 n:63 RSHIFT
+shift/rshift-zero-count | n:-77 n:0 RSHIFT
+shift/rshift-zero-value | n:0 n:5 RSHIFT
+shift/rshift-negative-count | n:8 n:-1 RSHIFT
+shift/rshift-count-before-value | x:80 n:-1 RSHIFT
+shift/rshift-short | RSHIFT
+
+# ---- NUM2BIN / BIN2NUM / REVERSEBYTES
+num/num2bin-neg-one | n:-1 n:4 NUM2BIN
+num/num2bin-one | n:1 n:4 NUM2BIN
+num/num2bin-zero | n:0 n:4 NUM2BIN
+num/num2bin-zero-zero | n:0 n:0 NUM2BIN
+num/num2bin-255 | n:255 n:2 NUM2BIN
+num/num2bin-neg-255 | n:-255 n:2 NUM2BIN
+num/num2bin-neg-255-wide | n:-255 n:3 NUM2BIN
+num/num2bin-128-too-narrow | n:128 n:1 NUM2BIN
+num/num2bin-neg-128-too-narrow | n:-128 n:1 NUM2BIN
+num/num2bin-neg-one-1 | n:-1 n:1 NUM2BIN
+num/num2bin-one-zero-size | n:1 n:0 NUM2BIN
+num/num2bin-520 | n:-1 n:520 NUM2BIN
+num/num2bin-520-value | w:ff*519+7f n:520 NUM2BIN
+num/num2bin-9-byte | n:2^63 n:9 NUM2BIN
+num/num2bin-size-521 | n:1 n:521 NUM2BIN
+num/num2bin-size-negative | n:1 n:-1 NUM2BIN
+num/num2bin-size-5-bytes | n:1 n:4294967296 NUM2BIN
+num/num2bin-size-non-minimal | n:1 x:0400 NUM2BIN
+num/num2bin-value-non-minimal | x:0100 n:4 NUM2BIN
+num/num2bin-size-before-value | x:0100 n:-1 NUM2BIN
+num/num2bin-value-521 | w:01*521 n:4 NUM2BIN
+num/num2bin-short | n:4 NUM2BIN
+num/bin2num-padded-neg-one | x:01000080 BIN2NUM
+num/bin2num-neg-zero | x:80 BIN2NUM
+num/bin2num-zeros | x:0000 BIN2NUM
+num/bin2num-padded-neg-zero | x:000080 BIN2NUM
+num/bin2num-ff00 | x:ff00 BIN2NUM
+num/bin2num-ff0000 | x:ff0000 BIN2NUM
+num/bin2num-ff0080 | x:ff0080 BIN2NUM
+num/bin2num-8000 | x:8000 BIN2NUM
+num/bin2num-808080 | x:808080 BIN2NUM
+num/bin2num-minimal | x:05 BIN2NUM
+num/bin2num-empty-input | n:0 BIN2NUM
+num/bin2num-520-zeros | x:00*520 BIN2NUM
+num/bin2num-520-ones | x:ff*520 BIN2NUM
+num/bin2num-521 | w:00*521 BIN2NUM
+num/bin2num-short | BIN2NUM
+num/reversebytes | x:010203 REVERSEBYTES
+num/reversebytes-empty | n:0 REVERSEBYTES
+num/reversebytes-single | x:aa REVERSEBYTES
+num/reversebytes-shared | x:0102 DUP REVERSEBYTES
+num/reversebytes-520 | x:01+00*518+02 REVERSEBYTES
+num/reversebytes-witness | w:01+00*600 REVERSEBYTES
+num/reversebytes-short | REVERSEBYTES
+
+# ---- MODEXP
+modexp/basic | n:4 n:13 n:497 MODEXP
+modexp/zero-pow-zero | n:0 n:0 n:7 MODEXP
+modexp/zero-pow-zero-mod-one | n:0 n:0 n:1 MODEXP
+modexp/mod-one | n:5 n:3 n:1 MODEXP
+modexp/neg-base-odd | n:-5 n:3 n:7 MODEXP
+modexp/neg-base-even | n:-5 n:2 n:7 MODEXP
+modexp/neg-base-multiple | n:-7 n:3 n:7 MODEXP
+modexp/exp-zero | n:7 n:0 n:5 MODEXP
+modexp/secp-inverse | n:3 n:0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2d n:0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f MODEXP
+modexp/operands-64-bytes | n:2^511-1 n:2^511-3 n:2^511-1 MODEXP
+modexp/neg-base-64-bytes | n:-2^511+1 n:3 n:1000003 MODEXP
+modexp/negative-exponent | n:2 n:-1 n:7 MODEXP
+modexp/modulus-zero | n:2 n:3 n:0 MODEXP
+modexp/modulus-negative | n:2 n:3 n:-7 MODEXP
+modexp/modulus-before-exponent | n:2 n:-1 n:0 MODEXP
+modexp/base-65-bytes | n:2^511 n:3 n:7 MODEXP
+modexp/exp-65-bytes | n:2 n:2^511 n:7 MODEXP
+modexp/modulus-65-bytes | n:2 n:3 n:2^511 MODEXP
+modexp/size-before-sign | n:2^511 n:-1 n:0 MODEXP
+modexp/base-520-bytes | w:ff*519+7f n:3 n:7 MODEXP
+modexp/non-minimal-modulus | n:2 n:3 x:0700 MODEXP
+modexp/non-minimal-base | x:0200 n:3 n:7 MODEXP
+modexp/short | n:2 n:3 MODEXP
+
+# ---- hashes
+hash/ripemd160 | x:616263 RIPEMD160
+hash/ripemd160-empty | n:0 RIPEMD160
+hash/ripemd160-short | RIPEMD160
+hash/sha1 | x:616263 SHA1
+hash/sha1-empty | n:0 SHA1
+hash/sha1-short | SHA1
+hash/sha256 | x:616263 SHA256
+hash/sha256-empty | n:0 SHA256
+hash/sha256-witness | w:61*600 SHA256
+hash/sha256-short | SHA256
+hash/hash160 | x:616263 HASH160
+hash/hash160-short | HASH160
+hash/hash256 | x:616263 HASH256
+hash/hash256-empty | n:0 HASH256
+hash/hash256-short | HASH256
+digest/sha256 | x:616263 n:1 DIGEST
+digest/sha1 | x:616263 n:2 DIGEST
+digest/ripemd160 | x:616263 n:3 DIGEST
+digest/keccak256 | x:616263 n:4 DIGEST
+digest/sha3-256 | x:616263 n:5 DIGEST
+digest/keccak256-empty | n:0 n:4 DIGEST
+digest/sha3-256-empty | n:0 n:5 DIGEST
+digest/witness | w:61*600 n:5 DIGEST
+digest/selector-0 | x:616263 n:0 DIGEST
+digest/selector-6 | x:616263 n:6 DIGEST
+digest/selector-negative | x:616263 n:-1 DIGEST
+digest/selector-max-int32 | x:616263 n:2147483647 DIGEST
+digest/selector-5-bytes | x:616263 n:4294967297 DIGEST
+digest/selector-non-minimal | x:616263 x:0100 DIGEST
+digest/selector-neg-zero | x:616263 x:80 DIGEST
+digest/no-data | n:1 DIGEST
+digest/empty | DIGEST
+
+# ---- SHA256 midstate
+mid/init-empty | n:0 SHA256INITIALIZE
+mid/init-empty-is-iv | n:0 SHA256INITIALIZE st:|IV|00*64|0 EQUAL
+mid/init-abc | x:616263 SHA256INITIALIZE
+mid/init-final-abc | x:616263 SHA256INITIALIZE n:0 SHA256FINALIZE
+mid/init-update-final | x:61 SHA256INITIALIZE x:62 SHA256UPDATE x:63 SHA256FINALIZE
+mid/empty-update-final | n:0 SHA256INITIALIZE x:616263 SHA256UPDATE n:0 SHA256FINALIZE
+mid/init-63 | x:aa*63 SHA256INITIALIZE
+mid/init-64 | x:aa*64 SHA256INITIALIZE
+mid/init-65 | x:aa*65 SHA256INITIALIZE
+mid/init-520 | x:aa*520 SHA256INITIALIZE
+mid/init-witness | w:aa*600 SHA256INITIALIZE
+mid/cross-block-stale-buffer | x:aa*40 SHA256INITIALIZE x:bb*40 SHA256UPDATE
+mid/cross-block-final | x:aa*40 SHA256INITIALIZE x:bb*40 SHA256UPDATE x:cc*30 SHA256FINALIZE
+mid/update-exact-block | x:aa*10 SHA256INITIALIZE x:bb*54 SHA256UPDATE
+mid/update-many-blocks | x:aa*10 SHA256INITIALIZE x:bb*300 SHA256UPDATE x:cc*7 SHA256FINALIZE
+mid/final-pad-55 | st:|IV|aa*55+00*9|55 n:0 SHA256FINALIZE
+mid/final-pad-56 | st:|IV|aa*56+00*8|56 n:0 SHA256FINALIZE
+mid/final-pad-63 | st:|IV|aa*63+00|63 n:0 SHA256FINALIZE
+mid/final-data-crosses-pad | st:|IV|aa*50+00*14|50 x:bb*10 SHA256FINALIZE
+mid/witness-zero-h | st:|00*32|00*64|0 n:0 SHA256FINALIZE
+mid/witness-arbitrary-h | st:|0123456789abcdef+fedcba9876543210+00112233445566778899aabbccddeeff|5a*64|1000 x:01 SHA256UPDATE
+mid/witness-garbage-past-nx-update | st:|IV|616263+ff*61|3 n:0 SHA256UPDATE
+mid/witness-garbage-past-nx-final | st:|IV|616263+ff*61|3 n:0 SHA256FINALIZE
+mid/witness-len-nx-mismatch | st:|IV|616263+00*61|67 x:64 SHA256UPDATE
+mid/len-max-final | st:|IV|aa*63+00|2^64-1 n:0 SHA256FINALIZE
+mid/len-max-update-wraps | st:|IV|aa*63+00|2^64-1 x:bb SHA256UPDATE
+mid/len-max-update-final | st:|IV|aa*63+00|2^64-1 x:bb SHA256FINALIZE
+mid/len-2-53-plus-1-update | st:|IV|aa+00*63|2^53+1 x:bb SHA256UPDATE
+mid/len-2-53-plus-1-final | st:|IV|aa+00*63|2^53+1 x:bb SHA256FINALIZE
+mid/len-2-61-final | st:|IV|00*64|2^61 n:0 SHA256FINALIZE
+mid/len-2-61-plus-5-final | st:|IV|0102030405+00*59|2^61+5 n:0 SHA256FINALIZE
+mid/seeded-state-and-data | wst:|IV|aa*7+00*57|7 w:bb*600 SHA256FINALIZE
+mid/bad-magic-224 | st:73686102|IV|00*64|0 n:0 SHA256UPDATE
+mid/bad-magic-final | st:73686203|IV|00*64|0 n:0 SHA256FINALIZE
+mid/bad-prefix | x:087f060102ff8200000070ff80006c+73686103+IV+00*64+0000000000000000 n:0 SHA256UPDATE
+mid/len-122 | x:P+73686103+IV+00*64+00000000000000 n:0 SHA256UPDATE
+mid/len-124 | x:P+73686103+IV+00*64+0000000000000000+00 n:0 SHA256FINALIZE
+mid/empty-state | n:0 n:0 SHA256UPDATE
+mid/swapped-operands | x:61 SHA256INITIALIZE x:62 SWAP SHA256UPDATE
+mid/init-short | SHA256INITIALIZE
+mid/update-short | n:0 SHA256UPDATE
+mid/final-short | n:0 SHA256FINALIZE
+
+# ---- MERKLEBRANCHROOT: stack bottom-first is leaf_tag branch_tag proof leaf_data
+merkle/tagged-no-proof | s:LT s:BT n:0 s:payload MERKLEBRANCHROOT
+merkle/raw-no-proof | n:0 s:BT n:0 x:11*32 MERKLEBRANCHROOT
+merkle/raw-31 | n:0 s:BT n:0 x:11*31 MERKLEBRANCHROOT
+merkle/raw-33 | n:0 s:BT n:0 x:11*33 MERKLEBRANCHROOT
+merkle/raw-empty-leaf | n:0 s:BT n:0 n:0 MERKLEBRANCHROOT
+merkle/proof-31 | s:LT s:BT x:aa*31 s:d MERKLEBRANCHROOT
+merkle/proof-33 | s:LT s:BT x:aa*33 s:d MERKLEBRANCHROOT
+merkle/empty-branch-tag | s:LT n:0 n:0 s:d MERKLEBRANCHROOT
+merkle/sibling-high | s:LT s:BT x:ff*32 s:d MERKLEBRANCHROOT
+merkle/sibling-low | s:LT s:BT x:00*32 s:d MERKLEBRANCHROOT
+merkle/sibling-equal | n:0 s:BT x:11*32 x:11*32 MERKLEBRANCHROOT
+merkle/raw-two-steps | n:0 s:BT x:00*32+ff*32 x:11*32 MERKLEBRANCHROOT
+merkle/tagged-three-steps | s:LT s:BT x:00*32+ff*32+80*32 s:d MERKLEBRANCHROOT
+merkle/binary-tags | x:00ff x:01 x:22*32 x:0203 MERKLEBRANCHROOT
+merkle/empty-leaf-tagged | s:LT s:BT n:0 n:0 MERKLEBRANCHROOT
+merkle/proof-over-520 | w:s=LT w:s=BT w:aa*544 w:s=d MERKLEBRANCHROOT
+merkle/chain | s:LT s:BT x:ff*32 s:d MERKLEBRANCHROOT n:0 s:BT x:00*32 n:3 ROLL MERKLEBRANCHROOT
+merkle/dead-branch | n:0 IF MERKLEBRANCHROOT ENDIF n:1
+merkle/short-1 | s:d MERKLEBRANCHROOT
+merkle/short-2 | n:0 s:d MERKLEBRANCHROOT
+merkle/short-3 | s:BT n:0 s:d MERKLEBRANCHROOT
+merkle/empty | MERKLEBRANCHROOT

@@ -1,0 +1,553 @@
+{
+    "source": "arkade-os/executor@af8d9eb pkg/template/testdata/vectors/v1",
+    "expressions": [
+        {
+            "tokens": [
+                "2",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTPACKET",
+                "OP_VERIFY",
+                "OP_BIN2NUM",
+                "OP_1ADD",
+                "8",
+                "OP_NUM2BIN"
+            ],
+            "files": ["counter.json", "reject-duplicate-source.json"]
+        },
+        {
+            "tokens": ["<!refund_locktime>", "OP_DROP", "<receiver_program>"],
+            "files": ["reject-splice-int.json"]
+        },
+        {
+            "tokens": ["<!terms>", "OP_VERIFY", "<receiver_program>"],
+            "files": [
+                "reject-splice-non-minimal.json",
+                "reject-splice-terms.json",
+                "splice-locking.json"
+            ]
+        },
+        {
+            "tokens": ["<preimage>", "OP_HASH160"],
+            "files": [
+                "example-vhtlc-non-interactive-claim.json",
+                "reject-example-vhtlc-claim.json",
+                "reject-example-vhtlc-unilateral-claim.json",
+                "reject-fees-virtual.json",
+                "reject-legacy-secrets.json",
+                "reject-sealed-plaintext.json",
+                "reject-sealed-twice.json",
+                "reject-sealed-undeclared.json",
+                "reject-sealed-unhashed.json",
+                "reject-splice-int.json",
+                "reject-splice-non-minimal.json",
+                "reject-splice-terms.json",
+                "reject-trigger-capture-variable.json",
+                "reject-trigger-context.json",
+                "reject-trigger-group.json",
+                "reject-trigger-input.json",
+                "reject-trigger-no-require.json",
+                "reject-trigger-source.json",
+                "reject-trigger-unfixed.json",
+                "splice-locking.json",
+                "supplied-taptree-undelegated.json",
+                "supplied-taptree.json",
+                "vhtlc-claim-plaintext.json",
+                "vhtlc-claim.json"
+            ]
+        },
+        {
+            "tokens": ["<tlv:2>", "6", "32", "OP_SUBSTR"],
+            "files": [
+                "reject-trigger-context.json",
+                "reject-trigger-group.json",
+                "reject-trigger-input.json",
+                "reject-trigger-no-require.json",
+                "reject-trigger-unfixed.json",
+                "supplied-taptree.json"
+            ]
+        },
+        {
+            "tokens": ["<tlv:2>", "<taptree>", "OP_CAT"],
+            "files": ["reject-trigger-capture-variable.json"]
+        },
+        {
+            "tokens": ["OP_PUSHCURRENTINPUTINDEX"],
+            "files": ["reject-trigger-context.json"]
+        }
+    ],
+    "covenants": [
+        {
+            "name": "board",
+            "asm": [
+                "0x74797065",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "0x7265676973746572",
+                "OP_EQUALVERIFY",
+                "0x6f6e636861696e5f6f75747075745f696e6465786573",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "0x5b5d",
+                "OP_EQUALVERIFY",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_1SUB",
+                "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                "1",
+                "OP_EQUALVERIFY",
+                "<renewalProgram>",
+                "OP_EQUALVERIFY",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_1SUB",
+                "OP_INSPECTOUTPUTVALUE",
+                "<maxFee>",
+                "OP_ADD",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTVALUE",
+                "OP_GREATERTHANOREQUAL"
+            ],
+            "inputs": [
+                {
+                    "name": "owner",
+                    "type": "pubkey"
+                },
+                {
+                    "name": "boardingExitDelay",
+                    "type": "int"
+                },
+                {
+                    "name": "renewalProgram",
+                    "type": "bytes32"
+                },
+                {
+                    "name": "maxFee",
+                    "type": "int"
+                }
+            ],
+            "files": [
+                "boarding.json",
+                "default-board.json",
+                "example-boarding-board.json",
+                "reject-example-boarding-exit.json",
+                "reject-example-boarding-forfeit.json"
+            ]
+        },
+        {
+            "name": "release",
+            "asm": ["1"],
+            "inputs": [
+                {
+                    "name": "owner",
+                    "type": "pubkey"
+                },
+                {
+                    "name": "lock",
+                    "type": "int"
+                }
+            ],
+            "files": ["locktime.json"]
+        },
+        {
+            "name": "renew",
+            "asm": [
+                "1",
+                "OP_DROP",
+                "OP_PUSHEXPIRY",
+                "1024",
+                "OP_SUB",
+                "OP_CHECKTIME",
+                "OP_VERIFY",
+                "0x74797065",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "0x7265676973746572",
+                "OP_EQUALVERIFY",
+                "0x6f6e636861696e5f6f75747075745f696e6465786573",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "0x5b5d",
+                "OP_EQUALVERIFY",
+                "0x636f7369676e6572735f7075626c69635f6b6579732e30",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "<COSIGNER_KEY>",
+                "OP_EQUALVERIFY",
+                "0x636f7369676e6572735f7075626c69635f6b6579732e31",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_NOT",
+                "OP_VERIFY",
+                "OP_DROP",
+                "5",
+                "OP_INSPECTPACKET",
+                "OP_VERIFY",
+                "5",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTPACKET",
+                "OP_VERIFY",
+                "OP_EQUALVERIFY",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_1SUB",
+                "7",
+                "0",
+                "OP_TUNNEL"
+            ],
+            "inputs": [],
+            "files": ["counter.json", "reject-duplicate-source.json"]
+        },
+        {
+            "name": "pay",
+            "asm": ["OP_1"],
+            "inputs": [
+                {
+                    "name": "owner",
+                    "type": "pubkey"
+                }
+            ],
+            "files": [
+                "mixed-fees.json",
+                "proof-plain-leaf.json",
+                "reject-plain-uninjected-signature.json",
+                "virtual-plain-leaf.json",
+                "witness-order.json"
+            ]
+        },
+        {
+            "name": "burn",
+            "asm": [
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_1ADD",
+                "OP_INSPECTINPUTSCRIPTPUBKEY",
+                "1",
+                "OP_EQUALVERIFY",
+                "<tokenProgram>",
+                "OP_EQUALVERIFY",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_DUP",
+                "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                "1",
+                "OP_EQUALVERIFY",
+                "0x50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0",
+                "OP_EQUALVERIFY",
+                "OP_INSPECTOUTPUTVALUE",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTVALUE",
+                "OP_EQUAL"
+            ],
+            "inputs": [
+                {
+                    "name": "owner",
+                    "type": "pubkey"
+                },
+                {
+                    "name": "tokenProgram",
+                    "type": "bytes32"
+                },
+                {
+                    "name": "exitDelay",
+                    "type": "int"
+                }
+            ],
+            "files": [
+                "reject-example-burnable-burn.json",
+                "reject-example-burnable-exit.json",
+                "reject-example-burnable-forfeit.json"
+            ]
+        },
+        {
+            "name": "nonInteractiveClaim",
+            "asm": [
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_DUP",
+                "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                "1",
+                "OP_EQUALVERIFY",
+                "<receiverProgram>",
+                "OP_EQUALVERIFY",
+                "OP_INSPECTOUTPUTVALUE",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTVALUE",
+                "OP_GREATERTHANOREQUAL"
+            ],
+            "inputs": [
+                {
+                    "name": "sender",
+                    "type": "pubkey"
+                },
+                {
+                    "name": "receiver",
+                    "type": "pubkey"
+                },
+                {
+                    "name": "preimageHash",
+                    "type": "bytes20"
+                },
+                {
+                    "name": "refundLocktime",
+                    "type": "int"
+                },
+                {
+                    "name": "unilateralClaimDelay",
+                    "type": "int"
+                },
+                {
+                    "name": "unilateralRefundDelay",
+                    "type": "int"
+                },
+                {
+                    "name": "unilateralRefundWithoutReceiverDelay",
+                    "type": "int"
+                },
+                {
+                    "name": "receiverProgram",
+                    "type": "bytes32"
+                },
+                {
+                    "name": "senderProgram",
+                    "type": "bytes32"
+                }
+            ],
+            "files": [
+                "example-vhtlc-non-interactive-claim.json",
+                "example-vhtlc-non-interactive-refund-without-receiver.json",
+                "reject-example-vhtlc-claim.json",
+                "reject-example-vhtlc-non-interactive-refund.json",
+                "reject-example-vhtlc-refund-without-receiver.json",
+                "reject-example-vhtlc-refund.json",
+                "reject-example-vhtlc-unilateral-claim.json",
+                "reject-example-vhtlc-unilateral-refund-without-receiver.json",
+                "reject-example-vhtlc-unilateral-refund.json",
+                "reject-fees-virtual.json",
+                "reject-legacy-secrets.json",
+                "reject-sealed-plaintext.json",
+                "reject-sealed-twice.json",
+                "reject-sealed-undeclared.json",
+                "reject-sealed-unhashed.json",
+                "reject-splice-int.json",
+                "reject-splice-non-minimal.json",
+                "reject-splice-terms.json",
+                "reject-trigger-capture-variable.json",
+                "reject-trigger-context.json",
+                "reject-trigger-group.json",
+                "reject-trigger-input.json",
+                "reject-trigger-no-require.json",
+                "reject-trigger-source.json",
+                "reject-trigger-unfixed.json",
+                "splice-locking.json",
+                "supplied-taptree-undelegated.json",
+                "supplied-taptree.json",
+                "vhtlc-claim-plaintext.json",
+                "vhtlc-claim.json"
+            ]
+        },
+        {
+            "name": "nonInteractiveRefund",
+            "asm": [
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_DUP",
+                "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                "1",
+                "OP_EQUALVERIFY",
+                "<senderProgram>",
+                "OP_EQUALVERIFY",
+                "OP_INSPECTOUTPUTVALUE",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTVALUE",
+                "OP_GREATERTHANOREQUAL"
+            ],
+            "inputs": [
+                {
+                    "name": "sender",
+                    "type": "pubkey"
+                },
+                {
+                    "name": "receiver",
+                    "type": "pubkey"
+                },
+                {
+                    "name": "preimageHash",
+                    "type": "bytes20"
+                },
+                {
+                    "name": "refundLocktime",
+                    "type": "int"
+                },
+                {
+                    "name": "unilateralClaimDelay",
+                    "type": "int"
+                },
+                {
+                    "name": "unilateralRefundDelay",
+                    "type": "int"
+                },
+                {
+                    "name": "unilateralRefundWithoutReceiverDelay",
+                    "type": "int"
+                },
+                {
+                    "name": "receiverProgram",
+                    "type": "bytes32"
+                },
+                {
+                    "name": "senderProgram",
+                    "type": "bytes32"
+                }
+            ],
+            "files": [
+                "example-vhtlc-non-interactive-claim.json",
+                "example-vhtlc-non-interactive-refund-without-receiver.json",
+                "reject-example-vhtlc-claim.json",
+                "reject-example-vhtlc-non-interactive-refund.json",
+                "reject-example-vhtlc-refund-without-receiver.json",
+                "reject-example-vhtlc-refund.json",
+                "reject-example-vhtlc-unilateral-claim.json",
+                "reject-example-vhtlc-unilateral-refund-without-receiver.json",
+                "reject-example-vhtlc-unilateral-refund.json",
+                "reject-fees-virtual.json",
+                "reject-legacy-secrets.json",
+                "reject-sealed-plaintext.json",
+                "reject-sealed-twice.json",
+                "reject-sealed-undeclared.json",
+                "reject-sealed-unhashed.json",
+                "reject-splice-int.json",
+                "reject-splice-non-minimal.json",
+                "reject-splice-terms.json",
+                "splice-locking.json",
+                "vhtlc-claim-plaintext.json",
+                "vhtlc-claim.json"
+            ]
+        },
+        {
+            "name": "renew",
+            "asm": [
+                "OP_PUSHEXPIRY",
+                "1024",
+                "OP_SUB",
+                "OP_CHECKTIME",
+                "OP_VERIFY",
+                "0x74797065",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "0x7265676973746572",
+                "OP_EQUALVERIFY",
+                "0x6f6e636861696e5f6f75747075745f696e6465786573",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "0x5b5d",
+                "OP_EQUALVERIFY",
+                "0x636f7369676e6572735f7075626c69635f6b6579732e30",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "<COSIGNER_KEY>",
+                "OP_EQUALVERIFY",
+                "0x636f7369676e6572735f7075626c69635f6b6579732e31",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_NOT",
+                "OP_VERIFY",
+                "OP_DROP",
+                "2",
+                "OP_INSPECTPACKET",
+                "OP_VERIFY",
+                "OP_SIZE",
+                "8",
+                "OP_EQUALVERIFY",
+                "OP_BIN2NUM",
+                "2",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTPACKET",
+                "OP_VERIFY",
+                "OP_BIN2NUM",
+                "OP_1ADD",
+                "OP_EQUALVERIFY",
+                "5",
+                "OP_INSPECTPACKET",
+                "OP_VERIFY",
+                "5",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTPACKET",
+                "OP_VERIFY",
+                "OP_EQUALVERIFY",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_1SUB",
+                "7",
+                "0",
+                "OP_TUNNEL"
+            ],
+            "inputs": [],
+            "files": ["counter.json", "reject-duplicate-source.json"]
+        },
+        {
+            "name": "renew",
+            "asm": [
+                "OP_PUSHEXPIRY",
+                "<renewalWindow>",
+                "OP_SUB",
+                "OP_CHECKTIME",
+                "OP_VERIFY",
+                "0x74797065",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "0x7265676973746572",
+                "OP_EQUALVERIFY",
+                "0x6f6e636861696e5f6f75747075745f696e6465786573",
+                "OP_INSPECTINTENTMESSAGE",
+                "OP_VERIFY",
+                "0x5b5d",
+                "OP_EQUALVERIFY",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_1SUB",
+                "OP_INSPECTOUTPUTVALUE",
+                "<maxFee>",
+                "OP_ADD",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_INSPECTINPUTVALUE",
+                "OP_GREATERTHANOREQUAL",
+                "OP_VERIFY",
+                "OP_PUSHCURRENTINPUTINDEX",
+                "OP_1SUB",
+                "5",
+                "0",
+                "OP_TUNNEL"
+            ],
+            "inputs": [
+                {
+                    "name": "owner",
+                    "type": "pubkey"
+                },
+                {
+                    "name": "exitDelay",
+                    "type": "int"
+                },
+                {
+                    "name": "renewalWindow",
+                    "type": "int"
+                },
+                {
+                    "name": "maxFee",
+                    "type": "int"
+                }
+            ],
+            "files": [
+                "boarding.json",
+                "default-board.json",
+                "default-renew.json",
+                "example-boarding-board.json",
+                "example-vtxo-renew.json",
+                "reject-artifact-identity.json",
+                "reject-example-boarding-forfeit.json",
+                "reject-example-vtxo-exit.json",
+                "reject-example-vtxo-forfeit.json",
+                "reject-example-vtxo-renew-unrouted-asset.json",
+                "reject-fee-program.json",
+                "reject-legacy-type.json",
+                "reject-missing-variable.json",
+                "reject-null-delegation.json",
+                "reject-schedule-input.json",
+                "reject-schedule-slot.json",
+                "reject-schedule-two-fields.json",
+                "renew-assets.json",
+                "renew-fee.json",
+                "renew-immediate.json",
+                "renew-undelegated.json"
+            ]
+        }
+    ]
+}
