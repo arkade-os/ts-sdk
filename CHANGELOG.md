@@ -142,6 +142,12 @@ style and have not been backfilled.
 
 ### Internal
 
+- **The nonce swap pair compiles with `arkadec` 0.1.1.** `fulfill` names
+  `taker` and the operator key tweaked by `fulfill`, `cancel` names `user`
+  and the operator key, and the asset lookup takes an `AssetId`. The default
+  read of these artifacts is the program the 0.1.0-rc.1 ones gave, so no
+  deposit moves; a test pins both addresses.
+
 - **The legacy delegator provider is marked `@deprecated`.** `DelegateProvider`, `RestDelegateProvider`, `DelegateInfo` and `DelegateOptions` talk to the retired delegator; `ExecutorProvider` and `RestExecutorProvider` replace them. Nothing is removed.
 
 ## [0.5.13] - 2026-11-23

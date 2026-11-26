@@ -6,13 +6,18 @@
 synthesize for `fulfill`.
 
 `asset-swap-directed-nonce.ark` and `sats-swap-directed-nonce.ark` bind a 32-byte
-RFQ commitment into `fulfill`. With optimized `arkadec` 0.1.0-rc.1, its
+RFQ commitment into `fulfill`. With optimized `arkadec` 0.1.1, its
 self-comparison compiles to a nonce push and drop. Distinct RFQs get distinct
 addresses even when they pay the same amount to the same receiver. Both
 variants follow the spend paths below.
 
-Regenerate the nonce artifacts from this directory with `arkadec` built from
-compiler commit `aff980779ffd179b0fe8e5f7b29ebbff61b45034`.
+The nonce pair names the operator once per leaf: `fulfill` is `taker` and the operator key
+tweaked by `fulfill`, `cancel` is `user` and the operator key. `programFromArtifact` reads that,
+by default, as the server key beside the `fulfill`-tweaked emulator key, the leaves drawn below,
+so existing deposits keep their addresses.
+
+Regenerate the nonce artifacts from this directory with `arkadec` 0.1.1, built from compiler
+commit `bec2d5a79157d6af4e0041a35b89880a1d683240`.
 
 ```sh
 arkadec --deny warnings asset-swap-directed-nonce.ark -o asset-swap-directed-nonce.json
