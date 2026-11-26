@@ -555,6 +555,7 @@ describe("the @deprecated pointers", () => {
         "ASSET_SWAP_V2",
         "ASSET_SWAP_DIRECTED",
         "ASSET_SWAP_DIRECTED_NONCE",
+        "ASSET_SWAP_DIRECTED_NONCE_V2",
         "AssetSwapContractVersion",
         "assetRfqNonce",
         "assetSwapContractVersion",

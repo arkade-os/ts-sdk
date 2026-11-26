@@ -5,6 +5,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     ArkAddress,
     CSVMultisigTapscript,
+    MultisigTapscript,
     Transaction,
     arkade,
     asset,
@@ -40,7 +41,11 @@ import {
     ASSET_SWAP_V2,
     ASSET_SWAP_DIRECTED,
 } from "../src/program";
-import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../src/protocol";
+import {
+    ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
+    assetRfqNonce,
+} from "../src/protocol";
 
 const operatorPubkey = hex.decode(
     "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
@@ -77,6 +82,11 @@ const directions: [string, Terms, string][] = [
 const NONCE_GOLDEN: Record<string, string> = {
     "asset-swap-directed": "51200e7a3788788224fb43de30dab0370cead26a8b0ba66f48a9298201695116462f",
     "sats-swap-directed": "5120326d47e757be1ce70df45f1967b0aa2bae49b1182a476f47c4d5329fe00f90aa",
+};
+
+const NONCE_V2_GOLDEN: Record<string, string> = {
+    "asset-swap-directed": "51205ff5ecc6b63d7eecc67cf73b4545b601109c0868231736d3a3c43a990c27d857",
+    "sats-swap-directed": "5120fad34b8fcfce9b6a98da07fa9d65efa87d9392b9f3b8767d0bab1168516fbf2a",
 };
 
 const artifact = (name: string) =>
@@ -183,16 +193,115 @@ describe("the directed contracts (asset-swap-directed)", () => {
         expect(() => ASSET_SWAP_CONTRACTS[ASSET_SWAP_V2].args(inputs)).toThrow(/binds no taker/);
     });
 
-    it("advertises both directed covenants and still derives v2", () => {
+    it("advertises the single-key nonce covenant last and still derives v2", () => {
         expect(ASSET_SWAP_DERIVABLE_VERSIONS).toEqual([
             ASSET_SWAP_DIRECTED_NONCE,
             ASSET_SWAP_DIRECTED,
+            ASSET_SWAP_DIRECTED_NONCE_V2,
             ASSET_SWAP_V2,
         ]);
         expect(ASSET_SWAP_CONTRACT_VERSIONS).toEqual([
             ASSET_SWAP_DIRECTED_NONCE,
             ASSET_SWAP_DIRECTED,
+            ASSET_SWAP_DIRECTED_NONCE_V2,
         ]);
+    });
+});
+
+describe("the nonce pair on arkd's single co-signer (asset-swap-directed-nonce-v2)", () => {
+    const nonce = assetRfqNonce(RFQ_ID);
+    const nonceTerms = (terms: Terms, emulatorPubkey = terms.emulatorPubkey) => ({
+        ...terms,
+        emulatorPubkey,
+        taker: TAKER,
+        nonce,
+    });
+    const v2 = (terms: Terms, emulatorPubkey?: Uint8Array) =>
+        offerContract(
+            nonceTerms(terms, emulatorPubkey),
+            operatorPubkey,
+            ASSET_SWAP_DIRECTED_NONCE_V2,
+        );
+
+    it.each(directions)("pins %s to the artifact's single-key read", (name, terms) => {
+        const id = terms.wantAsset;
+        const read = arkade.programFromArtifact(artifact(`${name}-nonce`), {
+            singleOperatorKey: true,
+        });
+        const proved = new arkade.ArkadeProgramScript(
+            withExitClosure(read, terms.exitDelay),
+            {
+                receiver: terms.makerPkScript.subarray(2),
+                amount: terms.wantAmount,
+                ...(id && { assetTxid: id.txid.slice().reverse(), assetGroupIndex: id.groupIndex }),
+                user: terms.makerPublicKey,
+                server: operatorPubkey,
+                exitDelay: terms.exitDelay.value,
+                taker: TAKER,
+                nonce,
+            },
+            { serverKey: operatorPubkey, userKey: terms.makerPublicKey },
+        );
+        expect(hex.encode(v2(terms).pkScript)).toBe(hex.encode(proved.pkScript));
+        expect(hex.encode(proved.pkScript)).toBe(NONCE_V2_GOLDEN[name]);
+        const old = offerContract(nonceTerms(terms), operatorPubkey, ASSET_SWAP_DIRECTED_NONCE);
+        expect(hex.encode(old.pkScript)).toBe(NONCE_GOLDEN[name]);
+    });
+
+    it.each(directions)("co-signs %s's fulfill with the tweaked operator key alone", (_, terms) => {
+        const programs = ASSET_SWAP_CONTRACTS[ASSET_SWAP_DIRECTED_NONCE_V2].programs;
+        const program = terms.wantAsset ? programs.wantAsset : programs.wantBtc;
+        expect(program.functions.fulfill.tapscript.signers).toEqual([
+            "$taker",
+            { tweak: "$server", fn: "fulfill" },
+        ]);
+        expect(program.functions.fulfill.tapscript.emulator).toBeNull();
+        expect(program.functions.cancel.tapscript.signers).toEqual(["$user", "$server"]);
+
+        const script = v2(terms);
+        const fulfill = script.functionByName("fulfill")!;
+        expect(MultisigTapscript.decode(fulfill.leafScript).params.pubkeys).toEqual([
+            TAKER,
+            arkade.computeArkadeScriptPublicKey(operatorPubkey, fulfill.arkadeScript!),
+        ]);
+        const old = offerContract(nonceTerms(terms), operatorPubkey, ASSET_SWAP_DIRECTED_NONCE);
+        for (const path of ["cancel", "exit"]) {
+            expect(script.functionByName(path)?.leafScript).toEqual(
+                old.functionByName(path)?.leafScript,
+            );
+        }
+    });
+
+    it.each(directions)("keeps %s's address whatever the co-signer key", (name, terms) => {
+        expect(hex.encode(v2(terms, operatorPubkey).pkScript)).toBe(NONCE_V2_GOLDEN[name]);
+        // the production default: the co-signer is the operator's own key
+        const asOperator = nonceTerms(terms, operatorPubkey);
+        const old = offerContract(asOperator, operatorPubkey, ASSET_SWAP_DIRECTED_NONCE);
+        expect(hex.encode(old.pkScript)).not.toBe(NONCE_V2_GOLDEN[name]);
+        for (const [version, swapPkScript] of [
+            [ASSET_SWAP_DIRECTED_NONCE, old.pkScript],
+            [ASSET_SWAP_DIRECTED_NONCE_V2, v2(terms, operatorPubkey).pkScript],
+        ] as const) {
+            const packet = encodeOffer({ ...asOperator, swapPkScript });
+            expect(bindingFromOffer(decodeOffer(packet), operatorPubkey).version).toBe(version);
+        }
+    });
+
+    it.each(directions)("reads %s's version back off its packet and its record", (name, terms) => {
+        const offer: Offer = {
+            ...nonceTerms(terms),
+            swapPkScript: hex.decode(NONCE_V2_GOLDEN[name]),
+        };
+        const fromPacket = bindingFromOffer(decodeOffer(encodeOffer(offer)), operatorPubkey);
+        expect(fromPacket.version).toBe(ASSET_SWAP_DIRECTED_NONCE_V2);
+        const stored = JSON.parse(JSON.stringify(recordOfferBinding(fromPacket)));
+        expect(offerBindingOf(stored)).toEqual(fromPacket);
+        expect(hex.encode(offerFromBinding(offerBindingOf(stored)).swapPkScript)).toBe(
+            NONCE_V2_GOLDEN[name],
+        );
+        expect(() => offerBindingOf({ ...stored, nonce: undefined })).toThrow();
+        const old: Offer = { ...offer, swapPkScript: hex.decode(NONCE_GOLDEN[name]) };
+        expect(bindingFromOffer(old, operatorPubkey).version).toBe(ASSET_SWAP_DIRECTED_NONCE);
     });
 });
 
@@ -312,6 +421,27 @@ describe("which tree an offer compiles", () => {
             /needs a taker/,
         );
     });
+
+    it("tells the two nonce trees apart by the script alone, defaulting to the old one", () => {
+        const [name] = directions[0];
+        const nonced = { ...terms, taker: TAKER, nonce: assetRfqNonce(RFQ_ID) };
+        expect(versionOf(nonced)).toBe(ASSET_SWAP_DIRECTED_NONCE);
+        expect(versionOf({ ...nonced, swapPkScript: hex.decode(NONCE_GOLDEN[name]) })).toBe(
+            ASSET_SWAP_DIRECTED_NONCE,
+        );
+        expect(versionOf({ ...nonced, swapPkScript: hex.decode(NONCE_V2_GOLDEN[name]) })).toBe(
+            ASSET_SWAP_DIRECTED_NONCE_V2,
+        );
+        expect(
+            swapProgramBinding(nonced, operatorPubkey, ASSET_SWAP_DIRECTED_NONCE_V2).version,
+        ).toBe(ASSET_SWAP_DIRECTED_NONCE_V2);
+        expect(() => offerContract(nonced, operatorPubkey, ASSET_SWAP_DIRECTED)).toThrow(
+            /binds no nonce/,
+        );
+        expect(() =>
+            offerContract({ ...terms, taker: TAKER }, operatorPubkey, ASSET_SWAP_DIRECTED_NONCE_V2),
+        ).toThrow(/asset-swap-directed-nonce-v2 needs a nonce/);
+    });
 });
 
 describe("the offer binding", () => {
@@ -389,9 +519,9 @@ describe("a recorded binding", () => {
 });
 
 describe("deriveOffer with a taker", () => {
-    it("derives the directed tree and hands back its binding", async () => {
-        const [, terms, golden] = directions[0];
-        const derived = await deriveOffer({} as IWallet, {
+    const [name, terms, golden] = directions[0];
+    const derive = (over: Partial<Parameters<typeof deriveOffer>[1]> = {}) =>
+        deriveOffer({} as IWallet, {
             wantAmount: terms.wantAmount,
             wantAsset: terms.wantAsset,
             emulatorPubkey: `02${hex.encode(keys.emulatorPubkey)}`,
@@ -402,13 +532,36 @@ describe("deriveOffer with a taker", () => {
             } as never,
             maker: { pkScript: keys.makerPkScript, publicKey: keys.makerPublicKey },
             taker: TAKER,
+            ...over,
         });
+
+    it("derives the directed tree and hands back its binding", async () => {
+        const derived = await derive();
         expect(hex.encode(derived.swapPkScript)).toBe(golden);
         expect(derived.offerBinding.version).toBe(ASSET_SWAP_DIRECTED);
         expect(derived.offerBinding).toEqual(
             bindingFromOffer(decodeOffer(hex.decode(derived.offerHex)), operatorPubkey),
         );
     });
+
+    it.each([
+        [ASSET_SWAP_DIRECTED_NONCE, NONCE_GOLDEN[name]],
+        [ASSET_SWAP_DIRECTED_NONCE_V2, NONCE_V2_GOLDEN[name]],
+        [undefined, NONCE_GOLDEN[name]],
+    ] as const)(
+        "derives the nonce tree for contract version %s",
+        async (contractVersion, script) => {
+            const derived = await derive({
+                nonce: assetRfqNonce(RFQ_ID),
+                ...(contractVersion && { contractVersion }),
+            });
+            expect(hex.encode(derived.swapPkScript)).toBe(script);
+            expect(derived.offerBinding.version).toBe(contractVersion ?? ASSET_SWAP_DIRECTED_NONCE);
+            expect(recordOfferBinding(derived.offerBinding).version).toBe(
+                derived.offerBinding.version,
+            );
+        },
+    );
 });
 
 describe("a record that carries a binding in place of offerHex", () => {
@@ -484,17 +637,31 @@ describe("a cancel built from the binding", () => {
             }),
         }) as unknown as IWallet;
 
+    const [assetName, assetTerms] = directions[0];
     it.each([
-        ...directions.map(([name, terms]) => [name, terms, ASSET_SWAP_DIRECTED] as const),
-        ["nonce-bound asset", directions[0][1], ASSET_SWAP_DIRECTED_NONCE] as const,
-    ])("spends a %s deposit exactly as its offerHex does", async (_, terms, version) => {
+        ...directions.map(
+            ([name, terms, golden]) => [name, terms, ASSET_SWAP_DIRECTED, golden] as const,
+        ),
+        [
+            "nonce-bound asset",
+            assetTerms,
+            ASSET_SWAP_DIRECTED_NONCE,
+            NONCE_GOLDEN[assetName],
+        ] as const,
+        [
+            "single-key nonce-bound asset",
+            assetTerms,
+            ASSET_SWAP_DIRECTED_NONCE_V2,
+            NONCE_V2_GOLDEN[assetName],
+        ] as const,
+    ])("spends a %s deposit exactly as its offerHex does", async (_, terms, version, golden) => {
         const directed = {
             ...terms,
             taker: TAKER,
-            ...(version === ASSET_SWAP_DIRECTED_NONCE && { nonce: assetRfqNonce(RFQ_ID) }),
+            ...(version !== ASSET_SWAP_DIRECTED && { nonce: assetRfqNonce(RFQ_ID) }),
         };
-        const swapPkScript = offerContract(directed, operatorPubkey, version).pkScript;
-        const offer: Offer = { ...directed, swapPkScript };
+        const offer: Offer = { ...directed, swapPkScript: hex.decode(golden) };
+        expect(bindingFromOffer(offer, operatorPubkey).version).toBe(version);
         const submitted: string[] = [];
         const wallet = offlineWallet(submitted);
         const fromHex = await prepareOfferCancel(wallet, hex.encode(encodeOffer(offer)), {

@@ -30,10 +30,12 @@ import {
 import {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_CONTRACTS,
+    ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_DIRECTED,
     ASSET_SWAP_DIRECTED_NONCE,
     type AssetSwapContractVersion,
     assetSwapContractVersion,
+    bindsNonce,
     swapPrograms,
 } from "./program";
 import {
@@ -130,6 +132,8 @@ export function withExitClosure(
     };
 }
 
+const NONCE_SHAPES = ASSET_SWAP_DERIVABLE_VERSIONS.filter(bindsNonce);
+
 /** Exported for the asset-id vector tests (the args are the only place both asset-id forms are
  * visible). Deliberately absent from the package index -- not public API.
  * A carried `swapPkScript` selects the version that compiles to it; without one,
@@ -146,7 +150,7 @@ export function swapProgramBinding(
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
     const directed = offer.taker !== undefined;
-    const candidate =
+    const candidate: AssetSwapContractVersion =
         offer.nonce !== undefined
             ? ASSET_SWAP_DIRECTED_NONCE
             : directed
@@ -155,8 +159,11 @@ export function swapProgramBinding(
     const version = contractVersion ?? candidate;
     const expected = offer.swapPkScript;
     if (!expected?.length) return bindSwapProgram(offer, operatorPubkey, version);
-    const binding = bindSwapProgram(offer, operatorPubkey, candidate);
-    if (pkOf(binding) === hex.encode(expected)) return binding;
+    // the nonce versions carry the same fields, so only the script they compile to tells them apart
+    for (const shape of offer.nonce !== undefined ? NONCE_SHAPES : [candidate]) {
+        const binding = bindSwapProgram(offer, operatorPubkey, shape);
+        if (pkOf(binding) === hex.encode(expected)) return binding;
+    }
     // No match (usually a rotated operator key): callers throw with that diagnosis.
     return bindSwapProgram(offer, operatorPubkey, directed ? candidate : version);
 }
@@ -166,7 +173,7 @@ function bindSwapProgram(
     operatorPubkey: Uint8Array,
     contractVersion: AssetSwapContractVersion,
 ): SwapProgramBinding {
-    if (offer.nonce !== undefined && contractVersion !== ASSET_SWAP_DIRECTED_NONCE) {
+    if (offer.nonce !== undefined && !bindsNonce(contractVersion)) {
         throw new Error(`${contractVersion} binds no nonce`);
     }
     const { programs, args } = ASSET_SWAP_CONTRACTS[assetSwapContractVersion(contractVersion)];
@@ -350,7 +357,7 @@ export const offerBindingOf = (recorded: RecordedOfferBinding): OfferBinding => 
         throw new Error(`recorded binding names no known contract version (${recorded.version})`);
     }
     const { exitDelay, wantAsset, offerAsset, taker, nonce } = recorded;
-    if ((recorded.version === ASSET_SWAP_DIRECTED_NONCE) !== (nonce !== undefined)) {
+    if (bindsNonce(recorded.version) !== (nonce !== undefined)) {
         throw new Error(
             `recorded binding nonce does not match contract version ${recorded.version}`,
         );

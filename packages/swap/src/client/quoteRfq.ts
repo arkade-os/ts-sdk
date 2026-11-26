@@ -33,7 +33,7 @@ import {
     resolveReceivePkScript,
     type DerivedOffer,
 } from "../offer";
-import { ASSET_SWAP_CONTRACT_VERSIONS, assetRfqNonce } from "../program";
+import { ASSET_SWAP_CONTRACT_VERSIONS, assetRfqNonce, bindsNonce } from "../program";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
@@ -43,7 +43,7 @@ import {
     type OnchainNetwork,
 } from "../onchainHtlc";
 import { claimFeeSats } from "../payment/onchainSwap";
-import { ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE } from "../rfq-contract";
+import { ASSET_SWAP_DIRECTED } from "../rfq-contract";
 import {
     arkadeSwapRequest,
     deriveLightningReceive,
@@ -348,7 +348,7 @@ const quoteArkadeAsset = async (
         throw new Error("assetPayment requires an Arkade asset payout");
     const twoAssetSwap = sides.offerAsset !== undefined && sides.wantAsset !== undefined;
     const contractVersions = twoAssetSwap
-        ? [ASSET_SWAP_DIRECTED_NONCE]
+        ? ASSET_SWAP_CONTRACT_VERSIONS.filter(bindsNonce)
         : ASSET_SWAP_CONTRACT_VERSIONS;
     // The fee is measured against the card's own feed, so a card without one is refused before the
     // request discloses anything, not after the solver has already answered.
@@ -422,7 +422,7 @@ const quoteArkadeAsset = async (
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire, input.policy);
     const taker =
-        contractVersion === ASSET_SWAP_DIRECTED || contractVersion === ASSET_SWAP_DIRECTED_NONCE
+        contractVersion === ASSET_SWAP_DIRECTED || bindsNonce(contractVersion)
             ? verifyTaker({
                   attested: input.transport.attestedResponder,
                   solverPubkey: parsed.solver,
@@ -518,7 +518,7 @@ const quoteArkadeAsset = async (
         info: input.info,
         contractVersion,
         ...(taker === undefined ? {} : { taker }),
-        ...(contractVersion === ASSET_SWAP_DIRECTED_NONCE ? { nonce: assetRfqNonce(rfqId) } : {}),
+        ...(bindsNonce(contractVersion) ? { nonce: assetRfqNonce(rfqId) } : {}),
     });
     // Compare-only, and never the other way round: the address the trader funds
     // is the one the trader derived, and a solver naming another one is refused

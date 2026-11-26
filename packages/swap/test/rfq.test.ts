@@ -44,6 +44,7 @@ import {
     ASSET_SWAP_DERIVABLE_VERSIONS,
     ASSET_SWAP_V2,
     ASSET_SWAP_DIRECTED,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
     assetSwapContractVersion,
 } from "../src/program";
 import { asset } from "@arkade-os/sdk";
@@ -564,7 +565,11 @@ describe("requests", () => {
         for (const version of ASSET_SWAP_CONTRACT_VERSIONS) {
             expect(ASSET_SWAP_DERIVABLE_VERSIONS).toContain(version);
         }
+        expect(ASSET_SWAP_DERIVABLE_VERSIONS).toContain(ASSET_SWAP_DIRECTED_NONCE_V2);
         expect(assetSwapContractVersion(ASSET_SWAP_DIRECTED)).toBe(ASSET_SWAP_DIRECTED);
+        expect(assetSwapContractVersion("asset-swap-directed-nonce-v2")).toBe(
+            ASSET_SWAP_DIRECTED_NONCE_V2,
+        );
     });
 
     it("mirrors the wire's pair-length cap for asset-to-asset", () => {

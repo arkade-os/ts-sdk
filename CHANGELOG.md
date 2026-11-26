@@ -102,6 +102,18 @@ style and have not been backfilled.
 - **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
 - **Two-asset RFQ swaps can pay a specified recipient.** Set `assetPayment.receiveAddress` on a directed quote or an exact-payout open RFQ. Explicit carrier modes require a BTC deposit.
 
+- **`@arkade-os/swap` adds contract version `asset-swap-directed-nonce-v2`.**
+  It is the nonce covenant on arkd's single co-signer: `fulfill` needs `taker`
+  and the operator key tweaked by `fulfill`, with no emulator key, so its
+  address does not depend on the co-signer key. `ASSET_SWAP_DIRECTED_NONCE_V2`
+  names it in `@arkade-os/swap/rfq-contract` and `/protocol`. RFQ requests
+  list it last, after `asset-swap-directed-nonce` (and `asset-swap-directed`,
+  except for two-asset swaps), so a solver that picks the first version it
+  serves keeps choosing the existing ones. Both nonce versions carry the same
+  offer fields, so a deposit's version is the one whose script it was funded
+  to: deposits under `asset-swap-directed-nonce` still restore, cancel and
+  fill as before, and a binding records which version it is.
+
 ### Bug Fixes
 
 - **Covenant co-signer routing uses the selected signing leaf.** Renewal

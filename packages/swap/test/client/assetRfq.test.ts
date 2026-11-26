@@ -37,7 +37,11 @@ import {
     recordOfferBinding,
 } from "../../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "../../src/program";
-import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../../src/protocol";
+import {
+    ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
+    assetRfqNonce,
+} from "../../src/protocol";
 import { verifyTaker } from "../../src/client/verify";
 import { SwapRefusal } from "../../src/rfq";
 import type { QuoteInput } from "../../src/client/quote";
@@ -202,7 +206,11 @@ describe("quote() on a negotiated asset market", () => {
             // one.
             amount_side: "from",
             amount: "10000",
-            contract_versions: [ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED],
+            contract_versions: [
+                ASSET_SWAP_DIRECTED_NONCE,
+                ASSET_SWAP_DIRECTED,
+                ASSET_SWAP_DIRECTED_NONCE_V2,
+            ],
             profile: {
                 maker_pk_script: expect.stringMatching(/^5120[0-9a-f]{64}$/),
                 maker_public_key: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -317,7 +325,7 @@ describe("quote() on a negotiated asset market", () => {
         expect(transport.sent[0]).toMatchObject({
             pair: `arkade:${USD_ASSET_ID}->arkade:${EUR_ASSET_ID}`,
             amount_side: "to",
-            contract_versions: [ASSET_SWAP_DIRECTED_NONCE],
+            contract_versions: [ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE_V2],
             profile: {
                 maker_pk_script: receiverPkScript,
                 maker_public_key: hex.encode(await wallet.wallet.identity.xOnlyPublicKey()),
@@ -451,7 +459,7 @@ describe("quote() on a negotiated asset market", () => {
             });
             vi.mocked(deriveOffer).mockClear();
             await expect(client.quote(buy())).rejects.toThrow(
-                `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED_NONCE}, ${ASSET_SWAP_DIRECTED}`,
+                `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED_NONCE}, ${ASSET_SWAP_DIRECTED}, ${ASSET_SWAP_DIRECTED_NONCE_V2}`,
             );
             expect(deriveOffer).not.toHaveBeenCalled();
         });
@@ -722,6 +730,7 @@ describe("a directed quote (asset-swap-directed)", () => {
         expect(transport.sent[0]?.contract_versions).toEqual([
             ASSET_SWAP_DIRECTED_NONCE,
             ASSET_SWAP_DIRECTED,
+            ASSET_SWAP_DIRECTED_NONCE_V2,
         ]);
         expect(client.preparationOf(quote.id)).toMatchObject({
             offer: { offerBinding: { version: ASSET_SWAP_DIRECTED } },
@@ -834,13 +843,11 @@ describe("accept() on a negotiated asset market", () => {
         expect(wallet.sent).toHaveLength(0);
     });
 
-    it.each([ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE])(
+    it.each([ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE_V2])(
         "keeps a %s record as its binding and funds the packet rebuilt from it",
         async (version) => {
             const { client, repository, transport, wallet } = await harness({}, (payload) =>
-                arkadeAssetAnswer(payload, CLOCK, {
-                    supportsNonce: version === ASSET_SWAP_DIRECTED_NONCE,
-                }),
+                arkadeAssetAnswer(payload, CLOCK, { serves: [version] }),
             );
             const quote = await client.quote(buy());
             await client.accept(quote);
@@ -849,9 +856,7 @@ describe("accept() on a negotiated asset market", () => {
             expect(stored.binding?.version).toBe(version);
             const rfqId = transport.sent[0]?.rfq_id as string;
             expect(stored.binding?.nonce).toEqual(
-                version === ASSET_SWAP_DIRECTED_NONCE
-                    ? hex.encode(assetRfqNonce(rfqId))
-                    : undefined,
+                version === ASSET_SWAP_DIRECTED ? undefined : hex.encode(assetRfqNonce(rfqId)),
             );
 
             const [extension] = wallet.sent[0]?.extensions ?? [];

@@ -13,6 +13,7 @@ import {
     ASSET_SWAP_V2,
     ASSET_SWAP_DIRECTED,
     ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
 } from "./rfq-contract";
 
 export {
@@ -20,6 +21,7 @@ export {
     ASSET_SWAP_V2,
     ASSET_SWAP_DIRECTED,
     ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
 } from "./rfq-contract";
 
 // json imports widen "type": "pubkey" to string; the parsers validate at runtime
@@ -48,6 +50,18 @@ const nonceSwapPrograms: typeof swapPrograms = {
     wantBtc: arkade.programFromArtifact(satsSwapDirectedNonceArtifact as ContractArtifact),
 };
 
+const singleKey = { singleOperatorKey: true };
+const nonceV2SwapPrograms: typeof swapPrograms = {
+    wantAsset: arkade.programFromArtifact(
+        assetSwapDirectedNonceArtifact as ContractArtifact,
+        singleKey,
+    ),
+    wantBtc: arkade.programFromArtifact(
+        satsSwapDirectedNonceArtifact as ContractArtifact,
+        singleKey,
+    ),
+};
+
 const assetRfqNonceDomain = new TextEncoder().encode("arkade/asset-rfq-nonce/v1");
 
 /** Public commitment to the private RFQ status lookup ID. */
@@ -59,7 +73,8 @@ export const assetRfqNonce = (rfqId: string): Uint8Array => {
 export type AssetSwapContractVersion =
     | typeof ASSET_SWAP_V2
     | typeof ASSET_SWAP_DIRECTED
-    | typeof ASSET_SWAP_DIRECTED_NONCE;
+    | typeof ASSET_SWAP_DIRECTED_NONCE
+    | typeof ASSET_SWAP_DIRECTED_NONCE_V2;
 
 /** What a version's constructor args are built from; asset fields are in internal byte order. */
 export interface AssetSwapArgInputs {
@@ -99,6 +114,11 @@ const directedArgs = (inputs: AssetSwapArgInputs) => {
     };
 };
 
+const nonceArgs = (version: string) => (inputs: AssetSwapArgInputs) => {
+    if (inputs.nonce === undefined) throw new Error(`${version} needs a nonce`);
+    return { ...directedArgs(inputs), nonce: inputs.nonce };
+};
+
 export const ASSET_SWAP_CONTRACTS: Readonly<Record<AssetSwapContractVersion, AssetSwapContract>> = {
     [ASSET_SWAP_V2]: {
         programs: swapPrograms,
@@ -122,18 +142,24 @@ export const ASSET_SWAP_CONTRACTS: Readonly<Record<AssetSwapContractVersion, Ass
     },
     [ASSET_SWAP_DIRECTED_NONCE]: {
         programs: nonceSwapPrograms,
-        args: (inputs) => {
-            if (inputs.nonce === undefined)
-                throw new Error(`${ASSET_SWAP_DIRECTED_NONCE} needs a nonce`);
-            return { ...directedArgs(inputs), nonce: inputs.nonce };
-        },
+        args: nonceArgs(ASSET_SWAP_DIRECTED_NONCE),
+    },
+    [ASSET_SWAP_DIRECTED_NONCE_V2]: {
+        programs: nonceV2SwapPrograms,
+        args: nonceArgs(ASSET_SWAP_DIRECTED_NONCE_V2),
     },
 };
 
+/** Advertise order. The single-key covenant is last until a deliberate reorder prefers it. */
 export const ASSET_SWAP_CONTRACT_VERSIONS = [
     ASSET_SWAP_DIRECTED_NONCE,
     ASSET_SWAP_DIRECTED,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
 ] as const;
+
+/** Whether `version`'s `fulfill` binds the RFQ nonce. */
+export const bindsNonce = (version: string): boolean =>
+    version === ASSET_SWAP_DIRECTED_NONCE || version === ASSET_SWAP_DIRECTED_NONCE_V2;
 
 /** Every version this build derives: the registry's keys, not a preference. */
 export const ASSET_SWAP_DERIVABLE_VERSIONS = [
