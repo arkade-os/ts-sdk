@@ -18,7 +18,7 @@ import {
 } from "@arkade-os/sdk";
 import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
 import { requestArkadeSwap } from "../src/rfq";
-import { ASSET_SWAP_DIRECTED } from "../src/program";
+import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../src/program";
 import type { AttestingRfqTransport } from "../src/client/transport";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
@@ -105,12 +105,14 @@ const create = (maker: IWallet = wallet) =>
         wantAsset: testAsset,
         emulatorPubkey,
     });
-const createDirected = () =>
+const createDirected = (rfqId: string) =>
     createOffer(wallet, {
         wantAmount: BigInt(50_000),
         wantAsset: testAsset,
         emulatorPubkey,
         taker: hex.decode(TAKER),
+        contractVersion: ASSET_SWAP_DIRECTED_NONCE,
+        nonce: assetRfqNonce(rfqId),
     });
 
 // file-level, not per-describe: the mocked provider is module state, so a
@@ -127,8 +129,8 @@ describe("offer contract registration", () => {
     // check passes by construction and from_amount is whatever the solver asked.
     it("refuses an exact-out quote whose from_amount exceeds the caller's cap", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await createDirected();
         const rfqId = "33".repeat(32);
+        const expected = await createDirected(rfqId);
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const gouging: AttestingRfqTransport = {
             attestedResponder: TAKER,
@@ -142,7 +144,8 @@ describe("offer contract registration", () => {
                 to_amount: "50000",
                 solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
-                contract_version: ASSET_SWAP_DIRECTED,
+                contract_version: ASSET_SWAP_DIRECTED_NONCE,
+                carrier_sats: "1000",
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),
@@ -186,8 +189,8 @@ describe("offer contract registration", () => {
 
     it("requests an asset-to-asset RFQ and derives a want-asset-only offer", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await createDirected();
         const rfqId = "11".repeat(32);
+        const expected = await createDirected(rfqId);
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const transport: AttestingRfqTransport = {
             attestedResponder: TAKER,
@@ -200,7 +203,8 @@ describe("offer contract registration", () => {
                 to_amount: "50000",
                 solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
-                contract_version: ASSET_SWAP_DIRECTED,
+                contract_version: ASSET_SWAP_DIRECTED_NONCE,
+                carrier_sats: "1000",
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),
@@ -220,20 +224,23 @@ describe("offer contract registration", () => {
         });
 
         expect(transport.requestQuote).toHaveBeenCalledWith(
-            expect.objectContaining({ pair, amount: "700" }),
+            expect.objectContaining({
+                pair,
+                amount: "700",
+                contract_versions: [ASSET_SWAP_DIRECTED_NONCE],
+            }),
         );
-        expect(swap).toMatchObject({ pair, fundAmount: 700n, carrierSats: 330n });
+        expect(swap).toMatchObject({ pair, fundAmount: 700n, carrierSats: 1000n });
         expect(swap.address).toBe(expected.address);
         const encodedOffer = decodeOffer(hex.decode(swap.offerHex));
         expect(encodedOffer.wantAsset?.toString()).toBe(testAsset.toString());
         expect(encodedOffer.offerAsset).toBeUndefined();
     });
 
-    /** A solver whose dust is not 330 prices against its own; the constant would misfund. */
-    it("funds the carrier the solver published, not the SDK constant", async () => {
+    it("verifies the two-asset carrier against the operator's minimum output", async () => {
         const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
-        const expected = await createDirected();
         const rfqId = "33".repeat(32);
+        const expected = await createDirected(rfqId);
         const pair = `arkade:${offerAsset}->arkade:${testAsset}`;
         const quoteWith = (carrier?: string): AttestingRfqTransport => ({
             attestedResponder: TAKER,
@@ -247,7 +254,7 @@ describe("offer contract registration", () => {
                 ...(carrier === undefined ? {} : { carrier_sats: carrier }),
                 solver_pubkey: TAKER,
                 valid_until: 1_800_000_060,
-                contract_version: ASSET_SWAP_DIRECTED,
+                contract_version: ASSET_SWAP_DIRECTED_NONCE,
                 profile: {
                     offer_address: expected.address,
                     offer_pk_script: hex.encode(expected.swapPkScript),
@@ -256,10 +263,68 @@ describe("offer contract registration", () => {
             status: vi.fn(async () => null),
             close: vi.fn(async () => undefined),
         });
-        const request = (transport: AttestingRfqTransport, maker: IWallet = wallet) =>
-            requestArkadeSwap(maker, transport, {
+        const reads: unknown[] = [];
+        const counted = {
+            ...wallet,
+            getArkadeInfo: async (opts?: unknown) => {
+                reads.push(opts);
+                return { ...(await wallet.getArkadeInfo()), vtxoMinAmount: 1_500n };
+            },
+        } as unknown as IWallet;
+        const request = (transport: AttestingRfqTransport) =>
+            requestArkadeSwap(counted, transport, {
                 offerAsset,
                 wantAsset: testAsset,
+                amount: 700n,
+                rfqId,
+                emulatorPubkey,
+                now: 1_800_000_000,
+            });
+
+        expect((await request(quoteWith("1500"))).carrierSats).toBe(1_500n);
+        expect(reads).toEqual([{ requireLive: true }]);
+        for (const carrier of [undefined, "0", "1000", "1501", "1e3", "-1"]) {
+            await expect(request(quoteWith(carrier))).rejects.toMatchObject({
+                reason: "carrier_malformed",
+            });
+        }
+    });
+
+    it("funds an asset-to-BTC carrier up to the operator's dust, or the SDK constant", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
+        const rfqId = "44".repeat(32);
+        const expected = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            offerAsset,
+            emulatorPubkey,
+            taker: hex.decode(TAKER),
+            contractVersion: ASSET_SWAP_DIRECTED_NONCE,
+            nonce: assetRfqNonce(rfqId),
+        });
+        const quoteWith = (carrier?: string): AttestingRfqTransport => ({
+            attestedResponder: TAKER,
+            requestQuote: vi.fn(async () => ({
+                v: 1 as const,
+                type: "rfq_quote" as const,
+                rfq_id: rfqId,
+                pair: `arkade:${offerAsset}->arkade:BTC`,
+                from_amount: "700",
+                to_amount: "50000",
+                ...(carrier === undefined ? {} : { carrier_sats: carrier }),
+                solver_pubkey: TAKER,
+                valid_until: 1_800_000_060,
+                contract_version: ASSET_SWAP_DIRECTED_NONCE,
+                profile: {
+                    offer_address: expected.address,
+                    offer_pk_script: hex.encode(expected.swapPkScript),
+                },
+            })),
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        });
+        const request = (transport: AttestingRfqTransport) =>
+            requestArkadeSwap(wallet, transport, {
+                offerAsset,
                 amount: 700n,
                 rfqId,
                 emulatorPubkey,
@@ -274,14 +339,6 @@ describe("offer contract registration", () => {
                 reason: "carrier_malformed",
             });
         }
-
-        const reads: unknown[] = [];
-        const counted = {
-            ...wallet,
-            getArkadeInfo: (opts?: unknown) => (reads.push(opts), wallet.getArkadeInfo()),
-        } as unknown as IWallet;
-        await request(quoteWith("1000"), counted);
-        expect(reads).toEqual([{ requireLive: true }]);
     });
 
     it("registers the funded covenant as an escrowed arkade contract", async () => {

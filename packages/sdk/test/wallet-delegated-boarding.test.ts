@@ -312,6 +312,25 @@ async function sendFromRenewal(
     return stored.find((v) => v.txid === arkTxid)!;
 }
 
+/**
+ * A wallet whose renewal watch is live, once its boot has moved boarding off the receive key (both
+ * are the identity key until then): the displayed boarding key's renewal row, and its address.
+ */
+async function afterBootSeparation() {
+    const fx = await hdWalletWithWatch({ renewalLive: true });
+    await boardChainIdle(fx.wallet);
+    const key = hex.encode(fx.wallet.boardingTapscript.options.pubKey);
+    const [contract] = (
+        await collectContracts(fx.wallet.contractRepository, { type: ["executor"] })
+    ).filter((c) => c.params.template === "renewal" && c.params.owner.slice(2) === key);
+    fx.registerDelegation.mockClear();
+    return {
+        fx: { ...fx, renewal: { contract } as Awaited<ReturnType<typeof executorRow>> },
+        renewal: { contract } as Awaited<ReturnType<typeof executorRow>>,
+        first: await fx.wallet.getBoardingAddress(),
+    };
+}
+
 /** Delivers a contract event to the wallet's subscribers, as the watcher does. */
 async function deliverContractEvent(
     wallet: Wallet,
@@ -527,9 +546,8 @@ describe("delegated boarding address on an HD wallet", () => {
     });
 
     it("does not rotate for the change of a coin the Executor boarded", async () => {
-        const fx = await hdWalletWithWatch({ renewalLive: true });
-        const { wallet, boarding, renewal, registerDelegation } = fx;
-        const first = boarding.script.onchainAddress(networks.mutinynet);
+        const { fx, renewal, first } = await afterBootSeparation();
+        const { wallet, registerDelegation } = fx;
         const boarded = coin(renewal, "aa");
         await emitContractEvent(wallet, "vtxo_received", renewal.contract, [boarded]);
         const next = await wallet.getBoardingAddress();
@@ -544,9 +562,8 @@ describe("delegated boarding address on an HD wallet", () => {
     });
 
     it("rotates when the change lands after the deposit's own rotation failed", async () => {
-        const fx = await hdWalletWithWatch({ renewalLive: true });
-        const { wallet, boarding, renewal, registerDelegation } = fx;
-        const first = boarding.script.onchainAddress(networks.mutinynet);
+        const { fx, renewal, first } = await afterBootSeparation();
+        const { wallet, registerDelegation } = fx;
         vi.spyOn(console, "warn").mockImplementation(() => {});
         vi.spyOn(wallet as any, "rotateBoarding").mockRejectedValueOnce(new Error("no index"));
         const boarded = coin(renewal, "aa");

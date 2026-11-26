@@ -1397,6 +1397,43 @@ describe("Wallet.restore", () => {
         }
     }, 20_000);
 
+    it("HD: finds a coin at the Executor twin of a rotated receive key", async () => {
+        const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
+        try {
+            const keys = {
+                batchCosignerPubkey: executorVectors.batchCosignerPubkey,
+                operatorPubkey: `02${hex.encode(wallet.offchainTapscript.options.serverPubKey)}`,
+                emulatorPubkey: executorVectors.emulatorPubkey,
+            };
+            // renewal only: a receive key's twin has no boarding contract
+            const delegation = { exitDelay: 0x400001, renewalWindow: 86400, maxFee: 500 };
+            await watchExecutorContracts(wallet, keys, delegation);
+            const descriptor = hdProvider.materializeDescriptorAt(3);
+            const twin = ExecutorContractHandler.createScript(
+                ExecutorContractHandler.serializeParams({
+                    template: "renewal",
+                    owner: new Uint8Array([2, ...deriveDescriptorLeafPubKey(descriptor)]),
+                    ...delegation,
+                    batchCosignerPubKey: hex.decode(keys.batchCosignerPubkey),
+                    serverPubKey: hex.decode(keys.operatorPubkey),
+                    emulatorPubKey: hex.decode(keys.emulatorPubkey),
+                }),
+            );
+            indexer.usedScripts.add(hex.encode(twin.pkScript));
+
+            await wallet.restore({ gapLimit: 5 });
+
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(descriptor);
+            const [row] = await collectContracts(wallet.contractRepository, {
+                script: hex.encode(twin.pkScript),
+            });
+            expect(row.metadata?.signingDescriptor).toBe(descriptor);
+            expect(row.params.template).toBe("renewal");
+        } finally {
+            await wallet.dispose();
+        }
+    }, 20_000);
+
     it("HD: finds a deposit under each boarding delay a rotated key was watched with", async () => {
         const { wallet, hdProvider, fundedOnchain } = await makeHdWalletForTest();
         try {

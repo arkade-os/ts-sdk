@@ -13,7 +13,7 @@ import type {
     Diagnostic,
 } from "@arkade-os/compiler";
 
-import { programFromArtifact } from "./arkade/artifact";
+import { programFromArtifact, type ProgramFromArtifactOptions } from "./arkade/artifact";
 import type { Program } from "./arkade/program";
 
 export type { CompileInput, CompileOptions, CompilerArtifact, DebugInfo, Diagnostic };
@@ -46,10 +46,13 @@ export class CompileError extends Error {
 
 const PEER = "@arkade-os/compiler";
 
-/** Compile `input.entry` and its relative imports from `input.files` into a {@link Program}. */
+/**
+ * Compile `input.entry` and its relative imports from `input.files` into a {@link Program}.
+ * `contracts` takes the artifacts of the contracts it instantiates, as `programFromArtifact` does.
+ */
 export async function compile(
     input: CompileInput,
-    options?: CompileOptions,
+    options?: CompileOptions & Pick<ProgramFromArtifactOptions, "contracts">,
 ): Promise<CompileOutput> {
     let compiler: typeof import("@arkade-os/compiler");
     try {
@@ -68,11 +71,12 @@ export async function compile(
         }
         throw error;
     }
-    const result = await compiler.compile(input, options);
+    const { contracts, ...compilerOptions } = options ?? {};
+    const result = await compiler.compile(input, compilerOptions);
     if (result.artifact === null) throw new CompileError(result.diagnostics);
     const debug = result.debug ?? undefined;
     return {
-        program: programFromArtifact(result.artifact, debug),
+        program: programFromArtifact(result.artifact, { debug, contracts }),
         artifact: result.artifact,
         ...(debug ? { debug } : {}),
         diagnostics: result.diagnostics,

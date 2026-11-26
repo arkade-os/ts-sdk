@@ -1,0 +1,82 @@
+{
+  "formatVersion": 1,
+  "contractName": "SingleSig",
+  "constructorInputs": [
+    {
+      "name": "user",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "spend",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "userSig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "<user>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "spend",
+          "witness": [
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<OPERATOR_KEY:spend>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateral",
+      "leaves": [
+        {
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "userSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<OPERATOR_EXIT_DELAY>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<user>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "codeHash": "sha256:7ba6a7c8c4dc7dcaa8ee2441541aa560d74ffb48a0c15a1df9c95664147c4d9e",
+  "source": {
+    "entry": "single_sig.ark",
+    "files": {
+      "single_sig.ark": "pragma arkade ^0.1.0;\n\ncontract SingleSig(\n  pubkey user\n) {\n  // Single signature spend path\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n\n  // Unilateral exit (CSV).\n  function unilateral(signature userSig) tapscript {\n    require(older(operatorExitDelay));\n    require(checkSig(userSig, user));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-20T21:24:20.037701+00:00",
+  "fingerprint": "sha256:bb499736f93f541ee43dd309101464acc01e2813b9ac5127e13a7b2d05bd7911"
+}

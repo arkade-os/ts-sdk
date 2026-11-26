@@ -7,7 +7,8 @@ import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
 import { ContractRepository } from "../repositories/contractRepository";
 import { WalletRepository } from "../repositories/walletRepository";
 import { CreateContractParams, IContractManager } from "../contracts/contractManager";
-import type { Contract } from "../contracts/types";
+import { isContractVtxoEvent, type ContractEvent, type Contract } from "../contracts/types";
+import { ExecutorContractHandler } from "../contracts/handlers/executor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
@@ -175,6 +176,29 @@ export interface RotatableWallet {
     setOffchainTapscriptForRotation(tapscript: DefaultVtxo.Script | DelegateVtxo.Script): void;
     getContractManager(): Promise<IContractManager>;
     getAddress(): Promise<string>;
+    /**
+     * @internal Register the Executor twin of the receive key at `descriptor`, so it is renewed
+     * from the moment it is shown. Absent without an Executor. Never throws: a failure leaves
+     * the own address displayed.
+     */
+    registerReceiveTwin?(descriptor: string): Promise<void>;
+}
+
+/**
+ * Whether `event` is a receipt at the displayed receive key: its own address, or its Executor
+ * renewal contract, the twin shown in its place. The twin counts whether or not its watch is
+ * still live: the coin arrived at an address the wallet showed.
+ */
+function isReceiptAtDisplayed(event: ContractEvent, wallet: RotatableWallet): boolean {
+    if (event.type !== "vtxo_received") return false;
+    if (event.contractScript === wallet.defaultContractScript) return true;
+    if (!isContractVtxoEvent(event)) return false;
+    const { type, params } = event.contract;
+    return (
+        type === ExecutorContractHandler.type &&
+        params.template === "renewal" &&
+        params.owner?.slice(2).toLowerCase() === hex.encode(wallet.offchainTapscript.options.pubKey)
+    );
 }
 
 /**
@@ -316,8 +340,7 @@ export class WalletReceiveRotator {
     async install(wallet: RotatableWallet): Promise<void> {
         const manager = await wallet.getContractManager();
         this.unsubscribe = manager.onContractEvent((event) => {
-            if (event.type !== "vtxo_received") return;
-            if (event.contractScript !== wallet.defaultContractScript) return;
+            if (!isReceiptAtDisplayed(event, wallet)) return;
             // Serialized but deliberately NOT deduped: one receive ⇒ one fresh address, so two
             // rapid events burn two indices.
             this.chain = this.chain
@@ -416,6 +439,10 @@ export class WalletReceiveRotator {
 
         const manager = await managerPromise;
         await manager.createContract(params);
+
+        // After the own contract, so a failure leaves a watched address, and before the swap, so the
+        // address shown is renewed from its first receipt.
+        await wallet.registerReceiveTwin?.(descriptor);
 
         wallet.setOffchainTapscriptForRotation(newTapscript);
 

@@ -1,0 +1,149 @@
+{
+  "formatVersion": 1,
+  "contractName": "StructVault",
+  "structs": [
+    {
+      "name": "Signer",
+      "fields": [
+        {
+          "name": "key",
+          "type": "pubkey"
+        },
+        {
+          "name": "weight",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Policy",
+      "fields": [
+        {
+          "name": "primary",
+          "type": "Signer"
+        },
+        {
+          "name": "limits",
+          "type": "int[2]"
+        },
+        {
+          "name": "exitDelay",
+          "type": "int"
+        }
+      ]
+    }
+  ],
+  "constructorInputs": [
+    {
+      "name": "policy",
+      "type": "Policy"
+    }
+  ],
+  "functions": [
+    {
+      "name": "update",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "next",
+            "type": "Policy"
+          },
+          {
+            "name": "sig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "OP_5",
+          "OP_ROLL",
+          "<policy.primary.key>",
+          "OP_CHECKSIGVERIFY",
+          "0",
+          "OP_3",
+          "OP_PICK",
+          "OP_ADD",
+          "OP_4",
+          "OP_PICK",
+          "OP_ADD",
+          "OP_DUP",
+          "<policy.primary.weight>",
+          "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY",
+          "<policy.exitDelay>",
+          "OP_5",
+          "OP_PICK",
+          "OP_5",
+          "OP_PICK",
+          "OP_3",
+          "OP_PICK",
+          "OP_5",
+          "OP_ROLL",
+          "OP_SWAP",
+          "OP_5",
+          "OP_ROLL",
+          "OP_NUMEQUALVERIFY",
+          "OP_2DROP",
+          "OP_2DROP",
+          "OP_2DROP",
+          "OP_2DROP",
+          "OP_1"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "update",
+          "witness": [
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<OPERATOR_KEY:update>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateral",
+      "leaves": [
+        {
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "sig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<policy.exitDelay>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<policy.primary.key>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "codeHash": "sha256:62a97618ba3deda6334579ff075c6b4f5c0aa42885e46b5488daa22636f7c75e",
+  "source": {
+    "entry": "struct_vault.ark",
+    "files": {
+      "struct_vault.ark": "pragma arkade ^0.1.0;\n\nstruct Signer {\n  pubkey key;\n  int weight;\n}\n\nstruct Policy {\n  Signer primary;\n  int[2] limits;\n  int exitDelay;\n}\n\ncontract StructVault(Policy policy) {\n  function update(Policy next, signature sig) {\n    require(checkSig(sig, policy.primary.key));\n\n    int total = 0;\n    for (i, limit) in next.limits {\n      total = total + limit;\n    }\n    require(total >= policy.primary.weight);\n\n    Policy local = {\n      primary: {\n        key: next.primary.key,\n        weight: total\n      },\n      limits: [next.limits[0], next.limits[1]],\n      exitDelay: policy.exitDelay\n    };\n    require(local.primary.weight == total);\n  }\n\n  function unilateral(signature sig) tapscript {\n    require(older(policy.exitDelay));\n    require(checkSig(sig, policy.primary.key));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-20T21:24:20.051596+00:00",
+  "fingerprint": "sha256:5d40d212a4336c6a596246ebfc4cfcb8a283d25c486df8f56ac73cce9cebebf3"
+}
