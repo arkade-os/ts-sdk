@@ -941,7 +941,9 @@ function renewalAddressOf(
     amount: bigint,
     inputs: readonly (ExtendedCoin | ExtendedVirtualCoin)[],
 ): Promise<string> {
-    // settle() puts assets only on an output at getAddress()
+    // settle() puts assets only on an output at getAddress(), so these renewals skip the wallet's own
+    // rules: they pay the twin even for maxFee + dust or less, and when the coin sits at a live
+    // renewal contract the Executor missed
     if (inputs.some((input) => "assets" in input && (input.assets?.length ?? 0) > 0)) {
         return wallet.getAddress();
     }

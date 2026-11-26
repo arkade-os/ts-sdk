@@ -1116,7 +1116,10 @@ export interface IReadonlyWallet {
     /** Readonly identity associated with the wallet. */
     identity: ReadonlyIdentity;
 
-    /** @returns Arkade address used for offchain funds. */
+    /**
+     * @returns Arkade address to receive offchain funds at. It can change without a receipt,
+     * for instance once an Executor watches the wallet's key: do not store it.
+     */
     getAddress(): Promise<string>;
 
     /** @returns Onchain boarding address used to move funds into Arkade. */

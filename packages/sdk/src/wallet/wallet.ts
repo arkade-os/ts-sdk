@@ -206,7 +206,9 @@ import {
     type DelegatedContractWatch,
     ExecutorManagerImpl,
     type IExecutorManager,
+    receiveTwin,
     reRegistrationOf,
+    sameDelegation,
 } from "./executor";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
@@ -374,6 +376,8 @@ const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 const EXECUTOR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** Wallet-state setting: when the Executor last answered a refresh, in unix ms. */
 const EXECUTOR_REFRESHED_KEY = "executorRefreshedAt";
+/** How long a failed registration of the receive key's twin waits before the poll tries again. */
+const EXECUTOR_RECEIVE_RETRY_MS = 10 * 60 * 1000;
 
 function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     const seen = new Set<string>();
@@ -1386,6 +1390,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return wallet;
     }
 
+    /**
+     * The wallet's own address, under its own key: what its hrp and operator key are read from.
+     * Not where to receive; that is {@link getAddress}, which answers the delegated twin once the
+     * Executor watches this key.
+     */
     get arkAddress(): ArkAddress {
         return this.offchainTapscript.address(this.network.hrp, this.arkServerPublicKey);
     }
@@ -1399,11 +1408,49 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Returns the wallet's Arkade address. While an Executor renewal watch is live, the wallet's
-     * own renewals move coins received here into its renewal contract, which the Executor renews.
+     * Returns the Arkade address to receive at: the delegated twin of the current receive key
+     * while its Executor renewal watch is live, so the Executor renews what lands here while the
+     * wallet is offline; the wallet's own address otherwise. See
+     * {@link IExecutorManager.registerRenewal}.
+     *
+     * The answer changes without a receipt when a watch registers or ends, and when the operator
+     * signer rotates: do not store it. Use {@link arkAddress} for the wallet's own address.
      */
     async getAddress(): Promise<string> {
-        return this.arkAddress.encode();
+        // Both read before the first await: a rotation in between must not mix two epochs.
+        const serverPubKey = this.arkServerPublicKey;
+        const tapscript = await this.destinationTapscript(serverPubKey);
+        return tapscript.address(this.network.hrp, serverPubKey).encode();
+    }
+
+    /**
+     * Where receives go under `serverPubKey`: the live Executor renewal watch of the receive key
+     * (the delegated twin), else `own`. With `amount`, a twin the Executor cannot renew it at
+     * (`maxFee + dust` or less) gives way to `own`. Fail-open: a lookup must not fail a receive.
+     *
+     * Callers read `own` and `serverPubKey` before their first await, then pass them here.
+     */
+    protected async destinationTapscript(
+        serverPubKey: Bytes,
+        own: DefaultVtxo.Script | DelegateVtxo.Script = this.offchainTapscript,
+        amount?: bigint,
+    ): Promise<DefaultVtxo.Script | DelegateVtxo.Script> {
+        try {
+            const twin = await receiveTwin(
+                (filter) => collectContracts(this.contractRepository, filter),
+                hex.encode(own.options.pubKey),
+                toXOnlySignerHex(hex.encode(serverPubKey)),
+            );
+            if (twin && (amount === undefined || this.renews(twin, amount))) return twin.script;
+        } catch (e) {
+            console.warn("Unable to inspect Executor renewal watches", e);
+        }
+        return own;
+    }
+
+    /** Whether the Executor can renew `amount` at `watch`: not for `maxFee + dust` or less. */
+    protected renews(watch: DelegatedContractWatch, amount: bigint): boolean {
+        return amount > BigInt(watch.contract.params.maxFee) + this.dustAmount;
     }
 
     /**
@@ -3106,6 +3153,92 @@ export class Wallet
     }
 
     /**
+     * @internal Register the Executor twin of the receive key at `descriptor`, under the params
+     * of {@link delegationSource}: none means the app never opted in, and nothing is done.
+     * Only the displayed key gets one: look-ahead addresses may have been issued to others and
+     * are not delegated. Never throws: on failure the own address is shown until
+     * {@link syncReceiveDelegation} registers the twin.
+     */
+    async registerReceiveTwin(descriptor: string): Promise<void> {
+        const executor = this._executorManager;
+        if (!executor) return;
+        try {
+            const watch = this.delegationSource(
+                await this.liveRenewalWatches(
+                    toXOnlySignerHex(hex.encode(this.arkServerPublicKey)),
+                ),
+            );
+            if (!watch) return;
+            const { options, registration } = reRegistrationOf(watch);
+            await executor.registerRenewalAt(descriptor, options, registration);
+        } catch (e) {
+            console.warn("Failed to register an Executor watch for the new receive address", e);
+        }
+    }
+
+    /**
+     * The live renewal watch whose params a twin copies: the displayed boarding key's, which
+     * `registerRenewal` registers with the app's params, else the newest.
+     */
+    private delegationSource(
+        watches: DelegatedContractWatch[],
+    ): DelegatedContractWatch | undefined {
+        const boarding = hex.encode(this._boardingTapscript.options.pubKey);
+        return watches.find((w) => w.owner === boarding) ?? watches[0];
+    }
+
+    private _receiveSyncFailedAt = 0;
+
+    /**
+     * @internal The upkeep of receive delegation for an HD wallet that opted in, run from the poll
+     * and at boot, and never throwing:
+     * - the receive key never is the displayed boarding key, as a payment at the twin would
+     *   rotate boarding: it rotates boarding first, once, when they coincide;
+     * - the displayed receive key gets its twin when a rotation could not register one, or a new
+     *   one when the app registered renewal with other params since.
+     *
+     * A failure is not tried again for a few minutes, as the Executor may be down.
+     */
+    private syncReceiveDelegation(): Promise<void> {
+        const executor = this._executorManager;
+        if (!executor || !this._descriptorProvider) return Promise.resolve();
+        return this.onBoardChain(async () => {
+            if (
+                this._executorStopping ||
+                Date.now() - this._receiveSyncFailedAt < EXECUTOR_RECEIVE_RETRY_MS
+            ) {
+                return;
+            }
+            const signer = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
+            const watches = await this.liveRenewalWatches(signer);
+            // Never opted in
+            if (watches.length === 0) return;
+            const key = hex.encode(this.offchainTapscript.options.pubKey);
+            if (key === hex.encode(this._boardingTapscript.options.pubKey)) {
+                await this.rotateBoarding();
+            }
+            const source = this.delegationSource(watches)!;
+            const twin = watches.find((w) => w.owner === key);
+            if (twin && sameDelegation(twin, source)) return;
+            const [row] = await (await this.getContractManager()).getContracts({
+                script: this.defaultContractScript,
+            });
+            const descriptor = row?.metadata?.signingDescriptor;
+            const { options, registration } = reRegistrationOf(source);
+            await executor.registerRenewalAt(
+                typeof descriptor === "string"
+                    ? descriptor
+                    : await identityDescriptor(this.identity),
+                options,
+                registration,
+            );
+        }).catch((e) => {
+            this._receiveSyncFailedAt = Date.now();
+            console.warn("Failed to keep the receive address under Executor delegation", e);
+        });
+    }
+
+    /**
      * Startup work for an Executor: refresh its watches (every wallet), then, with a descriptor
      * provider, rotate-on-board. The Executor boards a deposit into the renewal contract of its
      * key, so a coin there while that key is displayed means the address was used. Renewals and a
@@ -3151,9 +3284,11 @@ export class Wallet
      * Best-effort: never throws. Never call it from a board chain task: it would wait on itself.
      */
     refreshExecutorWatches(): Promise<void> {
-        this._executorRefreshing ??= this.refreshExecutorWatchesNow().finally(() => {
-            this._executorRefreshing = undefined;
-        });
+        this._executorRefreshing ??= this.refreshExecutorWatchesNow()
+            .then(() => this.syncReceiveDelegation())
+            .finally(() => {
+                this._executorRefreshing = undefined;
+            });
         return this._executorRefreshing;
     }
 
@@ -3583,6 +3718,7 @@ export class Wallet
         // Re-check under the serialization barrier: a prior queued rotation may
         // have already applied this signer.
         if (equalBytes(xonly, this.arkServerPublicKey)) return;
+        const previousSigner = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
 
         const manager = await this.getContractManager();
 
@@ -3672,6 +3808,15 @@ export class Wallet
             await manager.refillLookAhead();
         } catch (e) {
             console.warn("look-ahead refill after server-signer rotation failed", e);
+        }
+
+        if (this._executorManager) {
+            const held = await this.liveRenewalWatches(previousSigner).catch(() => []);
+            if (held.length > 0) {
+                console.warn(
+                    "Executor delegations stay under the previous operator key, and getAddress() shows the own address: call registerRenewal() again to delegate under the new one",
+                );
+            }
         }
     }
 
@@ -7092,8 +7237,8 @@ export class Wallet
 
     /**
      * Change follows its inputs: a send spending a coin at a live renewal watch returns the change
-     * to that contract, so the Executor keeps renewing it. The own script otherwise. Fail-open: a
-     * send must not fail over a delegation lookup.
+     * to that contract, so the Executor keeps renewing it. Otherwise it goes where receives go.
+     * Fail-open: a send must not fail over a delegation lookup.
      */
     private async changeTapscriptFor(
         inputs: ExtendedVirtualCoin[],
@@ -7110,8 +7255,9 @@ export class Wallet
             }
         } catch (e) {
             console.warn("Unable to inspect Executor renewal watches", e);
+            return own;
         }
-        return own;
+        return this.destinationTapscript(serverPubKey, own, BigInt(changeAmount));
     }
 
     /** The live Executor renewal watches under `signer`, the operator's x-only key. */
@@ -7121,36 +7267,36 @@ export class Wallet
         );
     }
 
-    /** Whether the Executor can renew `amount` at `watch`: not for `maxFee + dust` or less. */
-    private renews(watch: DelegatedContractWatch, amount: bigint): boolean {
-        return amount > BigInt(watch.contract.params.maxFee) + this.dustAmount;
-    }
-
     /**
-     * @internal Where the wallet's own renewals pay `amount`: the newest live Executor renewal
-     * contract under the current operator, so the Executor renews the coin from then on. One the
-     * displayed boarding key does not own comes first: a coin at that key's contract rotates the
-     * boarding address. The wallet's address when none applies, for `maxFee + dust` or less, which
-     * the Executor cannot renew, or when a renewed coin carries assets, which `settle()` places
-     * only at the wallet's address. Also the wallet's address when any of `inputScripts` sits at a
-     * live renewal contract, whatever the reason: the Executor had its chance at that coin, and
-     * paying it back there only repeats the miss. Fail-open: a renewal must not fail over a
-     * delegation lookup.
+     * @internal Where the wallet's own renewals pay `amount`: {@link getAddress}, except for
+     * `maxFee + dust` or less, which the Executor cannot renew, and when any of `inputScripts`
+     * sits at a live renewal contract, whatever the reason: the Executor had its chance at that
+     * coin, and paying it back there only repeats the miss. Both pay the wallet's own address.
+     * Fail-open: a renewal must not fail over a delegation lookup.
+     *
+     * {@link VtxoManager} does not ask for a renewal of a coin that carries assets: `settle()`
+     * places assets only at {@link getAddress}, which that renewal pays whatever the rules above say.
      */
     async renewalAddress(amount: bigint, inputScripts: readonly string[] = []): Promise<string> {
-        const own = await this.getAddress();
-        try {
-            const { hrp, serverPubKey } = ArkAddress.decode(own);
-            const displayed = hex.encode(this._boardingTapscript.options.pubKey);
-            const underOperator = await this.liveRenewalWatches(hex.encode(serverPubKey));
-            if (underOperator.some((w) => inputScripts.includes(w.contract.script))) return own;
-            const live = underOperator.filter((w) => this.renews(w, amount));
-            const watch = live.find((w) => w.owner !== displayed) ?? live[0];
-            return watch ? watch.script.address(hrp, serverPubKey).encode() : own;
-        } catch (e) {
-            console.warn("Unable to inspect Executor renewal watches", e);
-            return own;
+        // Both read before the first await: a rotation in between must not mix two epochs.
+        const own = this.offchainTapscript;
+        const serverPubKey = this.arkServerPublicKey;
+        const addressOf = (tapscript: DefaultVtxo.Script | DelegateVtxo.Script) =>
+            tapscript.address(this.network.hrp, serverPubKey).encode();
+        if (inputScripts.length > 0) {
+            try {
+                const live = await this.liveRenewalWatches(
+                    toXOnlySignerHex(hex.encode(serverPubKey)),
+                );
+                if (live.some((w) => inputScripts.includes(w.contract.script))) {
+                    return addressOf(own);
+                }
+            } catch (e) {
+                console.warn("Unable to inspect Executor renewal watches", e);
+                return addressOf(own);
+            }
         }
+        return addressOf(await this.destinationTapscript(serverPubKey, own, amount));
     }
 
     /**

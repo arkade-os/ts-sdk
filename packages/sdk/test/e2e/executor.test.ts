@@ -247,13 +247,14 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
         expect((await daemon.getDelegation(renewal.address)).delegation.inputs[0].address).toBe(
             renewal.address,
         );
-        // the delegated contract is watched, and is not the wallet's own address yet
+        // the delegated contract is watched, and is the address the wallet now shows
         const cm = await alice.getContractManager();
         const [row] = (await cm.getContracts({ type: ["executor"] })).filter(
             (c) => c.params.template === "renewal",
         );
         renewalScript = row.script;
-        expect(await alice.getAddress()).not.toBe(renewal.address);
+        expect(await alice.getAddress()).toBe(renewal.address);
+        expect(alice.arkAddress.encode()).not.toBe(renewal.address);
     });
 
     // covers every wait below: two funding waits of 170 s and the renewal wait of 600 s
@@ -266,9 +267,8 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
             timeout: 170_000,
             interval: 2_000,
         });
+        // settle pays getAddress(), which is the renewal contract
         await alice.settle();
-        // all of it: an own change coin would be renewed into this contract too
-        await alice.send({ address: renewal.address, amount: 10_000 });
         await waitFor(async () => (await atRenewal()) !== undefined, {
             timeout: 170_000,
             interval: 2_000,
@@ -300,7 +300,7 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
 
     // no second wait for the daemon: the test above pins its in-place renewal
     it("keeps the change of a send at the renewal contract", { timeout: 120_000 }, async () => {
-        const own = await alice.getAddress();
+        const shown = await alice.getAddress();
         const held = (await atRenewal())!;
         const bob = await createWallet();
         // named, so an own coin expiring sooner is not spent with it and the change keeps the
@@ -317,7 +317,7 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
             const change = await atRenewal();
             return change !== undefined && change.txid !== held.txid;
         });
-        expect(await alice.getAddress()).toBe(own);
+        expect(await alice.getAddress()).toBe(shown);
 
         // still the daemon's to renew: the wallet's own renewal leaves it alone
         const change = (await atRenewal())!;
@@ -325,6 +325,53 @@ describe.skipIf(!reachable).sequential("Executor renewal delegation", () => {
         await (await alice.getVtxoManager()).renewVtxos().catch(() => undefined);
         const untouched = (await atRenewal())!;
         expect(`${untouched.txid}:${untouched.vout}`).toBe(`${change.txid}:${change.vout}`);
+    });
+});
+
+// An HD wallet shows the twin of each receive key and registers it before rotating to it: what only
+// the daemon can confirm is that it derives the child key's renewal address and accepts it.
+describe.skipIf(!reachable).sequential("Executor receive address on an HD wallet", () => {
+    const mnemonic = generateMnemonic(wordlist);
+    const daemon = new RestExecutorProvider(EXECUTOR_URL);
+    let alice: Wallet;
+    let first = "";
+
+    beforeAll(async () => {
+        alice = await createWallet(MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: false }), {
+            walletMode: "hd",
+        });
+    }, 60_000);
+
+    it("shows the identity key's twin once renewal is registered", {
+        timeout: 60_000,
+    }, async () => {
+        const renewal = await (await alice.getExecutorManager())!.registerRenewal(renewalOptions);
+        // the upkeep the poll runs, which settlementConfig: false skips: it moves boarding off the
+        // receive key, so a payment here is not taken for a deposit
+        await alice.refreshExecutorWatches();
+        first = await alice.getAddress();
+        expect(first).toBe(renewal.address);
+        expect(hex.encode(alice.boardingTapscript.options.pubKey)).not.toBe(
+            hex.encode(alice.offchainTapscript.options.pubKey),
+        );
+    });
+
+    it("rotates to a twin the daemon derives once a payment lands at the first", {
+        timeout: 240_000,
+    }, async () => {
+        faucetOnchain(await alice.getBoardingAddress(), 10_000);
+        await waitFor(async () => (await alice.getBalance()).boarding.confirmed === 10_000, {
+            timeout: 170_000,
+            interval: 2_000,
+        });
+        await alice.settle();
+
+        await waitFor(async () => (await alice.getAddress()) !== first, { timeout: 60_000 });
+        const next = await alice.getAddress();
+        expect((await daemon.getDelegation(next)).delegation.inputs[0].address).toBe(next);
+        // the first twin stays watched: its coin is still the wallet's, and the daemon's to renew
+        expect((await daemon.getDelegation(first)).delegation.status).toBe("active");
+        expect((await alice.getBalance()).available).toBeGreaterThan(0);
     });
 });
 
