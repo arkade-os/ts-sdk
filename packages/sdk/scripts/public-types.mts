@@ -1,4 +1,9 @@
-import { type arkade, type ServiceWorkerWallet, type WalletUpdate } from "@arkade-os/sdk";
+import {
+    type ArkadeHTLC,
+    type arkade,
+    type ServiceWorkerWallet,
+    type WalletUpdate,
+} from "@arkade-os/sdk";
 
 export interface ProgramTypes {
     argType: arkade.ArkadeArgType;
@@ -26,6 +31,7 @@ export interface ProgramTypes {
 export type CallableFunctions = arkade.CallableFunctions;
 export type ContractFunctions = arkade.ContractFunctions<arkade.Program>;
 export type ContractUnlockers = arkade.ContractUnlockers<arkade.Program>;
+export type ArkadeHTLCOptions = ArkadeHTLC.Options;
 
 declare const wallet: ServiceWorkerWallet;
 const unsubscribe: () => void = wallet.onWalletUpdate((update: WalletUpdate) => {

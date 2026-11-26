@@ -25,6 +25,7 @@
             "!packages/swap/src/legacy/*.program.v0.json",
             "!packages/swap/src/legacy/*.program.v1.json",
             "!packages/swap/src/contracts/*.json",
+            "!packages/sdk/src/script/contracts/*.json",
             "!**/fixtures/arkadec/**"
         ]
     },
