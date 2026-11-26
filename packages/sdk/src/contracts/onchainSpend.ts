@@ -151,6 +151,7 @@ export function operatorCosignedInputs(
     return operated;
 }
 
+/** Check PSBT signature entries before submission. arkd verifies the signatures. */
 export function assertOperatorPacketSignatures(
     tx: Transaction,
     operated: ReadonlyMap<number, Uint8Array[]>,

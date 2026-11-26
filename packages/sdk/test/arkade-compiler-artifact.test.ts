@@ -496,7 +496,7 @@ describe("reading an arkadec artifact", () => {
         expect(() => csvParamLeaf(sequence)).toThrow(/exitDelay.*canonical BIP68 sequence/);
     });
 
-    it("reads hash conditions and flattens structs, natives, arrays, and child outputs", () => {
+    it("reads hash conditions and flattens structs, natives and arrays", () => {
         const hash = programFromArtifact(
             demo({
                 constructorInputs: [
@@ -555,7 +555,7 @@ describe("reading an arkadec artifact", () => {
                         name: "spend",
                         arkade: {
                             inputs: [{ name: "request", type: "Policy" }],
-                            asm: ["<CONTRACT:SingleSig(<policy.owner>,<exit>)>", "OP_DROP"],
+                            asm: ["<policy.owner>", "OP_DROP"],
                         },
                         leaves: [collab("spend")],
                     },
@@ -571,7 +571,6 @@ describe("reading an arkadec artifact", () => {
             { name: "votes.1", type: "bool" },
             { name: "exit", type: "int" },
             { name: "server", type: "pubkey" },
-            { name: "contract_SingleSig_policy_owner_exit", type: "bytes32" },
         ]);
         expect(program.functions.spend.arkadeScript?.witness).toEqual([
             "request.threshold",
@@ -795,6 +794,10 @@ describe("reading an arkadec artifact", () => {
                     })),
                 })),
             }),
+            /name characters/,
+        ],
+        [
+            demo({ constructorInputs: [{ name: "x", type: `int${"[1]".repeat(4_000_000)}` }] }),
             /name characters/,
         ],
     ])("validates artifact boundaries %#", (artifact, error) => {
