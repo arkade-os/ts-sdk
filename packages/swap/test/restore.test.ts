@@ -12,7 +12,13 @@ import {
     recordOfferBinding,
     type OfferBinding,
 } from "../src/offer";
-import { ASSET_SWAP_DIRECTED } from "../src/program";
+import {
+    ASSET_SWAP_DIRECTED,
+    ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
+    assetRfqNonce,
+    type AssetSwapContractVersion,
+} from "../src/program";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -83,11 +89,13 @@ const spendPsbt = (
         offer: Offer;
         deposit: { txid: string; vout: number };
         via: "cancel" | "fulfill" | "exit";
+        script?: ReturnType<typeof offerContract>;
     }[],
 ): { psbt: string; txid: string } => {
     const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
-    for (const { offer, deposit, via } of spends) {
-        const leaf = offerContract(offer, OPERATOR_KEY).functionByName(via)!.tapLeafScript;
+    for (const { offer, deposit, via, script } of spends) {
+        const compiled = script ?? offerContract(offer, OPERATOR_KEY);
+        const leaf = compiled.functionByName(via)!.tapLeafScript;
         tx.addInput({
             txid: hex.decode(deposit.txid),
             index: deposit.vout,
@@ -1057,5 +1065,100 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
         const result = await reask(indexer, [record(offer, funding.txid)]);
 
         expect(result.restored).toMatchObject([{ status: "recoverable" }]);
+    });
+});
+
+describe("a nonce deposit of either shape", () => {
+    const shapes = [ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE_V2] as const;
+    const nonceBound = (version: AssetSwapContractVersion) => {
+        const { swapPkScript: _, ...terms } = makeOffer("want-asset", BigInt(992));
+        const bound = { ...terms, taker: key("66"), nonce: assetRfqNonce("cd".repeat(32)) };
+        const script = offerContract(bound, OPERATOR_KEY, version);
+        const offer: Offer = { ...bound, swapPkScript: script.pkScript };
+        return { offer, script };
+    };
+
+    it.each(shapes)(
+        "restores a %s deposit from its packet and reads its spend",
+        async (version) => {
+            const { offer, script } = nonceBound(version);
+            const funding = fundingPsbt(offer);
+            const deposit = { txid: funding.txid, vout: 0 };
+            for (const [via, status] of [
+                ["fulfill", "fulfilled"],
+                ["cancel", "cancelled"],
+            ] as const) {
+                const spend = spendPsbt([{ offer, deposit, via, script }]);
+                const indexer = makeIndexer(
+                    [funding, spend],
+                    [spentVtxo(offer, funding.txid, spend.txid)],
+                );
+                const { restored } = await restoreAssetSwaps(
+                    indexer,
+                    [walletTx(funding.txid, "sent")],
+                    new Set(),
+                    { operatorPubkey: OPERATOR_KEY, hrp: "tark" },
+                );
+                expect(restored).toMatchObject([
+                    {
+                        status,
+                        binding: { version },
+                        swapAddress: script.address("tark", OPERATOR_KEY).encode(),
+                    },
+                ]);
+            }
+        },
+    );
+
+    it.each(shapes)("re-answers a %s record from its binding or its offerHex", async (version) => {
+        const { offer, script } = nonceBound(version);
+        const funding = fundingPsbt(offer);
+        const fill = spendPsbt([
+            { offer, deposit: { txid: funding.txid, vout: 0 }, via: "fulfill", script },
+        ]);
+        const indexer = makeIndexer([fill], [spentVtxo(offer, funding.txid, fill.txid)]);
+        const binding = recordOfferBinding(bindingFromOffer(offer, OPERATOR_KEY));
+        expect(binding.version).toBe(version);
+        for (const covenant of [{ binding }, { offerHex: hex.encode(encodeOffer(offer)) }]) {
+            const record: AssetSwap = {
+                id: funding.txid,
+                fromAsset: "btc",
+                toAsset: ASSET_ID,
+                fromAmount: "10000",
+                toAmount: "992",
+                swapAddress: "",
+                swapPkScript: scriptOf(offer),
+                ...covenant,
+                fundingTxid: funding.txid,
+                status: "pending",
+                createdAt: 1_700_000_000_000,
+            };
+            const result = await restoreAssetSwaps(indexer, [], new Set([funding.txid]), {
+                operatorPubkey: OPERATOR_KEY,
+                scanned: new Set([funding.txid]),
+                reopen: [record],
+            });
+            expect(result.restored).toMatchObject([{ status: "fulfilled", spentTxid: fill.txid }]);
+        }
+    });
+
+    it("reads one shape's fill as no spend of the other's deposit", () => {
+        const [old, v2] = shapes.map(nonceBound);
+        const deposit = { txid: "ab".repeat(32), vout: 0 };
+        const fillOf = ({ offer, script }: ReturnType<typeof nonceBound>) =>
+            Transaction.fromPSBT(
+                base64.decode(spendPsbt([{ offer, deposit, via: "fulfill", script }]).psbt),
+            );
+        for (const [own, other] of [
+            [old, v2],
+            [v2, old],
+        ]) {
+            for (const source of [own.offer, bindingFromOffer(own.offer, OPERATOR_KEY)]) {
+                expect(classifySpend(source, OPERATOR_KEY, fillOf(own), deposit)).toBe("fulfilled");
+                expect(classifySpend(source, OPERATOR_KEY, fillOf(other), deposit)).toBe(
+                    "indeterminate",
+                );
+            }
+        }
     });
 });

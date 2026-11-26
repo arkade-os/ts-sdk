@@ -75,11 +75,11 @@ import {
     type AssetSwapContractVersion,
     assetRfqNonce,
     assetSwapContractVersion,
+    bindsNonce,
 } from "./program";
 import {
     ASSET_SWAP_BASELINE,
     ASSET_SWAP_DIRECTED,
-    ASSET_SWAP_DIRECTED_NONCE,
     RFQ_CONTRACT_VERSION_KEY,
     RFQ_CONTRACT_VERSION_UNSUPPORTED,
     RFQ_CONTRACT_VERSIONS_KEY,
@@ -1541,7 +1541,7 @@ export async function requestArkadeSwap(
     );
     const twoAssetSwap = params.offerAsset !== undefined && params.wantAsset !== undefined;
     const contractVersions = twoAssetSwap
-        ? [ASSET_SWAP_DIRECTED_NONCE]
+        ? ASSET_SWAP_CONTRACT_VERSIONS.filter(bindsNonce)
         : ASSET_SWAP_CONTRACT_VERSIONS;
     const { quote, rfqId, contractVersion } = await requestVersionedQuote(
         transport,
@@ -1563,7 +1563,7 @@ export async function requestArkadeSwap(
     }
     // Imported here: client/verify.ts imports this module, and a static cycle breaks the CJS build.
     const taker =
-        contractVersion === ASSET_SWAP_DIRECTED || contractVersion === ASSET_SWAP_DIRECTED_NONCE
+        contractVersion === ASSET_SWAP_DIRECTED || bindsNonce(contractVersion)
             ? (await import("./client/verify")).verifyTaker({
                   attested: transport.attestedResponder,
                   solverPubkey: quote.solver_pubkey,
@@ -1616,7 +1616,7 @@ export async function requestArkadeSwap(
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
         contractVersion,
         ...(taker === undefined ? {} : { taker }),
-        ...(contractVersion === ASSET_SWAP_DIRECTED_NONCE ? { nonce: assetRfqNonce(rfqId) } : {}),
+        ...(bindsNonce(contractVersion) ? { nonce: assetRfqNonce(rfqId) } : {}),
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);

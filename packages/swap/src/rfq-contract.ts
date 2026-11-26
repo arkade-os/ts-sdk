@@ -6,5 +6,7 @@ export const ASSET_SWAP_V2 = "asset-swap-v2";
 /** The directed covenant: `fulfill` also needs the quoting solver's `taker` signature. */
 export const ASSET_SWAP_DIRECTED = "asset-swap-directed";
 export const ASSET_SWAP_DIRECTED_NONCE = "asset-swap-directed-nonce";
+/** The nonce covenant whose `fulfill` arkd co-signs alone, on its key tweaked by `fulfill`. */
+export const ASSET_SWAP_DIRECTED_NONCE_V2 = "asset-swap-directed-nonce-v2";
 /** A quote without a negotiated version uses this tree. */
 export const ASSET_SWAP_BASELINE = ASSET_SWAP_V2;

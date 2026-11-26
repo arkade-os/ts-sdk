@@ -10,9 +10,15 @@ import {
     Transaction,
     VtxoScript,
     asset,
+    scriptFromTapLeafScript,
     type IWallet,
 } from "@arkade-os/sdk";
 import { digestJointGraph } from "../src/jointGraph";
+import {
+    ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
+    assetRfqNonce,
+} from "../src/program";
 import {
     bindingFromOffer,
     decodeOffer,
@@ -338,6 +344,32 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         expect(groups(submitted)).toEqual(groups(planned));
         expect(plan.inputOwners).toEqual([null, "solver"]);
     });
+
+    it.each([ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE_V2] as const)(
+        "fills a %s deposit through its own fulfill leaf",
+        async (version) => {
+            reset();
+            const nonced = { ...planOffer, taker: takerKey, nonce: assetRfqNonce("cd".repeat(32)) };
+            const script = offerVtxoScript(nonced, SERVER_KEY, version);
+            const nonceHex = hex.encode(encodeOffer({ ...nonced, swapPkScript: script.pkScript }));
+            const solver = solverCoin();
+            state.vtxos = [satsDeposit()];
+            const spentLeaf = async (offer: Parameters<typeof buildOfferFillPlan>[2]) => {
+                const plan = await buildOfferFillPlan(wallet, "http://ark", offer, {
+                    fund: [solver] as never,
+                    payoutScript: SOLVER_PAYOUT,
+                    assetCarrierSats: BigInt(330),
+                });
+                const input = Transaction.fromPSBT(base64.decode(plan.checkpoints[0])).getInput(0);
+                return hex.encode(scriptFromTapLeafScript(input.tapLeafScript![0]));
+            };
+            const fulfill = hex.encode(script.functionByName("fulfill")!.leafScript);
+            expect(await spentLeaf(nonceHex)).toBe(fulfill);
+            const binding = bindingFromOffer(decodeOffer(hex.decode(nonceHex)), SERVER_KEY);
+            expect(binding.version).toBe(version);
+            expect(await spentLeaf(binding)).toBe(fulfill);
+        },
+    );
 
     it("keeps the wanted asset first when the solver's coin carries more", async () => {
         reset();

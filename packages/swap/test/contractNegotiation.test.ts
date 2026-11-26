@@ -2,9 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { asset } from "@arkade-os/sdk";
 import { requestArkadeSwap, requestVersionedQuote, SwapRefusal, type RfqQuote } from "../src/rfq";
-import { createOffer, decodeOffer, deriveOffer, offerContract } from "../src/offer";
+import {
+    bindingFromOffer,
+    createOffer,
+    decodeOffer,
+    deriveOffer,
+    offerContract,
+} from "../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED, type AssetSwapContractVersion } from "../src/program";
-import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../src/protocol";
+import {
+    ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
+    assetRfqNonce,
+} from "../src/protocol";
 import type { AttestingRfqTransport } from "../src/client/transport";
 import { canFailoverQuote } from "../src/client/solverRouting";
 import { SolverResponseInvalid } from "../src/transportErrors";
@@ -48,7 +58,10 @@ const setup = async (
         emulatorPubkey,
         contractVersion: quotedVersion,
         ...(quotedVersion !== ASSET_SWAP_V2 ? { taker: hex.decode(TAKER) } : {}),
-        ...(quotedVersion === ASSET_SWAP_DIRECTED_NONCE ? { nonce: assetRfqNonce(RFQ_ID) } : {}),
+        ...(quotedVersion === ASSET_SWAP_DIRECTED_NONCE ||
+        quotedVersion === ASSET_SWAP_DIRECTED_NONCE_V2
+            ? { nonce: assetRfqNonce(RFQ_ID) }
+            : {}),
     });
     const requestQuote = vi.fn(async (_payload: Record<string, unknown>) =>
         quoteOf(quoted, contractVersion),
@@ -72,21 +85,31 @@ const setup = async (
 };
 
 describe("requestArkadeSwap contract version negotiation", () => {
-    it("prefers the nonce version and accepts the original directed version", async () => {
+    it("prefers the nonce version, and advertises the single-key nonce version last", async () => {
         const f = await setup(ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED);
         await f.request();
         expect(f.requestQuote.mock.calls[0]?.[0]).toMatchObject({
-            contract_versions: [ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED],
+            contract_versions: [
+                ASSET_SWAP_DIRECTED_NONCE,
+                ASSET_SWAP_DIRECTED,
+                ASSET_SWAP_DIRECTED_NONCE_V2,
+            ],
         });
     });
 
-    it("derives a nonce-bound offer from the requested RFQ id", async () => {
-        const f = await setup(ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE);
-        const result = await f.request();
-        expect(result.address).toBe(f.quoted.address);
-        expect(decodeOffer(hex.decode(result.offerHex)).nonce).toEqual(assetRfqNonce(RFQ_ID));
-        expect(result.offerHex).not.toContain(RFQ_ID);
-    });
+    it.each([ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE_V2] as const)(
+        "derives a %s offer bound to the requested RFQ id",
+        async (version) => {
+            const f = await setup(version, version);
+            const result = await f.request();
+            expect(result.address).toBe(f.quoted.address);
+            const decoded = decodeOffer(hex.decode(result.offerHex));
+            expect(decoded.nonce).toEqual(assetRfqNonce(RFQ_ID));
+            expect(decoded.taker).toEqual(hex.decode(TAKER));
+            expect(result.offerHex).not.toContain(RFQ_ID);
+            expect(bindingFromOffer(decoded, f.quoted.operatorPubkey).version).toBe(version);
+        },
+    );
 
     it("binds the attested responder as the taker of the offer it registers", async () => {
         const f = await setup(ASSET_SWAP_DIRECTED, ASSET_SWAP_DIRECTED);
@@ -122,7 +145,7 @@ describe("requestArkadeSwap contract version negotiation", () => {
     it.each(["asset-swap-v3", ASSET_SWAP_V2])("refuses a quote echoing %s", async (version) => {
         const f = await setup(ASSET_SWAP_V2, version);
         await expect(f.request()).rejects.toThrow(
-            `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED_NONCE}, ${ASSET_SWAP_DIRECTED}`,
+            `solver chose contract version ${version}, not one of ${ASSET_SWAP_DIRECTED_NONCE}, ${ASSET_SWAP_DIRECTED}, ${ASSET_SWAP_DIRECTED_NONCE_V2}`,
         );
         expect(createOffer).not.toHaveBeenCalled();
     });

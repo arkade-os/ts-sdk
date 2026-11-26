@@ -18,7 +18,11 @@ import {
 } from "@arkade-os/sdk";
 import { createOffer, decodeOffer, OFFER_CONTRACT_KIND, OFFER_CONTRACT_LABEL } from "../src/offer";
 import { requestArkadeSwap } from "../src/rfq";
-import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../src/program";
+import {
+    ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
+    assetRfqNonce,
+} from "../src/program";
 import type { AttestingRfqTransport } from "../src/client/transport";
 
 // the covenant derivation, Arkade.connect, ArkadeContract and register() are
@@ -227,7 +231,7 @@ describe("offer contract registration", () => {
             expect.objectContaining({
                 pair,
                 amount: "700",
-                contract_versions: [ASSET_SWAP_DIRECTED_NONCE],
+                contract_versions: [ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE_V2],
             }),
         );
         expect(swap).toMatchObject({ pair, fundAmount: 700n, carrierSats: 1000n });

@@ -30,7 +30,11 @@ import {
 } from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "../../src/program";
-import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../../src/protocol";
+import {
+    ASSET_SWAP_DIRECTED_NONCE,
+    ASSET_SWAP_DIRECTED_NONCE_V2,
+    assetRfqNonce,
+} from "../../src/protocol";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
@@ -518,6 +522,8 @@ export const arkadeAssetAnswer = (
         /** Quotes and derives `asset-swap-directed` under this key; default, the one the transport attests. */
         taker?: Uint8Array;
         supportsNonce?: boolean;
+        /** Replaces the versions it serves: the directed one and v2, plus the nonce one on `supportsNonce`. */
+        serves?: readonly string[];
     } = {},
 ): RfqQuote => {
     const profile = profileOf(payload);
@@ -535,14 +541,18 @@ export const arkadeAssetAnswer = (
     });
     const to = over.toAmount ?? plan.receive.atomic;
     // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
-    const version = (payload.contract_versions as string[] | undefined)?.find(
-        (v) =>
-            v === ASSET_SWAP_DIRECTED ||
-            v === ASSET_SWAP_V2 ||
-            (over.supportsNonce && v === ASSET_SWAP_DIRECTED_NONCE),
+    const serves = over.serves ?? [
+        ASSET_SWAP_DIRECTED,
+        ASSET_SWAP_V2,
+        ...(over.supportsNonce ? [ASSET_SWAP_DIRECTED_NONCE] : []),
+    ];
+    const version = (payload.contract_versions as string[] | undefined)?.find((v) =>
+        serves.includes(v),
     );
+    const nonced =
+        version === ASSET_SWAP_DIRECTED_NONCE || version === ASSET_SWAP_DIRECTED_NONCE_V2;
     const taker =
-        version === ASSET_SWAP_DIRECTED || version === ASSET_SWAP_DIRECTED_NONCE
+        version === ASSET_SWAP_DIRECTED || nonced
             ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY))
             : undefined;
     const script = offerContract(
@@ -558,12 +568,12 @@ export const arkadeAssetAnswer = (
             emulatorPubkey: cosignerOf(profile),
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
             ...(taker && { taker }),
-            ...(version === ASSET_SWAP_DIRECTED_NONCE && {
-                nonce: assetRfqNonce(payload.rfq_id as string),
-            }),
+            ...(nonced && { nonce: assetRfqNonce(payload.rfq_id as string) }),
         },
         OPERATOR_PUBKEY,
-        version === ASSET_SWAP_DIRECTED || version === ASSET_SWAP_DIRECTED_NONCE
+        version === ASSET_SWAP_DIRECTED ||
+            version === ASSET_SWAP_DIRECTED_NONCE ||
+            version === ASSET_SWAP_DIRECTED_NONCE_V2
             ? version
             : ASSET_SWAP_V2,
     );

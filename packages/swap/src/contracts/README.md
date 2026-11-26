@@ -16,6 +16,13 @@ tweaked by `fulfill`, `cancel` is `user` and the operator key. `programFromArtif
 by default, as the server key beside the `fulfill`-tweaked emulator key, the leaves drawn below,
 so existing deposits keep their addresses.
 
+Contract version `asset-swap-directed-nonce-v2` reads the same artifacts with
+`{ singleOperatorKey: true }`. Its `fulfill` takes `takerSig` and a single co-signature from arkd
+on the operator key tweaked by `fulfill`, with no emulator key, so its address does not depend on
+the co-signer key. `cancel` and `exit` are the leaves below. Its address differs from the
+`asset-swap-directed-nonce` one, and deposits funded under that version keep the three-key
+`fulfill`.
+
 Regenerate the nonce artifacts from this directory with `arkadec` 0.1.1, built from compiler
 commit `bec2d5a79157d6af4e0041a35b89880a1d683240`.
 
