@@ -341,8 +341,10 @@ describe.skipIf(!reachable).sequential("Executor boarding fallback", () => {
         const seq = (delay: bigint) =>
             Number(timelockToSequence({ value: delay, type: delay < 512n ? "blocks" : "seconds" }));
         const keys = {
-            cosignerPubkey: hex.encode(await SingleKey.fromRandomBytes().compressedPublicKey()),
-            serverPubkey: info.signerPubkey,
+            batchCosignerPubkey: hex.encode(
+                await SingleKey.fromRandomBytes().compressedPublicKey(),
+            ),
+            operatorPubkey: info.signerPubkey,
             emulatorPubkey: hex.encode(await SingleKey.fromRandomBytes().compressedPublicKey()),
         };
         const contracts = await watchExecutorContracts(

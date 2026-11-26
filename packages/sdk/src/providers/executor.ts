@@ -8,8 +8,8 @@ export type { ExecutorContractKeys };
 export interface ExecutorInfo extends ExecutorContractKeys {
     version: string;
     network: string;
-    /** Seals template secrets for this Executor; absent when it has no encryption key. */
-    encryptionPubkey?: string;
+    /** The key template secrets are sealed to for this Executor; absent when it reports none. */
+    sealingPubkey?: string;
 }
 
 export interface ExecutorTemplate {
@@ -480,16 +480,16 @@ function parseExecutorInfo(value: unknown): ExecutorInfo {
     const info: ExecutorInfo = {
         version: requiredString(value, "version"),
         network: requiredString(value, "network"),
-        cosignerPubkey: requiredString(value, "cosignerPubkey"),
-        serverPubkey: requiredString(value, "serverPubkey"),
+        batchCosignerPubkey: requiredString(value, "batchCosignerPubkey"),
+        operatorPubkey: requiredString(value, "operatorPubkey"),
         emulatorPubkey: requiredString(value, "emulatorPubkey"),
     };
-    decodeCompressed(info.cosignerPubkey, "cosignerPubkey");
-    decodeCompressed(info.serverPubkey, "serverPubkey");
+    decodeCompressed(info.batchCosignerPubkey, "batchCosignerPubkey");
+    decodeCompressed(info.operatorPubkey, "operatorPubkey");
     decodeCompressed(info.emulatorPubkey, "emulatorPubkey");
-    if (value.encryptionPubkey !== undefined && value.encryptionPubkey !== "") {
-        info.encryptionPubkey = requiredString(value, "encryptionPubkey");
-        decodeCompressed(info.encryptionPubkey, "encryptionPubkey");
+    if (value.sealingPubkey !== undefined && value.sealingPubkey !== "") {
+        info.sealingPubkey = requiredString(value, "sealingPubkey");
+        decodeCompressed(info.sealingPubkey, "sealingPubkey");
     }
     return info;
 }

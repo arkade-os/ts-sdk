@@ -1360,8 +1360,8 @@ describe("Wallet.restore", () => {
         const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
         try {
             const keys = {
-                cosignerPubkey: executorVectors.cosignerPubkey,
-                serverPubkey: `02${hex.encode(wallet.offchainTapscript.options.serverPubKey)}`,
+                batchCosignerPubkey: executorVectors.cosignerPubkey,
+                operatorPubkey: `02${hex.encode(wallet.offchainTapscript.options.serverPubKey)}`,
                 emulatorPubkey: executorVectors.emulatorPubkey,
             };
             const delegation = {
@@ -1378,8 +1378,8 @@ describe("Wallet.restore", () => {
                     template: "renewal",
                     owner: new Uint8Array([2, ...deriveDescriptorLeafPubKey(descriptor)]),
                     ...delegation,
-                    cosignerPubKey: hex.decode(keys.cosignerPubkey),
-                    serverPubKey: hex.decode(keys.serverPubkey),
+                    cosignerPubKey: hex.decode(keys.batchCosignerPubkey),
+                    serverPubKey: hex.decode(keys.operatorPubkey),
                     emulatorPubKey: hex.decode(keys.emulatorPubkey),
                 }),
             );
@@ -1401,8 +1401,8 @@ describe("Wallet.restore", () => {
         const { wallet, hdProvider, fundedOnchain } = await makeHdWalletForTest();
         try {
             const keys = {
-                cosignerPubkey: executorVectors.cosignerPubkey,
-                serverPubkey: `02${hex.encode(wallet.offchainTapscript.options.serverPubKey)}`,
+                batchCosignerPubkey: executorVectors.cosignerPubkey,
+                operatorPubkey: `02${hex.encode(wallet.offchainTapscript.options.serverPubKey)}`,
                 emulatorPubkey: executorVectors.emulatorPubkey,
             };
             // two boarding watches that differ only in their boarding delay: one renewal contract
@@ -1417,8 +1417,8 @@ describe("Wallet.restore", () => {
                     owner: new Uint8Array([2, ...deriveDescriptorLeafPubKey(descriptor)]),
                     ...delegation,
                     boardingExitDelay: 0x400003,
-                    cosignerPubKey: hex.decode(keys.cosignerPubkey),
-                    serverPubKey: hex.decode(keys.serverPubkey),
+                    cosignerPubKey: hex.decode(keys.batchCosignerPubkey),
+                    serverPubKey: hex.decode(keys.operatorPubkey),
                     emulatorPubKey: hex.decode(keys.emulatorPubkey),
                 }),
             );

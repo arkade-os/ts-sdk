@@ -55,8 +55,8 @@ const identity = SingleKey.fromHex(
 const executorInfo = async () => ({
     version: "test",
     network: "mutinynet",
-    cosignerPubkey: vectors.cosignerPubkey,
-    serverPubkey: SERVER_KEY_HEX,
+    batchCosignerPubkey: vectors.cosignerPubkey,
+    operatorPubkey: SERVER_KEY_HEX,
     emulatorPubkey: vectors.emulatorPubkey,
 });
 // reports every watch active, so the startup refresh leaves them be

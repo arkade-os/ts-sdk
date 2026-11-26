@@ -20,8 +20,8 @@ import { createMockIndexerProvider, createMockVtxo } from "../helpers";
 import type { DiscoveryDeps } from "../../../src/contracts/types";
 
 const keys = {
-    cosignerPubkey: vectors.cosignerPubkey,
-    serverPubkey: vectors.serverPubkey,
+    batchCosignerPubkey: vectors.cosignerPubkey,
+    operatorPubkey: vectors.serverPubkey,
     emulatorPubkey: vectors.emulatorPubkey,
 };
 const serverXOnly = hex.decode(vectors.serverPubkey).subarray(1);

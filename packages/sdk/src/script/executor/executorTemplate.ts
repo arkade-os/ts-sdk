@@ -10,8 +10,8 @@ import renewDocument from "./renew.json";
 
 /** The Executor's keys a delegated contract derives from, compressed hex. */
 export interface ExecutorContractKeys {
-    cosignerPubkey: string;
-    serverPubkey: string;
+    batchCosignerPubkey: string;
+    operatorPubkey: string;
     emulatorPubkey: string;
 }
 
@@ -132,7 +132,7 @@ export function instantiate(
         throw new Error(
             `unknown artifact ${(construction.definition as { artifact: string }).artifact}`,
         );
-    const serverKey = hex.decode(keys.serverPubkey).subarray(1);
+    const serverKey = hex.decode(keys.operatorPubkey).subarray(1);
     const args: Record<string, Value> = { server: serverKey };
     for (const [field, binding] of Object.entries(construction.arguments)) {
         if (typeof binding === "string") {

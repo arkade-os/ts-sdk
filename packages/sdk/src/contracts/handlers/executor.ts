@@ -82,8 +82,8 @@ export function executorContractParams(
         renewalWindow: params.renewalWindow,
         maxFee: params.maxFee,
         ...(template === "boarding" ? { boardingExitDelay: params.boardingExitDelay } : {}),
-        cosignerPubKey: hex.decode(keys.cosignerPubkey),
-        serverPubKey: hex.decode(keys.serverPubkey),
+        cosignerPubKey: hex.decode(keys.batchCosignerPubkey),
+        serverPubKey: hex.decode(keys.operatorPubkey),
         emulatorPubKey: hex.decode(keys.emulatorPubkey),
     });
 }
@@ -91,8 +91,8 @@ export function executorContractParams(
 /** The Executor keys a contract's params were derived from. */
 export function executorKeysOf(p: ExecutorContractParams): ExecutorContractKeys {
     return {
-        cosignerPubkey: hex.encode(p.cosignerPubKey),
-        serverPubkey: hex.encode(p.serverPubKey),
+        batchCosignerPubkey: hex.encode(p.cosignerPubKey),
+        operatorPubkey: hex.encode(p.serverPubKey),
         emulatorPubkey: hex.encode(p.emulatorPubKey),
     };
 }
@@ -135,6 +135,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
         return script;
     },
 
+    // Rows keep the key names they were stored with, before the Executor renamed its keys.
     serializeParams(params: ExecutorContractParams): Record<string, string> {
         return {
             template: params.template,
@@ -261,7 +262,7 @@ function discovered(
             params: serialized,
             script: hex.encode(script.pkScript),
             address: script
-                .address(deps.network.hrp, hex.decode(keys.serverPubkey).subarray(1))
+                .address(deps.network.hrp, hex.decode(keys.operatorPubkey).subarray(1))
                 .encode(),
             scope: template === "boarding" ? "onchain" : "offchain",
             label: template === "renewal" ? "Delegated renewal" : "Delegated boarding",

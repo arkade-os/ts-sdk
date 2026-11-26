@@ -820,9 +820,9 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // the watch address commits to the service's operator key, so it must be the wallet's
         const { hrp, serverPubKey } = ArkAddress.decode(await this.wallet.getAddress());
         const server = hex.encode(serverPubKey);
-        if (info.serverPubkey.slice(2).toLowerCase() !== server) {
+        if (info.operatorPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
-                `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${server}`,
+                `Executor's operator key ${info.operatorPubkey} is not the wallet's operator ${server}`,
             );
         }
         return {
@@ -860,8 +860,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const owner = await ownerKey(this.wallet.identity, descriptor);
         const params = resolveParams(options, operator, template);
         const keys: ExecutorContractKeys = {
-            cosignerPubkey: info.cosignerPubkey,
-            serverPubkey: info.serverPubkey,
+            batchCosignerPubkey: info.batchCosignerPubkey,
+            operatorPubkey: info.operatorPubkey,
             emulatorPubkey: info.emulatorPubkey,
         };
         const variables = defaultVariables(template, owner, params);
