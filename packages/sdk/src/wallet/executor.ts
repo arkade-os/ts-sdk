@@ -805,7 +805,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         });
     }
 
-    /** Whether `contract` holds an unspent coin the Executor could renew, as stored. */
+    /** Whether `contract` holds an unspent, unswept coin, as stored. */
     private async holdsCoin(contract: Contract): Promise<boolean> {
         const manager = await this.wallet.getContractManager();
         const [stored] = await manager.getStoredContractsWithVtxos({ script: contract.script });
