@@ -202,6 +202,7 @@ function watchOf(
     };
 }
 
+// Capped like the script cache: it spans every wallet in the process.
 const warnedStatusless = new Set<string>();
 
 /**
@@ -238,6 +239,9 @@ export async function receiveTwin(
 /** A restored watch has no status, so the wallet cannot tell the service still holds it. */
 function warnStatusless(contract: Contract): void {
     if (warnedStatusless.has(contract.script)) return;
+    if (warnedStatusless.size >= SCRIPT_CACHE_LIMIT) {
+        warnedStatusless.delete(warnedStatusless.values().next().value!);
+    }
     warnedStatusless.add(contract.script);
     console.warn(
         `Executor renewal watch ${contract.address} has no delegation status, as after a restore: the wallet shows its own address until registerRenewal() confirms it`,

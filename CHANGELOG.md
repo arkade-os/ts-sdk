@@ -20,7 +20,7 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
-- **The Executor script cache is capped.** It held one script per contract row, for every wallet in the process and past `dispose()`, and an HD wallet adds a row per receipt. It now keeps the 512 most recently built, first in first out.
+- **The Executor script cache is capped.** It held one script per contract row, for every wallet in the process and past `dispose()`, and an HD wallet adds a row per receipt. It now keeps the 512 most recently built, first in first out. The set of restored watches already warned about is capped the same way.
 
 - **Published type declarations compile without `skipLibCheck`.** The
   declaration bundler emitted `arkade`'s type-only exports as values once they
