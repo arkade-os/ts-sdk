@@ -1,6 +1,7 @@
 import {
     type ArkadeHTLC,
     type arkade,
+    type OnchainHTLC,
     type ServiceWorkerWallet,
     type WalletUpdate,
 } from "@arkade-os/sdk";
@@ -32,6 +33,7 @@ export type CallableFunctions = arkade.CallableFunctions;
 export type ContractFunctions = arkade.ContractFunctions<arkade.Program>;
 export type ContractUnlockers = arkade.ContractUnlockers<arkade.Program>;
 export type ArkadeHTLCOptions = ArkadeHTLC.Options;
+export type OnchainHTLCOptions = OnchainHTLC.Options;
 
 declare const wallet: ServiceWorkerWallet;
 const unsubscribe: () => void = wallet.onWalletUpdate((update: WalletUpdate) => {

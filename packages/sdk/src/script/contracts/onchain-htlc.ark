@@ -1,0 +1,72 @@
+pragma arkade ^0.1.0;
+
+// Onchain HTLC: a Bitcoin output arkd co-signs. The claim pays at least the agreed amount and
+// asset, at most `fee` leaves the coin, and a refund takes nothing: its pusher adds the fee.
+contract OnchainHTLC(
+  pubkey sender,
+  pubkey receiver,
+  bytes20 preimageHash,
+  int refundLocktime,
+  int refundDelay,
+  int claimDelay,
+  bytes32 receiverScript,
+  bytes32 senderScript,
+  int amount,
+  AssetId asset,
+  int assetAmount,
+  int fee
+) {
+  @allow(unsigned-spend-path, "nonInteractiveClaim also needs the preimage, and pays the receiver")
+  function payReceiver() {
+    int i = this.activeInputIndex;
+    let paid = tx.outputs[i].script;
+    require(paid.version == 1);
+    require(paid.program == receiverScript);
+    require(tx.outputs[i].value >= max(amount, tx.input.current.value - fee));
+    require(this.tunnel(i, {script: false, value: false, assets: true}));
+    if (assetAmount > 0) {
+      require(tx.outputs[i].assets.lookup(asset) >= assetAmount);
+    }
+  }
+
+  @allow(unsigned-spend-path, "the refund covenant pays the sender after refundLocktime")
+  function paySender() {
+    int i = this.activeInputIndex;
+    let paid = tx.outputs[i].script;
+    require(paid.version == 1);
+    require(paid.program == senderScript);
+    require(tx.outputs[i].value >= tx.input.current.value);
+    require(this.tunnel(i, {script: false, value: false, assets: true}));
+  }
+
+  function claim(bytes32 preimage, signature receiverSig, signature operatorSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(checkMultisig([receiver, operator], [receiverSig, operatorSig]));
+  }
+
+  function refundWithoutReceiver(signature senderSig, signature operatorSig) tapscript {
+    require(after(refundLocktime));
+    require(checkMultisig([sender, operator], [senderSig, operatorSig]));
+  }
+
+  function nonInteractiveClaim(bytes32 preimage, signature operatorSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(checkSig(operatorSig, tweak(operator, payReceiver)));
+  }
+
+  function nonInteractiveRefundWithoutReceiver(signature operatorSig) tapscript {
+    require(after(refundLocktime));
+    require(checkSig(operatorSig, tweak(operator, paySender)));
+  }
+
+  function unilateralRefundWithoutReceiver(signature senderSig) tapscript {
+    require(older(refundDelay));
+    require(checkSig(senderSig, sender));
+  }
+
+  function unilateralClaim(bytes32 preimage, signature receiverSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(older(claimDelay));
+    require(checkSig(receiverSig, receiver));
+  }
+}

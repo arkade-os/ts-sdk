@@ -90,6 +90,27 @@ style and have not been backfilled.
   `arkade.contract(ArkadeHTLC.program, ArkadeHTLC.args(options))` makes it
   spendable. Nothing uses it yet, and `VHTLC` lockups are unchanged.
 
+- **`OnchainHTLC`, `ArkadeHTLC`'s sibling for a Bitcoin output whose
+  collaborative spends arkd co-signs.** Its four signature leaves are
+  `VHTLC.ScriptV2`'s, byte for byte, with `claimDelay` as
+  `unilateralClaimDelay` and `refundDelay` as
+  `unilateralRefundWithoutReceiverDelay`. In its two covenant leaves the
+  operator's one key is arkd's signer key tweaked by the covenant, read with
+  `singleOperatorKey`. The claim covenant requires the receiver's output to
+  hold at least `amount` and at least the input's value less `fee`, and with
+  `asset` at least `asset.amount` of it; the refund covenant requires the
+  sender's output to hold at least the input's value, so a refund's pusher
+  adds the fee. Both carry the input's assets to that output. Onchain, the
+  asset terms depend on arkd tracking assets through onchain transactions,
+  ArkLabsHQ/arkd#202, still open. The sender's solo refund must open before
+  the receiver's unilateral claim, the reverse of `ArkadeHTLC`'s order, so
+  that with arkd down a receiver cannot refund the Arkade side of a swap and
+  still claim this one. `OnchainHTLC.args` refuses a `refundDelay` that does
+  not open before `claimDelay` in the same unit, or that is shorter than an
+  optional `minExitDelay`, arkd's `boardingExitDelay`, below which arkd
+  co-signs no spend of the coin. `OnchainHTLC.script(options)` derives the
+  lockup without a client. Nothing uses it yet.
+
 - **Arkade spends reveal the script hashes of a contract's other covenants.**
   arkd checks that every forfeit leaf of a spent VTXO's tree names its signer
   key, plain or tweaked by an arkade script hash it knows, and the emulator
