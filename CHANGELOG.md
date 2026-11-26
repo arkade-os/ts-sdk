@@ -18,6 +18,11 @@ style and have not been backfilled.
 
 - **`programFromArtifact` derives the key of each contract an artifact instantiates.** `new SingleSig(receiver)` compiles to a `<CONTRACT:SingleSig(<receiver>)>` placeholder that the caller had to fill with the child's key by hand, unchecked, so a wrong key made the covenant pay someone else. Pass the child artifacts instead, as `programFromArtifact(htlc, { contracts: [singleSig] })` or the same option to `compile()`: each must match the code hash its parent pins, and building the contract derives the child's key. An artifact with a placeholder now throws when a child is missing, does not match or is not pinned. To migrate, recompile the parent with arkadec 0.1.0 or later, pass its children in `contracts`, and stop passing the key. Saved contracts store only the resolved key and restore without the children.
 
+### Features
+
+- **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
+- **Two-asset RFQ swaps can pay a specified recipient.** Set `assetPayment.receiveAddress` on a directed quote or an exact-payout open RFQ. Explicit carrier modes require a BTC deposit.
+
 ### Bug Fixes
 
 - **Tapscript signature checks refuse encodings that BIP-341 rejects.**
