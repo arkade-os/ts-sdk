@@ -18,6 +18,8 @@ style and have not been backfilled.
 
 - **`programFromArtifact` derives the key of each contract an artifact instantiates.** `new SingleSig(receiver)` compiles to a `<CONTRACT:SingleSig(<receiver>)>` placeholder that the caller had to fill with the child's key by hand, unchecked, so a wrong key made the covenant pay someone else. Pass the child artifacts instead, as `programFromArtifact(htlc, { contracts: [singleSig] })` or the same option to `compile()`: each must match the code hash its parent pins, and building the contract derives the child's key. An artifact with a placeholder now throws when a child is missing, does not match or is not pinned. To migrate, recompile the parent with arkadec 0.1.0 or later, pass its children in `contracts`, and stop passing the key. Saved contracts store only the resolved key and restore without the children.
 
+- **`@arkade-os/swap/protocol`'s `requestArkadeSwap` refuses two-asset quotes it used to accept.** With both `offerAsset` and `wantAsset` set, it requests only `asset-swap-directed-nonce`, so a solver answering `asset-swap-directed` is refused. The quote must also publish `carrier_sats` equal to the operator's minimum output, the larger of `dust` and `vtxoMinAmount`; a missing or `0` carrier no longer falls back to 330 sats, and any other value is refused as `carrier_malformed`. Asset-to-BTC and BTC-to-asset requests are unchanged.
+
 ### Features
 
 - **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
