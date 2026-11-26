@@ -92,22 +92,20 @@ export interface RegistrationOptions {
 }
 
 /**
- * What the manager needs of a wallet: its key, its operator and its contracts. `arkAddress` is the
- * wallet's own address, which hrp and operator key are read from: `getAddress()` answers the
- * delegated twin once one is registered, and registration must not depend on the rows it is about
+ * What the manager needs of a wallet: its key, its operator and its contracts. Its hrp and
+ * operator key come from `getOwnAddress()`: `getAddress()` reads the rows a registration is about
  * to write. A wallet without it answers from `getAddress()`.
  */
 export type DelegatedWallet = Pick<
     IWallet,
-    "identity" | "getAddress" | "getContractManager" | "getOperatorInfo"
+    "identity" | "getAddress" | "getOwnAddress" | "getContractManager" | "getOperatorInfo"
 > & {
-    readonly arkAddress?: ArkAddress;
     /** The displayed receive tapscript, whose key a refresh keeps alive. */
     readonly offchainTapscript?: { readonly options: { readonly pubKey: Uint8Array } };
 };
 
-async function ownAddress(wallet: Pick<DelegatedWallet, "arkAddress" | "getAddress">) {
-    return wallet.arkAddress ?? ArkAddress.decode(await wallet.getAddress());
+async function ownAddress(wallet: Pick<DelegatedWallet, "getOwnAddress" | "getAddress">) {
+    return ArkAddress.decode(await (wallet.getOwnAddress?.() ?? wallet.getAddress()));
 }
 
 export interface DelegatedContractWatch {
@@ -262,7 +260,10 @@ function warnStatusless(contract: Contract): void {
  * it (a restore) the rows carry no status.
  */
 export async function watchExecutorContracts(
-    wallet: Pick<DelegatedWallet, "identity" | "getAddress" | "getContractManager" | "arkAddress">,
+    wallet: Pick<
+        DelegatedWallet,
+        "identity" | "getAddress" | "getOwnAddress" | "getContractManager"
+    >,
     keys: ExecutorContractKeys,
     params: DelegationParams,
     registered?: ExecutorWatchMetadata,

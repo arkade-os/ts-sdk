@@ -63,6 +63,7 @@ import {
     RequestCreateContract,
     RequestDeleteContract,
     RequestGetAddress,
+    RequestGetOwnAddress,
     RequestGetOperatorInfo,
     RequestIndexerGetVtxos,
     RequestIndexerGetVirtualTxs,
@@ -94,6 +95,7 @@ import {
     RequestUpdateContract,
     ResponseAnnotateVtxos,
     ResponseGetAddress,
+    ResponseGetOwnAddress,
     ResponseGetOperatorInfo,
     ResponseIndexerGetVtxos,
     ResponseIndexerGetVirtualTxs,
@@ -266,6 +268,7 @@ export type ServiceWorkerWalletMode = "auto" | "static" | "hd";
 export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // Fast reads — fail quickly
     GET_ADDRESS: 10_000,
+    GET_OWN_ADDRESS: 10_000,
     GET_BALANCE: 10_000,
     GET_BOARDING_ADDRESS: 10_000,
     GET_STATUS: 10_000,
@@ -364,6 +367,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
 
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_ADDRESS",
+    "GET_OWN_ADDRESS",
     "GET_OPERATOR_INFO",
     "INDEXER_GET_VTXOS",
     "INDEXER_GET_VIRTUAL_TXS",
@@ -1252,6 +1256,25 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             return (response as ResponseGetAddress).payload.address;
         } catch (error) {
             throw new Error(`Failed to get address: ${error}`);
+        }
+    }
+
+    async getOwnAddress(): Promise<string> {
+        const message: RequestGetOwnAddress = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_OWN_ADDRESS",
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetOwnAddress).payload.address;
+        } catch (error) {
+            // A worker without this message predates the twin: its getAddress() is the own address.
+            if (error instanceof Error && error.message === "Unknown message") {
+                return this.getAddress();
+            }
+            throw new Error(`Failed to get own address: ${error}`);
         }
     }
 

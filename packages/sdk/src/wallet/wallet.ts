@@ -1399,6 +1399,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return this.offchainTapscript.address(this.network.hrp, this.arkServerPublicKey);
     }
 
+    async getOwnAddress(): Promise<string> {
+        return this.arkAddress.encode();
+    }
+
     /**
      * Get the pkScript hex for the wallet's primary offchain address.
      * For the full wallet-owned script set registered in ContractManager, use getWalletScripts().

@@ -240,6 +240,12 @@ export type ResponseGetAddress = ResponseEnvelope & {
     payload: { address: string };
 };
 
+export type RequestGetOwnAddress = RequestEnvelope & { type: "GET_OWN_ADDRESS" };
+export type ResponseGetOwnAddress = ResponseEnvelope & {
+    type: "OWN_ADDRESS";
+    payload: { address: string };
+};
+
 export type RequestGetBoardingAddress = RequestEnvelope & {
     type: "GET_BOARDING_ADDRESS";
 };
@@ -1035,6 +1041,7 @@ export type WalletRequest =
     | RequestInitWallet
     | RequestSettle
     | RequestGetAddress
+    | RequestGetOwnAddress
     | RequestGetBoardingAddress
     | RequestGetOperatorInfo
     | RequestIndexerGetVtxos
@@ -1110,6 +1117,7 @@ export type WalletUpdaterResponse = ResponseEnvelope & {
         | ResponseSettle
         | ResponseSettleEvent
         | ResponseGetAddress
+        | ResponseGetOwnAddress
         | ResponseGetBoardingAddress
         | ResponseGetOperatorInfo
         | ResponseIndexerGetVtxos
@@ -1617,6 +1625,14 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "ADDRESS",
+                        payload: { address },
+                    });
+                }
+                case "GET_OWN_ADDRESS": {
+                    const address = await readonlyWallet.getOwnAddress();
+                    return this.tagged({
+                        id,
+                        type: "OWN_ADDRESS",
                         payload: { address },
                     });
                 }

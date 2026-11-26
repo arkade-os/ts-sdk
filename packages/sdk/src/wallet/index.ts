@@ -1118,9 +1118,17 @@ export interface IReadonlyWallet {
 
     /**
      * @returns Arkade address to receive offchain funds at. It can change without a receipt,
-     * for instance once an Executor watches the wallet's key: do not store it.
+     * for instance once an Executor watches the wallet's key: do not store it. See
+     * {@link getOwnAddress}.
      */
     getAddress(): Promise<string>;
+
+    /**
+     * @returns The wallet's own Arkade address under its current receive key, which
+     * {@link getAddress} answers until an Executor watches that key. For an address bound to the
+     * wallet, such as an LNURL handle's. It rotates with an HD wallet's receive key.
+     */
+    getOwnAddress?(): Promise<string>;
 
     /** @returns Onchain boarding address used to move funds into Arkade. */
     getBoardingAddress(): Promise<string>;
