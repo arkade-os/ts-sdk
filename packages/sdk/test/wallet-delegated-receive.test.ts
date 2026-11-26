@@ -39,7 +39,7 @@ async function boardingRow(owner: Uint8Array) {
         maxFee: 100,
         boardingExitDelay: 144,
         batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-        serverPubKey: hex.decode(vectors.operatorPubkey),
+        operatorPubKey: hex.decode(vectors.operatorPubkey),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
     const script = ExecutorContractHandler.createScript(params);

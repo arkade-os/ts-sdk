@@ -40,7 +40,7 @@ export interface ExecutorContractParams {
     /** boarding only */
     boardingExitDelay?: number;
     batchCosignerPubKey: Uint8Array;
-    serverPubKey: Uint8Array;
+    operatorPubKey: Uint8Array;
     emulatorPubKey: Uint8Array;
 }
 
@@ -83,7 +83,7 @@ export function executorContractParams(
         maxFee: params.maxFee,
         ...(template === "boarding" ? { boardingExitDelay: params.boardingExitDelay } : {}),
         batchCosignerPubKey: hex.decode(keys.batchCosignerPubkey),
-        serverPubKey: hex.decode(keys.operatorPubkey),
+        operatorPubKey: hex.decode(keys.operatorPubkey),
         emulatorPubKey: hex.decode(keys.emulatorPubkey),
     });
 }
@@ -92,7 +92,7 @@ export function executorContractParams(
 export function executorKeysOf(p: ExecutorContractParams): ExecutorContractKeys {
     return {
         batchCosignerPubkey: hex.encode(p.batchCosignerPubKey),
-        operatorPubkey: hex.encode(p.serverPubKey),
+        operatorPubkey: hex.encode(p.operatorPubKey),
         emulatorPubkey: hex.encode(p.emulatorPubKey),
     };
 }
@@ -122,7 +122,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
         const script = new DefaultVtxo.Script(
             {
                 pubKey: p.owner.subarray(1),
-                serverPubKey: p.serverPubKey.subarray(1),
+                serverPubKey: p.operatorPubKey.subarray(1),
                 csvTimelock: sequenceToTimelock(p.boardingExitDelay ?? p.exitDelay),
             },
             derived.scripts.slice(2),
@@ -146,7 +146,8 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
                 ? { boardingExitDelay: params.boardingExitDelay.toString() }
                 : {}),
             batchCosignerPubKey: hex.encode(params.batchCosignerPubKey),
-            serverPubKey: hex.encode(params.serverPubKey),
+            // stored as serverPubKey, the name every contract type stores the operator pubkey under
+            serverPubKey: hex.encode(params.operatorPubKey),
             emulatorPubKey: hex.encode(params.emulatorPubKey),
         };
     },
@@ -169,7 +170,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
                 params.batchCosignerPubKey ?? params.cosignerPubKey,
                 "batchCosignerPubKey",
             ),
-            serverPubKey: compressed(params.serverPubKey, "serverPubKey"),
+            operatorPubKey: compressed(params.serverPubKey, "serverPubKey"),
             emulatorPubKey: compressed(params.emulatorPubKey, "emulatorPubKey"),
         };
     },

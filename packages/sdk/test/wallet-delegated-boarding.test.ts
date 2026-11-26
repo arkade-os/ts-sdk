@@ -35,10 +35,10 @@ vi.mock("../src/utils/fetch", async (importActual) => ({
     baseFetch: mockFetch,
 }));
 
-const SERVER_KEY_HEX = vectors.operatorPubkey;
+const OPERATOR_PUBKEY_HEX = vectors.operatorPubkey;
 const arkInfo = {
-    signerPubkey: SERVER_KEY_HEX,
-    forfeitPubkey: SERVER_KEY_HEX,
+    signerPubkey: OPERATOR_PUBKEY_HEX,
+    forfeitPubkey: OPERATOR_PUBKEY_HEX,
     batchExpiry: BigInt(144),
     unilateralExitDelay: BigInt(144),
     boardingExitDelay: BigInt(144),
@@ -56,7 +56,7 @@ const executorInfo = async () => ({
     version: "test",
     network: "mutinynet",
     batchCosignerPubkey: vectors.batchCosignerPubkey,
-    operatorPubkey: SERVER_KEY_HEX,
+    operatorPubkey: OPERATOR_PUBKEY_HEX,
     emulatorPubkey: vectors.emulatorPubkey,
 });
 // reports every watch active, so the startup refresh leaves them be
@@ -79,7 +79,7 @@ async function executorRow(
         maxFee: 100,
         ...(template === "boarding" ? { boardingExitDelay: 144 } : {}),
         batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-        serverPubKey: hex.decode(SERVER_KEY_HEX),
+        operatorPubKey: hex.decode(OPERATOR_PUBKEY_HEX),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
     const script = ExecutorContractHandler.createScript(params);
@@ -89,7 +89,7 @@ async function executorRow(
             type: "executor",
             params,
             script: hex.encode(script.pkScript),
-            address: script.address("tark", hex.decode(SERVER_KEY_HEX).subarray(1)).encode(),
+            address: script.address("tark", hex.decode(OPERATOR_PUBKEY_HEX).subarray(1)).encode(),
             state: "active" as const,
             createdAt: Date.now(),
             metadata: {
@@ -223,7 +223,7 @@ async function hdWalletWithWatch({
                         ? { boardingExitDelay: num("boarding_exit_delay") }
                         : {}),
                     batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-                    serverPubKey: hex.decode(SERVER_KEY_HEX),
+                    operatorPubKey: hex.decode(OPERATOR_PUBKEY_HEX),
                     emulatorPubKey: hex.decode(vectors.emulatorPubkey),
                 }),
             );
@@ -241,7 +241,7 @@ async function hdWalletWithWatch({
                             template === "boarding"
                                 ? script.onchainAddress(networks.mutinynet)
                                 : script
-                                      .address("tark", hex.decode(SERVER_KEY_HEX).subarray(1))
+                                      .address("tark", hex.decode(OPERATOR_PUBKEY_HEX).subarray(1))
                                       .encode(),
                     },
                 ],

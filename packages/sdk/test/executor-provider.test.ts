@@ -627,17 +627,17 @@ describe("ExecutorManagerImpl.register", () => {
         // the x-only key of 3G, the newest boarding key the wallet rotated to
         const rotated = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
         const descriptor = `tr(${rotated})`;
-        const server = hex.encode(ArkAddress.decode(vectors.renewal.address).serverPubKey);
+        const operator = hex.encode(ArkAddress.decode(vectors.renewal.address).serverPubKey);
         contractManager.getContracts.mockResolvedValueOnce([
             {
                 type: "boarding",
-                params: { pubKey: "11".repeat(32), serverPubKey: server },
+                params: { pubKey: "11".repeat(32), serverPubKey: operator },
                 metadata: { source: WALLET_RECEIVE_SOURCE, signingDescriptor: "tr(old)" },
                 createdAt: 1,
             },
             {
                 type: "boarding",
-                params: { pubKey: rotated, serverPubKey: server },
+                params: { pubKey: rotated, serverPubKey: operator },
                 metadata: { source: WALLET_RECEIVE_SOURCE, signingDescriptor: descriptor },
                 createdAt: 2,
             },
@@ -648,7 +648,7 @@ describe("ExecutorManagerImpl.register", () => {
                 owner: hex.decode(`02${rotated}`),
                 ...params,
                 batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-                serverPubKey: hex.decode(vectors.operatorPubkey),
+                operatorPubKey: hex.decode(vectors.operatorPubkey),
                 emulatorPubKey: hex.decode(vectors.emulatorPubkey),
             }),
         );
@@ -710,7 +710,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
      * `fail` lists the owners and template ids it refuses, read at call time.
      */
     function derivingProvider({ fail = [] }: { fail?: string[] } = {}) {
-        const server = hex.decode(vectors.operatorPubkey).subarray(1);
+        const operatorXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
         const num = (variables: Record<string, string>, name: string) =>
             Number(ScriptNum().decode(hex.decode(variables[name])));
         return {
@@ -737,7 +737,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                                 ? { boardingExitDelay: num(variables, "boarding_exit_delay") }
                                 : {}),
                             batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-                            serverPubKey: hex.decode(vectors.operatorPubkey),
+                            operatorPubKey: hex.decode(vectors.operatorPubkey),
                             emulatorPubKey: hex.decode(vectors.emulatorPubkey),
                         }),
                     );
@@ -758,7 +758,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                                       name: "renew",
                                       onchain: false,
                                       script: hex.encode(script.pkScript),
-                                      address: script.address("tark", server).encode(),
+                                      address: script.address("tark", operatorXOnly).encode(),
                                   },
                         ],
                     };
@@ -855,9 +855,9 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         return { ...ctx, executor };
     }
 
-    it("accepts an offchain input addressed as the v0 Ark address of (hrp, server key, tap key)", async () => {
+    it("accepts an offchain input addressed as the v0 address of (hrp, operator pubkey, tap key)", async () => {
         // the Executor's addressOf encodes offchain inputs as a version-0 Ark address
-        const server = hex.decode(vectors.operatorPubkey).subarray(1);
+        const operatorXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
         const script = ExecutorContractHandler.createScript(
             ExecutorContractHandler.serializeParams({
                 template: "renewal",
@@ -866,11 +866,11 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
                 renewalWindow: params.renewalWindow,
                 maxFee: params.maxFee,
                 batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-                serverPubKey: hex.decode(vectors.operatorPubkey),
+                operatorPubKey: hex.decode(vectors.operatorPubkey),
                 emulatorPubKey: hex.decode(vectors.emulatorPubkey),
             }),
         );
-        const address = new ArkAddress(server, script.tweakedPublicKey, "tark").encode();
+        const address = new ArkAddress(operatorXOnly, script.tweakedPublicKey, "tark").encode();
         expect(address).toBe(vectors.renewal.address);
         await expect(
             new ExecutorManagerImpl(
@@ -1434,11 +1434,11 @@ describe("watchExecutorContracts", () => {
             contractRepository: new InMemoryContractRepository(),
             walletRepository: new InMemoryWalletRepository(),
         });
-        const serverXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
+        const operatorXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
         const restored = {
             identity,
             getAddress: async () =>
-                new ArkAddress(serverXOnly, new Uint8Array(32).fill(1), "tark").encode(),
+                new ArkAddress(operatorXOnly, new Uint8Array(32).fill(1), "tark").encode(),
             getContractManager: async () => manager,
         } as unknown as Parameters<typeof watchExecutorContracts>[0];
         const keys = {

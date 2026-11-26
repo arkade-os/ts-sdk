@@ -1379,7 +1379,7 @@ describe("Wallet.restore", () => {
                     owner: new Uint8Array([2, ...deriveDescriptorLeafPubKey(descriptor)]),
                     ...delegation,
                     batchCosignerPubKey: hex.decode(keys.batchCosignerPubkey),
-                    serverPubKey: hex.decode(keys.operatorPubkey),
+                    operatorPubKey: hex.decode(keys.operatorPubkey),
                     emulatorPubKey: hex.decode(keys.emulatorPubkey),
                 }),
             );
@@ -1415,7 +1415,7 @@ describe("Wallet.restore", () => {
                     owner: new Uint8Array([2, ...deriveDescriptorLeafPubKey(descriptor)]),
                     ...delegation,
                     batchCosignerPubKey: hex.decode(keys.batchCosignerPubkey),
-                    serverPubKey: hex.decode(keys.operatorPubkey),
+                    operatorPubKey: hex.decode(keys.operatorPubkey),
                     emulatorPubKey: hex.decode(keys.emulatorPubkey),
                 }),
             );
@@ -1455,7 +1455,7 @@ describe("Wallet.restore", () => {
                     ...delegation,
                     boardingExitDelay: 0x400003,
                     batchCosignerPubKey: hex.decode(keys.batchCosignerPubkey),
-                    serverPubKey: hex.decode(keys.operatorPubkey),
+                    operatorPubKey: hex.decode(keys.operatorPubkey),
                     emulatorPubKey: hex.decode(keys.emulatorPubkey),
                 }),
             );

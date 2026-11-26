@@ -24,7 +24,7 @@ const keys = {
     operatorPubkey: vectors.operatorPubkey,
     emulatorPubkey: vectors.emulatorPubkey,
 };
-const serverXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
+const operatorXOnly = hex.decode(vectors.operatorPubkey).subarray(1);
 // the variables of the vectors: 512 s and 1024 s in BIP 68, a day, 500 sats
 const delegation = {
     exitDelay: 0x400001,
@@ -51,7 +51,7 @@ const contractOf = (template: ExecutorDefault): Contract => {
         type: "executor",
         params: params(template),
         script: hex.encode(script.pkScript),
-        address: script.address("tark", serverXOnly).encode(),
+        address: script.address("tark", operatorXOnly).encode(),
         state: "active",
         createdAt: 0,
     };
@@ -81,7 +81,7 @@ describe("ExecutorContractHandler", () => {
         const s = ExecutorContractHandler.createScript(params("renewal"));
         expect(s.scripts.map((l) => hex.encode(l))).toEqual(vectors.renewal.tapscripts);
         expect(hex.encode(s.pkScript)).toBe(vectors.renewal.pkScript);
-        expect(s.address("tark", serverXOnly).encode()).toBe(vectors.renewal.address);
+        expect(s.address("tark", operatorXOnly).encode()).toBe(vectors.renewal.address);
     });
 
     it("derives the boarding leaves and onchain address of the Go engine", () => {
@@ -258,7 +258,7 @@ describe("ExecutorContractHandler.discoverRange", () => {
             } as never,
             network: { hrp: "tark" },
             onchainNetwork: networks.regtest,
-            serverPubKey: serverXOnly,
+            serverPubKey: operatorXOnly,
             csvTimelocks: [],
             executorWatches: [{ keys, params: delegation }],
         };

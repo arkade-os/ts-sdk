@@ -32,7 +32,7 @@ export function executorStub() {
                         ? { boardingExitDelay: num("boarding_exit_delay") }
                         : {}),
                     batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-                    serverPubKey: hex.decode(vectors.operatorPubkey),
+                    operatorPubKey: hex.decode(vectors.operatorPubkey),
                     emulatorPubKey: hex.decode(vectors.emulatorPubkey),
                 }),
             );

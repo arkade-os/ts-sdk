@@ -34,7 +34,7 @@ function renewalRow(
         renewalWindow,
         maxFee: MAX_FEE,
         batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-        serverPubKey: hex.decode(signerPubkey),
+        operatorPubKey: hex.decode(signerPubkey),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
     const script = ExecutorContractHandler.createScript(params);

@@ -99,7 +99,7 @@ describe("a send's change from a delegated coin", () => {
     it.each([
         // other not-live cases are delegatedContracts', covered in vtxo-manager-delegated
         ["is local", { metadata: { [DELEGATION_STATUS_KEY]: "local" } }],
-        ["is under another signer", { server: vectors.batchCosignerPubkey }],
+        ["is under another signer", { operatorPubkey: vectors.batchCosignerPubkey }],
     ])("stays at the own address when the watch %s", async (_, options: RowOptions) => {
         const row = await renewalRow(options);
         const fx = await walletWith(row);

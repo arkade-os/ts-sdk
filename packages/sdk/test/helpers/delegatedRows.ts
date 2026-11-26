@@ -10,14 +10,14 @@ import { DELEGATION_STATUS_KEY } from "../../src/wallet/executor";
 import { createMockExtendedVtxo } from "../contracts/helpers";
 import vectors from "../fixtures/executor/vectors.json";
 
-export const SERVER_KEY_HEX = vectors.operatorPubkey;
+export const OPERATOR_PUBKEY_HEX = vectors.operatorPubkey;
 export const DUST = 1000;
 export const MAX_FEE = 100;
 export const ARK_TXID = "ee".repeat(32);
 export const HOUR = 3_600_000;
 export const arkInfo = {
-    signerPubkey: SERVER_KEY_HEX,
-    forfeitPubkey: SERVER_KEY_HEX,
+    signerPubkey: OPERATOR_PUBKEY_HEX,
+    forfeitPubkey: OPERATOR_PUBKEY_HEX,
     batchExpiry: BigInt(144),
     unilateralExitDelay: BigInt(144),
     boardingExitDelay: BigInt(144),
@@ -31,18 +31,18 @@ export const arkInfo = {
 export const identity = SingleKey.fromHex(
     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
 );
-export const serverXOnly = hex.decode(SERVER_KEY_HEX).subarray(1);
+export const operatorXOnly = hex.decode(OPERATOR_PUBKEY_HEX).subarray(1);
 export const bob = new DefaultVtxo.Script({
     pubKey: await SingleKey.fromHex("11".repeat(32)).xOnlyPublicKey(),
-    serverPubKey: serverXOnly,
+    serverPubKey: operatorXOnly,
     csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
 })
-    .address("tark", serverXOnly)
+    .address("tark", operatorXOnly)
     .encode();
 
 export interface RowOptions {
     maxFee?: number;
-    server?: string;
+    operatorPubkey?: string;
     metadata?: Record<string, unknown>;
     /** Compressed; the identity's by default. */
     owner?: Uint8Array;
@@ -51,7 +51,7 @@ export interface RowOptions {
 /** The identity's live renewal watch; `maxFee` tells two watches apart. */
 export async function renewalRow({
     maxFee = MAX_FEE,
-    server = SERVER_KEY_HEX,
+    operatorPubkey = OPERATOR_PUBKEY_HEX,
     metadata = { [DELEGATION_STATUS_KEY]: "active" },
     owner,
 }: RowOptions = {}) {
@@ -62,7 +62,7 @@ export async function renewalRow({
         renewalWindow: 1000,
         maxFee,
         batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
-        serverPubKey: hex.decode(server),
+        operatorPubKey: hex.decode(operatorPubkey),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
     const script = ExecutorContractHandler.createScript(params);
@@ -72,7 +72,7 @@ export async function renewalRow({
             type: "executor",
             params,
             script: hex.encode(script.pkScript),
-            address: script.address("tark", serverXOnly).encode(),
+            address: script.address("tark", operatorXOnly).encode(),
             state: "active" as const,
             createdAt: Date.now(),
             metadata,

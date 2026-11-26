@@ -27,7 +27,7 @@ import { watchExecutorContracts } from "../../src/wallet/executor";
 import { ExecutorContractHandler } from "../../src/contracts/handlers/executor";
 import vectors from "../fixtures/executor/vectors.json";
 
-const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+const OPERATOR_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const CHECKPOINT_TAPSCRIPT =
     "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac";
 const COSIGNED = "ff".repeat(32);
@@ -45,8 +45,8 @@ async function makeWallet(
     boardingExitDelay = 604672n,
 ) {
     const info = {
-        signerPubkey: SERVER_PUBKEY_HEX,
-        forfeitPubkey: SERVER_PUBKEY_HEX,
+        signerPubkey: OPERATOR_PUBKEY_HEX,
+        forfeitPubkey: OPERATOR_PUBKEY_HEX,
         network: "mutinynet",
         vtxoTreeExpiry: 144n,
         unilateralExitDelay: 144n,
@@ -486,7 +486,7 @@ describe("sendOnchain with explicit inputs", () => {
 describe("deposits at a delegated boarding address", () => {
     const keys = {
         batchCosignerPubkey: vectors.batchCosignerPubkey,
-        operatorPubkey: SERVER_PUBKEY_HEX,
+        operatorPubkey: OPERATOR_PUBKEY_HEX,
         emulatorPubkey: vectors.emulatorPubkey,
     };
     const delegation = { renewalWindow: 1000, maxFee: 100, exitDelay: 144, boardingExitDelay: 144 };

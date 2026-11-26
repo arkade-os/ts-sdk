@@ -78,7 +78,7 @@ describe("getAddress with an Executor watch", () => {
             { metadata: { [DELEGATION_STATUS_KEY]: "active", [DELEGATION_EXPIRES_KEY]: 1 } },
         ],
         ["local", { metadata: { [DELEGATION_STATUS_KEY]: "local" } }],
-        ["under another signer", { server: vectors.batchCosignerPubkey }],
+        ["under another signer", { operatorPubkey: vectors.batchCosignerPubkey }],
         [
             "a boarding key's",
             {
