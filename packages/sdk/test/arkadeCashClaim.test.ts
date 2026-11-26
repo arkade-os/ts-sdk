@@ -248,6 +248,35 @@ describe("claimCash operator check", () => {
         expect(getInfo).toHaveBeenCalledOnce();
     });
 
+    it("reports a sweep the operator did not co-sign as sweep-failed", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const unspent = { ...spentCashVtxo(cashPkScript), isSpent: false };
+        // Hands back exactly what was submitted: our signatures, none of its own.
+        const submitTx = vi.fn(async (arkTx: string, checkpoints: string[]) => ({
+            arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
+            finalArkTx: arkTx,
+            signedCheckpointTxs: checkpoints,
+        }));
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [unspent]), {
+            getPendingTxs: vi.fn(async () => []),
+            submitTx,
+        });
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+            const result = await wallet.claimCash(cash.toString());
+
+            expect(submitTx).toHaveBeenCalledOnce();
+            expect(result.swept).toBe(0);
+            expect(result.unclaimed.vtxos).toEqual([
+                { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "sweep-failed" },
+            ]);
+        } finally {
+            errorLog.mockRestore();
+        }
+    });
+
     // A rotation must not lock the holder out of this operator's cash: before the cutoff it can
     // migrate; after it, once the batch expires and is swept, the claim recovers it.
     it.each([

@@ -299,9 +299,9 @@ function asmToken(token: string, instantiations: Map<string, string>): AsmToken 
             fail(`'${token}' is not a placeholder; the compiler emits <CONTRACT:…>`);
         }
         if (
-            inner === "SERVER_KEY" ||
             inner.startsWith("EMULATOR_KEY:") ||
-            inner.split(":")[0] === "OPERATOR_KEY"
+            inner === "OPERATOR_KEY" ||
+            inner.startsWith("OPERATOR_KEY:")
         ) {
             fail(`${token} is a signer role and cannot appear in a covenant`);
         }
@@ -347,13 +347,11 @@ function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegme
 /**
  * Reads `<OPERATOR_KEY:f>` as the `f`-tweaked emulator key, preceded by the server key arkd requires
  * in every non-CSV leaf unless the leaf already holds it.
- * ponytail: temporary until arkd and the emulator move to the single operator key; delete it then.
+ * ponytail: temporary until arkd and the emulator move to the single operator key. Deleting it
+ * changes the Program, and so the address, of every 0.1.0 artifact read through it.
  */
 function legacyOperatorLeaf(asm: string[]): string[] {
-    const skipServer =
-        asm.includes("OP_CHECKSEQUENCEVERIFY") ||
-        asm.includes("<OPERATOR_KEY>") ||
-        asm.includes("<SERVER_KEY>");
+    const skipServer = asm.includes("OP_CHECKSEQUENCEVERIFY") || asm.includes("<OPERATOR_KEY>");
     const server = skipServer ? [] : ["<OPERATOR_KEY>", "OP_CHECKSIGVERIFY"];
     return asm.flatMap((token) =>
         token.startsWith("<OPERATOR_KEY:")
@@ -418,7 +416,7 @@ function parseLeaf(
             fail(`leaf '${leaf.name}': unsupported key operand '${key}'`);
         }
         const inner = key.slice(1, -1);
-        if (inner === "SERVER_KEY" || inner === "OPERATOR_KEY") signers.push("$server");
+        if (inner === "OPERATOR_KEY") signers.push("$server");
         else if (inner.startsWith("TWEAK:")) {
             const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
             if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
@@ -460,6 +458,11 @@ function parseLeaf(
 /**
  * Adds `server`, and one param per child-output placeholder for the caller to bind to that output key.
  * With the build's `debug` file, each covenant segment also carries its `sourceMap`.
+ *
+ * `<OPERATOR_KEY>` reads as `server` and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`.
+ * `<OPERATOR_KEY:f>` reads as the server key followed by the emulator key tweaked by `f`'s Arkade
+ * Script, or the tweaked emulator key alone in a CSV leaf, until arkd and the emulator share one
+ * operator key.
  */
 export function programFromArtifact(
     artifact: ContractArtifact,
@@ -496,6 +499,15 @@ export function programFromArtifact(
     }
     const structsByName = new Map(structs.map((struct) => [struct.name, struct] as const));
     const budget = { left: MAX_LAYOUT_CHARS };
+    // rc.1 reserved SERVER_KEY for the server key; 0.1.0 frees it, and a constructor input of
+    // that name is then an ordinary key.
+    const serverRole = !artifact.constructorInputs.some(
+        (input) => isNamed(input) && input.name === "SERVER_KEY",
+    );
+    const roles = (asm: string[]) =>
+        serverRole
+            ? asm.map((token) => (token === "<SERVER_KEY>" ? "<OPERATOR_KEY>" : token))
+            : asm;
 
     const instantiations = new Map<string, string>();
     const functions: Record<string, ArkadeFunction> = Object.create(null);
@@ -519,7 +531,7 @@ export function programFromArtifact(
         const sourceMap = maps?.get(group.name);
         const arkadeScript = group.arkade
             ? {
-                  asm: group.arkade.asm.map((token) => asmToken(token, instantiations)),
+                  asm: roles(group.arkade.asm).map((token) => asmToken(token, instantiations)),
                   ...(covenantInputs.length > 0 ? { inputs: covenantInputs } : {}),
                   // Covenant witness is reverse declaration order.
                   witness: covenantInputs.map((field) => field.name as WitnessRef).reverse(),
@@ -552,7 +564,12 @@ export function programFromArtifact(
             }
             const witnessNames = new Set<string>();
             for (const item of leaf.witness ?? []) claim(witnessNames, item.name, "leaf witness");
-            const tapscript = parseLeaf(leaf, group.arkade !== undefined, instantiations, extras);
+            const tapscript = parseLeaf(
+                { ...leaf, asm: roles(leaf.asm) },
+                group.arkade !== undefined,
+                instantiations,
+                extras,
+            );
             if (
                 tapscript.emulator !== undefined &&
                 tapscript.emulator !== null &&
@@ -574,6 +591,13 @@ export function programFromArtifact(
         }
     }
 
+    // ponytail: 0.1.0 frees these names; they move to `operator`/`OPERATOR_EXIT_DELAY`, which it
+    // reserves, with the single operator key migration.
+    for (const input of artifact.constructorInputs) {
+        if (isNamed(input) && (input.name === "server" || input.name === "SERVER_EXIT_DELAY")) {
+            fail(`constructor input '${input.name}' is reserved by the SDK; rename it`);
+        }
+    }
     const params: InputDef[] = [
         ...artifact.constructorInputs.flatMap((input) => flatten(input, structsByName, budget)),
         { name: "server", type: "pubkey" },

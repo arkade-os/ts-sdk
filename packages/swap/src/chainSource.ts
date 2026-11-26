@@ -14,6 +14,32 @@ import { L1_NETWORKS } from "./onchainHtlc";
 const addressOf = (pkScript: Uint8Array, network: OnchainNetwork): string =>
     btc.Address(L1_NETWORKS[network]).encode(btc.OutScript.decode(pkScript));
 
+/**
+ * An outpoint's outspend, `undefined` for a transaction the backend no longer knows. A fee-bumped
+ * funding is gone, and backends refuse its outspends with an error; a refusal for a transaction
+ * still in `address`'s history is a real failure and stands.
+ */
+export const readOutspend = (
+    provider: OnchainProvider,
+    txid: string,
+    vout: number,
+    address: () => string,
+): Promise<{ spent: boolean; txid?: string } | undefined> =>
+    (provider.getTxOutspend
+        ? provider.getTxOutspend(txid, vout)
+        : provider.getTxOutspends(txid).then((all) => all[vout])
+    ).catch(async (error: unknown) => {
+        let known: boolean;
+        try {
+            known = (await provider.getTransactions(address())).some((tx) => tx.txid === txid);
+        } catch {
+            // The history check is the fallback; its own failure must not mask the outspend's.
+            throw error;
+        }
+        if (known) throw error;
+        return undefined;
+    });
+
 /** `network` is `requestOnchainSend`'s `l1Network`, and only decodes scripts to
  *  addresses — the provider decides which chain is read, so mismatching the two
  *  yields addresses it knows nothing about rather than an error.
@@ -56,9 +82,9 @@ export const chainSourceFrom = (
             vout: number,
             pkScript: Uint8Array,
         ): Promise<{ txHex: string } | null> {
-            const outspend = provider.getTxOutspend
-                ? await provider.getTxOutspend(txid, vout)
-                : (await provider.getTxOutspends(txid))[vout];
+            const outspend = await readOutspend(provider, txid, vout, () =>
+                addressOf(pkScript, network),
+            );
             if (!outspend?.spent) return null;
             // `||`: some deployments omit the txid, electrum sends `""` when
             // unspent. Null here would read a CLAIMED htlc as unfunded.

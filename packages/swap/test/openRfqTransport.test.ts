@@ -180,6 +180,19 @@ describe("open RFQ collection", () => {
         expect(await result).toEqual([]);
     });
 
+    it("accepts bids stamped by solver clocks behind or ahead of ours", async () => {
+        vi.useFakeTimers();
+        const f = fixture();
+        const now = Math.floor(Date.now() / 1000);
+        const result = collectOpenRfqBids(request(), f.options);
+        const filter = f.pool.subscribeMany.mock.calls[0]![1] as { since: number };
+        expect(filter.since).toBeLessThanOrEqual(now - 3);
+        f.bid({}, { created_at: now - 3 });
+        f.bid({}, { created_at: now + 8 }, generateSecretKey());
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(await result).toHaveLength(2);
+    });
+
     it("drops an otherwise valid reply with an invalid signature", async () => {
         vi.useFakeTimers();
         const f = fixture();

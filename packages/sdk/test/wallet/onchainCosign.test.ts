@@ -23,6 +23,9 @@ import { convertVtxo } from "../../src/wallet/vtxo";
 import { timelockToSequence } from "../../src/utils/timelock";
 import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import { extendVirtualCoinForContract } from "../../src/wallet/utils";
+import { watchExecutorContracts } from "../../src/wallet/executor";
+import { ExecutorContractHandler } from "../../src/contracts/handlers/executor";
+import vectors from "../fixtures/executor/vectors.json";
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const CHECKPOINT_TAPSCRIPT =
@@ -288,19 +291,20 @@ describe("wallet.sendOnchain", () => {
 describe("cosign outcomes through Ramps.offboardExact", () => {
     afterEach(() => vi.unstubAllGlobals());
 
-    const arkdReplies = (arkProvider: any, status: number, name: string) => {
+    const arkdReplies = (arkProvider: any, status: number, name?: string) => {
         const details = [
             { "@type": "type.googleapis.com/ark.v1.ErrorDetails", code: 0, name, message: "m" },
         ];
-        const body = JSON.stringify({ code: 13, message: "m", details });
-        vi.stubGlobal(
-            "fetch",
-            vi.fn(async () => new Response(body, { status })),
-        );
+        const body = name
+            ? JSON.stringify({ code: 13, message: "m", details })
+            : "404 page not found";
+        const fetch = vi.fn(async () => new Response(body, { status }));
+        vi.stubGlobal("fetch", fetch);
         const rest = new RestOperatorProvider("http://ark");
         arkProvider.cosignOnchainTx.mockImplementation((psbt: string) =>
             rest.cosignOnchainTx(psbt),
         );
+        return fetch;
     };
 
     const offboard = (wallet: Wallet) => {
@@ -337,14 +341,45 @@ describe("cosign outcomes through Ramps.offboardExact", () => {
         expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
     });
 
-    it("an arkd INVALID_ARK_PSBT falls back to settle", async () => {
+    it("an arkd INVALID_ARK_PSBT rethrows and skips settle, leaving the coins free", async () => {
         const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
         arkdReplies(arkProvider, 400, "INVALID_ARK_PSBT");
         const { settle, result } = offboard(wallet);
-        expect(await result).toBe("txSETTLE");
-        expect(settle).toHaveBeenCalledTimes(1);
+        expect(await result).toBeInstanceOf(OnchainCosignRejectedError);
+        expect(settle).not.toHaveBeenCalled();
         const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
         expect(row.spentBy).toBeFalsy();
+    });
+
+    it("an arkd without the endpoint fails the first offboard; later ones settle unsent", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
+        const fetch = arkdReplies(arkProvider, 404);
+        const first = offboard(wallet);
+        expect(await first.result).toBeInstanceOf(OnchainCosignAmbiguousError);
+        expect(first.settle).not.toHaveBeenCalled();
+        const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
+        expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
+
+        const second = offboard(wallet);
+        expect(await second.result).toBe("txSETTLE");
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("an arkd older than v0.9.22 is never sent the signed tx, so offboardExact settles", async () => {
+        const { wallet, arkProvider } = await makeWallet();
+        const fetch = vi.fn(async (url: string) =>
+            Response.json(url.endsWith("/v1/info") ? { version: "v0.9.21" } : { txid: COSIGNED }),
+        );
+        vi.stubGlobal("fetch", fetch);
+        const rest = new RestOperatorProvider("http://ark");
+        await rest.getInfo();
+        arkProvider.cosignOnchainTx.mockImplementation((psbt: string) =>
+            rest.cosignOnchainTx(psbt),
+        );
+        const { settle, result } = offboard(wallet);
+        expect(await result).toBe("txSETTLE");
+        expect(settle).toHaveBeenCalledTimes(1);
+        expect(fetch.mock.calls.filter(([u]) => u.endsWith("/onchain/cosign"))).toHaveLength(0);
     });
 
     it("a fee-rate failure before submission falls back to settle", async () => {
@@ -445,6 +480,87 @@ describe("sendOnchain with explicit inputs", () => {
                 sweepTo: externalAddress,
             }),
         ).rejects.toThrow(`${boardingCoin.txid}:1 has no CSV exit path`);
+    });
+});
+
+describe("deposits at a delegated boarding address", () => {
+    const keys = {
+        cosignerPubkey: vectors.cosignerPubkey,
+        serverPubkey: SERVER_PUBKEY_HEX,
+        emulatorPubkey: vectors.emulatorPubkey,
+    };
+    const delegation = { renewalWindow: 1000, maxFee: 100, exitDelay: 144, boardingExitDelay: 144 };
+    const deposit = {
+        txid: "dd".repeat(32),
+        vout: 0,
+        value: 30_000,
+        status: { confirmed: true, block_height: 100, block_time: 1700000000 },
+    };
+    const live = { template: "boarding", status: "active", expiresAt: 0 } as const;
+
+    async function watch(ctx: Awaited<ReturnType<typeof makeWallet>>) {
+        const [, boarding] = await watchExecutorContracts(ctx.wallet, keys, delegation, live);
+        const address = ExecutorContractHandler.createScript(boarding.params).onchainAddress(
+            ctx.wallet.network,
+        );
+        return { boarding, address };
+    }
+
+    async function withDeposit() {
+        const ctx = await makeWallet();
+        const { boarding, address } = await watch(ctx);
+        const own = ctx.onchainProvider.getCoins.getMockImplementation();
+        ctx.onchainProvider.getCoins.mockImplementation(async (a: string) =>
+            a === address ? [deposit] : own(a),
+        );
+        await (await ctx.wallet.getContractManager()).syncOnchain();
+        return { ...ctx, boarding };
+    }
+    const inputTxids = (psbt: Transaction) =>
+        Array.from({ length: psbt.inputsLength }, (_, i) => hex.encode(psbt.getInput(i).txid!));
+
+    it("keeps them among the stored boarding coins", async () => {
+        const { wallet } = await withDeposit();
+        const stored = await wallet.getStoredBoardingUtxos();
+        expect(stored.map((u) => u.txid)).toContain(deposit.txid);
+    });
+
+    it("leaves them out of a spend while the watch is live, cosigning them once it ends", async () => {
+        const { wallet, arkProvider, boarding, boardingCoin } = await withDeposit();
+        await wallet.sendOnchain({ outputs: [], sweepTo: externalAddress });
+        expect(inputTxids(sentPsbt(arkProvider))).toEqual([boardingCoin.txid]);
+
+        const manager = await wallet.getContractManager();
+        await manager.updateContract(boarding.script, {
+            metadata: { ...boarding.metadata, delegationStatus: "cancelled" },
+        });
+        await wallet.sendOnchain({ outputs: [], sweepTo: externalAddress });
+        const [, psbt] = arkProvider.cosignOnchainTx.mock.calls;
+        expect(inputTxids(Transaction.fromPSBT(base64.decode(psbt[0])))).toEqual([deposit.txid]);
+    });
+
+    it("renews one the Executor left unboarded through the cosign sweep, near its cut-off", async () => {
+        const { wallet, onchainProvider } = await withDeposit();
+        // 144-block CSV from height 100: a 36-block window above the 6-block margin
+        onchainProvider.getChainTip.mockResolvedValue(tipAt(201));
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([]);
+        onchainProvider.getChainTip.mockResolvedValue(tipAt(230));
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([
+            { txid: deposit.txid, vout: deposit.vout },
+        ]);
+    });
+
+    it("watches for them when the watch is registered after subscribing", async () => {
+        const ctx = await makeWallet();
+        const stop = await ctx.wallet.notifyIncomingFunds(() => {});
+        const { address } = await watch(ctx);
+        await vi.waitFor(() =>
+            expect(ctx.onchainProvider.watchAddresses).toHaveBeenCalledWith(
+                expect.arrayContaining([address]),
+                expect.any(Function),
+            ),
+        );
+        stop();
     });
 });
 

@@ -14,7 +14,44 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
-- **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the server key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. Until arkd and the emulator move to a single operator key, `<OPERATOR_KEY:f>` is temporarily read as rc.1's server key plus `f`-tweaked emulator key (the emulator key alone in CSV leaves). Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
+- **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the server key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. rc.1's `<SERVER_KEY>` still reads as the server key, except in a contract that declares a constructor input named `SERVER_KEY`, which 0.1.0 no longer reserves: there it is that input, where it used to be silently replaced by the server key. A constructor input named `server` or `SERVER_EXIT_DELAY`, which 0.1.0 also no longer reserves, is refused as reserved by the SDK; it used to fail as a duplicate program parameter. Until arkd and the emulator move to a single operator key, `<OPERATOR_KEY:f>` is temporarily read as rc.1's server key plus `f`-tweaked emulator key (the emulator key alone in CSV leaves). Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
+
+### Bug Fixes
+
+- **Tapscript signature checks refuse encodings that BIP-341 rejects.**
+  `verifyTapscriptSignatures`, which checks the server's signatures on
+  checkpoint and ark transactions, accepted a 65-byte signature ending in
+  `0x00`. It also accepted any signature longer than 65 bytes, verifying only
+  its first 64. Consensus rejects both: BIP-341 allows 64 bytes, or 65 ending
+  in a sighash type other than default. A transaction carrying either could
+  not be broadcast, so the SDK now refuses both.
+
+- **Published type declarations compile without `skipLibCheck`.** The
+  declaration bundler emitted `arkade`'s type-only exports as values once they
+  were split across chunks, so twenty of them, `arkade.Program` among them,
+  failed a strict consumer; local type aliases at the barrel keep them types. The
+  Electrum providers also referenced `ElectrumWS`, whose declarations need
+  `ws` types that the SDK does not ship. They now take an `ElectrumSocket`, the
+  four methods they call, which `ElectrumWS` still satisfies. Repositories are
+  `AsyncDisposable`, so a consumer needs `esnext.disposable` in `lib` (or
+  `@types/node`). The dist smoke test now type-checks ESM and CJS consumers
+  without `skipLibCheck`.
+
+- **`Ramps.offboardExact` documents what a cosign that failed after signing leaves open.** The error is rethrown and the boarding coins stay held, but an operator that kept the signed transaction can still complete it. A batch offboard cannot spend those coins to conflict with it: arkd refuses an intent with onchain inputs and onchain outputs (`INVALID_INTENT_PROOF`). The README and the method's doc now describe the options, so the caller picks the strategy. The hold's 6-block release is named, and `isCosignFallback`'s doc says `offboardExact` rethrows regardless.
+
+### Internal
+
+- **The legacy delegator provider is marked `@deprecated`.** `DelegateProvider`, `RestDelegateProvider`, `DelegateInfo` and `DelegateOptions` talk to the retired delegator; `ExecutorProvider` and `RestExecutorProvider` replace them. Nothing is removed.
+
+## [0.5.13] - 2026-11-23
+
+### Breaking Changes
+
+- **`@arkade-os/swap`: `AssetSwapRepository` is version 6, and a quote is funded at most once.** Version 6 adds the required `createSwapRecordIfAbsent(record)`: it inserts only when no record has that quote id, atomically across every client sharing the store, and resolves `true` only once committed. `accept()` creates the record through it and funds only when it returns `true`, so two runtimes sharing one store can no longer both fund a quote. It also adds `claimSwapFunding(id)`, which atomically flips a record's new `fundingSend` from `"unsent"` to `"claimed"` and resolves `true` only for the caller that flipped it. A second `accept()` of a stored record without a funding txid no longer sends again once its send may have started, because an empty indexer read does not prove the first attempt failed: it adopts a deposit found at the covenant, or returns the swap still `accepted`, and no longer throws `QuoteExpired` for it. A record whose failure provably came before the send started stays `"unsent"`, so a second `accept()` funds it, only after one runtime claims it. The funding constraints and deadline an interrupted acceptance recorded apply to that retry, and a record whose send may have started keeps them without sending again. The drive's startup restore no longer stamps a found deposit onto an unsent record, since that deposit belongs to another swap. An unsent record past its expiry is retired by `accept()` or the drive as cancelled with `{ reason: "send_not_started" }`; when another runtime holds the claim, both answer with the stored record, so the drive stops retrying the claim every poll, and a record written before `fundingSend` existed is never resent. The four built-in repositories implement both methods without a data migration. A custom repository fails to compile until it adds both methods; an untyped one throws before anything is funded. `SwapRecordCommon.fundingNotSubmitted` gains two proofs, `{ reason: "send_refused" }` (see Bug Fixes) and `{ reason: "send_not_started" }`, so narrow on `reason` before reading `validUntil`.
+
+- **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
+
+- **`@arkade-os/swap`: a fee ceiling on a cross-asset swap is refused.** The fee of a cross-asset swap is measured against the solver's own price feed, so `maxFee` or `policy.maxFee` cannot bound it. Setting either on such a swap now throws before anything is funded; same-asset ceilings are unchanged. `policy.maxFee` applies to every call, so a client that sets one for `pay` or `receive` can no longer `exchange` across assets.
 
 - **Inert open-RFQ placeholders are removed.** `SwapPolicy.selectBid`, `RfqAuctionPolicy.freshTransportKey` and `AuctionMarketRef` (a `MarketRef` member) were exported since 0.1.0 but never read or populated. Remove references to them; `openRfq()` and `quoteBid()` replace the auction they reserved, and an auction-closed quote keeps a card `MarketRef` with its `quote.auction` provenance.
 
@@ -77,6 +114,11 @@ style and have not been backfilled.
   rail's `RouteResult.swapId`, and the key it documents for `persist`, are now
   the covenant's `swapPkScript` hex rather than its `offerHex`.
 
+- **Reservation repositories require atomic release.** Version 2 adds required
+  `deleteReservationIfMatches(id, expected)`, which must compare and delete in one
+  transaction and acknowledge commit. Unsupported JavaScript backends retain
+  restored holds but reject acquisition and release before writes. IndexedDB's
+  stored schema is unchanged.
 - **Service-worker pages and workers must use the same wallet request protocol.** Every wallet operation now carries its captured identity/operator/network binding, including reads used to construct quotes and transactions. Older page/worker combinations fail before wallet access; update both together. `ServiceWorkerWallet` and its readonly variant accept `expectedNetwork` to verify the configured network during bootstrap.
 - **A worker `clear()` can be refused.** `ServiceWorkerWallet.clear()` rejects while a settlement or another long-running request from a page is in flight. It also fails without wiping anything if the remaining requests take over 5s to drain; the page then reinitializes before retrying. A logout that clears unconditionally must handle the rejection.
 
@@ -154,6 +196,22 @@ style and have not been backfilled.
   at the confirmation height minus one and at the tip, or seconds-locked
   coins never read as expired.
 
+- **`@arkade-os/swap` drops the `onchain -> arkade` corridor.** The solver no
+  longer quotes `onchain:BTC->arkade:BTC`; non-interactive boarding replaces
+  it. `client.receive({ via: "onchain" })` and `client.quote()` on that route
+  now throw `UnsupportedRoute` once market data loads (with `registryUrl: null`
+  and no snapshot they throw `DiscoverySnapshotUnavailable` first), as does
+  `quoteViaRfq` called with that route, and a stored `onchain_receive` record no
+  longer restores. `@arkade-os/swap/protocol` no longer exports `requestOnchainReceive`,
+  `deriveOnchainReceive`, `onchainReceiveRequest`, `ONCHAIN_RECEIVE_PAIR`,
+  `onchainReceiveProfile`, `OnchainReceiveProfile`, `OnchainReceiveSwap`,
+  `ReceiveLockupSwap` (use `LightningReceiveSwap`), `nextOnchainReceiveAction`,
+  `OnchainReceiveAction` or `OnchainReceiveNeedsChainSource`. The manager's
+  `refundOnchain` callback and action, the three L1-refund
+  `RFQ_CONFIGURATION_REFUSAL` reasons, and the `corridors.onchain.refund`
+  override are gone. `assertFundable`'s `onchain.direction` is removed: the
+  timelock-order gate always applies.
+
 - **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
   `scope`.** A custom `ContractRepository` must persist and round-trip
   `Contract.scope`, filter on it in `getContractsPage`, and read a row without
@@ -166,6 +224,205 @@ style and have not been backfilled.
 ### Features
 
 - **`programFromArtifact` reads 0.1.0 nested arrays and asset group records.** It refused them as `invalid array type 'int[2][3]'` and `unknown type 'AssetGroupOutput'`. A nested array, as a constructor or Arkade Script input or a struct field, flattens outer index first (`grid.1.2`) and binds whole (`{ grid: [[1n, 2n, 3n], [4n, 5n, 6n]] }`) or by those names; `AssetGroupInput` and `AssetGroupOutput` flatten to `type`, `index` and `amount`.
+- **`@arkade-os/swap`: a quote says what an asset deposit funds as its carrier.** `Quote.depositCarrierSats` is the sats funded beside an asset give leg: the solver's verified carrier on a negotiated quote, the operator's dust on a feed-priced one. Subtract it from a BTC take for the net proceeds; it is absent when BTC is given.
+
+- **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier as `depositCarrierSats`. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.
+
+- **`ExecutorProvider` can register and read the Executor's templates and
+  artifacts.** The SDK's Executor client covered only delegations, so a caller
+  delegating its own template needed a second client to upload it.
+  `RestExecutorProvider` adds `registerArtifact`, `getArtifact`,
+  `registerTemplate` and `getTemplate`, optional on the `ExecutorProvider`
+  interface so existing implementations still conform. A 404 from these calls
+  counts as the Executor's only when its body is the gRPC NOT_FOUND status.
+  `ExecutorInfo` reports the service's `encryptionPubkey` when it advertises
+  one, validated as a compressed key, so `getInfo()` now refuses a malformed
+  one. Executor v0.0.5 takes uploads on its admin port only, and its public
+  port answers 403 unless it runs with `EXECUTOR_PUBLIC_REGISTRY=true`.
+
+- **Non-interactive boarding through the Executor.** `executorProvider` on
+  `Wallet.create` and `ReadonlyWallet.create` (`executorUrl` on the service
+  worker and its `INIT_WALLET`, or a `RestExecutorProvider`) makes the wallet
+  follow Executor watches. A `Wallet`, and the service-worker wallet, also get a
+  `getExecutorManager()`; a `ReadonlyWallet` has none and only follows the
+  watches a `Wallet` registered. Everything about the Executor is opt-in: a
+  wallet without one behaves as before. `registerBoarding({ renewalWindow, maxFee })`
+  registers the wallet's key under the Executor's `boarding` template, exit
+  delays defaulting to the operator's; the manager refuses an Executor on
+  another network or operator, or one whose single onchain input derives a
+  different address, compared without regard to case (it needs Executor
+  `v0.0.4` or later), and a
+  `renewalWindow` as long as the operator's VTXO expiry, under which every
+  renewed coin would be due again at once and pay `maxFee` each batch. It also
+  refuses an emulator key other than the network's pinned one, as
+  `Arkade.connect` does: with an emulator key of its own, the Executor could
+  sign the covenant leaf itself and move the coins with the operator alone. A
+  private emulator, or a network with none pinned, is trusted by passing
+  `emulatorPubkey` in the registration options. While the watch is active,
+  `getBoardingAddress()` answers the delegated boarding address: the Executor
+  boards every deposit there into the wallet's renewal contract while the wallet
+  is offline. A boarded coin is the wallet's own: it counts, spends and renews
+  like any other, migrates off a deprecated operator signer, and incoming-funds
+  subscribers hear of it. The VtxoManager leaves its coins to the Executor
+  while the renewal watch is live (see the next entry). A restored wallet finds
+  it by registering again with
+  the same parameters, which returns the existing watch, but only while the
+  operator's exit delays and the Executor's keys are unchanged: the address
+  derives from them. The registration returns its resolved `params`, which with
+  its `keys` restore the watch through `watchExecutorContracts` regardless.
+  `getAddress()` does not change. A watch registered without `expiresAt` has no
+  deadline of its own, but the Executor (`v0.0.4`) expires one that never
+  receives a coin 168 hours after its creation, without reporting it, and
+  registering again does not extend an active one. The wallet therefore asks the
+  Executor about its live watches at most once a day, reloads included: every
+  wallet with an Executor when it starts, and one whose VtxoManager polls also
+  while it runs. With `settlementConfig: false` a session that stays open
+  refreshes only at its next start. A wallet with no live watch asks neither
+  the Executor nor the operator, and a refresh the Executor could not answer is
+  retried on the next start. A watch is lost when the Executor answers
+  NOT_FOUND, whatever its message; a 404 from a proxy in front of it fails the
+  refresh and leaves the watch live. It registers an expired one again, which revives
+  the same address, and stops showing one it cannot revive, so it boards those
+  deposits itself. Only the keys still in use are revived: the displayed one,
+  and the most recently registered other key, whose renewal contract the
+  wallet's renewals pay into. An older rotated key's watch that lapses, never
+  having held a coin, ends instead, so the refresh does not grow with every
+  rotation; the wallet boards a late deposit there itself. A revived watch
+  keeps its registration time, so reviving an older one does not move the
+  boarding address back to its params. The refresh asks the Executor outside
+  the queue that orders boarding rotations, and under a Web Lock of its own
+  rather than the boarding poll's: `getNewBoardingAddress()` waits for one
+  write at most, not for the whole refresh, and other tabs' polls do not wait
+  for it. `dispose()` stops it between watches. A wallet offline for longer
+  than that after its last rotation can still show an address nobody watches
+  until it is back online. A subscription
+  started before
+  the registration watches the delegated address too:
+  `ContractManagerConfig.onOnchainContractCreated` fires when a new
+  onchain-scoped contract is saved, and the wallet re-subscribes on it. A
+  callback that throws is logged and does not fail `createContract`. A new
+  Executor boarding watch's deposits are stored, and its address watched, as
+  soon as `createContract` or `createContracts` returns, best-effort like the
+  indexer hydration, rather than at the next `syncOnchain`.
+
+- **Executor renewal delegation: `registerRenewal`, and a VtxoManager that
+  defers to a live watch.** The manager gains `registerRenewal({ renewalWindow,
+  maxFee })`. Params can change between registrations, for it and for
+  `registerBoarding`: new params register a new watch beside the old one, which
+  stays live and keeps covering the coins already at its contract. Each watch
+  row records when it was last registered (`delegationRegisteredAt`), and the
+  boarding address follows the most recent, so an app that rolls back a release
+  gets its earlier address back. A boarding watch pays into the renewal contract
+  of its own params, so while the wallet has any live renewal watch under the
+  current operator, `registerBoarding` registers renewal under the new params
+  too, as a rotation does for the new key. That is best-effort: a failure is
+  logged and never undoes the boarding watch, and `registerRenewal` retries it.
+  `registerRenewal` registers the displayed boarding
+  key under the params it is given, first, and throws at once if that fails. It
+  then registers each live boarding watch under the current operator, under
+  that watch's own params, so the deposits an HD wallet boarded at earlier
+  rotated keys, and at earlier params, are covered too. A watch under another
+  emulator key than the Executor's, or with a window no longer shorter than the
+  operator's VTXO expiry, cannot be registered: it is skipped with a warning,
+  and the wallet renews its coins itself. Like boarding it is idempotent, so
+  apps call it at startup. A call the stored watches already cover (each key's
+  newest live watch, under the same params) asks the Executor nothing, and its
+  result has no `delegation`; otherwise each key costs one Executor call. It tries all of
+  the others before throwing and names the keys that failed, so a retry covers
+  the rest. A boarding rotation extends the new key with both watches while a
+  live renewal watch exists. While a renewal watch is live, the VtxoManager
+  leaves the coins at its renewal contract to the Executor, which renews them in
+  place while the wallet is offline. It renews them itself again — the fallback — inside half the
+  `renewalWindow` before expiry, and always for a recoverable, subdust or
+  `maxFee + dust`-or-less coin, which the Executor cannot renew. `renewVtxos()`
+  skips the delegated coins too, including a manual call; `settle()` still moves
+  them when the user asks. A send's change returns to the live renewal contract
+  of its first delegated input, so it stays covered. The wallet's own renewals,
+  from `renewVtxos()` and the periodic settle (with the deposits that settle
+  boards), pay into the newest live renewal contract under the current
+  operator: a coin received at `getAddress()` is covered from its first renewal
+  on, and until then the wallet renews it itself. On an HD wallet a contract
+  the displayed boarding key does not own comes first, since a coin at that
+  key's contract rotates the boarding address. Both stay at the wallet's own
+  address for `maxFee + dust` or less, when a renewed coin carries assets, and
+  when the watches cannot be read. A renewal that spends a coin at a live
+  renewal contract also pays to the wallet's own address, the fallback
+  included: the Executor missed that coin, and paying it back there would only
+  repeat the miss. Under an Executor that keeps failing, a coin therefore
+  alternates: one fallback renewal out, one ordinary renewal back in, so half
+  its renewals are late where every one would have been. A wallet with no
+  Executor watches pays one repository read for all this, in a send and in a
+  renewal pass, and makes no operator or identity-key lookup. A watch's script
+  is built once per process, so these reads stay cheap as an HD wallet keeps
+  rotating keys.
+
+- **Deposits waiting for the Executor are the wallet's boarding coins.** A
+  deposit at a delegated boarding address shows in `getBoardingUtxos`,
+  `getStoredBoardingUtxos`, `getBoardingAddresses` and the live and stored
+  boarding balances before the Executor boards it: the boarding contract is
+  `onchain`-scoped, so the onchain sync stores its coins. While its watch is
+  active and unexpired, `settle()`, the periodic settle and `sendOnchain`
+  without named inputs leave it to the Executor; once the watch ends, the wallet
+  boards or cosigns it itself through the owner's forfeit leaf. Either way, one
+  still unboarded near its cosign cut-off is renewed by the automatic cosign
+  sweep, and the boarding sweep exits it after its CSV; both send to the
+  wallet's own boarding address, never back to the delegated one.
+
+- **An HD wallet gives each boarding key its own Executor watch.** A watch
+  derives from its owner key, so one registered under the identity key would
+  have kept one delegated boarding address for every deposit, linking them
+  all onchain. `registerBoarding` now registers the key of the displayed
+  boarding address. When the address rotates, through `getNewBoardingAddress()`,
+  a settle that boards a deposit, or a coin the Executor boards into the
+  displayed key's renewal contract, the wallet registers the newest live
+  watch's parameters again for the new key. After a settle that happens in the
+  background, so the settle never waits on the Executor or holds the
+  transaction lock for it; until the new watch is registered the old delegated
+  address stays displayed, still watched, so a deposit there is still boarded.
+  `getNewBoardingAddress()` waits for the registration, so it now depends on
+  the network. A `RestExecutorProvider` registration request, and a refresh's
+  status read, stop after 30 seconds where the runtime has `AbortSignal`; a
+  custom provider must honor the `signal` it is passed
+  (`ExecutorProvider.registerDelegation` and `getDelegation` take it as an
+  optional argument). Repeating a registration is safe, as the service returns
+  the existing watch. A coin already there when the wallet starts, boarded
+  while it was offline, raises no event, and a lazy start writes it only
+  during its background boot, so
+  once that boot has finished the wallet looks for one, spent or not, and
+  rotates too. If a registration fails or times out, `getBoardingAddress()` and
+  `getNewBoardingAddress()` show the new key's own address, which the wallet
+  boards once online, rather than reuse the old one. Rows of a rotated key
+  carry its `signingDescriptor`, and the signer router routes `executor` inputs
+  by it. `restore()` scans HD indices for the delegations of the persisted
+  Executor contracts, as far as its `gapLimit` of consecutive unused indices
+  reaches, so calling `watchExecutorContracts` before it also finds the watches
+  of rotated keys. A static wallet keeps its one watch.
+  `getNewAddresses({ types: ["boarding"] })` registers no watch: its side
+  address is the wallet's own, and a deposit there waits for the wallet's own
+  settle.
+
+- **The Executor's delegated contracts are a built-in contract type.**
+  `ExecutorContractHandler` (`type: "executor"`) derives the renewal and
+  boarding contracts of the Executor's default templates from the owner key, the
+  `DelegationParams` and the Executor's keys, so a restored wallet finds its
+  delegated coins without the service. It offers the owner's forfeit and exit
+  paths, never the emulator-enforced leaf the Executor spends with, and counts
+  as generic spending: coins the Executor boards are the wallet's own. The
+  onchain cosign preflight reads its exit delay, so an unrolled delegated coin
+  spends through `sendOnchain` and `cosignOnchainTx`. The bundled templates and
+  their artifacts live under `script/executor/`, in the `template/v1` format the
+  Executor ships from its template/v1 release on: a `proof` type with the
+  schedule under `delegation`. An Executor still on the earlier documents lists
+  other template ids, and `defaultTemplates()` refuses it. `DefaultVtxo.Script`
+  takes extra leaves after forfeit and exit.
+
+- **`@arkade-os/swap`: Open offers for directed asset payments.** `openRfq()` supports receiver-exact BTC-to-asset payments. The public request carries the pair and amount. Only the selected bidder receives the recipient in the directed quote request.
+
+- **`@arkade-os/swap`: select a solver for one quote.** Pass a `solverId` from
+  `client.candidates()` to `client.quote(input, { solverId })`. An unavailable
+  or paused solver is refused before negotiation, and a selected solver's
+  failure returns to the caller without contacting another solver. Automatic
+  routing preferences still apply to subsequent quotes.
 
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,
@@ -270,6 +527,15 @@ style and have not been backfilled.
   `ASSET_SWAP_CONTRACT_VERSIONS`, what an asset RFQ advertises, is the directed
   covenant alone. It refuses to compile without a taker, and v2 refuses one.
 
+- **Worker wallets can dispose without clearing ownership records.**
+  `ServiceWorkerReadonlyWallet.dispose()` and `ServiceWorkerWallet.dispose()`
+  revoke the scoped worker and local proxy while preserving wallet, contract,
+  intent and reservation stores. The worker is left as a freshly started one:
+  every handler stops, and another page still using the wallet re-initializes
+  it on its next request. Disposed proxies cannot automatically reinitialize;
+  `clear()` remains the explicit destructive reset. `dispose()` resolves when
+  the worker already runs no wallet, and can be called again after a failure.
+  A `MessageHandler`'s channel gains `release()`.
 - **`@arkade-os/swap/rfq-contract` exports shared RFQ wire constants.** Solvers
   can import the negotiation field names, refusal code, and asset contract IDs
   without loading the client or contract builders. Existing `/protocol` exports
@@ -319,6 +585,73 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`send` refuses an asset recipient below dust instead of burning the asset.** A recipient amount below the wallet's pinned dust is routed to the subdust (`OP_RETURN`) script, which for an asset recipient destroys the asset. `validateRecipients` now throws `Asset recipient amount N is below dust D` before coin selection. A recipient with no amount still defaults to dust, and a BTC-only recipient still takes the subdust script. `arkAssetRail` defaults its carrier to 330 sats, so against an operator whose dust is higher it now refuses where it used to burn the asset; defaulting to the wallet's dust is left for a follow-up.
+
+- **`@arkade-os/swap`: a funding refused as below dust cancels the swap.** The new SDK refusal counts as a refusal before submission, so the swap ends `cancelled` with `send_refused` and its contract retired. If the operator lowered its dust after the wallet was created, a feed quote that gives an asset is refused at funding until the wallet is recreated.
+
+- **`@arkade-os/swap`: a funding refused before submission cancels the swap instead of leaving it pending.** With one funding attempt per quote, a record whose only send was refused would stay `accepted` with no txid for good: `accept()` no longer retries it, and the drive retired only an expired send deadline. When `send` refuses during coin selection (`Insufficient funds`, `Insufficient asset balance`, `Cannot form minimum change`, also as the service-worker client's `Send failed: Error: …`) or with `VtxoReservedError`, the offer is `cancelled` or the corridor swap `failed`, with `fundingNotSubmitted: { reason: "send_refused" }`, and its contract stops being watched, as an expired send deadline already did. Any other funding error still leaves the swap pending.
+
+- **`@arkade-os/swap`: quoted funding never pays change as a fee.** Funding passes `maxChangeFee: 0`, so change below the operator's VTXO minimum that the wallet cannot return is refused before submission, and the swap cancelled as above, instead of being paid as an offchain fee on top of the quote.
+
+- **`@arkade-os/swap`: a feed-priced asset deposit funds the carrier it was priced with.** A feed quote priced the deposit's carrier at 330 sats while funding sent the wallet's dust, so the two disagreed whenever the operator's dust was not 330. The quote now reads the operator's dust live, prices and records it, and funding sends that amount even if the operator's dust changes before `accept()`. An operator reporting a dust of 0, which is how a missing one reads, is refused at `quote()` with an error naming the operator.
+
+- **`@arkade-os/swap`: a feed-priced BTC deposit is priced at the operator's dust where the card charges for the delivered carrier.** A card that sets `charges_delivered_carrier` asks a BTC deposit for the carrier the solver delivers, which is the operator's dust, but the quote priced it at 330 sats because only an asset deposit read the dust. At a dust of 546 the covenant asked for more asset than the solver computes, so the solver never filled and the deposit sat until cancelled; below 330 the trader was overcharged. The quote now reads the operator's dust live for such a card, which makes `quote()` throw `OperatorUnreachable` when the operator is down; a BTC deposit on any other card still reads nothing. The read also now follows the amount check, so a missing amount is reported as that, not as an unreachable operator.
+
+- **`@arkade-os/swap`: a second `accept()` no longer adopts a deposit stamped on another swap.** Identical offers derive one covenant address, and the reconcile that recovers a lost funding txid took the first VTXO at the address whose amount matched. A swap whose send failed ambiguously could therefore adopt the deposit of an identical swap that was already funded and stamped, leaving both records claiming one deposit, so cancelling one spent the other's. The reconcile now skips a txid already stamped on another record at the same address. Two identical records that are both unstamped can still race for one deposit.
+
+- **`@arkade-os/swap`: a feed-priced quote on a CAIP-19 card can be accepted.** `accept()` built the covenant from the card's raw asset ids, which a current registry spells in CAIP-19, and failed with `invalid asset id format, must be hex` before recording anything. It now uses the quote's own legs.
+
+- **`@arkade-os/swap`: `validatePlan` checks dust on a BTC side spelled in CAIP-19.** It recognised BTC only as `btc`, so a plan from a current card, which spells BTC `arkade:bitcoin/slip44:0` or `arkade:mutinynet/slip44:1`, skipped the dust check and passed a BTC side below dust, on the cross-asset payment rail as well.
+
+- **`@arkade-os/swap`: `nostr-tools` is a regular dependency, no longer an optional peer.** The root declarations import its `SimplePool` type for `createNostrTransportFactory(pool?)`, so a consumer type-checking them without having installed the peer could not resolve it. The client still imports `nostr-tools` only once Nostr is used. A consumer pinning a different version now gets the swap package's own copy beside theirs.
+
+- **`@arkade-os/swap`: a resumed `accept()` no longer outlives its stored quote.** The retry checked expiry against the caller's quote object only, which no conflict check covers, so a quote carrying a later `expiresAt` could fund a stored, unfunded record past its expiry. The earlier of the stored and given expiries now applies.
+
+- **A full Executor store no longer pauses every request to that Executor.**
+  An Executor at its delegation cap answers `registerDelegation` with gRPC
+  `RESOURCE_EXHAUSTED`, which its gateway serves as a 429 without
+  `Retry-After`. `RestExecutorProvider` reported that to the shared rate gate
+  as a rate limit, so every request to that Executor then waited out the
+  default cooldown. A 429 carrying that status is now only an error, and any
+  other 429 still pauses the origin.
+
+- **A batch tree must spend the commitment's batch output.** Before the wallet signs the tree, a forfeit or a boarding input, `validateVtxoTxGraph` now requires output 0 of the commitment transaction to pay the tree root's aggregated cosigner key, every internal output to pay its child's key as a taproot output, and the root to name its cosigners.
+
+- **Boarding inputs in a commitment transaction are signed with the default sighash**, whatever sighash type the operator's PSBT declares, as forfeits already were.
+
+- **`arkServerPublicKey` and `ServiceWorkerWallet`'s `arkServer.publicKey` are marked deprecated.** Neither has been read since the signer key moved to the operator's info, which may rotate it.
+
+- **A negative or non-integer relative timelock is rejected** instead of encoding a different or unspendable CSV. `Wallet.create` now fails against an operator that advertises one as its exit delay.
+
+- **`OnchainWallet.bumpP2A` funds the fee child from confirmed coins first**, falling back to unconfirmed ones only when confirmed coins cannot cover the fee, as a TRUC child relays only on confirmed fee inputs. Coin selection for both P2A bumps now prices the fee at the number of inputs it selects and keeps the change above dust, and refuses a child over TRUC's 1000 vB limit instead of building one that cannot relay. A child refused at that limit is not retried on unconfirmed coins.
+
+- **ArkadeCash claims check the operator's signatures.** `claimCash` verifies the operator's signatures on the sweep, as sends do, so a sweep the operator did not co-sign is reported as failed.
+
+- **`@arkade-os/swap`: a solver's asset carrier is capped at the operator's dust.** A quote whose `carrier_sats` exceeds the operator's dust (at least 330 sats) is refused before anything is registered or funded, and a carrier the payout does not return now counts as fee.
+
+- **Cached browser wallets open during an operator outage even after an interrupted send.**
+  The service worker defers pending-transaction recovery to its background tick.
+  Once the operator responds, recovery checks current indexer state and can use
+  spent or swept outputs as proof inputs; subdust and exited outputs are left out,
+  as neither can carry an ownership proof. New Arkade submissions are refused only
+  until one recovery pass has reached the operator — not until every pending
+  transaction finalizes, and not when no output could be found to prove ownership
+  with. Whatever a pass leaves unfinalized stays flagged for the next startup to
+  retry. Until a pass does reach the operator — while it is unreachable, reports
+  another network, or answers unusably — sends stay refused and the tick keeps
+  retrying, so recovery self-heals once the operator is fixed.
+  Recovery is also deferred when the operator becomes unreachable between boot and
+  wallet initialization. A recovery that clears the pending flag also lifts the
+  block, whichever path ran it.
+
+- **`@arkade-os/swap`: Preserve the deadline for plain asset payments.** A directed quote without carrier terms is usable until the solver's deadline. Quotes with carrier terms still reserve their settlement window.
+
+- **`@arkade-os/swap`: open-RFQ bids survive clock skew.** `collectOpenRfqBids`
+  subscribed from the client's clock and dropped any bid stamped before the
+  open, so a client a second or two ahead of the solver received no bids at
+  all. Bid stamps are now trusted within 30 seconds either way; the bid's `e`
+  tag still binds it to this open.
+
 - **`@arkade-os/swap`: an offer swap record names its covenant.** `OfferSwapRecord`
   now requires `offerHex`, `binding`, or both (the new `OfferCovenant` type), so
   code that builds a record with neither no longer compiles. The restore scan
@@ -336,6 +669,8 @@ style and have not been backfilled.
 - **Esplora address history includes older transactions.** `getTransactions` read only `/address/:address/txs`, which holds the newest page. It now follows `/txs/chain/:last_seen` for the rest, and keeps the first page when an explorer has no such route. `getRawTransaction` bytes must hash to the requested txid, and `getCoins` validates amounts and output indices.
 
 - **Pending-transaction recovery and `Arkade.connect` validate the operator's checkpoint script**, as wallet creation and signer rotation already do. `Arkade.connect` also checks the script's key against the forfeit key when the operator advertises one.
+
+- **Pending-transaction recovery co-signs a checkpoint only for a fully signed ark tx.** Before signing, `finalizePendingTxs` requires the operator's `finalArkTx` to hash to the pending txid, to spend exactly the locally rebuilt checkpoints, and to carry a valid signature from every key of each checkpoint's leaf. arkd only accepts fully signed ark txs, so honest pending entries pass; an entry that fails is skipped and retried on the next start.
 
 - **Server signatures on submitted transactions are verified against the wallet's own prevouts**, not the copies in the server's response. Emulator submissions must also return the checkpoints that were submitted, and a tree signer session can no longer be initialized twice.
 
@@ -369,6 +704,9 @@ style and have not been backfilled.
   fee and the swap record still carry a carrier only for an asset deposit, so a
   BTC deposit is still funded as plain sats.
 
+- **Stale reservation handles cannot delete a restarted wallet's newer hold.**
+  Durable release compares the expected outpoints and deletes the matching row
+  atomically, then updates memory only after commit.
 - **Retained service-worker proxies cannot read or spend a replacement wallet.** Wallet requests and contract-event subscriptions retain their original wallet binding. Requests capture their wallet, providers and repository before awaiting, and disposal drains admitted operations for up to 5s before closing their storage; settlements and other long-running operations are not waited for, so a re-init during a batch round is not blocked. Initialization separately drains its finite writes and finalization while pending subscription setup remains revocable; clearing revokes callbacks before draining. Reservation requests also verify the original network without changing durable hold namespaces, and timeout settings and settlement events still follow the original operation.
 
 - **Worker reservations stay bound to their wallet after reinitialization.** Acquire and release requests carry the original identity/operator namespace and use scoped request names, so a retained handle cannot release another wallet's operation with the same id and older workers reject the request before mutation. Callers must persist a stable reservation id before acquiring, allowing reply loss to recover through that id after restart. Public batch-registration reconciliation is also drained by `ContractManager.dispose()`, so its pending repository writes finish before a replacement wallet starts.
@@ -409,7 +747,22 @@ style and have not been backfilled.
   itself, now reading `Unexpected status when fetching SSE stream: … (<status>)`.
   A body that fails to cancel no longer masks the error in `getFeeRate`.
 
+- **Wallets restored without a delegator now find coins held at Arkade's retired delegator contracts.** A `delegate` contract commits to the delegator's key, and discovery derived those scripts only from a configured, reachable `delegateProvider`, so once the Executor replaced the delegator, a restore or a new device missed every coin still sitting at one. The SDK now pins Arkade's delegator keys per network (bitcoin, mutinynet) and adds them to the boot baseline, the `restore()` scan and the HD look-ahead band whenever the wallet's operator is Arkade's (its current or a deprecated signer matches) and the wallet has an Executor (`executorProvider` or `executorUrl`). Discovery only: no receive address is ever minted on a retired key, and wallets on any other operator, or without an Executor, see no change. The coins spend through their forfeit leaf, so no delegator is needed to send or renew them. Apps passing Arkade's `delegateUrl` only to keep these coins visible can drop it once they configure the Executor.
+
 - **A malformed explorer history no longer leaves the address watch's baseline as an unhandled rejection.** The baseline guarded the history fetch but not the loop that keys its entries, so an entry without `status` threw `Cannot read properties of undefined (reading 'block_time')` out of a floating promise. Seeding now sits inside the same failure handling as the fetch, so a bad response takes the existing "first poll pass establishes the baseline" fallback.
+
+- **An onchain send keeps bumping its L1 claim past other outputs at the HTLC
+  address.** `classifyOnchainHtlc` judged the phase by the largest output at
+  the script, so an output paid there after the claim (even an unconfirmed
+  one) hid the spent fill: the claim was never fee-bumped or re-published, and
+  a claim stuck past `htlcLocktime` could be replaced by the solver's refund
+  after `P` was public. It now reads the recorded funding's spend first, and
+  `RfqSwapManager` pins `funding` to the outpoint its claim spent rather than
+  the first output it saw, which a replaced fill left stale. A claim re-published
+  after its fill vanished moves to another output only if that output pays the
+  agreed amount. An outspend lookup refused for a funding the backend no longer
+  knows reads as unspent; when the history check behind that also fails, the
+  outspend's own error is reported.
 
 - **`waitForIncomingFunds` no longer hangs when the subscription
   breaks.** The helper calls the unsubscribe function that the caller's
@@ -1798,6 +2151,12 @@ style and have not been backfilled.
 
 ### Internal
 
+- **Executor contracts reuse the SDK compiler and spending paths.** The
+  Executor's duplicate artifact assembler and forfeit/exit selection could
+  drift from the core implementation. Template bindings now feed
+  `programFromArtifact` and `ArkadeProgramScript`, and the existing path
+  helpers share the Executor CSV lookup with onchain preflight.
+
 - **Dev-tooling dependency overrides raised past every high and critical
   advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
   development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and
@@ -1825,6 +2184,17 @@ style and have not been backfilled.
   `@expo/cli`, the one package that asks for zod 3 and is forced to 4 so the
   audit stays clean. The CI `check` job now runs `pnpm audit --audit-level
   high` and fails on any new high or critical advisory.
+
+## [0.1.13] - 2026-11-21
+
+### Bug Fixes
+
+- **`@arkade-os/swap`: repeat asset RFQs derive distinct deposits.** Clients
+  prefer `asset-swap-directed-nonce`, which binds a hash of the request ID to
+  the covenant through a dedicated compiler artifact in each payout direction.
+  Equal terms on separate requests can now settle independently.
+  The client still negotiates `asset-swap-directed` with older solvers and can
+  recover previously funded deposits.
 
 ## [0.4.77] - 2026-09-30
 

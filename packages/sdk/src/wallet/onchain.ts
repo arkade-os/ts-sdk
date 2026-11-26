@@ -5,7 +5,7 @@ import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { DEFAULT_NETWORK_NAME, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
-import { AnchorBumper, buildAnchorChild } from "../utils/anchor";
+import { AnchorBumper, buildAnchorChild, CHILD_DUST_AMOUNT, findP2AOutput } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
@@ -234,10 +234,16 @@ export class OnchainWallet implements AnchorBumper {
      */
     async bumpP2A(parent: Transaction): Promise<[string, string]> {
         const feeRate = await providerFeeRate(this.provider);
-
-        // Unconfirmed coins stay eligible, unlike in `bumpAnchor`: `Unroll.Session` funds a later
-        // level's bump from an earlier bump's change before that change confirms.
-        const child = await this.buildBumpPackage(parent, feeRate, await this.getCoins());
+        const coins = await this.getCoins();
+        // TRUC relays a v3 child only on confirmed fee inputs; the retry covers explorer lag.
+        const child = await this.buildBumpPackage(
+            parent,
+            feeRate,
+            coins.filter((c) => c.status.confirmed),
+        ).catch((e) => {
+            if (!(e instanceof Error) || e.message !== "Insufficient funds") throw e;
+            return this.buildBumpPackage(parent, feeRate, coins);
+        });
 
         try {
             await this.provider.broadcastTransaction(parent.hex, child.hex);
@@ -272,9 +278,8 @@ export class OnchainWallet implements AnchorBumper {
     }
 
     /**
-     * Shared core of {@link bumpP2A} and {@link bumpAnchor}: probe the package
-     * fee with a single-input child, select coins for it, then build and sign
-     * with the actual selection (the fee grows per extra input).
+     * Shared core of {@link bumpP2A} and {@link bumpAnchor}: select coins that pay the
+     * package fee at their own input count and leave dust-free change, then build and sign.
      */
     private async buildBumpPackage(
         parent: Transaction,
@@ -286,19 +291,25 @@ export class OnchainWallet implements AnchorBumper {
             rate = OnchainWallet.MIN_FEE_RATE;
         }
 
-        const probeVsize = TxWeightEstimator.create()
-            .addKeySpendInput(true)
-            .addP2AInput()
-            .addOutputAddress(this.address, this.network)
-            .vsize().value;
-        const probeFee = Math.ceil(rate * (parent.vsize + Number(probeVsize)));
-        if (!probeFee) {
+        const anchor = Number(findP2AOutput(parent).witnessUtxo!.amount);
+        let selected: ReturnType<typeof selectCoins> = { inputs: [], changeAmount: 0n };
+        let childVsize = 0;
+        for (let n = 1; ; n = selected.inputs.length) {
+            const estimator = TxWeightEstimator.create()
+                .addP2AInput()
+                .addOutputAddress(this.address, this.network);
+            for (let i = 0; i < n; i++) estimator.addKeySpendInput(true);
+            childVsize = Number(estimator.vsize().value);
+            const fee = Math.ceil(rate * (parent.vsize + childVsize));
+            selected = selectCoins(coins, Math.max(1, fee + CHILD_DUST_AMOUNT - anchor));
+            if (selected.inputs.length <= n) break;
+        }
+        // TRUC (BIP 431) caps a child of an unconfirmed v3 parent at 1000 vB.
+        if (childVsize > 1000) {
             throw new Error(
-                `invalid fee, got ${probeFee} with vsize ${parent.vsize + Number(probeVsize)}, feeRate ${rate}`,
+                `fee child needs ${selected.inputs.length} inputs (${childVsize} vB, over the 1000 vB TRUC limit); consolidate the wallet's coins first`,
             );
         }
-
-        const selected = selectCoins(coins, probeFee, true);
 
         const { child } = buildAnchorChild({
             parent,

@@ -112,14 +112,6 @@ artifact is an invoice whose claim secret has to be durable before a payer can a
 off it would show a payer an invoice this client could not yet claim; the verb removes the
 ordering from the caller.
 
-`onchain -> arkade` is a receive too: `client.receive({ via: "onchain", amount })` returns a
-`deposit` artifact naming the L1 HTLC to fund, for exactly its `amount`, from any bitcoin wallet.
-The client claims the solver's Arkade lockup once it is funded. If the solver never funds it, the
-client takes the L1 funding back itself once the HTLC's refund leaf matures, paying a boarding
-address of this wallet fixed at quote time and signing with the wallet key the HTLC was derived
-with. The refund is built at the same `claimFeeRateSatVb` as the `arkade -> onchain` claim; wire
-your own with `corridors: { onchain: { refund } }`.
-
 An `arkade -> onchain` withdrawal claims the solver's L1 HTLC itself, and that claim's miner fee
 comes out of the HTLC output — so the client grosses the take leg up by the claim's cost and the
 recipient nets exactly the `amount` written, with the estimate folded into the reported `fee`. The
@@ -272,7 +264,8 @@ are adopted the same way, with `backend: "rfq"`.
 The one global the core requires is `crypto.getRandomValues`. Node and browsers have it; React
 Native does not, so install `react-native-get-random-values` (or `expo-crypto`) and import it
 before this package. `crypto.subtle` is unused. `EventSource` and `WebSocket` are needed only by
-the watch and relay transports, each of which takes an injected implementation.
+the watch and relay transports, each of which takes an injected implementation. `structuredClone`
+is needed only by `accept()` with `selectedVtxos`; React Native without it needs a polyfill.
 
 The client takes no operator URL. Operator info, Arkade chain reads and broadcast are all derived
 from the wallet, which is the single place that knows which operator it speaks to. The onchain
@@ -300,9 +293,9 @@ custom quote flows with `acceptQuote`/`quoteViaRfq`, record reading with `record
 with the client's internals across minor versions; the root is what stays put.
 
 `./nostr` is a floor and not a deprecation: the client opens the card's rendezvous itself, and the
-subpath is what keeps that an escape hatch rather than a wall. It is a separate entry point
-because `nostr-tools` is an optional peer dependency, so a consumer who never hand-builds a
-transport never pays for it.
+subpath is what keeps that an escape hatch rather than a wall. `nostr-tools` is a regular
+dependency, since the root declarations name its pool type, but the client imports it only once
+Nostr is used.
 
 `./protocol` is the other kind of subpath, and it is a floor rather than a staging area. Every
 name on it was the integration surface before this client — requests, covenants, records, the RFQ

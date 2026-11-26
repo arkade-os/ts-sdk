@@ -1,5 +1,5 @@
 import { FetchError } from "../utils/fetch";
-import { isFetchTimeoutError } from "./ark";
+import { DigestMismatchError, isFetchTimeoutError } from "./ark";
 import { ProviderUnavailableError } from "./errors";
 
 /**
@@ -23,4 +23,12 @@ export function isRetryableProviderError(error: unknown): boolean {
         error instanceof FetchError ||
         isFetchTimeoutError(error)
     );
+}
+
+/**
+ * {@link isRetryableProviderError} plus {@link DigestMismatchError}, which a stale
+ * cached digest raises and a re-read clears.
+ */
+export function isTransientOperatorError(error: unknown): boolean {
+    return isRetryableProviderError(error) || error instanceof DigestMismatchError;
 }

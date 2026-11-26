@@ -207,36 +207,30 @@ describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)
         // right amount) — the CLTV is the only thing that can refuse this,
         // isolating arkd's own timelock gate on the new leaf from the
         // covenant the emulator evaluates.
-        // WHY THE SAME PATTERN MATCHES ALL THREE OF (2)/(4)/(5) BELOW, ON
-        // PURPOSE. `RestEmulatorProvider.submitTx` (src/providers/emulator.ts:90-93)
-        // throws `Failed to submit tx to emulator: ${errorText}`, where
-        // `errorText` is the emulator's raw HTTP response body. Checked
-        // directly against this live stack (`docker logs emulator`) for each
-        // of the three rejections below, in order: the body is, byte for
-        // byte, `{"code":13, "message":"internal error", "details":[]}` —
-        // IDENTICAL for all three, despite three genuinely different causes
-        // server-side (confirmed only in the emulator's own logs, which a
-        // real caller does not see): `FORFEIT_CLOSURE_LOCKED (11): ... >
-        // ... (blocktime)` for the immature case, `OP_EQUALVERIFY failed
-        // vin=0` for the misdirected one, `false stack entry at end of
-        // script execution vin=0` for the shortchanged one — the last two
-        // matching exactly where `enforcePayTo`'s script would fail: the
-        // destination `EQUALVERIFY` for a wrong pkScript, and the trailing
-        // bare `GREATERTHANOREQUAL` (no `VERIFY`) leaving a false stack top
-        // for a short amount, rather than throwing partway through.
-        // `REGEXP` below is deliberately the SAME for all three: it is the
-        // most specific thing the client can actually observe, and forcing
-        // three different patterns onto one indistinguishable response would
-        // manufacture a distinction the API does not provide. What each
-        // assertion still rules out, over a bare `.rejects.toThrow()`: a
-        // wrong-class failure — a bug in this test, a network-level fetch
-        // failure, a timeout somewhere else in the chain — reaching this
-        // `await` instead of a genuine emulator-side submission rejection.
-        const EMULATOR_REJECTION = /Failed to submit tx to emulator:.*"code":\s*13/;
+        // HOW THE REJECTIONS ARE MATCHED. `RestEmulatorProvider.submitTx`
+        // (src/providers/emulator.ts:90-93) throws `Failed to submit tx to
+        // emulator: ${errorText}`, where `errorText` is the emulator's raw
+        // HTTP response body. What that body carries depends on the emulator
+        // release: v0.0.9 answered every rejection with the same opaque
+        // `{"code":13,"message":"internal error"}`, whatever the cause; v0.0.10
+        // passes arkd's own error through (`{"code":9,"message":"FORFEIT_CLOSURE_LOCKED
+        // (11): closure is CLTV locked, ..."}`). So the shared pattern pins only
+        // the prefix, which is what rules out a wrong-class failure (a bug in
+        // this test, a fetch failure, a timeout elsewhere in the chain) reaching
+        // the `await` instead of a genuine emulator-side submission rejection.
+        // The immature case also pins its cause: arkd's name on v0.0.10, the
+        // opaque code 13 on v0.0.9, which `.env.regtest` still pins.
+        // The covenant refusals ((3) wrong destination, (4) short amount) are
+        // matched on the prefix only: their body is whatever the emulator
+        // release reports for a failed ArkadeScript, which is not part of the
+        // contract this file tests.
+        const EMULATOR_REJECTION = /Failed to submit tx to emulator:/;
+        const CLOSURE_LOCKED =
+            /Failed to submit tx to emulator:.*(FORFEIT_CLOSURE_LOCKED|"code":\s*13\b)/;
 
         await expect(
             contract.functions.refund().to(senderPkScript, CONTRACT_AMOUNT).send(),
-        ).rejects.toThrow(EMULATOR_REJECTION);
+        ).rejects.toThrow(CLOSURE_LOCKED);
 
         await matureAbsoluteLocktime(refundLocktime);
 

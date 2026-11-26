@@ -42,6 +42,35 @@ export const READ_TIMEOUT_MS = 30_000;
 let warnedNoTimeoutSupport = false;
 
 /**
+ * A signal that aborts after `ms`, or `undefined` (warned once) where the runtime has neither
+ * `AbortSignal.timeout` nor `AbortController`.
+ */
+export function timeoutSignal(ms: number): AbortSignal | undefined {
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+        return AbortSignal.timeout(ms);
+    }
+
+    // Some React Native runtimes lack `AbortSignal.timeout` but have `AbortController`.
+    if (typeof AbortController === "function") {
+        const controller = new AbortController();
+        // Never cleared, so the bound covers the body read too (as natively); aborting a
+        // settled request is a no-op, and `unref` keeps it from holding Node open.
+        const timer: unknown = setTimeout(() => controller.abort(), ms);
+        (timer as { unref?: () => void })?.unref?.();
+        return controller.signal;
+    }
+
+    if (!warnedNoTimeoutSupport) {
+        warnedNoTimeoutSupport = true;
+        console.warn(
+            "Neither AbortSignal.timeout nor AbortController is available in this runtime: " +
+                "request deadlines (READ_TIMEOUT_MS on provider reads) are NOT applied, so those requests are UNBOUNDED.",
+        );
+    }
+    return undefined;
+}
+
+/**
  * The signal bounding this request, or `undefined` to leave it unbounded. Only GET/HEAD: an
  * aborted write's outcome is unknown, not failed. A `Request` input is left alone — it always
  * carries a `signal`, so whether its author supplied one can't be read back off it.
@@ -51,28 +80,7 @@ function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal
     const { method } = describeRequest(input, init);
     const verb = method.toUpperCase();
     if (verb !== "GET" && verb !== "HEAD") return undefined;
-    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-        return AbortSignal.timeout(READ_TIMEOUT_MS);
-    }
-
-    // Some React Native runtimes lack `AbortSignal.timeout` but have `AbortController`.
-    if (typeof AbortController === "function") {
-        const controller = new AbortController();
-        // Never cleared, so the bound covers the body read too (as natively); aborting a
-        // settled request is a no-op, and `unref` keeps it from holding Node open.
-        const timer: unknown = setTimeout(() => controller.abort(), READ_TIMEOUT_MS);
-        (timer as { unref?: () => void })?.unref?.();
-        return controller.signal;
-    }
-
-    if (!warnedNoTimeoutSupport) {
-        warnedNoTimeoutSupport = true;
-        console.warn(
-            "Neither AbortSignal.timeout nor AbortController is available in this runtime: " +
-                "provider reads are UNBOUNDED and READ_TIMEOUT_MS is not being applied.",
-        );
-    }
-    return undefined;
+    return timeoutSignal(READ_TIMEOUT_MS);
 }
 
 /**

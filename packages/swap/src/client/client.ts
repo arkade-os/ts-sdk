@@ -6,8 +6,14 @@
  * built in a component body, and a missing dep for an unused corridor is not a construction error.
  */
 import { hex } from "@scure/base";
-import { captureSendDeadline, type IWallet } from "@arkade-os/sdk";
+import {
+    captureSendDeadline,
+    toXOnly,
+    type ExtendedVirtualCoin,
+    type IWallet,
+} from "@arkade-os/sdk";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
+import { resolveReceivePkScript } from "../offer";
 import type { SwapOperator } from "../refund";
 import { walletOperator } from "../refund";
 import { corridorSet, type CorridorSet } from "./corridors/registry";
@@ -122,6 +128,11 @@ export interface SwapClientConfig {
 export interface AcceptOptions {
     /** Final funding submission deadline, Unix seconds, capped by the quote expiry. */
     readonly validUntil?: number;
+    /** Spend exactly these VTXOs. An interrupted acceptance requires the same outpoints. */
+    readonly selectedVtxos?: readonly ExtendedVirtualCoin[];
+    /** Maximum unavoidable BTC change paid as an offchain fee, in sats. Zero forbids it.
+     * Repeat the same limit when resuming an interrupted acceptance. */
+    readonly maxChangeFee?: number;
     /** `false` funds an offer with no packet. Default on: a seed-only restore finds an unfilled
      * deposit by it. Kept on the record, so a resumed funding chooses the same. */
     readonly attachOfferPacket?: boolean;
@@ -229,15 +240,17 @@ export interface SwapClient {
     resolve(input: QuoteInput): Promise<RouteResolution>;
     /** Verified, binding terms; no swap is persisted, funded or watched. Advisory health may update.
      * Routing errors include SolverUnavailable, SolverResponseInvalid and SolverRoutesUnavailable;
-     * narrow them with instanceof, separately from the closed SwapError taxonomy. */
-    quote(input: QuoteInput): Promise<Quote>;
+     * narrow them with instanceof, separately from the closed SwapError taxonomy.
+     * An explicit `solverId` from `candidates()` must still be eligible and never fails over. */
+    quote(input: QuoteInput, options?: { readonly solverId?: string }): Promise<Quote>;
     /**
      * Make the quote durable, then move the value: record and secrets are at rest before anything
-     * irreversible. Idempotent by quote id — never a second invoice or a second funding. Returns
+     * irreversible. Idempotent by quote id — never a second invoice or a second funding: a stored
+     * record without a funding txid is answered as it stands until its deposit is found. Returns
      * once durable: an invoice shown while its claim secret is only in memory buys an unclaimable
      * lockup.
      *
-     * @throws {QuoteExpired} past `quote.expiresAt`; the client never re-quotes.
+     * @throws {QuoteExpired} creating a record past `quote.expiresAt`; the client never re-quotes.
      * @throws {InsufficientFunds} before the persist, on funding routes only.
      * @throws {AcceptConflict} when a record for this quote id contradicts it.
      * @throws {MissingCorridorDep} when the client was given no repository.
@@ -267,7 +280,7 @@ export interface SwapClient {
     /**
      * Swap one Arkade asset for another.
      *
-     * @throws {MaxFeeExceeded} as {@link pay} does.
+     * @throws {MaxFeeExceeded} as {@link pay} does; `Error` for any ceiling on a cross-asset swap.
      */
     exchange(options: ExchangeOptions): Promise<Swap>;
 
@@ -299,7 +312,12 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     const auctionQuotes = new Map<QuoteId, Quote>();
     const auctions = new Map<
         OpenRfqAuction,
-        { input: QuoteInput; route: ResolvedRoute; offers: Map<OpenRfqOffer, MarketCandidate> }
+        {
+            input: QuoteInput;
+            route: ResolvedRoute;
+            offers: Map<OpenRfqOffer, MarketCandidate>;
+            receiveAddress?: string;
+        }
     >();
     const health =
         config.policy?.solverRouting === undefined
@@ -397,7 +415,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         assetPayment?: ReturnType<typeof captureAssetPayment>,
         auction?: AuctionProvenance,
     ): Promise<Quote> => {
-        const { corridors } = await resolved();
+        const { base, corridors } = await resolved();
         corridors.get(resolvedRoute.legs.give.corridor);
         corridors.get(resolvedRoute.legs.take.corridor);
         ensureLive("quote");
@@ -422,12 +440,25 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         if (market.backend === "feed") {
             if (assetPayment !== undefined)
                 throw new Error("assetPayment needs a negotiated BTC-to-asset market");
+            const operatorDust = async (): Promise<bigint> => {
+                const { dust } = await liveOperatorInfo(wallet);
+                if (
+                    typeof dust !== "bigint" ||
+                    dust <= 0n ||
+                    dust > BigInt(Number.MAX_SAFE_INTEGER)
+                )
+                    throw new Error(
+                        `the Arkade operator reports dust ${String(dust)}, which cannot carry an asset deposit`,
+                    );
+                return dust;
+            };
             const { quote, preparation } = await quoteFromFeed({
                 quoteId,
                 candidate: market,
                 market: marketRef,
                 legs: resolvedRoute.legs,
                 endpoints: { give: resolvedRoute.give, take: resolvedRoute.take },
+                operatorDust,
                 ...(resolvedRoute.amount === undefined ? {} : { amount: resolvedRoute.amount }),
                 feed,
                 ...(config.policy === undefined ? {} : { policy: config.policy }),
@@ -442,6 +473,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         // live: a snapshot could bind the tree to a signer key the operator no longer co-signs
         // for; an unreachable operator is `OperatorUnreachable` here, before funding
         const info = await liveOperatorInfo(wallet, { requireLive: true });
+        if (assetPayment !== undefined && info.network !== base.networkName)
+            throw new UnsupportedRoute("Arkade network changed during asset payment preparation");
         const rendezvous = market.card.discovery_pubkey;
         if (rendezvous === undefined) {
             // unreachable: `eligibleMarkets` drops a corridor card with no rendezvous, and an asset card without one prices from its feed
@@ -482,6 +515,16 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             });
             ensureLive("quote");
             const issued = auction === undefined ? quote : { ...quote, auction };
+            if (
+                auction !== undefined &&
+                preparation.route === "arkade->arkade" &&
+                quote.assetPayment !== undefined &&
+                quote.assetPayment.validUntil > auction.winner.expiresAt
+            ) {
+                const terms = { ...quote.assetPayment, validUntil: auction.winner.expiresAt };
+                remember(quoteId, { ...preparation, assetPayment: terms });
+                return { ...issued, assetPayment: terms };
+            }
             remember(quoteId, preparation);
             return issued;
         } finally {
@@ -509,9 +552,19 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         openRfq: async (input, options) => {
             ensureLive("openRfq");
             options.signal?.throwIfAborted();
-            if (input.assetPayment !== undefined)
-                throw new UnsupportedRoute("open RFQ does not publish asset-payment terms");
-            const captured = Object.freeze({ ...input });
+            const { assetPayment, ...routeInput } = input;
+            const receiveAddress = assetPayment?.receiveAddress;
+            if (
+                assetPayment !== undefined &&
+                (typeof receiveAddress !== "string" ||
+                    !receiveAddress ||
+                    assetPayment.carrier !== undefined ||
+                    routeInput.to !== undefined)
+            )
+                throw new UnsupportedRoute(
+                    "open RFQ asset payments require assetPayment.receiveAddress without carrier options",
+                );
+            const captured = Object.freeze(routeInput);
             const { base, corridors, discovery } = await resolved();
             let snapshot: DiscoverySnapshot;
             try {
@@ -532,6 +585,28 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     give: routed.legs.give.corridor,
                     take: routed.legs.take.corridor,
                 });
+            if (receiveAddress !== undefined) {
+                if (
+                    routed.pair !== "arkade->arkade" ||
+                    !isBtcAsset(routed.give.asset) ||
+                    isBtcAsset(routed.take.asset) ||
+                    routed.amount?.on !== "take"
+                )
+                    throw new UnsupportedRoute(
+                        "open RFQ asset payments require an exact BTC-to-asset route",
+                    );
+                const info = await liveOperatorInfo(wallet, { requireLive: true });
+                if (info.network !== base.networkName)
+                    throw new UnsupportedRoute(
+                        "Arkade network changed during asset payment discovery",
+                    );
+                resolveReceivePkScript(
+                    receiveAddress,
+                    new Uint8Array(),
+                    base.network.hrp,
+                    toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+                );
+            }
             const canonicalInput = Object.freeze({
                 ...captured,
                 give: routed.give.asset,
@@ -644,6 +719,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 ensureLive("openRfq");
                 const { collectOpenRfqBids } = await import("../openRfqTransport");
                 ensureLive("openRfq");
+                controller.signal.throwIfAborted();
                 const bids = await collectOpenRfqBids(
                     { ...request, bidsUntil: Math.ceil((Date.now() + windowMs) / 1000) },
                     {
@@ -694,6 +770,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     input: canonicalInput,
                     route: routed,
                     offers: new Map(offers.map((offer) => [offer, owned.get(offer.id)!.candidate])),
+                    ...(receiveAddress === undefined ? {} : { receiveAddress }),
                 });
                 if (auctions.size > 16) auctions.delete(auctions.keys().next().value!);
                 return auction;
@@ -754,12 +831,19 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             checkExpiry();
             let quote: Quote | undefined;
             try {
-                quote = await prepare(routed, candidate, undefined, {
-                    marketKey: auction.pair,
-                    winner: ranked(bid),
-                    losers: auction.bids.filter((other) => other !== bid).map(ranked),
-                    closedAt: auction.closedAt,
-                });
+                quote = await prepare(
+                    routed,
+                    candidate,
+                    session.receiveAddress === undefined
+                        ? undefined
+                        : { receiveAddress: session.receiveAddress },
+                    {
+                        marketKey: auction.pair,
+                        winner: ranked(bid),
+                        losers: auction.bids.filter((other) => other !== bid).map(ranked),
+                        closedAt: auction.closedAt,
+                    },
+                );
                 ensureLive("quoteBid");
                 checkExpiry();
                 if (quote.give.amount > bid.fromAmount || quote.take.amount < bid.toAmount)
@@ -830,8 +914,9 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             );
         },
 
-        quote: async (input) => {
+        quote: async (input, options) => {
             const assetPayment = captureAssetPayment(input.assetPayment);
+            const solverId = options?.solverId;
             ensureLive("quote");
             const { base, corridors, discovery } = await resolved();
             let resolvedRoute = await route(input, "quote");
@@ -840,7 +925,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             // carries unvalidated, so re-pin from the registry. If unreachable, the stale snapshot
             // comes back and the check refuses it (fail closed).
             if (
-                (config.policy?.solverRouting === undefined
+                (solverId === undefined && config.policy?.solverRouting === undefined
                     ? resolvedRoute.market?.backend === "rfq"
                     : resolvedRoute.candidates.some((candidate) => candidate.backend === "rfq")) &&
                 !resolvedRoute.snapshot.ref.live
@@ -849,7 +934,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 resolvedRoute = await route(input, "quote");
             }
 
-            const candidates = await orderedSolverCandidates(
+            const ordered = await orderedSolverCandidates(
                 resolvedRoute,
                 base.networkName,
                 config.policy,
@@ -857,12 +942,18 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 true,
                 health,
             );
+            const candidates =
+                solverId === undefined
+                    ? ordered
+                    : ordered.filter((candidate) => candidate.solverId === solverId);
             if (candidates.length === 0) {
                 throw new UnsupportedRoute(
-                    `no market serves ${resolvedRoute.legs.give.corridor}:` +
-                        `${resolvedRoute.legs.give.assetId} -> ` +
-                        `${resolvedRoute.legs.take.corridor}:${resolvedRoute.legs.take.assetId} ` +
-                        "on the active discovery snapshot",
+                    solverId === undefined
+                        ? `no market serves ${resolvedRoute.legs.give.corridor}:` +
+                              `${resolvedRoute.legs.give.assetId} -> ` +
+                              `${resolvedRoute.legs.take.corridor}:${resolvedRoute.legs.take.assetId} ` +
+                              "on the active discovery snapshot"
+                        : "the selected solver is unavailable for this route",
                     {
                         give: resolvedRoute.legs.give.corridor,
                         take: resolvedRoute.legs.take.corridor,
@@ -876,6 +967,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             corridors.get(resolvedRoute.legs.take.corridor);
 
             const failover =
+                solverId === undefined &&
                 config.policy?.solverRouting !== undefined &&
                 config.policy.solverRouting.failover !== false &&
                 config.policy.selectMarket === undefined;
@@ -905,11 +997,24 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             if (issued !== undefined && issued !== quote)
                 throw new Error("auction quote must be the original issued quote");
             const requestedDeadline = captureSendDeadline(options?.validUntil);
+            const attachOfferPacket = options?.attachOfferPacket;
+            const maxChangeFee = options?.maxChangeFee;
+            const selectedVtxos = options?.selectedVtxos;
             const validUntil =
                 issued === undefined
                     ? requestedDeadline
                     : Math.min(issued.expiresAt, requestedDeadline ?? issued.expiresAt);
             ensureLive("accept");
+            const funding =
+                selectedVtxos === undefined && maxChangeFee === undefined
+                    ? undefined
+                    : {
+                          selectedVtxos:
+                              selectedVtxos === undefined
+                                  ? undefined
+                                  : structuredClone([...selectedVtxos]),
+                          maxChangeFee,
+                      };
             const { corridors } = await resolved();
             const drive = driving();
             // before the persist: the restore indexes stored records, and resuming one the drive
@@ -919,7 +1024,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             return acceptQuote({
                 quote,
                 ...(validUntil === undefined ? {} : { validUntil }),
-                ...(options?.attachOfferPacket === false ? { attachOfferPacket: false } : {}),
+                ...(attachOfferPacket === false ? { attachOfferPacket: false } : {}),
+                ...(funding === undefined ? {} : { funding }),
                 ...(preparation === undefined ? {} : { preparation }),
                 wallet,
                 repository: config.repository,

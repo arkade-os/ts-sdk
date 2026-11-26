@@ -64,6 +64,8 @@ export interface OfferPreparation {
     /** The plan the offer covenant is built from: both amounts and both assets. */
     readonly plan: OfferPlan;
     readonly give: Side;
+    /** The asset deposit's carrier the plan was priced with, funded as quoted. */
+    readonly carrierSats?: bigint;
 }
 
 export interface FeedQuoteInput {
@@ -72,6 +74,9 @@ export interface FeedQuoteInput {
     readonly market: CardMarketRef;
     readonly legs: { readonly give: DiscoveryLeg; readonly take: DiscoveryLeg };
     readonly endpoints: { readonly give: ResolvedEndpoint; readonly take: ResolvedEndpoint };
+    /** The operator's validated dust; read only when a carrier is priced, so a BTC give to a card
+     * that doesn't charge for the delivered carrier needs no operator. */
+    readonly operatorDust: () => Promise<bigint>;
     readonly amount?: PinnedAmount;
     readonly feed: FeedFetch;
     readonly policy?: SwapPolicy;
@@ -103,6 +108,13 @@ export const quoteFromFeed = async (
         // no invoice on this route can pin one; caller input, not a swap-boundary refusal
         throw new Error("an asset swap needs an amount and the side it pins");
     }
+    // The carrier the solver delivers is the operator's dust, which a card charging for it asks of
+    // a BTC deposit too; any other BTC give prices none, so the fallback is never charged.
+    const giveIsBtc = isBtcAsset(input.endpoints.give.asset);
+    const needsDust = !giveIsBtc || candidate.card.charges_delivered_carrier === true;
+    const dust = needsDust ? await input.operatorDust() : undefined;
+    const carrier = giveIsBtc ? undefined : dust;
+    const priced = dust ?? ASSET_CARRIER_SATS;
 
     const plan = await quoteAdvertisedPlan(
         candidate.card,
@@ -111,7 +123,7 @@ export const quoteFromFeed = async (
             ...(amount.on === "give" ? { giveAmount: amount.value } : { wantAmount: amount.value }),
             // What `fund` attaches to an asset deposit and the fill pays an asset want: the plan asks
             // for it back in a BTC payout, and charges it where the card declares a delivered carrier.
-            carrierSats: ASSET_CARRIER_SATS,
+            carrierSats: priced,
             ...QUOTE_OPTIONS,
             fetchImpl: input.feed.fetch,
         },
@@ -144,6 +156,7 @@ export const quoteFromFeed = async (
             id: input.quoteId,
             route,
             give: { asset: input.endpoints.give.asset, amount: plan.deposit.atomic },
+            ...(carrier === undefined ? {} : { depositCarrierSats: carrier }),
             take: { asset: input.endpoints.take.asset, amount: plan.receive.atomic },
             market: input.market,
             expiresAt,
@@ -152,12 +165,18 @@ export const quoteFromFeed = async (
                 amount: feedSpread(
                     plan,
                     plan.receive.atomic,
-                    sellsAssetForBtc(input.endpoints) ? ASSET_CARRIER_SATS : 0n,
+                    sellsAssetForBtc(input.endpoints) ? priced : 0n,
                 ),
                 asset: input.endpoints.take.asset,
             },
         },
-        preparation: { backend: "feed", card: candidate.card, plan, give: candidate.give },
+        preparation: {
+            backend: "feed",
+            card: candidate.card,
+            plan,
+            give: candidate.give,
+            ...(carrier === undefined ? {} : { carrierSats: carrier }),
+        },
     };
 };
 
@@ -171,7 +190,6 @@ export const quoteFromFeed = async (
  * that returns it charges nothing for it, and one that does not shows it as fee.
  */
 export const feedSpread = (plan: OfferPlan, take: bigint, carrierSats = 0n): bigint => {
-    const payout = take > carrierSats ? take - carrierSats : 0n;
     const fair = computeWantAmount({
         deposit: plan.deposit.atomic,
         give: plan.give,
@@ -179,7 +197,7 @@ export const feedSpread = (plan: OfferPlan, take: bigint, carrierSats = 0n): big
         feeBps: 0,
         safetyBps: 0,
     });
-    const spread = fair - payout;
+    const spread = fair + carrierSats - take;
     return spread > 0n ? spread : 0n;
 };
 

@@ -29,22 +29,14 @@
           "name": "renew",
           "witness": [
             {
-              "name": "serverSig",
-              "type": "signature",
-              "encoding": "schnorr-64",
-              "injected": true
-            },
-            {
-              "name": "emulatorSig",
+              "name": "operatorSig",
               "type": "signature",
               "encoding": "schnorr-64",
               "injected": true
             }
           ],
           "asm": [
-            "<SERVER_KEY>",
-            "OP_CHECKSIGVERIFY",
-            "<EMULATOR_KEY:renew>",
+            "<OPERATOR_KEY:renew>",
             "OP_CHECKSIG"
           ]
         }
@@ -63,7 +55,7 @@
             }
           ],
           "asm": [
-            "<SERVER_EXIT_DELAY>",
+            "<OPERATOR_EXIT_DELAY>",
             "OP_CHECKSEQUENCEVERIFY",
             "OP_DROP",
             "<owner>",
@@ -73,10 +65,11 @@
       ]
     }
   ],
+  "codeHash": "sha256:98cfcffa996202f9bd6b6aff2fdd5c8146c7c0e49f5d0a743032b1335c30ba89",
   "source": {
     "entry": "renewable.ark",
     "files": {
-      "renewable.ark": "pragma arkade ^0.1.0;\n\n// A coin anyone may renew into a new batch without the owner's key.\ncontract Renewable(pubkey owner) {\n  function renew() {\n    require(tx.version == 2, \"intent only\");\n    require(this.tunnel(this.activeInputIndex - 1), \"tunnel\");\n  }\n\n  function unilateral(signature ownerSig) tapscript {\n    require(older(serverExitDelay));\n    require(checkSig(ownerSig, owner));\n  }\n}\n"
+      "renewable.ark": "pragma arkade ^0.1.0;\n\n// A coin anyone may renew into a new batch without the owner's key.\ncontract Renewable(pubkey owner) {\n  function renew() {\n    require(tx.version == 2, \"intent only\");\n    require(this.tunnel(this.activeInputIndex - 1), \"tunnel\");\n  }\n\n  function unilateral(signature ownerSig) tapscript {\n    require(older(operatorExitDelay));\n    require(checkSig(ownerSig, owner));\n  }\n}\n"
     }
   },
   "compiler": {
@@ -86,6 +79,6 @@
       "optimize": true
     }
   },
-  "updatedAt": "2026-10-29T19:27:31.494417700+00:00",
-  "fingerprint": "sha256:ff0de61217f68e8450199f2539fee92d9e1e641b3a70986c0c7f248ea3a01b9c"
+  "updatedAt": "2026-11-25T15:08:20.021+00:00",
+  "fingerprint": "sha256:2c8753cd8f1b9c90a19d9fbf70bee149492a62540c0e071a19690ab09a5573ce"
 }

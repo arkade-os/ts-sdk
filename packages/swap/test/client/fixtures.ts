@@ -30,10 +30,10 @@ import {
 } from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
 import { ASSET_SWAP_V2, ASSET_SWAP_DIRECTED } from "../../src/program";
+import { ASSET_SWAP_DIRECTED_NONCE, assetRfqNonce } from "../../src/protocol";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
-    ONCHAIN_RECEIVE_PAIR,
     ONCHAIN_SEND_PAIR,
     lightningReceiveContract,
     lightningSendContract,
@@ -58,9 +58,6 @@ export const SOLVER_DISCOVERY_KEY = hex.encode(key(4));
 export const RECEIVER_PK_SCRIPT = p2tr(key(6));
 export const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 export const HTLC_REFUND_PUBKEY = key(7);
-/** The solver's L1 claim key on `onchain -> arkade`. */
-export const HTLC_CLAIM_PUBKEY = key(10);
-/** The wallet's boarding address: where an `onchain -> arkade` refund pays. */
 export const BOARDING_ADDRESS = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 
 export const NETWORK = getNetwork("regtest");
@@ -84,6 +81,7 @@ export const CHECKPOINT_TAPSCRIPT = hex.encode(
 /** What the wallet answers `getArkadeInfo()` with. */
 export const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
+    dust: 330n,
     unilateralExitDelay: 4096n,
     network: "regtest",
     deprecatedSigners: [],
@@ -485,54 +483,6 @@ export const onchainSendAnswer = (
     } as RfqQuote;
 };
 
-/** The solver's answer to `onchain:BTC->arkade:BTC`: its lockup and the L1 HTLC the trader funds. */
-export const onchainReceiveAnswer = (
-    payload: Payload,
-    clock: SolverClock,
-    over: { quote?: Partial<RfqQuote>; profile?: Profile } = {},
-): RfqQuote => {
-    const profile = profileOf(payload);
-    const paymentHash = profile.payment_hash as string;
-    const script = lightningReceiveContract({
-        solverPubkey: SOLVER_PUBKEY,
-        refundLocktime: clock.refundLocktime,
-        operatorPubkey: OPERATOR_PUBKEY,
-        paymentHash,
-        claimDelay: CLAIM_DELAY,
-        emulatorPubkey: EMULATOR_PUBKEY,
-        solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
-        payoutPubkey: hex.decode(profile.payout_pubkey as string),
-        payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
-    });
-    const htlc = onchainHtlcScript(
-        {
-            paymentHash,
-            claimKey: HTLC_CLAIM_PUBKEY,
-            refundKey: hex.decode(profile.refund_pubkey as string),
-            refundLocktime: clock.htlcLocktime,
-        },
-        "regtest",
-    );
-    // The pinned side echoes the request, the other carries a 1% spread.
-    const requested = Number(payload.amount);
-    const toPinned = payload.amount_side === "to";
-    return {
-        ...baseQuote(payload, clock),
-        from_amount: toPinned ? Math.ceil(requested * 1.01) : requested,
-        to_amount: toPinned ? requested : Math.floor(requested * 0.99),
-        profile: {
-            lockup_address: script.address(NETWORK.hrp, OPERATOR_PUBKEY).encode(),
-            solver_refund_pk_script: hex.encode(SOLVER_REFUND_PK_SCRIPT),
-            claim_pubkey: hex.encode(HTLC_CLAIM_PUBKEY),
-            htlc_locktime: clock.htlcLocktime,
-            htlc_address: htlc.address,
-            min_confirmations: 2,
-            ...over.profile,
-        },
-        ...over.quote,
-    } as RfqQuote;
-};
-
 /**
  * The solver's answer on a negotiated asset market.
  *
@@ -554,6 +504,7 @@ export const arkadeAssetAnswer = (
         toAmount?: bigint;
         /** Quotes and derives `asset-swap-directed` under this key; default, the one the transport attests. */
         taker?: Uint8Array;
+        supportsNonce?: boolean;
     } = {},
 ): RfqQuote => {
     const profile = profileOf(payload);
@@ -570,10 +521,13 @@ export const arkadeAssetAnswer = (
     const usd = asset.AssetId.fromString(USD_ASSET_ID);
     // As the solver negotiates: first advertised contract version it serves, echoed only when asked.
     const version = (payload.contract_versions as string[] | undefined)?.find(
-        (v) => v === ASSET_SWAP_DIRECTED || v === ASSET_SWAP_V2,
+        (v) =>
+            v === ASSET_SWAP_DIRECTED ||
+            v === ASSET_SWAP_V2 ||
+            (over.supportsNonce && v === ASSET_SWAP_DIRECTED_NONCE),
     );
     const taker =
-        version === ASSET_SWAP_DIRECTED
+        version === ASSET_SWAP_DIRECTED || version === ASSET_SWAP_DIRECTED_NONCE
             ? (over.taker ?? hex.decode(SOLVER_DISCOVERY_KEY))
             : undefined;
     const script = offerContract(
@@ -587,9 +541,14 @@ export const arkadeAssetAnswer = (
             emulatorPubkey: EMULATOR_PUBKEY,
             exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
             ...(taker && { taker }),
+            ...(version === ASSET_SWAP_DIRECTED_NONCE && {
+                nonce: assetRfqNonce(payload.rfq_id as string),
+            }),
         },
         OPERATOR_PUBKEY,
-        version === ASSET_SWAP_DIRECTED ? version : ASSET_SWAP_V2,
+        version === ASSET_SWAP_DIRECTED || version === ASSET_SWAP_DIRECTED_NONCE
+            ? version
+            : ASSET_SWAP_V2,
     );
     return {
         v: 1,
@@ -658,8 +617,6 @@ export const solverFor = (clock: SolverClock): SolverAnswer => {
                 return lightningReceiveAnswer(payload, clock);
             case ONCHAIN_SEND_PAIR:
                 return onchainSendAnswer(payload, clock);
-            case ONCHAIN_RECEIVE_PAIR:
-                return onchainReceiveAnswer(payload, clock);
             case ASSET_BUY_PAIR:
             case ASSET_SELL_PAIR:
                 return arkadeAssetAnswer(payload, clock);
@@ -674,7 +631,7 @@ export const compressed = (fill: number): string =>
 
 // ── What `accept()` needs behind it, and nothing the quote path had ─────────
 
-/** One `wallet.send` call, exactly as the accept path issued it. */
+/** One recipient of a `wallet.send` call, exactly as the accept path issued it. */
 export interface SentPayment {
     address: string;
     amount?: number;
@@ -697,6 +654,8 @@ export interface AcceptWallet {
     readonly wallet: IWallet;
     /** Every funding call, in order. */
     readonly sent: SentPayment[];
+    /** Every funding call's whole request, send options included. */
+    readonly requests: unknown[];
     /** Every contract row written, in order — first-writer-wins is modelled. */
     readonly contracts: WrittenContract[];
     /** Every watch-state change, in order. The offer route promotes its row. */
@@ -730,6 +689,7 @@ export const acceptWallet = async (
 ): Promise<AcceptWallet> => {
     const base = await hdWallet();
     const sent: SentPayment[] = [];
+    const requests: unknown[] = [];
     const contracts: WrittenContract[] = [];
     const watched: WatchStateCall[] = [];
     const deposits = new Map<
@@ -786,14 +746,15 @@ export const acceptWallet = async (
         // transactions for offer packets. An empty history is the honest answer
         // for a wallet that has funded nothing outside this test.
         getTransactionHistory: async () => [],
-        send: async (recipient: SentPayment) => {
+        send: async (request: SentPayment | { recipients: SentPayment[] }) => {
             const failure = over.failSend?.();
             if (failure) throw failure;
-            sent.push(recipient);
+            requests.push(request);
+            sent.push(...("recipients" in request ? request.recipients : [request]));
             return over.txid ?? FUNDING_TXID;
         },
     } as unknown as IWallet;
-    return { wallet, sent, contracts, watched, deposits };
+    return { wallet, sent, requests, contracts, watched, deposits };
 };
 
 /** The txid `acceptWallet`'s `send` returns unless told otherwise. */

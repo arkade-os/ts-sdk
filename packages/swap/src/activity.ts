@@ -32,7 +32,6 @@ const LABELS: Record<SwapActivityInput["kind"], string> = {
     lightning_send: "Lightning send",
     lightning_receive: "Lightning receive",
     onchain_send: "Onchain send",
-    onchain_receive: "Onchain receive",
 };
 
 /**

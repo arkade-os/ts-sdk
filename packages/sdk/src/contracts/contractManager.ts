@@ -30,7 +30,7 @@ import {
     watchStateOf,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
-import { contractHandlers } from "./handlers";
+import { contractHandlers, ExecutorContractHandler } from "./handlers";
 import { speculativeReceiveMetadata } from "./handlers/helpers";
 import { Coin, ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
@@ -662,6 +662,8 @@ export interface ContractManagerConfig {
     /** Enables onchain coin discovery and watching; needs `network` too. */
     onchainProvider?: OnchainProvider;
     network?: Network;
+    /** Fired after a new onchain-scoped contract is saved: the onchain address set changed. */
+    onOnchainContractCreated?: () => void;
 }
 
 /**
@@ -1325,6 +1327,7 @@ export class ContractManager implements IContractManager {
             // Best-effort hydration so wallet construction survives an offline operator; the
             // contract is still watched and hydrates on the next reconcile.
             await this.trySync(() => this.fetchContractVxosFromIndexer([contract]));
+            await this.syncNewOnchain([contract]);
             await this.watcher.addContract(contract);
         }
         return contract;
@@ -1357,6 +1360,7 @@ export class ContractManager implements IContractManager {
             const fresh = upserted.filter((u) => u.persisted).map((u) => u.contract);
             if (fresh.length > 0) {
                 await this.trySync(() => this.fetchContractVxosFromIndexer(fresh));
+                await this.syncNewOnchain(fresh);
                 for (const contract of fresh) await this.watcher.addContract(contract);
             }
             return upserted.map((u) => u.contract);
@@ -1446,6 +1450,14 @@ export class ContractManager implements IContractManager {
         };
 
         await this.config.contractRepository.saveContract(contract);
+        if (isOnchainScoped(contract)) {
+            // The row is saved: a throwing callback must not skip its hydration and watching.
+            try {
+                this.config.onOnchainContractCreated?.();
+            } catch (e) {
+                console.warn("onOnchainContractCreated failed", e);
+            }
+        }
         return { contract, persisted: true };
     }
 
@@ -2148,6 +2160,21 @@ export class ContractManager implements IContractManager {
     /** @see IContractManager.getWatchedScripts */
     async getWatchedScripts(): Promise<WatchedScript[]> {
         return this.watcher.getWatchedScripts();
+    }
+
+    /**
+     * The onchain side of hydrating new Executor contracts: stores their coins, and the sync's
+     * retarget adds their addresses to the onchain watch. Best-effort: the next sync retries.
+     */
+    private async syncNewOnchain(contracts: Contract[]): Promise<void> {
+        // Executor only: a plain boarding row is created inside the settle lock.
+        const scripts = contracts
+            .filter((c) => c.type === ExecutorContractHandler.type && isOnchainScoped(c))
+            .map((c) => c.script);
+        if (scripts.length === 0) return;
+        await this.syncOnchain(scripts).catch((e) =>
+            console.warn("[contracts] onchain sync of new contracts failed", e),
+        );
     }
 
     /** @see IContractManager.syncOnchain */

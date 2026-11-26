@@ -273,6 +273,7 @@ export function createArkadeBatchHandler(
 
                     commitmentPsbt.updateInput(boardingIdx, {
                         tapLeafScript: [input.forfeitTapLeafScript],
+                        sighashType: SigHash.DEFAULT,
                     });
                     boardingIndices.push(boardingIdx);
                     continue;

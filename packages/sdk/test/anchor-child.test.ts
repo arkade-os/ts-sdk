@@ -8,6 +8,10 @@ import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { buildAnchorChild, ANCHOR_PKSCRIPT, P2A } from "../src/utils/anchor";
 import { buildOffchainTx } from "../src/utils/arkTransaction";
 import { Transaction } from "../src/utils/transaction";
+import { OnchainWallet } from "../src/wallet/onchain";
+import { SingleKey } from "../src/identity/singleKey";
+import type { OnchainProvider } from "../src/providers/onchain";
+import type { Coin } from "../src/wallet";
 
 const network = getNetwork("regtest");
 const key = schnorr.getPublicKey(new Uint8Array(32).fill(3));
@@ -118,5 +122,59 @@ describe("buildAnchorChild", () => {
                 network,
             }),
         ).toThrow(/dust|insufficient/i);
+    });
+});
+
+describe("OnchainWallet.bumpP2A coin selection", () => {
+    const coin = (id: string, value: number, confirmed: boolean): Coin => ({
+        txid: id.repeat(32),
+        vout: 0,
+        value,
+        status: { confirmed },
+    });
+
+    /** The txids of the fee inputs of the child `bumpP2A` builds from `coins`. */
+    async function feeInputs(coins: Coin[], feeRate = 2): Promise<string[]> {
+        const provider = {
+            getFeeRate: async () => feeRate,
+            getCoins: async () => coins,
+            broadcastTransaction: async () => "",
+        } as Partial<OnchainProvider> as OnchainProvider;
+        const wallet = await OnchainWallet.create(
+            SingleKey.fromHex("1".repeat(64)),
+            "regtest",
+            provider,
+        );
+        const [, childHex] = await wallet.bumpP2A(makeParentWithAnchor());
+        const child = Transaction.fromRaw(hex.decode(childHex));
+        return Array.from({ length: child.inputsLength - 1 }, (_, i) =>
+            hex.encode(child.getInput(i + 1).txid!),
+        );
+    }
+
+    it("funds from a confirmed coin over a larger unconfirmed one", async () => {
+        const inputs = await feeInputs([coin("aa", 1_000_000, false), coin("bb", 50_000, true)]);
+        expect(inputs).toEqual(["bb".repeat(32)]);
+    });
+
+    it("still funds from an unconfirmed coin when no confirmed coin can", async () => {
+        const inputs = await feeInputs([coin("cc", 100_000, false)]);
+        expect(inputs).toEqual(["cc".repeat(32)]);
+    });
+
+    it("adds coins until the fee for that many inputs leaves dust-free change", async () => {
+        const inputs = await feeInputs([coin("11", 600, true), coin("22", 600, true)], 1);
+        expect(inputs).toHaveLength(2);
+    });
+
+    it("refuses a fee child over the 1000 vB TRUC limit", async () => {
+        const coins = Array.from({ length: 20 }, (_, i) => coin((i + 16).toString(16), 600, true));
+        await expect(feeInputs(coins, 8)).rejects.toThrow(/1000 vB TRUC limit/);
+    });
+
+    it("refuses the TRUC limit rather than retrying on an unconfirmed coin", async () => {
+        const coins = Array.from({ length: 20 }, (_, i) => coin((i + 16).toString(16), 600, true));
+        coins.push(coin("ff", 1_000_000, false));
+        await expect(feeInputs(coins, 8)).rejects.toThrow(/1000 vB TRUC limit/);
     });
 });

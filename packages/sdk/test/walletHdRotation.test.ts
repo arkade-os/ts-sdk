@@ -22,6 +22,7 @@ import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { WalletReceiveRotator } from "../src/wallet/walletReceiveRotator";
 import type { Contract, ContractEvent, ExtendedVirtualCoin } from "../src";
 import { jsonResponse } from "./helpers/response";
+import { ProviderUnavailableError } from "../src/providers/errors";
 
 /**
  * Hand-crafted integration tests for HD receive rotation against the
@@ -1399,12 +1400,23 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         "0000000000000000000000000000000000000000000000000000000000000001",
     );
 
+    const USER_KEY = SingleKey.fromHex(
+        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+    );
+
     // Sign input 0 of a checkpoint PSBT with the server key on the
     // collaborative (forfeit) leaf and return the re-encoded base64 PSBT.
     async function serverSignCheckpoint(checkpointB64: string): Promise<string> {
         const tx = Transaction.fromPSBT(base64.decode(checkpointB64));
         const signed = await SERVER_KEY.sign(tx, [0]);
         return base64.encode(signed.toPSBT());
+    }
+
+    // The ark tx as an honest operator stores it: sender-signed, then co-signed.
+    async function finalArkTxFor(arkTx: Transaction): Promise<string> {
+        const indexes = Array.from({ length: arkTx.inputsLength }, (_, i) => i);
+        const userSigned = await USER_KEY.sign(arkTx, indexes);
+        return base64.encode((await SERVER_KEY.sign(userSigned, indexes)).toPSBT());
     }
 
     // Pubkeys (x-only hex) that carry a tapScriptSig on the given input.
@@ -1448,9 +1460,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         // Use a baseline SingleKey wallet (no HD rotation): every input
         // routes to the identity, so canBatch returns true and the batch
         // path is exercised.
-        const base = SingleKey.fromHex(
-            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
-        );
+        const base = USER_KEY;
         const identity = batchSignable
             ? makeBatchSignable(base)
             : (base as unknown as ReturnType<typeof makeBatchSignable>);
@@ -1720,11 +1730,13 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
 
         // Pretend a previous send was interrupted after submit.
         await (wallet as any).setPendingTxFlag(true);
-        const getPendingSpy = vi
-            .spyOn(wallet.arkProvider, "getPendingTxs")
-            .mockResolvedValue([
-                { arkTxid: "cd".repeat(32), signedCheckpointTxs: [serverCheckpointB64] },
-            ] as never);
+        const getPendingSpy = vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([
+            {
+                arkTxid: offchain.arkTx.id,
+                finalArkTx: await finalArkTxFor(offchain.arkTx),
+                signedCheckpointTxs: [serverCheckpointB64],
+            },
+        ] as never);
         let finalizedCheckpoints: string[] | undefined;
         const finalizeSpy = vi
             .spyOn(wallet.arkProvider, "finalizeTx")
@@ -1734,7 +1746,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
 
         const result = await wallet.finalizePendingTxs([coin]);
 
-        expect(result.finalized).toEqual(["cd".repeat(32)]);
+        expect(result.finalized).toEqual([offchain.arkTx.id]);
         // One batch call covers every checkpoint of the recovered tx.
         expect(identity.signMultipleSpy).toHaveBeenCalledTimes(1);
 
@@ -1764,7 +1776,8 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             unroll,
         );
         return {
-            arkTxid: "cd".repeat(32),
+            arkTxid: offchain.arkTx.id,
+            finalArkTx: await finalArkTxFor(offchain.arkTx),
             signedCheckpointTxs: [
                 await serverSignCheckpoint(base64.encode(offchain.checkpoints[0].toPSBT())),
             ],
@@ -1784,7 +1797,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
     async function runFinalizePending(
         wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
         coins: ExtendedVirtualCoin[],
-        pendingTx: { arkTxid: string; signedCheckpointTxs: string[] },
+        pendingTx: { arkTxid: string; finalArkTx?: string; signedCheckpointTxs: string[] },
     ) {
         await (wallet as any).setPendingTxFlag(true);
         vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([pendingTx] as never);
@@ -1792,6 +1805,31 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const result = await wallet.finalizePendingTxs(coins);
         return { result, finalizeSpy };
     }
+
+    it("rethrows a transient finalize failure during recovery but not on a live boot", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const pending = await pendingTxFor(wallet, coin);
+        const info = await wallet.arkProvider.getInfo();
+        await (wallet as any).setPendingTxFlag(true);
+        vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([pending] as never);
+        const finalizeSpy = vi
+            .spyOn(wallet.arkProvider, "finalizeTx")
+            .mockRejectedValue(new ProviderUnavailableError("operator offline"));
+
+        // The per-tx catch would otherwise report a pass that reached a conclusion,
+        // unfencing sends on an operator that vanished mid-recovery.
+        await expect(
+            (wallet as any).finalizePendingTxsImpl([coin], { info, isCurrent: () => true }),
+        ).rejects.toThrow("operator offline");
+
+        const result = await wallet.finalizePendingTxs([coin]);
+        expect(result.finalized).toEqual([]);
+        expect(result.pending).toEqual([pending.arkTxid]);
+        expect(finalizeSpy).toHaveBeenCalledTimes(2);
+
+        await wallet.dispose();
+    });
 
     it("leaves a pending tx alone when its checkpoint does not rebuild", async () => {
         const { wallet } = await makeStaticBatchWallet();
@@ -1815,6 +1853,78 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const pending = await pendingTxFor(wallet, other);
 
         const { result, finalizeSpy } = await runFinalizePending(wallet, [coin], pending);
+
+        expect(finalizeSpy).not.toHaveBeenCalled();
+        expect(result.finalized).toEqual([]);
+
+        await wallet.dispose();
+    });
+
+    it("leaves a pending tx alone when the operator reports no ark tx for it", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const { finalArkTx, ...pending } = await pendingTxFor(wallet, coin);
+        expect(finalArkTx).toBeDefined();
+
+        const { result, finalizeSpy } = await runFinalizePending(wallet, [coin], pending);
+
+        expect(finalizeSpy).not.toHaveBeenCalled();
+        expect(result.finalized).toEqual([]);
+        expect(result.pending).toEqual([pending.arkTxid]);
+
+        await wallet.dispose();
+    });
+
+    it("leaves a pending tx alone when its ark tx is not the one it names", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const pending = await pendingTxFor(wallet, coin);
+        // Genuinely signed, but of another send.
+        const other = await pendingTxFor(wallet, coin, foreignUnrollScript(wallet));
+        pending.finalArkTx = other.finalArkTx;
+
+        const { result, finalizeSpy } = await runFinalizePending(wallet, [coin], pending);
+
+        expect(finalizeSpy).not.toHaveBeenCalled();
+        expect(result.finalized).toEqual([]);
+
+        await wallet.dispose();
+    });
+
+    it("leaves a pending tx alone when its ark tx carries no sender signature", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const offchain = buildOffchainTx(
+            [{ ...coin, tapLeafScript: coin.forfeitTapLeafScript }],
+            [{ amount: BigInt(coin.value - 1000), script: wallet.arkAddress.pkScript }],
+            wallet.serverUnrollScript,
+        );
+        const serverOnly = await SERVER_KEY.sign(offchain.arkTx, [0]);
+        const pending = await pendingTxFor(wallet, coin);
+        pending.finalArkTx = base64.encode(serverOnly.toPSBT());
+        expect(Transaction.fromPSBT(base64.decode(pending.finalArkTx)).id).toBe(pending.arkTxid);
+
+        const { result, finalizeSpy } = await runFinalizePending(wallet, [coin], pending);
+
+        expect(finalizeSpy).not.toHaveBeenCalled();
+        expect(result.finalized).toEqual([]);
+
+        await wallet.dispose();
+    });
+
+    it("leaves a pending tx alone when a checkpoint is not one its ark tx spends", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const first = makeBaselineCoin(wallet);
+        const second = { ...first, txid: "33".repeat(32) };
+        const honest = await pendingTxFor(wallet, first);
+        const other = await pendingTxFor(wallet, second);
+        // Both rebuild from a wallet VTXO; only the first is spent by the named ark tx.
+        const pending = {
+            ...honest,
+            signedCheckpointTxs: [...honest.signedCheckpointTxs, ...other.signedCheckpointTxs],
+        };
+
+        const { result, finalizeSpy } = await runFinalizePending(wallet, [first, second], pending);
 
         expect(finalizeSpy).not.toHaveBeenCalled();
         expect(result.finalized).toEqual([]);
