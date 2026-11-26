@@ -1,5 +1,6 @@
 import { base64, hex } from "@scure/base";
 import { Script, SigHash, TaprootControlBlock } from "@scure/btc-signer";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { scriptFromTapLeafScript } from "../script/base";
 import { Extension, ExtensionNotFoundError } from "../extension";
@@ -17,11 +18,14 @@ import type { OnchainProvider } from "../providers/onchain";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import {
+    ArkadeTweak,
     ConditionWitness,
+    PrevoutTxField,
     VtxoTaprootTree,
     getArkPsbtFields,
     setArkPsbtField,
 } from "../utils/unknownFields";
+import { computeArkadeScriptPublicKey } from "../arkade/tweak";
 import type { VirtualCoin } from "../wallet";
 import type { Contract, PathSelection } from "./types";
 import { exitSequence } from "./handlers/helpers";
@@ -29,7 +33,7 @@ import { ExecutorContractHandler } from "./handlers/executor";
 import { isOnchainScoped, scopeOf } from "./scope";
 import { isExplorerCoin } from "./onchainCoins";
 import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
-import type { RelativeTimelock } from "../script/tapscript";
+import { decodeTapscript, type RelativeTimelock } from "../script/tapscript";
 
 export const DEFAULT_COSIGN_MARGIN_BLOCKS = 6;
 
@@ -77,7 +81,10 @@ export function prepareOwnedInput(
         tx.updateInput(index, { tapLeafScript: undefined, tapScriptSig: undefined }, true);
     }
     const kept = unknown?.filter(
-        (u) => VtxoTaprootTree.decode(u) === null && ConditionWitness.decode(u) === null,
+        (u) =>
+            VtxoTaprootTree.decode(u) === null &&
+            ConditionWitness.decode(u) === null &&
+            ArkadeTweak.decode(u) === null,
     );
     if (kept && kept.length !== unknown!.length) {
         tx.updateInput(index, { unknown: undefined }, true);
@@ -92,6 +99,9 @@ export function prepareOwnedInput(
     if (path.extraWitness?.length) {
         setArkPsbtField(tx, index, ConditionWitness, path.extraWitness);
     }
+    if (path.arkadeTweaks?.length) {
+        setArkPsbtField(tx, index, ArkadeTweak, path.arkadeTweaks);
+    }
 }
 
 export function emulatorInputIndexes(tx: Transaction): Set<number> {
@@ -104,6 +114,78 @@ export function emulatorInputIndexes(tx: Transaction): Set<number> {
     } catch (e) {
         if (e instanceof ExtensionNotFoundError) return new Set();
         throw e;
+    }
+}
+
+/** Packet inputs that arkd co-signs, mapped to the leaf keys that must sign before arkd. */
+export function operatorCosignedInputs(
+    tx: Transaction,
+    operatorKeys: Uint8Array[],
+): Map<number, Uint8Array[]> {
+    let entries;
+    try {
+        entries = Extension.fromTx(tx).getEmulatorPacket()?.entries ?? [];
+    } catch (e) {
+        if (e instanceof ExtensionNotFoundError) return new Map();
+        throw e;
+    }
+    const operated = new Map<number, Uint8Array[]>();
+    for (const { vin, script } of entries) {
+        const leaf = tx.getInput(vin)?.tapLeafScript?.[0];
+        if (!leaf) continue;
+        let leafKeys: Uint8Array[];
+        try {
+            leafKeys = decodeTapscript(scriptFromTapLeafScript(leaf)).params.pubkeys;
+        } catch {
+            continue;
+        }
+        const tweakedKeys = operatorKeys.map((key) => computeArkadeScriptPublicKey(key, script));
+        if (!leafKeys.some((leafKey) => tweakedKeys.some((key) => equalBytes(key, leafKey))))
+            continue;
+        const held = [...operatorKeys, ...tweakedKeys];
+        operated.set(
+            vin,
+            leafKeys.filter((leafKey) => !held.some((key) => equalBytes(key, leafKey))),
+        );
+    }
+    return operated;
+}
+
+/** Check PSBT signature entries before submission. arkd verifies the signatures. */
+export function assertOperatorPacketSignatures(
+    tx: Transaction,
+    operated: ReadonlyMap<number, Uint8Array[]>,
+): void {
+    for (const [vin, requiredKeys] of operated) {
+        if (requiredKeys.length === 0) continue;
+        const { tapLeafScript, tapScriptSig } = tx.getInput(vin);
+        const leaf = tapLeafScript?.[0];
+        const leafHash = leaf && tapLeafHash(scriptFromTapLeafScript(leaf), leaf[1].at(-1));
+        const missing = requiredKeys.find(
+            (key) =>
+                !tapScriptSig?.some(
+                    ([sig]) =>
+                        leafHash &&
+                        equalBytes(sig.leafHash, leafHash) &&
+                        equalBytes(sig.pubKey, key),
+                ),
+        );
+        if (missing) {
+            throw new OnchainCosignPreflightError(
+                `input ${vin} requires a signature from co-signer ${hex.encode(missing)} before arkd can co-sign`,
+            );
+        }
+    }
+}
+
+function dropPrevoutTxs(tx: Transaction): void {
+    for (let i = 0; i < tx.inputsLength; i++) {
+        const { unknown } = tx.getInput(i);
+        const kept = unknown?.filter((u) => PrevoutTxField.decode(u) === null);
+        if (kept && kept.length !== unknown!.length) {
+            tx.updateInput(i, { unknown: undefined }, true);
+            if (kept.length > 0) tx.updateInput(i, { unknown: kept });
+        }
     }
 }
 
@@ -290,6 +372,8 @@ export function estimateOnchainCosignFee(nIn: number, nOut: number, feeRate: num
 export type OnchainSpendDeps = {
     arkProvider?: Pick<OperatorProvider, "cosignOnchainTx">;
     emulator?: Pick<EmulatorProvider, "submitOnchainTx">;
+    /** arkd itself runs the emulator inputs' Arkade Script, so they go to its cosign endpoint. */
+    viaOperator?: boolean;
     onchainProvider: Pick<OnchainProvider, "broadcastTransaction" | "getRawTransaction">;
 };
 
@@ -299,7 +383,7 @@ export async function submitOnchainSpend(
     deps: OnchainSpendDeps,
 ): Promise<string> {
     const emulated = emulatorInputIndexes(tx);
-    if (emulated.size > 0) {
+    if (emulated.size > 0 && !deps.viaOperator) {
         if (!deps.emulator) {
             throw new Error("emulator inputs present but no emulator provider configured");
         }
@@ -307,11 +391,14 @@ export async function submitOnchainSpend(
         tx = Transaction.fromPSBT(base64.decode(signedTx));
     }
     // arkd refuses a finalized input as unsigned, and finalizes every input itself.
-    if (arkInputs.size > 0) {
+    if (arkInputs.size > 0 || (emulated.size > 0 && deps.viaOperator)) {
         if (!deps.arkProvider) {
             throw new Error("arkd-cosigned inputs present but no arkProvider configured");
         }
         if (!deps.arkProvider.cosignOnchainTx) throw new OnchainCosignUnsupportedError();
+        // arkd attaches its own prevout txs to a packet's tx without deduping, and its signer
+        // then refuses the duplicate keys as "invalid tx".
+        if (emulated.size > 0) dropPrevoutTxs(tx);
         return deps.arkProvider.cosignOnchainTx(base64.encode(tx.toPSBT()));
     }
     for (let i = 0; i < tx.inputsLength; i++) {

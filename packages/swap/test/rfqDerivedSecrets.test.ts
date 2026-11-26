@@ -361,7 +361,7 @@ describe("contractParams round-trips to the funded script", () => {
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
         });
         // serverPubkey and claimDelay come from this wallet's own getArkadeInfo(),
-        // emulatorPubkey from a per-network pin, refundPkScript from decoding an
+        // emulatorPubkey from the override, refundPkScript from decoding an
         // address. None of them is on the quote.
         expect(result.contractParams.operatorPubkey).toHaveLength(32);
         expect(result.contractParams.emulatorPubkey).toHaveLength(32);

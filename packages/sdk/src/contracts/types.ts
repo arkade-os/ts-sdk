@@ -149,6 +149,9 @@ export interface PathSelection {
     /** Additional witness elements, for example a preimage for HTLC-like paths. */
     extraWitness?: Bytes[];
 
+    /** Arkade script hashes this spend reveals in its `arkadetweak` PSBT input field. */
+    arkadeTweaks?: Bytes[];
+
     /**
      * nSequence for the spending input, BIP-68 encoded when the leaf
      * uses CSV. Decode with `sequenceToTimelock`; do NOT use as an
@@ -398,6 +401,8 @@ export interface DerivedContractTapscripts {
     /** @deprecated Use {@link proofTapLeafScript}. */
     intentTapLeafScript?: TapLeafScript;
     tapTree: Bytes;
+    /** Arkade script hashes a spend of the chosen leaf must reveal; absent when none needs one. */
+    arkadeTweaks?: Bytes[];
 }
 
 /**

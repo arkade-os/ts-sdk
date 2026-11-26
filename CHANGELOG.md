@@ -14,16 +14,104 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
-- **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the server key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. rc.1's `<SERVER_KEY>` still reads as the server key, except in a contract that declares a constructor input named `SERVER_KEY`, which 0.1.0 no longer reserves: there it is that input, where it used to be silently replaced by the server key. A constructor input named `server` or `SERVER_EXIT_DELAY`, which 0.1.0 also no longer reserves, is refused as reserved by the SDK; it used to fail as a duplicate program parameter. Until arkd and the emulator move to a single operator key, `<OPERATOR_KEY:f>` is temporarily read as rc.1's server key plus `f`-tweaked emulator key (the emulator key alone in CSV leaves). Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
+- **Arkade covenants commit to arkd's signer key.** The operator now runs
+  Arkade Script inside arkd, so `Arkade.connect` builds new covenants on
+  arkd's current `signerPubkey`, or on an explicit `emulatorPubkey`, which no
+  longer needs an `emulator` provider. `Arkade.emulatorKey` is therefore
+  always set. A covenant whose co-signer key arkd holds, current or
+  deprecated, is spent through arkd: `submitTx`/`finalizeTx` (two-step),
+  `cosignOnchainTx`, and `registerIntent`/`submitSignedForfeitTxs`. Any other
+  covenant still goes through the emulator. A transaction or renewal mixing
+  the two is refused up front; spend them separately. Stored contracts keep
+  the key they were built with, so covenants on the old emulator key keep
+  spending through the standalone emulator, which `{ network: "bitcoin" }`
+  still wires. Against an arkd that does not run Arkade Script, new covenants
+  cannot be co-signed.
+  The pinned keys (`BITCOIN_EMULATOR_PUBKEY` and the rest) stay: they name the
+  standalone emulators, and the Executor check still uses them. Validate an
+  override with `arkade.validateEmulatorPubkey`. `connect` also no longer
+  throws for a provider whose info lacks `deprecatedSigners`.
+  `@arkade-os/swap` derives on the same key (an explicit `emulatorPubkey`,
+  else arkd's `signerPubkey`), so `testnet` and `signet` no longer need an
+  override.
+
+- **`@arkade-os/swap` names the covenant's co-signer key on every RFQ
+  request.** Each `rfq_request` whose quote builds a covenant (Lightning and
+  onchain sends and receives, and arkade-to-arkade swaps) carries it as
+  `profile.emulator_pubkey`, in x-only hex, and the solver's address is
+  verified against that key. A solver whose strict schema predates the field
+  refuses these requests. `requestArkadeSwap` therefore always reads the
+  operator's info live, even without a `receiveAddress`, since the key comes
+  from it. `fillOffer` no longer needs an `emulator`: a fill of
+  an offer whose co-signer key arkd holds goes to arkd. Solver rendezvous
+  accepts any well-formed card when the payment rails are given no
+  `fallbackEmulatorPubkey`, since the request now names the key. With one
+  given, a card advertising a different key is still skipped.
+
+- **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the server key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. rc.1's `<SERVER_KEY>` still reads as the server key, except in a contract that declares a constructor input named `SERVER_KEY`, which 0.1.0 no longer reserves: there it is that input, where it used to be silently replaced by the server key. A constructor input named `server` or `SERVER_EXIT_DELAY`, which 0.1.0 also no longer reserves, is refused as reserved by the SDK; it used to fail as a duplicate program parameter. For compatibility, `<OPERATOR_KEY:f>` is read as rc.1's server key plus `f`-tweaked emulator key (the emulator key alone in CSV leaves); `Arkade.contract()` rewrites eligible leaves when the co-signer is the server, as described below. Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
 
 - **`programFromArtifact` derives the key of each contract an artifact instantiates.** `new SingleSig(receiver)` compiles to a `<CONTRACT:SingleSig(<receiver>)>` placeholder that the caller had to fill with the child's key by hand, unchecked, so a wrong key made the covenant pay someone else. Pass the child artifacts instead, as `programFromArtifact(htlc, { contracts: [singleSig] })` or the same option to `compile()`: each must match the code hash its parent pins, and building the contract derives the child's key. An artifact with a placeholder now throws when a child is missing, does not match or is not pinned. To migrate, recompile the parent with arkadec 0.1.0 or later, pass its children in `contracts`, and stop passing the key. Saved contracts store only the resolved key and restore without the children.
 
 ### Features
 
+- **New covenants name the operator key only tweaked once it is the
+  co-signer.** When the client's co-signer key is the operator's own
+  `signerPubkey` (compared x-only), a covenant leaf that names `$server` and
+  also splices in the co-signer carried both `X` and `tweak(X, script)`.
+  `Arkade.contract()` now rewrites `$server` in place to
+  `{ tweak: "$server", fn }`, with the covenant the splice used, and drops the
+  splice, so the leaf names `tweak(X, script)` alone; its other keys keep their
+  order. The contract holds the rewritten program and `register()` stores it.
+  `ArkadeContract.fromContract` and the `"arkade"` handler compile a stored
+  program as is, so stored contracts keep their address. `send()` and
+  `renewProgramContractOutputs` accept the operator key tweaked by the spent
+  covenant as the server's. `@arkade-os/swap` offers, `new ArkadeContract(...)`
+  and `ArkadeProgramScript` are not rewritten, and with any other co-signer key
+  nothing changes. An app that re-derives a contract from its artifact through
+  `contract()`, instead of restoring its row, gets the new address once the
+  co-signer is the operator.
+
+- **Arkade spends reveal the script hashes of a contract's other covenants.**
+  arkd checks that every forfeit leaf of a spent VTXO's tree names its signer
+  key, plain or tweaked by an arkade script hash it knows, and the emulator
+  packet only carries the script of the leaf being spent. A leaf that names the
+  operator key only tweaked, such as a non-interactive covenant leaf, therefore
+  needs its hash revealed whenever the coin is spent through another function.
+  When a program contract's tree has such a leaf, every spend now sets the new
+  `ArkadeTweak` PSBT input field (`0xde || "arkadetweak"`, 1 to 16 32-byte
+  hashes) on the ark tx input, the onchain input or the intent proof input,
+  listing the hashes of the covenant scripts whose leaves lack the plain
+  server key, the spent one aside: arkd accepts a leaf on its plain server key
+  alone. That covers `ArkadeContract`'s own builders, `renewProgramContractOutputs`,
+  and the wallet-level spends of a generically spendable program contract
+  (`send`, `settle`, `cosignOnchainTx`), which read the hashes off the coin
+  and the selected path. The coin's hashes are derived from its contract on
+  every read, copied per read, and never persisted. A path arkd does not
+  co-sign, such as a unilateral exit, carries none. More than 16 is refused, already by `Arkade.contract()`
+  when any collaborative function's spend would need more, rather than at that
+  spend. Trees without such a leaf, swap offers included, build the same
+  PSBTs as before, and an arkd that predates the field ignores it.
+  `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
+
 - **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
 - **Two-asset RFQ swaps can pay a specified recipient.** Set `assetPayment.receiveAddress` on a directed quote or an exact-payout open RFQ. Explicit carrier modes require a BTC deposit.
 
 ### Bug Fixes
+
+- **Covenant co-signer routing uses the selected signing leaf.** Renewal
+  rejects missing or Bitcoin-only functions before choosing a co-signer.
+  Onchain routing compares the tweaked operator key with the leaf's decoded
+  signing keys, so bytes in a condition cannot select the operator.
+  Linked child contracts use the same signer rewrite as direct creation,
+  so the parent commits to the child's directly derived address.
+  Unilateral CSV spends omit operator tweak hashes and remain buildable
+  when the contract's collaborative leaves reach the disclosure limit.
+  Operator-routed covenant spends enforce arkd's input limit and require any
+  other co-signers' PSBT signature entries before submission. arkd verifies
+  the signatures before co-signing.
+
+- **Signer classification accepts operator info without deprecated signers.**
+  Providers that omit the list are treated as advertising only the active signer.
 
 - **Tapscript signature checks refuse encodings that BIP-341 rejects.**
   `verifyTapscriptSignatures`, which checks the server's signatures on

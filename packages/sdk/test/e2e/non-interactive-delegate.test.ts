@@ -17,6 +17,7 @@ import {
     SingleKey,
     VtxoScript,
     withPrevTxs,
+    REGTEST_EMULATOR_PUBKEY,
 } from "../../src";
 import { Transaction } from "../../src/utils/transaction";
 import { buildForfeitTx } from "../../src/forfeit";
@@ -88,6 +89,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             indexer: indexerProvider,
             identity: aliceIdentity,
             network: networks.regtest,

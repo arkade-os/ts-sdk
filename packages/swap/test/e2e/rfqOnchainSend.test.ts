@@ -115,16 +115,16 @@ const solverHealthy = async (): Promise<boolean> => {
 };
 
 /** `whileDown` runs with the solver stopped, so what it reads cannot race the solver. */
-const restartSolver = async (whileDown?: () => Promise<void>): Promise<void> => {
+const restartSolver = async <T>(whileDown?: () => Promise<T>): Promise<T | undefined> => {
     sh(`docker stop ${SOLVER}`);
     try {
-        await whileDown?.();
+        return await whileDown?.();
     } finally {
         sh(`docker start ${SOLVER}`);
+        await waitFor("the solver to come back", solverHealthy, {
+            timeout: 120_000,
+        });
     }
-    await waitFor("the solver to come back", solverHealthy, {
-        timeout: 120_000,
-    });
 };
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
@@ -157,8 +157,7 @@ const lockupVtxos = async (record: CorridorSwapRecord) =>
 const htlcOutputs = async (record: CorridorSwapRecord) =>
     outputsPaying(record.profile.htlcAddress as string);
 
-/** Quote and accept a payout to a fresh bitcoind address. */
-const send = async (client: SwapClient) => {
+const quotePayout = async (client: SwapClient) => {
     const destination = sh(`${bccli} getnewaddress "" bech32m`);
     let quote: Awaited<ReturnType<SwapClient["quote"]>> | undefined;
     await waitFor(
@@ -181,12 +180,15 @@ const send = async (client: SwapClient) => {
     if (!quote) throw new Error("unreachable");
     expect(quote.take.amount).toBe(PAYOUT_SATS);
     const balanceBefore = BigInt((await wallet.getBalance()).available);
-    const swap = await client.accept(quote);
+    return { quote, destination, balanceBefore };
+};
+
+const send = async (client: SwapClient, payout?: Awaited<ReturnType<typeof quotePayout>>) => {
+    payout ??= await quotePayout(client);
+    const swap = await client.accept(payout.quote);
     return {
-        quote,
+        ...payout,
         swap,
-        destination,
-        balanceBefore,
         record: await recordOf(swap),
     };
 };
@@ -303,10 +305,14 @@ describe("arkade -> onchain against the real solver (regtest)", () => {
     }, 600_000);
 
     it("funds the HTLC once across solver restarts before and after funding", async () => {
-        const s = await send(clientOn());
-        await restartSolver(async () => {
-            expect(await htlcOutputs(s.record)).toHaveLength(0);
+        const client = clientOn();
+        const payout = await quotePayout(client);
+        const s = await restartSolver(async () => {
+            const sent = await send(client, payout);
+            expect(await htlcOutputs(sent.record)).toHaveLength(0);
+            return sent;
         });
+        if (!s) throw new Error("failed to accept the quote while the solver was stopped");
         await waitFor(
             "the solver's HTLC funding",
             async () => (await htlcOutputs(s.record)).length > 0,

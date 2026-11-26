@@ -22,6 +22,7 @@ import {
     Extension,
     EmulatorPacket,
     withPrevTxs,
+    REGTEST_EMULATOR_PUBKEY,
 } from "../../src";
 import type { Identity } from "../../src/identity";
 import {
@@ -330,6 +331,7 @@ describe("arkade", () => {
         return arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             indexer: indexerProvider,
             identity,
             network: networks.regtest,
@@ -1071,6 +1073,7 @@ describe("arkade", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             network: networks.regtest,
         });
 

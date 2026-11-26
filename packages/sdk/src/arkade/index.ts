@@ -112,6 +112,7 @@ export {
     resolveAsm,
     parseArtifact,
     validateProgram,
+    validateEmulatorPubkey,
     SUPPORTED_PROGRAM_VERSION,
     type AssetSpec,
     type ArkadeNestedValue,

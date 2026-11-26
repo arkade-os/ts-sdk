@@ -14,6 +14,7 @@ import {
     RestEmulatorProvider,
     RestIndexerProvider,
     Transaction,
+    REGTEST_EMULATOR_PUBKEY,
 } from "../../src";
 import type { ExtensionPacket } from "../../src/extension";
 import { beforeEachFaucet, faucetOffchain, randomP2TR } from "./utils";
@@ -91,6 +92,7 @@ describe("liquidation (oracle-signed asset burn)", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             indexer: indexerProvider,
             network: networks.regtest,
         });

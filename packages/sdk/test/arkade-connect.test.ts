@@ -3,7 +3,6 @@ import { hex } from "@scure/base";
 import {
     arkade,
     Arkade,
-    BITCOIN_EMULATOR_PUBKEY,
     ContractManager,
     CSVMultisigTapscript,
     DEFAULT_ARKADE_EMULATOR_URL,
@@ -176,12 +175,39 @@ describe("Arkade.connect with service", () => {
         expect(Arkade).toBe(arkade.Arkade);
     });
 
-    it("network arm resolves the emulator and the pinned mainnet key", async () => {
+    it("network arm resolves the emulator, and covenants commit to arkd's key", async () => {
         vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue(info());
         const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
         expect((ark.emulator as RestEmulatorProvider).serverUrl).toBe(DEFAULT_ARKADE_EMULATOR_URL);
-        expect(hex.encode(ark.emulatorKey!)).toBe(BITCOIN_EMULATOR_PUBKEY);
+        expect(hex.encode(ark.emulatorKey)).toBe(info().signerPubkey);
         expect(ark.contractManager).toBeUndefined();
+    });
+
+    it("lets arkd co-sign covenants on any key it advertises, not an override's", async () => {
+        const deprecated = "02" + "22".repeat(32);
+        vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue({
+            ...info(),
+            deprecatedSigners: [{ pubkey: deprecated, cutoffDate: 0n }],
+        });
+        const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
+        expect(ark.operatorCosigns(ark.emulatorKey)).toBe(true);
+        expect(ark.operatorCosigns(hex.decode(deprecated))).toBe(true);
+
+        const own = await arkade.Arkade.connect({
+            service: { network: "bitcoin" },
+            emulatorPubkey: "02" + TEST_PUB_KEY_HEX,
+        });
+        expect(own.operatorCosigns(own.emulatorKey)).toBe(false);
+    });
+
+    it("keeps an explicit emulatorPubkey without an emulator provider", async () => {
+        const override = "02" + TEST_PUB_KEY_HEX;
+        const ark = await arkade.Arkade.connect({
+            arkade: { getInfo: async () => info("regtest") },
+            emulatorPubkey: override,
+        });
+        expect(ark.emulator).toBeUndefined();
+        expect(hex.encode(ark.emulatorKey!)).toBe(override);
     });
 
     it("storage builds and owns a manager, which dispose() stops", async () => {

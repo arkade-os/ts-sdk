@@ -25,6 +25,11 @@ import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import { extendVirtualCoinForContract } from "../../src/wallet/utils";
 import { watchExecutorContracts } from "../../src/wallet/executor";
 import { ExecutorContractHandler } from "../../src/contracts/handlers/executor";
+import { computeArkadeScriptPublicKey } from "../../src/arkade/tweak";
+import { Extension } from "../../src/extension";
+import { EmulatorPacket } from "../../src/extension/emulator";
+import { VtxoScript } from "../../src/script/base";
+import { MultisigTapscript } from "../../src/script/tapscript";
 import vectors from "../fixtures/executor/vectors.json";
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -622,6 +627,27 @@ describe("wallet.getBoardingUtxos", () => {
 });
 
 describe("wallet.cosignOnchainTx", () => {
+    function covenantSpend(externalScript: Uint8Array, otherKeys: Uint8Array[] = []) {
+        const script = new Uint8Array([0x51]);
+        const tweakedKey = computeArkadeScriptPublicKey(
+            hex.decode(SERVER_PUBKEY_HEX.slice(2)),
+            script,
+        );
+        const leaf = MultisigTapscript.encode({ pubkeys: [tweakedKey, ...otherKeys] });
+        const covenant = new VtxoScript([leaf.script]);
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({
+            txid: hex.decode("bb".repeat(32)),
+            index: 0,
+            witnessUtxo: { script: covenant.pkScript, amount: 50_000n },
+            tapLeafScript: [covenant.leaves[0]],
+        });
+        tx.addOutput({ script: externalScript, amount: 40_000n });
+        const packet = EmulatorPacket.create([{ vin: 0, script, witness: new Uint8Array(0) }]);
+        tx.addOutput(Extension.create([packet]).txOut());
+        return tx;
+    }
+
     it("fills owned inputs of an external PSBT and leaves foreign inputs alone", async () => {
         const { wallet, arkProvider, boardingCoin, externalScript } = await makeWallet();
         const tx = new Transaction({ version: 2 });
@@ -668,6 +694,35 @@ describe("wallet.cosignOnchainTx", () => {
             "65 inputs exceed arkd's limit of 64",
         );
         expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
+    });
+
+    it("refuses more inputs than arkd cosigns when it co-signs only a packet input", async () => {
+        const { wallet, arkProvider, externalScript } = await makeWallet();
+        const tx = covenantSpend(externalScript);
+        for (let i = 0; i < 64; i++) {
+            tx.addInput({
+                txid: hex.decode(i.toString(16).padStart(64, "0")),
+                index: 0,
+                witnessUtxo: { script: externalScript, amount: 1_000n },
+            });
+        }
+        await expect(wallet.cosignOnchainTx(tx)).rejects.toThrow(
+            "65 inputs exceed arkd's limit of 64",
+        );
+        expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
+    });
+
+    it("requires the other covenant co-signer's signature before asking arkd", async () => {
+        const { wallet, arkProvider, externalScript } = await makeWallet();
+        const otherSigner = SingleKey.fromHex("22".repeat(32));
+        const tx = covenantSpend(externalScript, [await otherSigner.xOnlyPublicKey()]);
+
+        await expect(wallet.cosignOnchainTx(tx.clone())).rejects.toThrow(
+            "input 0 requires a signature from co-signer",
+        );
+        expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
+
+        await expect(wallet.cosignOnchainTx(await otherSigner.sign(tx))).resolves.toBe(COSIGNED);
     });
 
     it("rejects outputs exceeding inputs", async () => {

@@ -32,6 +32,12 @@ function makeInfo(
 const NOW = 1_700_000_000; // fixed reference Unix time (seconds)
 
 describe("signerRotation - classification", () => {
+    it("classifies signers when a provider omits deprecated signers", () => {
+        const info = { signerPubkey: ACTIVE } as OperatorInfo;
+        expect(classifyContractSigner(ACTIVE, info, NOW).status).toBe("CURRENT");
+        expect(classifyContractSigner(DEPRECATED_A, info, NOW).status).toBe("UNKNOWN_SIGNER");
+    });
+
     it("classifies the active signer as current", () => {
         const info = makeInfo(ACTIVE, [{ pubkey: DEPRECATED_A, cutoffDate: BigInt(NOW + 1000) }]);
         const cls = classifyContractSigner(ACTIVE, info, NOW);

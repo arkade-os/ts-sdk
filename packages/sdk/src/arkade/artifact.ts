@@ -12,6 +12,7 @@ import {
     SUPPORTED_PROGRAM_VERSION,
     ARKADE_TYPE_ENCODINGS,
     stringifyArtifact,
+    tweakServerSigners,
     validateParamValue,
     type ArkadeArgType,
     type ArkadeParamValue,
@@ -19,6 +20,7 @@ import {
     type AsmToken,
     type InputDef,
     type Program,
+    type ProgramKeys,
     type SignerRef,
     type SourceRange,
     type TapscriptSegment,
@@ -101,6 +103,25 @@ const INSTANTIATED = Symbol("instantiated contracts");
  */
 export function instantiatedContracts(program: Program): Record<string, Instantiation> {
     return (program as { [INSTANTIATED]?: Record<string, Instantiation> })[INSTANTIATED] ?? {};
+}
+
+export function tweakInstantiatedServerSigners<P extends Program>(
+    program: P,
+    keys: ProgramKeys,
+): P {
+    const tweaked = tweakServerSigners(program, keys);
+    if (tweaked === program) return program;
+    const children = Object.entries(instantiatedContracts(program));
+    if (children.length === 0) return tweaked;
+    return {
+        ...tweaked,
+        [INSTANTIATED]: Object.fromEntries(
+            children.map(([name, child]) => [
+                name,
+                { ...child, program: tweakInstantiatedServerSigners(child.program, keys) },
+            ]),
+        ),
+    };
 }
 
 /** The compiler's debug file: each covenant's source map, keyed by spend group. */

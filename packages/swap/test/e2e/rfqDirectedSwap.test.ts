@@ -24,7 +24,6 @@ import {
     arkade,
     asset,
     networkFromOperatorInfo,
-    resolveEmulatorPubkey,
     toXOnlySignerHex,
 } from "@arkade-os/sdk";
 import {
@@ -68,6 +67,7 @@ let swaps: SwapClient;
 let card: DiscoveredMarket;
 let assetId: string;
 let takerHex: string;
+let emulatorPubkey: string;
 /** The operator terms the solver read for itself. */
 let terms: Pick<OfferBinding, "serverPublicKey" | "emulatorPublicKey" | "exitDelay"> & {
     hrp: string;
@@ -79,15 +79,15 @@ beforeAll(async () => {
     const operatorInfo = await (await fetch(`${OPERATOR_URL}/v1/info`)).json();
     const emulatorInfo = await (await fetch(`${EMULATOR_URL}/v1/info`)).json();
     const network = networkFromOperatorInfo(operatorInfo);
-    // a refused emulator signature is a key mismatch until proven otherwise
-    expect(emulatorInfo.signerPubkey).toBe(resolveEmulatorPubkey(network));
+    emulatorPubkey = arkade.validateEmulatorPubkey(emulatorInfo.signerPubkey);
     const delay = BigInt(operatorInfo.unilateralExitDelay);
     terms = {
         serverPublicKey: hex.decode(toXOnlySignerHex(operatorInfo.signerPubkey)),
-        emulatorPublicKey: hex.decode(toXOnlySignerHex(resolveEmulatorPubkey(network))),
+        emulatorPublicKey: hex.decode(toXOnlySignerHex(emulatorPubkey)),
         exitDelay: { type: delay < 512n ? "blocks" : "seconds", value: delay },
         hrp: network.hrp,
     };
+    expect(terms.emulatorPublicKey).not.toEqual(terms.serverPublicKey);
 
     [client, solver, stranger] = await Promise.all([
         walletOf(clientKey),
@@ -336,6 +336,7 @@ function clientOn(wallet: Wallet, store: InMemoryAssetSwapRepository): SwapClien
     return createSwapClient({
         wallet,
         repository: store,
+        emulatorPubkey,
         discovery: { snapshot: [card] },
         fetchImpl: (async () =>
             new Response(JSON.stringify({ price: PRICE }))) as unknown as typeof fetch,

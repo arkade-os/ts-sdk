@@ -23,6 +23,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    REGTEST_EMULATOR_PUBKEY,
     RestOperatorProvider,
     RestIndexerProvider,
     SingleKey,
@@ -129,6 +130,7 @@ describe("filling an offer (regtest)", () => {
                 wantAmount: WANT_SATS,
                 offerAsset: asset.AssetId.fromString(assetId),
                 contractVersion,
+                emulatorPubkey: REGTEST_EMULATOR_PUBKEY,
             });
             // No `amount`: an asset deposit rides the SDK's dust-sat carrier.
             const fundingTxid = await maker.send({
