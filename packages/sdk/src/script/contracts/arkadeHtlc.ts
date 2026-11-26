@@ -33,6 +33,7 @@ export namespace ArkadeHTLC {
         if (options.refundLocktime <= 0n) {
             throw new Error("ArkadeHTLC: refundLocktime must be greater than 0");
         }
+        if (options.amount <= 0n) throw new Error("ArkadeHTLC: amount must be greater than 0");
         if (asset && asset.amount <= 0n) {
             throw new Error("ArkadeHTLC: asset amount must be greater than 0");
         }

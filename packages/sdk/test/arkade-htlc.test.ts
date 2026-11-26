@@ -129,7 +129,7 @@ describe("ArkadeHTLC", () => {
             MultisigTapscript.encode({ pubkeys: [receiver, tweaked("nonInteractiveRefund")] }),
             CLTVMultisigTapscript.encode({
                 absoluteTimelock: LOCKUP.refundLocktime,
-                pubkeys: [tweaked("nonInteractiveRefund")],
+                pubkeys: [tweaked("nonInteractiveRefundWithoutReceiver")],
             }),
         ];
         const v2 = new VHTLC.ScriptV2(LOCKUP);
@@ -167,8 +167,9 @@ describe("ArkadeHTLC", () => {
         }
     });
 
-    it("refuses a lockup whose timelocks open at once, or whose asset it would not check", () => {
+    it("refuses a lockup whose timelocks open at once, or whose amounts it would not check", () => {
         expect(() => ArkadeHTLC.args({ ...SATS, refundLocktime: 0n })).toThrow(/refundLocktime/);
+        expect(() => ArkadeHTLC.args({ ...SATS, amount: 0n })).toThrow(/amount must be greater/);
         expect(() =>
             ArkadeHTLC.args({ ...SATS, unilateralRefundDelay: { type: "blocks", value: 0n } }),
         ).toThrow(/unilateralRefundDelay/);
