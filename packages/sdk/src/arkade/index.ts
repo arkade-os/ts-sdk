@@ -39,6 +39,11 @@ import type {
     ArkadeService as ServiceDefinition,
     ResolvedArkadeService as ResolvedService,
 } from "./service";
+import type {
+    ContractArtifact as ArtifactDefinition,
+    ContractDebugInfo as ArtifactDebugInfo,
+    ProgramFromArtifactOptions as ArtifactProgramOptions,
+} from "./artifact";
 export { OP, Script };
 
 // Local aliases keep namespace declaration bundling from treating shared-chunk
@@ -63,6 +68,9 @@ export type TweakedSigner = ProgramTweakedSigner;
 export type WitnessRef = ProgramWitnessRef;
 export type ArkadeService = ServiceDefinition;
 export type ResolvedArkadeService = ResolvedService;
+export type ContractArtifact = ArtifactDefinition;
+export type ContractDebugInfo = ArtifactDebugInfo;
+export type ProgramFromArtifactOptions = ArtifactProgramOptions;
 
 export {
     ARKADE_OP,
@@ -88,13 +96,7 @@ export {
     type ArkadeExtendedVirtualCoin,
 } from "./batch";
 export { renewProgramContractOutputs, type ProgramContractRenewTarget } from "./renew";
-export {
-    programFromArtifact,
-    isContractArtifact,
-    type ContractArtifact,
-    type ContractDebugInfo,
-    type ProgramFromArtifactOptions,
-} from "./artifact";
+export { programFromArtifact, isContractArtifact } from "./artifact";
 export {
     ArkadeProgramScript,
     stringifyArtifact,
