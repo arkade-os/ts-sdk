@@ -96,6 +96,8 @@ style and have not been backfilled.
   rejects missing or Bitcoin-only functions before choosing a co-signer.
   Onchain routing compares the tweaked operator key with the leaf's decoded
   signing keys, so bytes in a condition cannot select the operator.
+  Operator-routed covenant spends enforce arkd's input limit and require any
+  other co-signers' signatures before submission.
 
 - **Signer classification accepts operator info without deprecated signers.**
   Providers that omit the list are treated as advertising only the active signer.

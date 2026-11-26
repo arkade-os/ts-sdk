@@ -439,8 +439,8 @@ describe("emulator inputs", () => {
         });
         const tx = emulatorTx(new VtxoScript([leaf.script]));
 
-        expect(operatorCosignedInputs(tx, [keyB])).toEqual(new Set([0]));
-        expect(operatorCosignedInputs(tx, [keyA])).toEqual(new Set());
+        expect(operatorCosignedInputs(tx, [keyB])).toEqual(new Map([[0, [keyA]]]));
+        expect(operatorCosignedInputs(tx, [keyA])).toEqual(new Map());
     });
 
     it("ignores tweaked operator key bytes in the leaf condition", () => {
@@ -457,7 +457,7 @@ describe("emulator inputs", () => {
         });
         const tx = emulatorTx(new VtxoScript([leaf.script]));
 
-        expect(operatorCosignedInputs(tx, [keyB])).toEqual(new Set());
+        expect(operatorCosignedInputs(tx, [keyB])).toEqual(new Map());
     });
 
     it("finalizes a condition leaf on the direct broadcast path too", async () => {

@@ -257,6 +257,7 @@ import {
     emulatorInputIndexes,
     estimateOnchainCosignFee,
     operatorCosignedInputs,
+    assertOperatorPacketSignatures,
     prepareOwnedInput,
     submitOnchainSpend,
 } from "../contracts/onchainSpend";
@@ -5617,17 +5618,17 @@ export class Wallet
         let outSum = 0n;
         for (let i = 0; i < tx.outputsLength; i++) outSum += tx.getOutput(i).amount ?? 0n;
         if (outSum > inSum) throw new Error(`outputs ${outSum} exceed inputs ${inSum}`);
-        if (arkInputs.size > 0 && tx.inputsLength > MAX_COSIGN_INPUTS) {
-            throw new OnchainCosignPreflightError(
-                `${tx.inputsLength} inputs exceed arkd's limit of ${MAX_COSIGN_INPUTS}`,
-            );
-        }
 
         const operated = operatorCosignedInputs(tx, [
             this._arkServerPublicKey,
             ...[...this._deprecatedSigners.keys()].map((k) => hex.decode(k)),
         ]);
         const viaOperator = emulated.size > 0 && operated.size === emulated.size;
+        if ((arkInputs.size > 0 || viaOperator) && tx.inputsLength > MAX_COSIGN_INPUTS) {
+            throw new OnchainCosignPreflightError(
+                `${tx.inputsLength} inputs exceed arkd's limit of ${MAX_COSIGN_INPUTS}`,
+            );
+        }
         if (operated.size > 0 && !viaOperator) {
             throw new OnchainCosignPreflightError(
                 "covenants co-signed by arkd and by the emulator cannot share a transaction; spend them separately",
@@ -5639,6 +5640,7 @@ export class Wallet
             this.inputSigningJobsFromWitnessUtxos(tx, ownedIndexes),
             { onUnknownScript: "sign" },
         )) as Transaction;
+        if (viaOperator) assertOperatorPacketSignatures(signed, operated);
         const markPending = async (txid: string) => {
             try {
                 // The preflight tip: a fresh fetch failing here would leave the spend unmarked.

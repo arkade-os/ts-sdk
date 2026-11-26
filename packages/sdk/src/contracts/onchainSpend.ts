@@ -1,5 +1,6 @@
 import { base64, hex } from "@scure/base";
 import { Script, SigHash, TaprootControlBlock } from "@scure/btc-signer";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { scriptFromTapLeafScript } from "../script/base";
 import { Extension, ExtensionNotFoundError } from "../extension";
@@ -116,16 +117,19 @@ export function emulatorInputIndexes(tx: Transaction): Set<number> {
     }
 }
 
-/** Packet inputs whose leaf names one of `operatorKeys` tweaked by its entry's script: arkd co-signs them. */
-export function operatorCosignedInputs(tx: Transaction, operatorKeys: Uint8Array[]): Set<number> {
+/** Packet inputs that arkd co-signs, mapped to the leaf keys that must sign before arkd. */
+export function operatorCosignedInputs(
+    tx: Transaction,
+    operatorKeys: Uint8Array[],
+): Map<number, Uint8Array[]> {
     let entries;
     try {
         entries = Extension.fromTx(tx).getEmulatorPacket()?.entries ?? [];
     } catch (e) {
-        if (e instanceof ExtensionNotFoundError) return new Set();
+        if (e instanceof ExtensionNotFoundError) return new Map();
         throw e;
     }
-    const held = new Set<number>();
+    const operated = new Map<number, Uint8Array[]>();
     for (const { vin, script } of entries) {
         const leaf = tx.getInput(vin)?.tapLeafScript?.[0];
         if (!leaf) continue;
@@ -135,13 +139,42 @@ export function operatorCosignedInputs(tx: Transaction, operatorKeys: Uint8Array
         } catch {
             continue;
         }
-        const named = (key: Uint8Array) => {
-            const tweakedKey = computeArkadeScriptPublicKey(key, script);
-            return leafKeys.some((leafKey) => equalBytes(leafKey, tweakedKey));
-        };
-        if (operatorKeys.some(named)) held.add(vin);
+        const tweakedKeys = operatorKeys.map((key) => computeArkadeScriptPublicKey(key, script));
+        if (!leafKeys.some((leafKey) => tweakedKeys.some((key) => equalBytes(key, leafKey))))
+            continue;
+        const held = [...operatorKeys, ...tweakedKeys];
+        operated.set(
+            vin,
+            leafKeys.filter((leafKey) => !held.some((key) => equalBytes(key, leafKey))),
+        );
     }
-    return held;
+    return operated;
+}
+
+export function assertOperatorPacketSignatures(
+    tx: Transaction,
+    operated: ReadonlyMap<number, Uint8Array[]>,
+): void {
+    for (const [vin, requiredKeys] of operated) {
+        if (requiredKeys.length === 0) continue;
+        const { tapLeafScript, tapScriptSig } = tx.getInput(vin);
+        const leaf = tapLeafScript?.[0];
+        const leafHash = leaf && tapLeafHash(scriptFromTapLeafScript(leaf), leaf[1].at(-1));
+        const missing = requiredKeys.find(
+            (key) =>
+                !tapScriptSig?.some(
+                    ([sig]) =>
+                        leafHash &&
+                        equalBytes(sig.leafHash, leafHash) &&
+                        equalBytes(sig.pubKey, key),
+                ),
+        );
+        if (missing) {
+            throw new OnchainCosignPreflightError(
+                `input ${vin} requires a signature from co-signer ${hex.encode(missing)} before arkd can co-sign`,
+            );
+        }
+    }
 }
 
 function dropPrevoutTxs(tx: Transaction): void {
