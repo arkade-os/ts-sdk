@@ -18,6 +18,14 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Tapscript signature checks refuse encodings that BIP-341 rejects.**
+  `verifyTapscriptSignatures`, which checks the server's signatures on
+  checkpoint and ark transactions, accepted a 65-byte signature ending in
+  `0x00`. It also accepted any signature longer than 65 bytes, verifying only
+  its first 64. Consensus rejects both: BIP-341 allows 64 bytes, or 65 ending
+  in a sighash type other than default. A transaction carrying either could
+  not be broadcast, so the SDK now refuses both.
+
 - **Published type declarations compile without `skipLibCheck`.** The
   declaration bundler emitted `arkade`'s type-only exports as values once they
   were split across chunks, so twenty of them, `arkade.Program` among them,
