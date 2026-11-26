@@ -12,6 +12,7 @@ import { OUTPOINT_QUERY_CHUNK_SIZE, SCRIPT_QUERY_CHUNK_SIZE } from "../src/contr
 import { ProviderUnavailableError } from "../src/providers/errors";
 import { updateWalletState } from "../src/utils/syncCursors";
 import { fetchVtxoCreatedAtByTxid, getAllNormalizedVtxos } from "../src/wallet/vtxo";
+import { MAX_INPUTS_PER_PROOF } from "../src/wallet/vtxo-manager";
 import { createDefaultContractParams, createMockIndexerProvider } from "./contracts/helpers";
 import {
     installRestoreHarness,
@@ -332,6 +333,252 @@ describe("Wallet script queries stay under the URL cap", () => {
 
         expect(handle.indexer.getVtxosCalls.length).toBeGreaterThan(0);
         expect(widest(handle.indexer.getVtxosCalls)).toBeLessThanOrEqual(CAP);
+    });
+
+    /** A fenced-off interrupted send, as a boot from cached operator info leaves it. */
+    const deferredRecovery = async () => {
+        const { wallet, walletRepository } = await walletWithContracts(1);
+        await (await wallet.getContractManager()).whenBooted();
+        await updateWalletState(walletRepository, (state) => ({
+            ...state,
+            settings: { ...state.settings, hasPendingTx: true },
+        }));
+        const liveInfo = await wallet.arkProvider.getInfo();
+        const getInfo = vi.spyOn(wallet.arkProvider, "getInfo");
+        const getPendingTxs = vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([]);
+        const submitTx = vi.spyOn(wallet.arkProvider, "submitTx").mockResolvedValue({
+            arkTxid: "txid",
+            finalArkTx: "ark-transaction",
+            signedCheckpointTxs: [],
+        });
+        const finalizeTx = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
+        const getVtxos = vi
+            .spyOn(wallet.indexerProvider, "getVtxos")
+            .mockResolvedValue({ vtxos: [] });
+        const broadcaster = await wallet.getArkadeBroadcaster();
+
+        expect(await wallet.deferPendingTxRecovery()).toBe(true);
+
+        return {
+            wallet,
+            broadcaster,
+            liveInfo,
+            getInfo,
+            getPendingTxs,
+            submitTx,
+            finalizeTx,
+            getVtxos,
+            own: (n: number, extra: Partial<VirtualCoin> = {}) => ({
+                ...vtxoFor(wallet.defaultContractScript, n),
+                ...extra,
+            }),
+            hasPendingTx: async () =>
+                (await walletRepository.getWalletState())?.settings?.hasPendingTx,
+        };
+    };
+
+    type DeferredRecovery = Awaited<ReturnType<typeof deferredRecovery>>;
+
+    /** Both paths a new send can take to the operator. */
+    const expectSendsRefused = async (h: DeferredRecovery) => {
+        expect(h.wallet.hasDeferredPendingTxRecovery).toBe(true);
+        await expect(h.broadcaster.submitTx("new-transaction", [])).rejects.toThrow(
+            "recovery is required",
+        );
+        await expect(h.wallet.buildAndSubmitOffchainTx([], [])).rejects.toThrow(
+            "recovery is required",
+        );
+        expect(h.submitTx).not.toHaveBeenCalled();
+    };
+
+    const expectSendsAllowed = async (h: DeferredRecovery) => {
+        expect(h.wallet.hasDeferredPendingTxRecovery).toBe(false);
+        await h.broadcaster.submitTx("new-transaction", []);
+        expect(h.submitTx).toHaveBeenCalledWith("new-transaction", []);
+    };
+
+    it("unfences sends after a pass that found no proof input", async () => {
+        const h = await deferredRecovery();
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+
+        expect(h.getPendingTxs).not.toHaveBeenCalled();
+        expect(await h.hasPendingTx()).toBe(true);
+        await expectSendsAllowed(h);
+    });
+
+    it("unfences sends after a pass that could not finalize a discovered tx", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSwept: true })] });
+        h.getPendingTxs.mockResolvedValue([
+            { arkTxid: "a".repeat(64), finalArkTx: "", signedCheckpointTxs: [] },
+        ]);
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+
+        expect(logged).toHaveBeenCalledWith(
+            expect.stringContaining("Failed to finalize transaction"),
+            expect.anything(),
+        );
+        expect(await h.hasPendingTx()).toBe(true);
+        await expectSendsAllowed(h);
+    });
+
+    it("keeps sends fenced while the operator is unreachable, then unfences", async () => {
+        const h = await deferredRecovery();
+        h.getInfo.mockRejectedValueOnce(new ProviderUnavailableError("operator offline"));
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "operator offline",
+        );
+
+        expect(h.getVtxos).not.toHaveBeenCalled();
+        await expectSendsRefused(h);
+        // Recovery completes by finalizing, so that leg is never fenced.
+        await h.broadcaster.finalizeTx("existing-transaction", []);
+        expect(h.finalizeTx).toHaveBeenCalledWith("existing-transaction", []);
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+        await expectSendsAllowed(h);
+    });
+
+    it("keeps sends fenced when the pass hits a retryable failure mid-flight", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSwept: true })] });
+        h.getPendingTxs.mockRejectedValueOnce(new ProviderUnavailableError("operator offline"));
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "operator offline",
+        );
+
+        expect(await h.hasPendingTx()).toBe(true);
+        await expectSendsRefused(h);
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+        await expectSendsAllowed(h);
+    });
+
+    it("unfences sends when the pass fails for a non-retryable reason", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSwept: true })] });
+        h.getPendingTxs.mockRejectedValue(new Error("pending lookup rejected"));
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "pending lookup rejected",
+        );
+
+        expect(await h.hasPendingTx()).toBe(true);
+        await expectSendsAllowed(h);
+    });
+
+    it("keeps sends fenced when the operator reports another network", async () => {
+        const h = await deferredRecovery();
+        h.getInfo.mockResolvedValue({ ...h.liveInfo, network: "regtest" });
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "Operator network changed",
+        );
+
+        expect(h.getVtxos).not.toHaveBeenCalled();
+        await expectSendsRefused(h);
+    });
+
+    it("keeps sends fenced when the operator's info is unusable, then unfences", async () => {
+        const h = await deferredRecovery();
+        h.getInfo.mockRejectedValueOnce(new Error("malformed operator info"));
+
+        await expect(h.wallet.resumeDeferredPendingTxs(() => true)).rejects.toThrow(
+            "malformed operator info",
+        );
+
+        expect(h.getVtxos).not.toHaveBeenCalled();
+        await expectSendsRefused(h);
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+        await expectSendsAllowed(h);
+    });
+
+    it("proves ownership with spent and swept outputs, never subdust or exited ones", async () => {
+        const h = await deferredRecovery();
+        const swept = h.own(1, { isSwept: true });
+        const spent = h.own(2, { isSpent: true });
+        const subdust = h.own(3, { value: Number(h.wallet.dustAmount) - 1 });
+        const exited = h.own(4, { isUnrolled: true });
+        h.getVtxos.mockResolvedValue({ vtxos: [swept, subdust, spent, exited] });
+        const signOwnershipProof = vi.spyOn(h.wallet, "makeGetPendingTxIntentSignature");
+
+        await h.wallet.resumeDeferredPendingTxs(() => true);
+
+        expect(signOwnershipProof).toHaveBeenCalledWith([
+            expect.objectContaining({ txid: swept.txid, isSwept: true }),
+            expect.objectContaining({ txid: spent.txid, isSpent: true }),
+        ]);
+    });
+
+    it("holds the recovery pass open until every proof batch has settled", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({
+            vtxos: Array.from({ length: MAX_INPUTS_PER_PROOF + 1 }, (_, i) =>
+                h.own(i + 1, { isSwept: true }),
+            ),
+        });
+        let release!: (txs: never[]) => void;
+        const inFlight = new Promise<never[]>((resolve) => (release = resolve));
+        let call = 0;
+        h.getPendingTxs.mockImplementation(() => {
+            call += 1;
+            return call === 1
+                ? Promise.reject(new ProviderUnavailableError("operator offline"))
+                : inFlight;
+        });
+
+        let settled = false;
+        const recovery = h.wallet
+            .resumeDeferredPendingTxs(() => true)
+            .catch(() => {
+                settled = true;
+            });
+
+        // Failing fast would drop the tx lock with a sibling batch still signing, letting
+        // the next tick finalize the same pending tx a second time.
+        await vi.waitFor(() => expect(h.getPendingTxs.mock.calls.length).toBeGreaterThan(1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(settled).toBe(false);
+
+        release([]);
+        await recovery;
+        expect(settled).toBe(true);
+        expect(h.wallet.hasDeferredPendingTxRecovery).toBe(true);
+    });
+
+    it("leaves the fence in place when its init generation went stale", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSwept: true })] });
+        let active = true;
+        let finishLookup!: (pending: []) => void;
+        h.getPendingTxs.mockImplementationOnce(
+            () => new Promise((resolve) => (finishLookup = resolve)),
+        );
+
+        const staleRecovery = h.wallet.resumeDeferredPendingTxs(() => active);
+        await vi.waitFor(() => expect(h.getPendingTxs).toHaveBeenCalledOnce());
+        active = false;
+        finishLookup([]);
+        await staleRecovery;
+
+        expect(await h.hasPendingTx()).toBe(true);
+        expect(h.wallet.hasDeferredPendingTxRecovery).toBe(true);
+    });
+
+    it("unfences sends when a public recovery clears the flag", async () => {
+        const h = await deferredRecovery();
+        h.getVtxos.mockResolvedValue({ vtxos: [h.own(1, { isSpent: true })] });
+
+        await h.wallet.finalizePendingTxs();
+
+        expect(await h.hasPendingTx()).toBe(false);
+        await expectSendsAllowed(h);
     });
 });
 

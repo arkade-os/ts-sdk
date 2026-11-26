@@ -1,0 +1,27 @@
+pragma arkade ^0.1.0;
+
+contract SatsSwapDirectedNonce(
+    pubkey receiver,
+    int amount,
+    pubkey user,
+    pubkey taker,
+    bytes32 nonce
+) {
+    function fulfill() {
+        @allow(self-comparison, "commits the nonce without imposing a spend condition")
+        require(nonce == nonce);
+        int i = this.activeInputIndex;
+        require(tx.outputs[i].value >= amount);
+        let paid = tx.outputs[i].script;
+        require(paid.version == 1);
+        require(paid.program == receiver);
+    }
+
+    function fulfill(signature takerSig, signature serverSig, signature emulatorSig) tapscript {
+        require(checkMultisig([taker, server, emulator], [takerSig, serverSig, emulatorSig], 3));
+    }
+
+    function cancel(signature userSig, signature serverSig) tapscript {
+        require(checkMultisig([user, server], [userSig, serverSig], 2));
+    }
+}

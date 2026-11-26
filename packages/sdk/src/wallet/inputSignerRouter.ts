@@ -28,7 +28,8 @@ export interface InputSignerRouterDeps {
     boardingPkScript: Uint8Array;
 }
 
-const DESCRIPTOR_CAPABLE_CONTRACT_TYPES = new Set(["default", "delegate", "boarding"]);
+type DescriptorCapableType = "default" | "delegate" | "boarding" | "executor";
+const DESCRIPTOR_CAPABLE_CONTRACT_TYPES = new Set(["default", "delegate", "boarding", "executor"]);
 
 /**
  * Routing decision for a single tx's signable inputs: which inputs the
@@ -50,7 +51,7 @@ export interface InputRoutingPlan {
 
 /**
  * Routes PSBT inputs to the correct signer based on the owning contract.
- * Inputs whose script matches a `default`/`delegate`/`boarding` contract with
+ * Inputs whose script matches a `default`/`delegate`/`boarding`/`executor` contract with
  * a non-baseline owner are sent to {@link DescriptorProvider}; everything
  * else (baseline-owned contracts, other contract types, and the index-0
  * boarding fallback script) is sent to {@link Identity}. Inputs with no
@@ -120,8 +121,10 @@ export class InputSignerRouter {
             }
 
             // this is persisted data: a migration or custom repository adapter
-            // could legitimately store it uppercase
-            const ownerPubKeyHex = contract.params.pubKey?.toLowerCase();
+            // could legitimately store it uppercase. An executor owner is compressed.
+            const ownerPubKeyHex = (
+                contract.params.pubKey ?? contract.params.owner?.slice(2)
+            )?.toLowerCase();
             if (ownerPubKeyHex && ownerPubKeyHex === baselinePubKeyHex) {
                 identityIndexes.push(job.index);
                 continue;
@@ -131,7 +134,7 @@ export class InputSignerRouter {
             if (typeof descriptor !== "string" || descriptor.length === 0) {
                 throw new MissingSigningDescriptorError(
                     contract.script,
-                    contract.type as "default" | "delegate" | "boarding",
+                    contract.type as DescriptorCapableType,
                 );
             }
 

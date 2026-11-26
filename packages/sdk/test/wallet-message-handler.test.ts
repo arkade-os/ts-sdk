@@ -9,6 +9,8 @@ import {
     deserializeMigrationReport,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { InMemoryWalletRepository, toXOnlySignerHex } from "../src";
+import { DigestMismatchError } from "../src/providers/ark";
+import { ProviderUnavailableError } from "../src/providers/errors";
 import { hex } from "@scure/base";
 import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
 import {
@@ -2696,6 +2698,250 @@ describe("WalletMessageHandler repo-backed reads", () => {
             "aa".repeat(32),
             "dd".repeat(32),
         ]);
+    });
+
+    /** A cached-boot wallet whose recovery attempt the test drives. */
+    const cachedBootWallet = (attempt: () => Promise<void>) => ({
+        serverInfoSource: "cache",
+        hasDeferredPendingTxRecovery: true,
+        deferPendingTxRecovery: vi.fn().mockResolvedValue(undefined),
+        resumeDeferredPendingTxs: attempt,
+        finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+        getVtxoManager: vi.fn().mockResolvedValue({}),
+    });
+
+    const startCachedBoot = async (wallet: ReturnType<typeof cachedBootWallet>) => {
+        const { readonlyWallet, arkProvider } = fixtureContext(updater);
+        await updater.start(
+            { wallet, readonlyWallet, arkProvider, walletRequestBinding: TEST_BINDING } as any,
+            { walletRepository: walletRepo },
+            { broadcast: vi.fn() },
+        );
+        await (updater as any).onWalletInitialized(fixtureContext(updater));
+    };
+
+    it("initializes from cache before pending recovery and runs one attempt at a time", async () => {
+        setupHandler();
+        let release!: () => void;
+        const attempt = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+        const wallet = cachedBootWallet(attempt);
+        await startCachedBoot(wallet);
+
+        expect(wallet.deferPendingTxRecovery).toHaveBeenCalledOnce();
+        expect(wallet.finalizePendingTxs).not.toHaveBeenCalled();
+        expect(attempt).not.toHaveBeenCalled();
+
+        await updater.tick(0);
+        await updater.tick(1);
+        expect(attempt).toHaveBeenCalledOnce();
+
+        release();
+        await vi.waitFor(() => expect((updater as any).inFlightOperations.size).toBe(0));
+        await updater.tick(2);
+        expect(attempt).toHaveBeenCalledOnce();
+        expect((updater as any).retryPendingTxs).toBeUndefined();
+    });
+
+    it("retries every failure that leaves the wallet still refusing sends", async () => {
+        setupHandler();
+        const attempt = vi.fn<() => Promise<void>>();
+        await startCachedBoot(cachedBootWallet(attempt));
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+        const armed = () => (updater as any).retryPendingTxs !== undefined;
+        const stuck = () =>
+            new Error("Operator network changed while recovering pending transactions");
+
+        // Two transient failures and one that is not retryable at all; none reached
+        // the operator.
+        for (const error of [
+            new ProviderUnavailableError("operator offline"),
+            new DigestMismatchError("operator changed"),
+            stuck(),
+        ]) {
+            attempt.mockRejectedValueOnce(error);
+            await updater.tick(0);
+            await until(armed);
+            expect(armed()).toBe(true);
+        }
+        expect(attempt).toHaveBeenCalledTimes(3);
+
+        // Waits on the re-arm, not the call: the slot is set only after the catch logs.
+        attempt.mockRejectedValue(stuck());
+        await updater.tick(1);
+        await until(armed);
+        expect(attempt).toHaveBeenCalledTimes(4);
+        expect(logged).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-arms when recovery rejects with no error value at all", async () => {
+        setupHandler();
+        const attempt = vi.fn<() => Promise<void>>();
+        await startCachedBoot(cachedBootWallet(attempt));
+        vi.spyOn(console, "error").mockImplementation(() => {});
+
+        // Classifying the rejection must not throw, or the catch dies and nothing re-arms.
+        attempt.mockRejectedValueOnce(undefined);
+        await updater.tick(0);
+        await until(() => (updater as any).retryPendingTxs !== undefined);
+
+        expect((updater as any).retryPendingTxs).toBeDefined();
+    });
+
+    it("stops retrying once the wallet has unfenced sends", async () => {
+        setupHandler();
+        const attempt = vi.fn<() => Promise<void>>();
+        const wallet = cachedBootWallet(attempt);
+        await startCachedBoot(wallet);
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        wallet.hasDeferredPendingTxRecovery = false;
+        attempt.mockRejectedValueOnce(new Error("pending lookup rejected"));
+        await updater.tick(0);
+        await until(() => logged.mock.calls.length > 0);
+        await updater.tick(1);
+        await updater.tick(2);
+
+        expect(attempt).toHaveBeenCalledOnce();
+        expect((updater as any).retryPendingTxs).toBeUndefined();
+        expect(logged).toHaveBeenCalledWith(
+            "Error recovering pending transactions:",
+            expect.any(Error),
+        );
+    });
+
+    describe("deferred recovery at INIT", () => {
+        const initWith = (wallet: any) => {
+            setupHandler();
+            (updater as any).wallet = wallet;
+            return fixtureContext(updater);
+        };
+        const makeWallet = (overrides: Record<string, unknown> = {}) => {
+            const wallet: any = {
+                serverInfoSource: "cache",
+                hasDeferredPendingTxRecovery: false,
+                deferPendingTxRecovery: vi.fn().mockImplementation(async () => {
+                    wallet.hasDeferredPendingTxRecovery = true;
+                    return true;
+                }),
+                resumeDeferredPendingTxs: vi.fn().mockResolvedValue(undefined),
+                finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+                getVtxoManager: vi.fn().mockResolvedValue({}),
+                ...overrides,
+            };
+            return wallet;
+        };
+
+        it("keeps the retry scheduled when INIT fails on the boarding fetch", async () => {
+            const wallet = makeWallet({ hasDeferredPendingTxRecovery: true });
+            const context = initWith(wallet);
+            (updater as any).lazyBoardingInit = false;
+            (context.readonlyWallet as any).getBoardingUtxosForSigners = vi
+                .fn()
+                .mockRejectedValue(new Error("address fetch failed"));
+
+            await expect((updater as any).onWalletInitialized(context)).rejects.toThrow(
+                "address fetch failed",
+            );
+            expect((updater as any).retryPendingTxs).toBeDefined();
+
+            await updater.tick(0);
+            await vi.waitFor(() => expect(wallet.resumeDeferredPendingTxs).toHaveBeenCalledOnce());
+        });
+
+        it("defers at INIT when the source flipped to cache after boot", async () => {
+            const wallet = makeWallet();
+            await (updater as any).onWalletInitialized(initWith(wallet));
+
+            expect(wallet.deferPendingTxRecovery).toHaveBeenCalledOnce();
+            expect(wallet.finalizePendingTxs).not.toHaveBeenCalled();
+            expect((updater as any).retryPendingTxs).toBeDefined();
+        });
+
+        it("defers when the live branch cannot reach the operator", async () => {
+            const wallet = makeWallet({
+                serverInfoSource: "live",
+                finalizePendingTxs: vi
+                    .fn()
+                    .mockRejectedValue(new ProviderUnavailableError("operator down")),
+            });
+            await (updater as any).onWalletInitialized(initWith(wallet));
+
+            expect(wallet.finalizePendingTxs).toHaveBeenCalledOnce();
+            expect(wallet.deferPendingTxRecovery).toHaveBeenCalledOnce();
+            expect((updater as any).retryPendingTxs).toBeDefined();
+        });
+
+        it("logs a non-availability failure of the live branch without deferring", async () => {
+            const error = vi.spyOn(console, "error").mockImplementation(() => {});
+            const wallet = makeWallet({
+                serverInfoSource: "live",
+                finalizePendingTxs: vi.fn().mockRejectedValue(new Error("boom")),
+            });
+            await (updater as any).onWalletInitialized(initWith(wallet));
+
+            expect(wallet.deferPendingTxRecovery).not.toHaveBeenCalled();
+            expect((updater as any).retryPendingTxs).toBeUndefined();
+            expect(error).toHaveBeenCalledWith(
+                "Error recovering pending transactions:",
+                expect.any(Error),
+            );
+        });
+
+        it("schedules nothing when a newer INIT lands during the fallback deferral", async () => {
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            const wallet = makeWallet({
+                serverInfoSource: "live",
+                finalizePendingTxs: vi
+                    .fn()
+                    .mockRejectedValue(new ProviderUnavailableError("operator down")),
+            });
+            wallet.deferPendingTxRecovery.mockImplementation(async () => {
+                await gate;
+                return true;
+            });
+            const context = initWith(wallet);
+
+            const first = (updater as any).onWalletInitialized(context);
+            await until(() => wallet.deferPendingTxRecovery.mock.calls.length > 0);
+            (updater as any).initEpoch++;
+            release();
+            await first;
+
+            expect((updater as any).retryPendingTxs).toBeUndefined();
+        });
+
+        it("leaves only the newest INIT's retry in place", async () => {
+            const wallet = makeWallet({ hasDeferredPendingTxRecovery: true });
+            const context = initWith(wallet);
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            (context.readonlyWallet as any).getBoardingUtxosForSigners = vi
+                .fn()
+                .mockImplementationOnce(async () => {
+                    await gate;
+                    return [];
+                })
+                .mockResolvedValue([]);
+            (updater as any).lazyBoardingInit = false;
+
+            const first = (updater as any).onWalletInitialized(context);
+            await until(() => (updater as any).retryPendingTxs !== undefined);
+            const firstRetry = (updater as any).retryPendingTxs;
+
+            const second = (updater as any).onWalletInitialized(context);
+            await until(() => (updater as any).retryPendingTxs !== firstRetry);
+            const secondRetry = (updater as any).retryPendingTxs;
+            expect(secondRetry).toBeDefined();
+            expect(secondRetry).not.toBe(firstRetry);
+
+            release();
+            await Promise.all([first, second]);
+            expect((updater as any).retryPendingTxs).toBe(secondRetry);
+
+            await firstRetry();
+            expect(wallet.resumeDeferredPendingTxs).not.toHaveBeenCalled();
+        });
     });
 
     it.each([false, true])(

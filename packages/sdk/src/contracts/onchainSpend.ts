@@ -25,6 +25,7 @@ import {
 import type { VirtualCoin } from "../wallet";
 import type { Contract, PathSelection } from "./types";
 import { exitSequence } from "./handlers/helpers";
+import { ExecutorContractHandler } from "./handlers/executor";
 import { isOnchainScoped, scopeOf } from "./scope";
 import { isExplorerCoin } from "./onchainCoins";
 import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
@@ -157,14 +158,18 @@ export function assertCosignable(
 }
 
 /**
- * A boarding script: a `boarding` contract, or the `default` row an equal-delay boarding script
- * coalesced onto (widened to `both`). Scope alone does not qualify: any contract type may be
- * onchain-scoped, and its coins are not the wallet's to re-board. A `default` row's CSV must match
- * the boarding CSV, which makes its script byte-identical to that key's boarding script.
+ * A boarding script: a `boarding` contract, an Executor boarding watch, or the `default` row an
+ * equal-delay boarding script coalesced onto (widened to `both`). Scope alone does not qualify: any
+ * contract type may be onchain-scoped, and its coins are not the wallet's to re-board. A `default`
+ * row's CSV must match the boarding CSV, which makes its script byte-identical to that key's
+ * boarding script.
  */
 function isBoardingContract(contract: Contract, boardingCsv: RelativeTimelock): boolean {
     if (!isOnchainScoped(contract)) return false;
     if (contract.type === "boarding") return true;
+    if (contract.type === ExecutorContractHandler.type) {
+        return contract.params.template === "boarding";
+    }
     if (contract.type !== "default" || scopeOf(contract) !== "both") return false;
     return exitSequence(contract) === timelockToSequence(boardingCsv);
 }
@@ -228,7 +233,11 @@ export function isCosignRejectedAfterSigning(e: unknown): boolean {
     return e instanceof OnchainCosignRejectedError && !isCosignFallback(e);
 }
 
-/** True only when the coins were definitely not spent, so paying another way is safe. */
+/**
+ * True only when the coins were definitely not spent, so paying another way is safe, as
+ * `sendOnchain` and `cosignOnchainTx` callers may. `Ramps.offboardExact` still rethrows every
+ * `OnchainCosignRejectedError` after signing (see README "Onchain cosigning").
+ */
 export function isCosignFallback(e: unknown): boolean {
     if (e instanceof OnchainCosignRejectedError) {
         return !!e.arkErrorName && DEFINITE_COSIGN_REJECTIONS.has(e.arkErrorName);

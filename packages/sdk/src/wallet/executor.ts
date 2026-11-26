@@ -1,0 +1,934 @@
+import { hex } from "@scure/base";
+import { equalBytes } from "@scure/btc-signer/utils.js";
+import type { IWallet } from ".";
+import {
+    ExecutorRequestError,
+    type ExecutorContractKeys,
+    type ExecutorDelegation,
+    type ExecutorInfo,
+    type ExecutorProvider,
+} from "../providers/executor";
+import type { Contract } from "../contracts/types";
+import type { ContractFilter } from "../repositories/contractRepository";
+import {
+    evenOwnerKey,
+    ExecutorContractHandler,
+    executorContractParams,
+    executorKeysOf,
+} from "../contracts/handlers/executor";
+import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
+import { networkFromOperatorInfo, resolveEmulatorPubkey } from "../networks";
+import { ArkAddress } from "../script/address";
+import {
+    DEFAULT_TEMPLATE_IDS,
+    type ExecutorDefault,
+    type DelegationParams,
+    defaultVariables,
+} from "../script/executor/executorTemplate";
+import { timeoutSignal } from "../utils/fetch";
+import { timelockToSequence } from "../utils/timelock";
+import { newestWalletReceiveContract } from "./walletReceiveRotator";
+import { toXOnlySignerHex } from "./signerRotation";
+
+/**
+ * Bounds a registration or a refresh's status read, neither with a `fetch` deadline of its own;
+ * the local setup after the service answers is not covered.
+ */
+export const EXECUTOR_REQUEST_TIMEOUT_MS = 30_000;
+
+/** Metadata key: the service's status of a delegated watch. */
+export const DELEGATION_STATUS_KEY = "delegationStatus";
+/** Metadata key: the watch's expiry, in unix seconds; 0 or absent when it has none. */
+export const DELEGATION_EXPIRES_KEY = "delegationExpiresAt";
+/** Metadata key: when the watch was last registered, in unix milliseconds. */
+export const DELEGATION_REGISTERED_KEY = "delegationRegisteredAt";
+/**
+ * The status of a contract row the SDK watches but did not register with the service: the local
+ * companion of a registration, such as the renewal contract a boarding watch boards into.
+ */
+export const DELEGATION_LOCAL_STATUS = "local";
+
+/** How a delegated watch was registered, persisted on its contract row. */
+export interface ExecutorWatchMetadata {
+    /** The template the service registered. */
+    template: ExecutorDefault;
+    /** The service's status of the watch. */
+    status: string;
+    /** The watch's expiry, in unix seconds; 0 or absent when it has none. */
+    expiresAt?: number;
+}
+
+/** A watch both sides derived: the address to fund and what restores it. */
+export interface ExecutorWatchRegistration {
+    /** The delegated boarding address, onchain. */
+    address: string;
+    templateId: string;
+    /** The template's variables, canonical hex. */
+    variables: Record<string, string>;
+    /** The Executor's keys the wallet's delegated contracts are derived from. */
+    keys: ExecutorContractKeys;
+    /** The parameters the contracts were derived from, exit delays resolved. */
+    params: DelegationParams;
+    /** The service's answer; absent when the stored watch answered and the service was not asked. */
+    delegation?: ExecutorDelegation;
+}
+
+/**
+ * The parameters a caller chooses. The exit delays default to the operator's, as BIP 68
+ * sequences.
+ */
+export type DelegationOptions = Pick<DelegationParams, "renewalWindow" | "maxFee"> &
+    Partial<Pick<DelegationParams, "exitDelay" | "boardingExitDelay">>;
+
+export interface RegistrationOptions {
+    /** The watch's expiry, in unix seconds. */
+    expiresAt?: number;
+    /**
+     * The emulator key to accept in place of the network's pinned one, for a private emulator or
+     * a network with none. Its holder, with the operator, can move the delegated coins.
+     */
+    emulatorPubkey?: string;
+}
+
+/** What the manager needs of a wallet: its key, its operator and its contracts. */
+export type DelegatedWallet = Pick<
+    IWallet,
+    "identity" | "getAddress" | "getContractManager" | "getOperatorInfo"
+>;
+
+export interface DelegatedContractWatch {
+    contract: Contract;
+    owner: string;
+    script: ReturnType<typeof ExecutorContractHandler.createScript>;
+    signer: string;
+    live: boolean;
+}
+
+/** A read of the wallet's contract rows: repositories, never the manager's indexer sync. */
+export type ContractReader = (filter?: ContractFilter) => Promise<Contract[]>;
+
+// Building a script takes milliseconds and every poll reads all watches, rotated-off keys included.
+const scriptCache = new Map<string, DelegatedContractWatch["script"]>();
+
+function cachedScript(params: Record<string, string>): DelegatedContractWatch["script"] {
+    const key = JSON.stringify(Object.entries(params).sort(([a], [b]) => (a < b ? -1 : 1)));
+    let script = scriptCache.get(key);
+    if (!script) {
+        script = ExecutorContractHandler.createScript(params);
+        scriptCache.set(key, script);
+    }
+    return script;
+}
+
+/** Rows that predate the registration time, or were restored, order by when they were created. */
+function registeredAt(contract: Contract): number {
+    const at = contract.metadata?.[DELEGATION_REGISTERED_KEY];
+    return typeof at === "number" ? at : contract.createdAt;
+}
+
+/**
+ * The wallet-owned Executor watches of one template, most recently registered first. A watch is
+ * the wallet's when its owner is the identity key, or one the row's `signingDescriptor` derives;
+ * it is live while the service reported it active and it has not expired.
+ */
+export async function delegatedContracts(
+    identity: Pick<IWallet["identity"], "xOnlyPublicKey">,
+    getContracts: ContractReader,
+    template: ExecutorDefault,
+): Promise<DelegatedContractWatch[]> {
+    const rows = (await getContracts({ type: ["executor"] }))
+        .filter((c) => c.params.template === template)
+        .sort((a, b) => registeredAt(b) - registeredAt(a));
+    // Before the identity read, which can be a round trip for a remote signer.
+    if (rows.length === 0) return [];
+    const identityKey = hex.encode(await identity.xOnlyPublicKey());
+    const now = Math.floor(Date.now() / 1000);
+    const watches: DelegatedContractWatch[] = [];
+    for (const contract of rows) {
+        try {
+            const owner = contract.params.owner?.slice(2).toLowerCase();
+            const descriptor = contract.metadata?.signingDescriptor;
+            const held =
+                owner === identityKey ||
+                (typeof descriptor === "string" &&
+                    hex.encode(deriveDescriptorLeafPubKey(descriptor)) === owner);
+            if (!held || owner === undefined) continue;
+            const script = cachedScript(contract.params);
+            if (hex.encode(script.pkScript) !== contract.script) continue;
+            const expiresAt = contract.metadata?.[DELEGATION_EXPIRES_KEY];
+            watches.push({
+                contract,
+                owner,
+                script,
+                signer: toXOnlySignerHex(contract.params.serverPubKey),
+                live:
+                    contract.metadata?.[DELEGATION_STATUS_KEY] === "active" &&
+                    !(typeof expiresAt === "number" && expiresAt > 0 && expiresAt <= now),
+            });
+        } catch (e) {
+            console.warn("Skipping malformed delegated contract", contract.script, e);
+        }
+    }
+    return watches;
+}
+
+/**
+ * Make the wallet's contract manager watch, as its own, the renewal contract of its key and, when
+ * params has a boarding exit delay, its boarding contract: derived locally from the key, the
+ * params and the service's keys, so a restored wallet finds its delegated coins without asking
+ * the service. Idempotent.
+ *
+ * `descriptor` names the owner key, the identity's by default. Called before `restore()`, it
+ * also lets an HD wallet find the watches of its rotated keys.
+ *
+ * `registered` carries the service's answer for the template it registered: that row becomes the
+ * live delegation, the others stay local companions of it (watched, never delegated to). Without
+ * it (a restore) the rows carry no status.
+ */
+export async function watchExecutorContracts(
+    wallet: Pick<IWallet, "identity" | "getAddress" | "getContractManager">,
+    keys: ExecutorContractKeys,
+    params: DelegationParams,
+    registered?: ExecutorWatchMetadata,
+    descriptor?: string,
+): Promise<Contract[]> {
+    const [owner, address, manager] = await Promise.all([
+        descriptor === undefined
+            ? wallet.identity.compressedPublicKey()
+            : ownerKey(wallet.identity, descriptor),
+        wallet.getAddress(),
+        wallet.getContractManager(),
+    ]);
+    // the identity's key needs no descriptor to sign
+    const signing =
+        descriptor === undefined ||
+        equalBytes(owner.subarray(1), await wallet.identity.xOnlyPublicKey())
+            ? undefined
+            : descriptor;
+    const { hrp, serverPubKey } = ArkAddress.decode(address);
+    const templates: ExecutorDefault[] =
+        params.boardingExitDelay === undefined ? ["renewal"] : ["renewal", "boarding"];
+    const contracts: Contract[] = [];
+    for (const template of templates) {
+        const serialized = executorContractParams(template, owner, keys, params);
+        const script = ExecutorContractHandler.createScript(serialized);
+        contracts.push(
+            await manager.createContract({
+                type: ExecutorContractHandler.type,
+                params: serialized,
+                script: hex.encode(script.pkScript),
+                address: script.address(hrp, serverPubKey).encode(),
+                // boarding deposits are onchain coins, stored by the onchain sync
+                scope: template === "boarding" ? "onchain" : "offchain",
+                label: template === "renewal" ? "Delegated renewal" : "Delegated boarding",
+                metadata: metadataFor(template, registered, signing),
+            }),
+        );
+    }
+    return contracts;
+}
+
+function metadataFor(
+    template: ExecutorDefault,
+    registered: ExecutorWatchMetadata | undefined,
+    signingDescriptor: string | undefined,
+): Record<string, string | number> | undefined {
+    const signing: Record<string, string> =
+        signingDescriptor === undefined ? {} : { signingDescriptor };
+    if (registered === undefined) {
+        return signingDescriptor === undefined ? undefined : signing;
+    }
+    if (registered.template !== template) {
+        return { ...signing, [DELEGATION_STATUS_KEY]: DELEGATION_LOCAL_STATUS };
+    }
+    return statusMetadata(signing, registered.status, registered.expiresAt);
+}
+
+/**
+ * The compressed owner key of `descriptor`. The identity's keeps its own parity, so its rows and
+ * the service's registration stay the ones made before descriptors; the scripts take the x-only
+ * key, so any other parity derives the same address.
+ */
+export async function ownerKey(
+    identity: Pick<IWallet["identity"], "compressedPublicKey">,
+    descriptor: string,
+): Promise<Uint8Array> {
+    const xOnly = deriveDescriptorLeafPubKey(descriptor);
+    const own = await identity.compressedPublicKey();
+    return equalBytes(own.subarray(1), xOnly) ? own : evenOwnerKey(xOnly);
+}
+
+/**
+ * The descriptor of the displayed boarding address: the newest one the wallet rotated to, as
+ * boot resolves it, else the identity's.
+ */
+async function boardingDescriptor(
+    wallet: Pick<IWallet, "identity" | "getContractManager">,
+    serverPubKey: string,
+): Promise<string> {
+    const manager = await wallet.getContractManager();
+    const rows = await manager.getContracts({ type: "boarding", state: "active" });
+    const descriptor = newestWalletReceiveContract(rows, serverPubKey)?.metadata?.signingDescriptor;
+    return typeof descriptor === "string" ? descriptor : identityDescriptor(wallet.identity);
+}
+
+/**
+ * The key a held watch's row is registered under: its row's descriptor, else the identity's —
+ * a held row without one is the identity key's.
+ */
+function watchDescriptor(
+    watch: DelegatedContractWatch,
+    identity: Pick<IWallet["identity"], "xOnlyPublicKey">,
+): Promise<string> {
+    const descriptor = watch.contract.metadata?.signingDescriptor;
+    return typeof descriptor === "string"
+        ? Promise.resolve(descriptor)
+        : identityDescriptor(identity);
+}
+
+/** `updateContract` replaces metadata, so the previous expiry must not outlive a status without one. */
+function statusMetadata(
+    metadata: Record<string, unknown>,
+    status: string,
+    expiresAt: number | undefined,
+    registeredAtMs: number = Date.now(),
+): Record<string, string | number> {
+    const { [DELEGATION_EXPIRES_KEY]: _stale, ...rest } = metadata;
+    return {
+        ...(rest as Record<string, string | number>),
+        [DELEGATION_STATUS_KEY]: status,
+        [DELEGATION_REGISTERED_KEY]: registeredAtMs,
+        ...(expiresAt !== undefined ? { [DELEGATION_EXPIRES_KEY]: expiresAt } : {}),
+    };
+}
+
+/**
+ * What registering `watch` again takes: its own params and expiry, and its own emulator key,
+ * checked against the pin or approved when first registered, so registering refuses an Executor
+ * that no longer holds it.
+ */
+export function reRegistrationOf(watch: DelegatedContractWatch): {
+    options: DelegationOptions;
+    registration: RegistrationOptions;
+} {
+    const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
+    const expiresAt = watch.contract.metadata?.[DELEGATION_EXPIRES_KEY];
+    return {
+        options: {
+            renewalWindow: p.renewalWindow,
+            maxFee: p.maxFee,
+            exitDelay: p.exitDelay,
+            boardingExitDelay: p.boardingExitDelay,
+        },
+        registration: {
+            expiresAt: typeof expiresAt === "number" && expiresAt > 0 ? expiresAt : undefined,
+            emulatorPubkey: hex.encode(p.emulatorPubKey),
+        },
+    };
+}
+
+/** The script of `owner`'s renewal contract under `keys` and `params`. */
+function renewalScript(
+    owner: Uint8Array,
+    keys: ExecutorContractKeys,
+    params: DelegationParams,
+): string {
+    const script = ExecutorContractHandler.createScript(
+        executorContractParams("renewal", owner, keys, params),
+    );
+    return hex.encode(script.pkScript);
+}
+
+/**
+ * A window as long as the coin's life makes every renewed coin due again at once, each round
+ * paying up to maxFee. Block-typed expiries (regtest only) have no fixed duration.
+ */
+function windowPastExpiry(renewalWindow: number, lifetime: bigint | undefined): boolean {
+    return lifetime !== undefined && lifetime >= 512n && renewalWindow >= lifetime;
+}
+
+/** An operator delay as a BIP 68 sequence: below 512 it counts blocks, else seconds. */
+function delaySequence(delay: bigint): number {
+    return Number(timelockToSequence({ value: delay, type: delay < 512n ? "blocks" : "seconds" }));
+}
+
+/** `options` with the exit delays it leaves out set to the operator's. */
+function resolveParams(
+    options: DelegationOptions,
+    operator: Pick<RegistrationContext["operator"], "unilateralExitDelay" | "boardingExitDelay">,
+    template: ExecutorDefault,
+): DelegationParams {
+    return {
+        renewalWindow: options.renewalWindow,
+        maxFee: options.maxFee,
+        exitDelay: options.exitDelay ?? delaySequence(operator.unilateralExitDelay),
+        ...(template === "boarding"
+            ? {
+                  boardingExitDelay:
+                      options.boardingExitDelay ?? delaySequence(operator.boardingExitDelay),
+              }
+            : {}),
+    };
+}
+
+/**
+ * Registers Executor watches. Renewal keeps renewal-contract coins alive while the wallet is
+ * offline; boarding moves onchain deposits into the corresponding renewal contract.
+ */
+export interface IExecutorManager {
+    getInfo(): Promise<ExecutorInfo>;
+    /** The default template ids; throws unless the service lists them as active. */
+    defaultTemplates(): Promise<Record<ExecutorDefault, string>>;
+    /**
+     * Watch the displayed boarding address's key: the Executor boards every deposit there
+     * into the wallet's renewal contract, a virtual output the wallet spends and renews as its
+     * own. The wallet watches both contracts. Without `expiresAt` the watch has no deadline of
+     * its own, but the Executor expires one that never receives a coin after an idle window: the
+     * wallet registers it again while it is online. Registering again returns the existing watch
+     * unchanged, from the stored row when it is the key's newest live watch under the same params:
+     * the Executor is not asked, and `delegation` is absent. An HD wallet registers a new watch
+     * each time it rotates the boarding address.
+     *
+     * The address derives from the key, `params`, the operator's exit delays when `params` omits
+     * them, and the Executor's keys: registering again on a restored wallet finds the same watch
+     * only while none of them changed. The returned `keys` and `params` restore it regardless,
+     * through {@link watchExecutorContracts}.
+     *
+     * Params may change between calls: the new ones register a new watch, and the earlier watches
+     * stay live and keep boarding the deposits already sent to them. The boarding address follows
+     * the most recently registered watch, so registering older params again moves it back.
+     *
+     * A boarding watch pays into the renewal contract of its own params. While renewal is on, that
+     * is, while the wallet has any live renewal watch under the current operator, this also
+     * registers renewal under `params` and `options`, unless that contract already has one. That registration is best-effort: a failure is logged and never
+     * undoes the boarding watch. {@link registerRenewal} retries it.
+     */
+    registerBoarding(
+        params: DelegationOptions,
+        options?: RegistrationOptions,
+    ): Promise<ExecutorWatchRegistration>;
+    /**
+     * Register the renewal watch, like {@link registerBoarding} idempotent, so apps call it at
+     * startup. `params` is the displayed boarding key's: that registration comes first, is
+     * returned, and its failure throws at once, before any other key is tried.
+     *
+     * It then covers every live boarding watch under the current operator, each under its own
+     * params, which is where its coins sit: the displayed key's earlier watches, and each earlier
+     * rotated key's. A key whose renewal watch is already live, as stored, is not asked again. A watch under another emulator key than the Executor's, or with a window no
+     * longer shorter than the operator's VTXO expiry, cannot be registered: it is skipped with a
+     * warning, and the wallet renews its coins itself. The others are all tried before a failure
+     * is thrown, and the error names the keys that failed, so a retry covers the rest.
+     * `expiresAt` applies to every watch registered.
+     *
+     * A send's change returns to the live renewal contract of its first delegated input, and the
+     * wallet's own renewals pay into the newest live one, unless the amount is `maxFee + dust` or
+     * less, or a renewed coin carries assets. A renewal spending a coin at a live renewal contract
+     * pays to `getAddress()` instead: the Executor missed that coin, so paying it back repeats the
+     * miss. A coin received at `getAddress()` is covered from its first renewal on; until then the
+     * wallet renews it itself. Under an Executor that keeps failing, a coin alternates: one
+     * fallback renewal out, one ordinary renewal back in.
+     */
+    registerRenewal(
+        params: DelegationOptions,
+        options?: RegistrationOptions,
+    ): Promise<ExecutorWatchRegistration>;
+}
+
+/** What a public call reads once, however many keys it registers. */
+interface RegistrationContext {
+    info: ExecutorInfo;
+    operator: Awaited<ReturnType<DelegatedWallet["getOperatorInfo"]>>;
+    network: ReturnType<typeof networkFromOperatorInfo>;
+    hrp: string;
+    serverPubKey: Uint8Array;
+    /** The wallet's operator key, x-only hex. */
+    server: string;
+}
+
+/** Client-side watch registration with the Executor. */
+export class ExecutorManagerImpl implements IExecutorManager {
+    constructor(
+        readonly executorProvider: ExecutorProvider,
+        readonly wallet: DelegatedWallet,
+    ) {}
+
+    getInfo(): Promise<ExecutorInfo> {
+        return this.executorProvider.getInfo();
+    }
+
+    async defaultTemplates(): Promise<Record<ExecutorDefault, string>> {
+        const ids = { ...DEFAULT_TEMPLATE_IDS };
+        const templates = await this.executorProvider.listTemplates();
+        const active = new Set(templates.filter((t) => t.status === "active").map((t) => t.id));
+        const missing = Object.entries(ids).filter(([, id]) => !active.has(id));
+        if (missing.length > 0) {
+            throw new Error(
+                `Executor does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
+            );
+        }
+        return ids;
+    }
+
+    registerBoarding(
+        options: DelegationOptions,
+        registration?: RegistrationOptions,
+    ): Promise<ExecutorWatchRegistration> {
+        return this.registerBoardingAt(undefined, options, registration);
+    }
+
+    async registerRenewal(
+        options: DelegationOptions,
+        registration: RegistrationOptions = {},
+    ): Promise<ExecutorWatchRegistration> {
+        // Resolved once: a rotation during the call must not change which key is the displayed one.
+        const displayed = await this.displayedDescriptor();
+        const context = this.lazyContext();
+        const first =
+            (await this.storedWatch(displayed, options, registration, "renewal")) ??
+            (await this.registerAt(await context(), displayed, options, registration, "renewal"));
+        const [server, { vtxoTreeExpiry }] = await Promise.all([
+            this.operatorSigner(),
+            this.wallet.getOperatorInfo(),
+        ]);
+        const registered = new Set([
+            renewalScript(hex.decode(first.variables.owner), first.keys, first.params),
+        ]);
+        // A live one needs no registration: the refresh revives it if the service let it lapse.
+        const live = new Set(
+            (await this.heldWatches("renewal"))
+                .filter((w) => w.live && w.signer === server)
+                .map((w) => w.contract.script),
+        );
+        const failed = new Set<string>();
+        for (const watch of await this.heldWatches("boarding")) {
+            if (!watch.live || watch.signer !== server) continue;
+            try {
+                // Its coins sit in the contract its own params and keys derive.
+                const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
+                const keys = executorKeysOf(p);
+                // Never registrable, and a held boarding watch ends only once it lapses: failing
+                // would repeat at every startup. The wallet renews the coins itself.
+                if (keys.emulatorPubkey !== first.keys.emulatorPubkey.toLowerCase()) {
+                    console.warn(
+                        `Skipping the held key ${watch.owner}: its watch uses another emulator key than the Executor's`,
+                    );
+                    continue;
+                }
+                if (windowPastExpiry(p.renewalWindow, vtxoTreeExpiry)) {
+                    console.warn(
+                        `Skipping the held key ${watch.owner}: its watch's renewalWindow ${p.renewalWindow}s is not shorter than the operator's VTXO expiry of ${vtxoTreeExpiry}s`,
+                    );
+                    continue;
+                }
+                const contract = renewalScript(p.owner, keys, p);
+                if (registered.has(contract) || live.has(contract)) continue;
+                registered.add(contract);
+                await this.registerAt(
+                    await context(),
+                    await watchDescriptor(watch, this.wallet.identity),
+                    reRegistrationOf(watch).options,
+                    { expiresAt: registration.expiresAt, emulatorPubkey: keys.emulatorPubkey },
+                    "renewal",
+                );
+            } catch (e) {
+                console.warn(`Renewal watch for the held key ${watch.owner} failed`, e);
+                failed.add(watch.owner);
+            }
+        }
+        if (failed.size > 0) {
+            throw new Error(
+                `Executor renewal registration failed for the keys ${[...failed].join(", ")}`,
+            );
+        }
+        return first;
+    }
+
+    /** @internal {@link registerBoarding} for `descriptor`'s key; the displayed one by default. */
+    async registerBoardingAt(
+        descriptor: string | undefined,
+        options: DelegationOptions,
+        registration: RegistrationOptions = {},
+    ): Promise<ExecutorWatchRegistration> {
+        const key = descriptor ?? (await this.displayedDescriptor());
+        const context = this.lazyContext();
+        const boarding =
+            (await this.storedWatch(key, options, registration, "boarding")) ??
+            (await this.registerAt(await context(), key, options, registration, "boarding"));
+        try {
+            await this.pairRenewal(context, key, boarding, options, registration);
+        } catch (e) {
+            console.warn("Failed to register the Executor renewal watch paired with boarding", e);
+        }
+        return boarding;
+    }
+
+    /**
+     * Register again the live watches the Executor no longer holds. It expires a client delegation
+     * that never held a coin after an idle window, and reports no deadline for it: the row stays
+     * live, and the wallet keeps advertising an address nobody watches. Registering an expired
+     * watch again revives it at the same address, keeping its registration time: only an explicit
+     * registration moves the boarding address. One that cannot be revived stops being live, and
+     * the wallet boards its deposits itself. A failing watch leaves the others to be tried.
+     *
+     * Only a key the wallet still uses is revived: the displayed one, and the most recently
+     * registered other key with a live watch, whose renewal contract the wallet's renewals pay
+     * into. A lapsed watch of any older key ends instead: it never held a coin, and reviving it
+     * would repeat for every rotation, forever.
+     *
+     * The status reads run as called; only the writes go through `write`, so a caller that orders
+     * them with its rotations holds those back for one write, never for the whole refresh.
+     * `stopped` ends the refresh between watches, and turns a write still queued into a no-op.
+     *
+     * Throws when a live watch is held and the Executor or the operator cannot be reached; a
+     * wallet with none reaches neither.
+     * @internal
+     */
+    async refreshWatches({
+        write = (task) => task(),
+        stopped = () => false,
+    }: {
+        write?: (task: () => Promise<void>) => Promise<void>;
+        stopped?: () => boolean;
+    } = {}): Promise<void> {
+        const held = {
+            boarding: (await this.heldWatches("boarding")).filter((w) => w.live),
+            renewal: (await this.heldWatches("renewal")).filter((w) => w.live),
+        };
+        if (!held.boarding.length && !held.renewal.length) return;
+        const context = await this.registrationContext();
+        for (const template of ["boarding", "renewal"] as const) {
+            for (const watch of held[template]) {
+                if (stopped()) return;
+                if (watch.signer !== context.server) continue;
+                try {
+                    const status = await this.serviceStatus(context, template, watch);
+                    if (status === "active") continue;
+                    await write(async () => {
+                        if (!stopped()) await this.settleLapsed(context, template, watch, status);
+                    });
+                } catch (e) {
+                    console.warn(
+                        `Failed to refresh the Executor ${template} watch`,
+                        watch.owner,
+                        e,
+                    );
+                }
+            }
+        }
+    }
+
+    /** What the Executor says of `watch`; an unknown watch is a lost one, so "expired". */
+    private async serviceStatus(
+        context: RegistrationContext,
+        template: ExecutorDefault,
+        watch: DelegatedContractWatch,
+    ): Promise<string> {
+        const address =
+            template === "boarding"
+                ? watch.script.onchainAddress(context.network)
+                : watch.script.address(context.hrp, context.serverPubKey).encode();
+        try {
+            const details = await this.executorProvider.getDelegation(address, {
+                signal: timeoutSignal(EXECUTOR_REQUEST_TIMEOUT_MS),
+            });
+            return details.delegation.status;
+        } catch (e) {
+            // Any other failure says nothing of the watch.
+            if (!(e instanceof ExecutorRequestError) || e.status !== 404) throw e;
+            return "expired";
+        }
+    }
+
+    /** Revive a lapsed watch, or end it when its key is no longer in use. */
+    private async settleLapsed(
+        context: RegistrationContext,
+        template: ExecutorDefault,
+        lapsed: DelegatedContractWatch,
+        status: string,
+    ): Promise<void> {
+        // Re-read: a rotation may have run while the service was asked.
+        const watch = (await this.heldWatches(template)).find(
+            (w) => w.contract.script === lapsed.contract.script,
+        );
+        if (!watch?.live) return;
+        if (!(await this.keyInUse(watch.owner, context.server))) {
+            await this.endWatch(watch, status);
+            return;
+        }
+        const { options, registration } = reRegistrationOf(watch);
+        try {
+            await this.registerAt(
+                context,
+                await watchDescriptor(watch, this.wallet.identity),
+                options,
+                registration,
+                template,
+                true,
+            );
+        } catch (e) {
+            // Whatever failed, the service said it no longer holds the watch: stop advertising it.
+            await this.endWatch(watch, status);
+            throw e;
+        }
+    }
+
+    /** Record the service's `status`, so the watch stops being live and is no longer shown. */
+    private async endWatch(watch: DelegatedContractWatch, status: string): Promise<void> {
+        const manager = await this.wallet.getContractManager();
+        await manager.updateContract(watch.contract.script, {
+            metadata: statusMetadata(
+                watch.contract.metadata ?? {},
+                status,
+                undefined,
+                registeredAt(watch.contract),
+            ),
+        });
+    }
+
+    /**
+     * The displayed key, and the most recently registered other key with a live watch: the
+     * wallet's renewals pay into its renewal contract, and a rotation copies its params when the
+     * displayed key has no watch.
+     */
+    private async keyInUse(owner: string, server: string): Promise<boolean> {
+        const displayed = await ownerKey(this.wallet.identity, await this.displayedDescriptor());
+        const displayedOwner = hex.encode(displayed.subarray(1));
+        if (owner === displayedOwner) return true;
+        const others = [
+            ...(await this.heldWatches("boarding")),
+            ...(await this.heldWatches("renewal")),
+        ]
+            .filter((w) => w.live && w.signer === server && w.owner !== displayedOwner)
+            .sort((a, b) => registeredAt(b.contract) - registeredAt(a.contract));
+        return others[0]?.owner === owner;
+    }
+
+    /**
+     * A boarding watch pays into the renewal contract of its own params, so while renewal is on,
+     * meaning any live renewal watch under the operator, that contract needs one too, or its
+     * boarded coins fall back to the wallet.
+     */
+    private async pairRenewal(
+        context: () => Promise<RegistrationContext>,
+        descriptor: string,
+        boarding: ExecutorWatchRegistration,
+        options: DelegationOptions,
+        registration: RegistrationOptions,
+    ): Promise<void> {
+        const contract = renewalScript(
+            hex.decode(boarding.variables.owner),
+            boarding.keys,
+            boarding.params,
+        );
+        const server = await this.operatorSigner();
+        const renewals = (await this.heldWatches("renewal")).filter(
+            (w) => w.live && w.signer === server,
+        );
+        if (renewals.length === 0 || renewals.some((w) => w.contract.script === contract)) return;
+        await this.registerAt(await context(), descriptor, options, registration, "renewal");
+    }
+
+    /**
+     * What registering `descriptor`'s key would return, read from the stored watch: the key's
+     * newest live one of `template` under the current operator, when it has the same params and
+     * emulator key. The service would answer with it unchanged; a lapsed watch is the refresh's to
+     * find. Undefined when the service must be asked: a first registration, a restored row, new
+     * params, or older ones registered again to move the boarding address back.
+     */
+    private async storedWatch(
+        descriptor: string,
+        options: DelegationOptions,
+        { emulatorPubkey }: RegistrationOptions,
+        template: ExecutorDefault,
+    ): Promise<ExecutorWatchRegistration | undefined> {
+        const [address, owner] = await Promise.all([
+            this.wallet.getAddress(),
+            ownerKey(this.wallet.identity, descriptor),
+        ]);
+        const { hrp, serverPubKey } = ArkAddress.decode(address);
+        const server = hex.encode(serverPubKey);
+        const xOnlyOwner = hex.encode(owner.subarray(1));
+        const watch = (await this.heldWatches(template)).find(
+            (w) => w.live && w.signer === server && w.owner === xOnlyOwner,
+        );
+        if (!watch) return undefined;
+        const operator = await this.wallet.getOperatorInfo();
+        const network = networkFromOperatorInfo(operator);
+        const params = resolveParams(options, operator, template);
+        const p = ExecutorContractHandler.deserializeParams(watch.contract.params);
+        if (
+            hex.encode(p.emulatorPubKey) !== resolveEmulatorPubkey(network, emulatorPubkey) ||
+            p.renewalWindow !== params.renewalWindow ||
+            p.maxFee !== params.maxFee ||
+            p.exitDelay !== params.exitDelay ||
+            p.boardingExitDelay !== params.boardingExitDelay ||
+            windowPastExpiry(params.renewalWindow, operator.vtxoTreeExpiry)
+        ) {
+            return undefined;
+        }
+        return {
+            address:
+                template === "boarding"
+                    ? watch.script.onchainAddress(network)
+                    : watch.script.address(hrp, serverPubKey).encode(),
+            templateId: DEFAULT_TEMPLATE_IDS[template],
+            variables: defaultVariables(template, owner, params),
+            keys: executorKeysOf(p),
+            params,
+        };
+    }
+
+    /** {@link registrationContext}, read once, and only when the service is asked. */
+    private lazyContext(): () => Promise<RegistrationContext> {
+        let context: Promise<RegistrationContext> | undefined;
+        return () => (context ??= this.registrationContext());
+    }
+
+    /** The wallet's operator key, x-only hex: the signer a live watch is registered under. */
+    private async operatorSigner(): Promise<string> {
+        return hex.encode(ArkAddress.decode(await this.wallet.getAddress()).serverPubKey);
+    }
+
+    /**
+     * Both templates register the displayed boarding key: boarding moves its deposits in, renewal
+     * keeps the renewal contract that receives them alive. It falls back to the identity's, so a
+     * static wallet registers its identity key.
+     */
+    private async displayedDescriptor(): Promise<string> {
+        return boardingDescriptor(this.wallet, await this.operatorSigner());
+    }
+
+    /** The wallet's watches of `template`, from the repository rows. */
+    private heldWatches(template: ExecutorDefault): Promise<DelegatedContractWatch[]> {
+        return delegatedContracts(
+            this.wallet.identity,
+            async (filter) => (await this.wallet.getContractManager()).getContracts(filter),
+            template,
+        );
+    }
+
+    private async registrationContext(): Promise<RegistrationContext> {
+        const [info, operator] = await Promise.all([
+            this.executorProvider.getInfo(),
+            this.wallet.getOperatorInfo({ requireLive: true }),
+        ]);
+        if (info.network !== operator.network) {
+            throw new Error(
+                `Executor runs on ${info.network}, the wallet's operator on ${operator.network}`,
+            );
+        }
+        // the watch address commits to the service's operator key, so it must be the wallet's
+        const { hrp, serverPubKey } = ArkAddress.decode(await this.wallet.getAddress());
+        const server = hex.encode(serverPubKey);
+        if (info.serverPubkey.slice(2).toLowerCase() !== server) {
+            throw new Error(
+                `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${server}`,
+            );
+        }
+        return {
+            info,
+            operator,
+            network: networkFromOperatorInfo(operator),
+            hrp,
+            serverPubKey,
+            server,
+        };
+    }
+
+    private async registerAt(
+        { info, operator, network, hrp, serverPubKey }: RegistrationContext,
+        descriptor: string,
+        options: DelegationOptions,
+        { expiresAt, emulatorPubkey }: RegistrationOptions = {},
+        template: ExecutorDefault,
+        /** A refresh keeps the row's registration time, which picks the boarding address. */
+        refresh = false,
+    ): Promise<ExecutorWatchRegistration> {
+        // Pinned, as in Arkade.connect: holding the emulator key, the Executor could sign the
+        // emulator-enforced leaf itself, past its covenant. Matching addresses cannot show it.
+        const emulator = resolveEmulatorPubkey(network, emulatorPubkey);
+        if (info.emulatorPubkey.toLowerCase() !== emulator) {
+            throw new Error(
+                `Executor's emulator key ${info.emulatorPubkey} is not the trusted ${emulator}`,
+            );
+        }
+        if (windowPastExpiry(options.renewalWindow, operator.vtxoTreeExpiry)) {
+            throw new Error(
+                `renewalWindow ${options.renewalWindow}s must be shorter than the operator's VTXO expiry of ${operator.vtxoTreeExpiry}s`,
+            );
+        }
+        const owner = await ownerKey(this.wallet.identity, descriptor);
+        const params = resolveParams(options, operator, template);
+        const keys: ExecutorContractKeys = {
+            cosignerPubkey: info.cosignerPubkey,
+            serverPubkey: info.serverPubkey,
+            emulatorPubkey: info.emulatorPubkey,
+        };
+        const variables = defaultVariables(template, owner, params);
+        const watchScript = ExecutorContractHandler.createScript(
+            executorContractParams(template, owner, keys, params),
+        );
+        const watchAddress =
+            template === "boarding"
+                ? watchScript.onchainAddress(network)
+                : watchScript.address(hrp, serverPubKey).encode();
+        const templateId = DEFAULT_TEMPLATE_IDS[template];
+        // Idempotent on the service (repeating returns the existing watch), so a call aborted
+        // with its outcome unknown is safe to repeat.
+        const delegation = await this.executorProvider.registerDelegation(templateId, variables, {
+            expiresAt,
+            signal: timeoutSignal(EXECUTOR_REQUEST_TIMEOUT_MS),
+        });
+        // The scripts derive from the owner, the params and the operator and emulator keys, not the
+        // cosigner key: a matching address proves those and commits to the same tapscripts, and
+        // says nothing of the cosigner key. That is safe while the cosigner key is in no leaf; a
+        // template that gives it one must check it here. Checked before anything is persisted.
+        const [input] = delegation.inputs;
+        if (
+            delegation.inputs.length !== 1 ||
+            !input ||
+            (template === "boarding" ? !input.onchain : input.onchain)
+        ) {
+            throw new Error(
+                `Executor's ${template} delegation has ${delegation.inputs.length} inputs, expected one ${template === "boarding" ? "onchain" : "offchain"} input`,
+            );
+        }
+        // bech32 is case-insensitive, and the service may answer in upper case
+        if (input.address.toLowerCase() !== watchAddress) {
+            throw new Error(
+                `Executor derived a different address: expected ${watchAddress}, got ${input.address}`,
+            );
+        }
+        const registered: ExecutorWatchMetadata = {
+            template,
+            status: delegation.status,
+            expiresAt: delegation.expiresAt,
+        };
+        const contracts = await watchExecutorContracts(
+            this.wallet,
+            keys,
+            params,
+            registered,
+            descriptor,
+        );
+        // The row may predate this registration (the service is idempotent, the repository is
+        // not): make it carry what the service just said, ended or not, so an ended watch stops
+        // being advertised.
+        const row = contracts.find((c) => c.params.template === template);
+        if (row) {
+            const manager = await this.wallet.getContractManager();
+            await manager.updateContract(row.script, {
+                metadata: statusMetadata(
+                    row.metadata ?? {},
+                    delegation.status,
+                    delegation.expiresAt,
+                    refresh ? registeredAt(row) : undefined,
+                ),
+            });
+        }
+        if (delegation.status !== "active") {
+            throw new Error(`Executor watch ${watchAddress} is ${delegation.status}`);
+        }
+        return { address: watchAddress, templateId, variables, keys, params, delegation };
+    }
+}

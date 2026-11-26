@@ -26,10 +26,10 @@ import {
 } from "@arkade-os/sdk";
 import { fundingWasNotSubmitted } from "./record";
 import { assetPaymentOf } from "./assetPayment";
-import { retireUnsubmittedFunding } from "./fundingNotSubmitted";
+import { retireNeverSent, retireUnsubmittedFunding } from "./fundingNotSubmitted";
 import { hex } from "@scure/base";
 import { finalizePendingClaim, findPendingClaims, pushClaim } from "../claim";
-import { buildHtlcRefund, claimOnchainFill, nextClaimFeeRate } from "../onchainHtlc";
+import { claimOnchainFill, nextClaimFeeRate } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
 import { migrateV0OfferRows } from "../migrateOfferRows";
 import { restoreOfferCoverage } from "../offer";
@@ -54,7 +54,7 @@ import {
     RfqSwapManager,
     isRfqConfigurationRefusal,
     type AvailableRfqSwapManagerCallbacks,
-    type ReceiveLockupSwap,
+    type LightningReceiveSwap,
     type RfqSwap,
     type RfqSwapManagerCallbacks,
     type RfqSwapManagerDeps,
@@ -87,6 +87,7 @@ import {
 import {
     LOCKUP_OWNER,
     corridorOutcome,
+    isCorridorKind,
     readsChain,
     recordOutcome,
     type Outcome,
@@ -238,7 +239,11 @@ export const readableRecord = (record: SwapRecord): boolean => {
         }
     }
     if (record.family === "rfq") {
-        return typeof record.rfqId === "string" && typeof record.lockupAddress === "string";
+        return (
+            isCorridorKind(record.kind) &&
+            typeof record.rfqId === "string" &&
+            typeof record.lockupAddress === "string"
+        );
     }
     return (
         record.family === "offer" &&
@@ -489,14 +494,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     });
 
     /**
-     * The L1 seams, resolved the first time a swap that reads them (either onchain direction)
-     * appears. A refusal is reported and the record left undriven. `null` = refused.
+     * The L1 seams, resolved the first time a swap that reads them appears. A refusal is reported and the record left undriven. `null` = refused.
      */
     let onchainSeams:
         | {
               chain: RfqSwapManagerDeps["chain"];
               claim?: RfqSwapManagerCallbacks["claimOnchain"];
-              refund?: RfqSwapManagerCallbacks["refundOnchain"];
           }
         | null
         | undefined;
@@ -579,47 +582,6 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         };
     };
 
-    /**
-     * The wallet-backed default L1 refund. Signs through the descriptor `provisionRefundKey` bound
-     * at quote time, checked against the key the HTLC was derived with, and pays the record's own
-     * `refundPkScript`. The manager calls it only once the refund leaf has matured on MTP.
-     */
-    const defaultOnchainRefund = (
-        chain: NonNullable<RfqSwapManagerDeps["chain"]>,
-        feeRateSatVb: number,
-    ): RfqSwapManagerCallbacks["refundOnchain"] => {
-        return async (swap, utxo) => {
-            const record = await corridorStore().getRfqSwap(swap.rfqId);
-            if (!record) {
-                throw new Error(`rfq swap ${swap.rfqId} has no stored record to refund from`);
-            }
-            const descriptor = record.profile.refundDescriptor;
-            if (typeof descriptor !== "string") {
-                throw new Error(
-                    `rfq swap ${swap.rfqId} carries no refund descriptor; wire the onchain ` +
-                        "corridor's refund callback to take its L1 funding back",
-                );
-            }
-            const signer = await contractSigner(wallet, descriptor);
-            const held = hex.encode(await signer.xOnlyPublicKey());
-            if (held !== record.profile.refundKey) {
-                throw new Error(
-                    `the key behind ${descriptor} is ${held}, not the refund key ` +
-                        `${String(record.profile.refundKey)} rfq swap ${swap.rfqId}'s HTLC was derived with`,
-                );
-            }
-            const { txHex } = await buildHtlcRefund({
-                htlc: swap.htlc,
-                utxo,
-                payoutPkScript: swap.refundPkScript,
-                feeRateSatVb,
-                sign: (sighash) => signer.signMessage(sighash, "schnorr"),
-            });
-            // Tracked so `idle()`/`dispose()` drain this money-moving broadcast.
-            return { txid: await track(chain.broadcast(txHex)) };
-        };
-    };
-
     const resolveOnchain = async (): Promise<boolean> => {
         if (onchainSeams !== undefined) return onchainSeams !== null;
         try {
@@ -630,15 +592,9 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 (deps.claimFeeRateSatVb === undefined
                     ? undefined
                     : defaultOnchainClaim(deps.chain, deps.claimFeeRateSatVb));
-            const refund =
-                deps.refund ??
-                (deps.claimFeeRateSatVb === undefined
-                    ? undefined
-                    : defaultOnchainRefund(deps.chain, deps.claimFeeRateSatVb));
             onchainSeams = {
                 chain: deps.chain,
                 ...(claim ? { claim } : {}),
-                ...(refund ? { refund } : {}),
             };
             managerDeps.chain = deps.chain;
             return true;
@@ -661,7 +617,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * response it is checking. @see operatorUnrollScript */
     const pinnedNetwork = async (): Promise<Network> => getNetwork(await config.network());
 
-    const claimSecretOf = async (swap: ReceiveLockupSwap) => {
+    const claimSecretOf = async (swap: LightningReceiveSwap) => {
         const record = await corridorStore().getRfqSwap(swap.rfqId);
         if (!record) throw new Error(`rfq swap ${swap.rfqId} has no stored record to claim from`);
         const secret = rfqClaimSecretOf(record);
@@ -780,7 +736,6 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             pendingClaims,
             finalizeClaim,
             ...(onchainSeams?.claim ? { claimOnchain: onchainSeams.claim } : {}),
-            ...(onchainSeams?.refund ? { refundOnchain: onchainSeams.refund } : {}),
         });
     };
 
@@ -846,10 +801,16 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 .filter((record) => record.fundingTxid !== undefined)
                 .map((record) => [`${record.swapPkScript}:${record.fundingTxid}`, record]),
         );
-        // Identical offers derive one script, so each unstamped record is matched once.
+        // Identical offers derive one script, so each unstamped record is matched once. An unsent
+        // record never sent, so a deposit at its script belongs to another swap.
         const unstamped = new Map<string, OfferSwapRecord[]>();
         for (const record of offer) {
-            if (record.fundingTxid !== undefined || !OFFER_LIVE(record.status)) continue;
+            if (
+                record.fundingTxid !== undefined ||
+                record.fundingSend === "unsent" ||
+                !OFFER_LIVE(record.status)
+            )
+                continue;
             unstamped.set(record.swapPkScript, [
                 ...(unstamped.get(record.swapPkScript) ?? []),
                 record,
@@ -953,8 +914,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             });
         }
         if (!lapseTimer) {
-            lapseTimer = setInterval(cancelLapsed, config.pollIntervalMs ?? 5_000);
+            lapseTimer = setInterval(() => {
+                cancelLapsed();
+                retireLapsedUnsent();
+            }, config.pollIntervalMs ?? 5_000);
             cancelLapsed();
+            retireLapsedUnsent();
         }
     };
 
@@ -995,6 +960,34 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 })
                     .catch((error: unknown) => {
                         console.warn(`[swap] could not cancel lapsed swap ${record.id}`, error);
+                    })
+                    .finally(() => lapsing.delete(record.id)),
+            );
+        }
+    };
+
+    /** Retire swaps whose funding never started and whose quote lapsed, so nobody watches their
+     * covenant forever. */
+    const retireLapsedUnsent = (): void => {
+        if (disposed || !repository || mode === "readonly") return;
+        for (const record of records.values()) {
+            if (
+                record.fundingSend !== "unsent" ||
+                record.fundingTxid !== undefined ||
+                now() <= record.expiresAt ||
+                lapsing.has(record.id)
+            ) {
+                continue;
+            }
+            lapsing.add(record.id);
+            void track(
+                retireNeverSent({ wallet, drive: { ingest: remember } }, repository, record)
+                    .then((fresh) => {
+                        // A lost claim answers with the stored record; stop retrying on our copy.
+                        if (records.get(record.id) === record) remember(fresh);
+                    })
+                    .catch((error: unknown) => {
+                        console.warn(`[swap] could not retire unsent swap ${record.id}`, error);
                     })
                     .finally(() => lapsing.delete(record.id)),
             );

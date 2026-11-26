@@ -100,37 +100,51 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
     candidatesAt: delegateCandidatesAt,
 };
 
+/** The configured delegate key and the retired ones, deduped. */
+export function delegateDiscoveryKeys(
+    deps: Pick<CandidateDeps, "delegatePubKey" | "retiredDelegatePubKeys">,
+): Uint8Array[] {
+    const keys = new Map<string, Uint8Array>();
+    for (const key of [
+        ...(deps.delegatePubKey ? [deps.delegatePubKey] : []),
+        ...(deps.retiredDelegatePubKeys ?? []),
+    ]) {
+        const id = hex.encode(key);
+        if (!keys.has(id)) keys.set(id, key);
+    }
+    return [...keys.values()];
+}
+
 /**
  * The `default` cross-product (@see DefaultContractHandler.candidatesAt) under
- * the wallet's delegate key. Empty for a non-delegate wallet.
+ * each delegate key, configured or retired. Empty when there is none.
  */
 function delegateCandidatesAt(
     _index: number,
     descriptor: string,
     deps: CandidateDeps,
 ): DiscoveredContract[] {
-    const delegatePubKey = deps.delegatePubKey;
-    if (!delegatePubKey) return [];
-
-    return buildSignerTimelockCandidates(
-        descriptor,
-        deps,
-        (opts) => new DelegateVtxo.Script({ ...opts, delegatePubKey }),
-    ).map((c) => ({
-        type: "delegate",
-        params: DelegateContractHandler.serializeParams({ ...c, delegatePubKey }),
-        script: c.scriptHex,
-        address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
-    }));
+    return delegateDiscoveryKeys(deps).flatMap((delegatePubKey) =>
+        buildSignerTimelockCandidates(
+            descriptor,
+            deps,
+            (opts) => new DelegateVtxo.Script({ ...opts, delegatePubKey }),
+        ).map((c) => ({
+            type: "delegate",
+            params: DelegateContractHandler.serializeParams({ ...c, delegatePubKey }),
+            script: c.scriptHex,
+            address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
+        })),
+    );
 }
 
 function discoverDelegateRange(
     entries: readonly { index: number; descriptor: string }[],
     deps: DiscoveryDeps,
 ): Promise<Map<number, DiscoveredContract[]>> {
-    // Not a delegate wallet: still answer for every requested index, since an
-    // omission would read as indeterminate and truncate the scan.
-    if (!deps.delegatePubKey) {
+    // No delegate key, configured or retired: still answer for every requested
+    // index, since an omission would read as indeterminate and truncate the scan.
+    if (delegateDiscoveryKeys(deps).length === 0) {
         return Promise.resolve(new Map(entries.map((e) => [e.index, []])));
     }
 

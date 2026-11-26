@@ -250,7 +250,7 @@ describe("Worker", () => {
             { walletRepository },
             // What the channel *does* is messageBus.test.ts's; here it only has
             // to reach the handler.
-            { broadcast: expect.any(Function) },
+            { broadcast: expect.any(Function), release: expect.any(Function) },
         );
     });
 

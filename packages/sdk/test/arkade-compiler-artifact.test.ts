@@ -246,6 +246,53 @@ describe("reading an arkadec artifact", () => {
         expect(read(keys)).toEqual(read(legacy));
     });
 
+    it("reads a 0.1.0 constructor key named SERVER_KEY as that key, not the server", () => {
+        const program = programFromArtifact(
+            demo({
+                constructorInputs: [{ name: "SERVER_KEY", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "claim",
+                        arkade: { inputs: [], asm: ["<SERVER_KEY>", "OP_DROP", "OP_1"] },
+                        leaves: [
+                            {
+                                name: "claim",
+                                asm: [
+                                    "<SERVER_KEY>",
+                                    "OP_CHECKSIGVERIFY",
+                                    "<OPERATOR_KEY:claim>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                        ],
+                    },
+                    {
+                        name: "exit",
+                        leaves: [
+                            {
+                                name: "exit",
+                                asm: [
+                                    "<SERVER_KEY>",
+                                    "OP_CHECKSIGVERIFY",
+                                    "<OPERATOR_KEY>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }),
+        );
+        expect(program.params?.map((param) => param.name)).toEqual(["SERVER_KEY", "server"]);
+        expect(program.functions.claim.arkadeScript?.asm[0]).toBe("$SERVER_KEY");
+        expect(program.functions.claim.tapscript).toMatchObject({
+            signers: ["$SERVER_KEY", "$server"],
+            emulator: "claim",
+            emulatorIndex: 2,
+        });
+        expect(program.functions.exit.tapscript.signers).toEqual(["$SERVER_KEY", "$server"]);
+    });
+
     it("keeps every leaf in a multi-leaf covenant group", () => {
         const program = programFromArtifact(
             demo({
@@ -1038,7 +1085,7 @@ describe("reading an arkadec artifact", () => {
                     { name: "server", type: "pubkey" },
                 ],
             },
-            /duplicate program parameter 'server'/,
+            /'server' is reserved by the SDK/,
         ],
         [
             "a struct named pubkey",
@@ -1076,6 +1123,11 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
             /emulator or a tweaked constructor key/,
+        ],
+        [
+            "a constructor input named SERVER_EXIT_DELAY",
+            demo({ constructorInputs: [{ name: "SERVER_EXIT_DELAY", type: "int" }] }),
+            /'SERVER_EXIT_DELAY' is reserved by the SDK/,
         ],
         [
             "an operator key in a covenant",
