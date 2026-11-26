@@ -290,6 +290,57 @@ describe("offer contract registration", () => {
         }
     });
 
+    it("funds an asset-to-BTC carrier up to the operator's dust, or the SDK constant", async () => {
+        const offerAsset = asset.AssetId.fromString("bb".repeat(32) + "0000");
+        const rfqId = "44".repeat(32);
+        const expected = await createOffer(wallet, {
+            wantAmount: BigInt(50_000),
+            offerAsset,
+            emulatorPubkey,
+            taker: hex.decode(TAKER),
+            contractVersion: ASSET_SWAP_DIRECTED_NONCE,
+            nonce: assetRfqNonce(rfqId),
+        });
+        const quoteWith = (carrier?: string): AttestingRfqTransport => ({
+            attestedResponder: TAKER,
+            requestQuote: vi.fn(async () => ({
+                v: 1 as const,
+                type: "rfq_quote" as const,
+                rfq_id: rfqId,
+                pair: `arkade:${offerAsset}->arkade:BTC`,
+                from_amount: "700",
+                to_amount: "50000",
+                ...(carrier === undefined ? {} : { carrier_sats: carrier }),
+                solver_pubkey: TAKER,
+                valid_until: 1_800_000_060,
+                contract_version: ASSET_SWAP_DIRECTED_NONCE,
+                profile: {
+                    offer_address: expected.address,
+                    offer_pk_script: hex.encode(expected.swapPkScript),
+                },
+            })),
+            status: vi.fn(async () => null),
+            close: vi.fn(async () => undefined),
+        });
+        const request = (transport: AttestingRfqTransport) =>
+            requestArkadeSwap(wallet, transport, {
+                offerAsset,
+                amount: 700n,
+                rfqId,
+                emulatorPubkey,
+                now: 1_800_000_000,
+            });
+
+        expect((await request(quoteWith("1000"))).carrierSats).toBe(1000n);
+        expect((await request(quoteWith(undefined))).carrierSats).toBe(330n);
+        expect((await request(quoteWith("0"))).carrierSats).toBe(330n);
+        for (const carrier of ["1e3", "-1", "1001", "1000000"]) {
+            await expect(request(quoteWith(carrier))).rejects.toMatchObject({
+                reason: "carrier_malformed",
+            });
+        }
+    });
+
     it("registers the funded covenant as an escrowed arkade contract", async () => {
         const offer = await create();
 
