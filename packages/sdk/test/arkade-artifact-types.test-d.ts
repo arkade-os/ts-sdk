@@ -1,6 +1,10 @@
 import { expectTypeOf, it } from "vitest";
 
-import type { ArtifactWitnessElement, ContractArtifact } from "../src/arkade/artifact";
+import {
+    programFromArtifact,
+    type ArtifactWitnessElement,
+    type ContractArtifact,
+} from "../src/arkade/artifact";
 import type { ArkadeArgType, ArkadeNestedValue, ContractFunctions, Program } from "../src/arkade";
 
 const nativeProgram = {
@@ -77,11 +81,14 @@ const artifact = {
             ],
         },
     ],
+    contracts: { SingleSig: "sha256:00" },
+    codeHash: "sha256:00",
 } satisfies ContractArtifact;
 
 it("reads an arkadec witness item that carries its encoding", () => {
     expectTypeOf<ArtifactWitnessElement["encoding"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf(artifact).toExtend<ContractArtifact>();
+    expectTypeOf(programFromArtifact).toBeCallableWith(artifact, { contracts: [artifact] });
 });
 
 it("keeps a function with dotted input names loose, since its fields bind as one argument", () => {

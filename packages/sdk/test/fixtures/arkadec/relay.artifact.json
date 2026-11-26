@@ -1,0 +1,132 @@
+{
+  "formatVersion": 1,
+  "contractName": "Relay",
+  "structs": [
+    {
+      "name": "Policy",
+      "fields": [
+        {
+          "name": "primary",
+          "type": "Signer"
+        },
+        {
+          "name": "limits",
+          "type": "int[2]"
+        },
+        {
+          "name": "exitDelay",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Signer",
+      "fields": [
+        {
+          "name": "key",
+          "type": "pubkey"
+        },
+        {
+          "name": "weight",
+          "type": "int"
+        }
+      ]
+    }
+  ],
+  "constructorInputs": [
+    {
+      "name": "policy",
+      "type": "Policy"
+    }
+  ],
+  "functions": [
+    {
+      "name": "relay",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "<CONTRACT:StructVault(<policy.primary.key>,<policy.primary.weight>,<policy.limits.0>,<policy.limits.1>,<policy.exitDelay>)>",
+          "OP_1",
+          "OP_SWAP",
+          "OP_ROT",
+          "OP_EQUALVERIFY",
+          "OP_NUMEQUALVERIFY",
+          "1",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "<CONTRACT:SingleSig(0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)>",
+          "OP_1",
+          "OP_SWAP",
+          "OP_ROT",
+          "OP_EQUALVERIFY",
+          "OP_NUMEQUALVERIFY",
+          "OP_1"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "relay",
+          "witness": [
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<OPERATOR_KEY:relay>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateral",
+      "leaves": [
+        {
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "sig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<policy.exitDelay>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<policy.primary.key>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "contracts": {
+    "SingleSig": "sha256:7ba6a7c8c4dc7dcaa8ee2441541aa560d74ffb48a0c15a1df9c95664147c4d9e",
+    "StructVault": "sha256:62a97618ba3deda6334579ff075c6b4f5c0aa42885e46b5488daa22636f7c75e"
+  },
+  "codeHash": "sha256:ff2cef9b983c57134911fb0e6459c37c06858f73837ac630ecd5be425835baa5",
+  "source": {
+    "entry": "relay.ark",
+    "files": {
+      "relay.ark": "pragma arkade ^0.1.0;\n\nimport \"struct_vault.ark\";\nimport \"single_sig.ark\";\n\n// Moves a coin into a vault under the same policy, with a fee to a fixed key.\ncontract Relay(Policy policy) {\n  @allow(unsigned-spend-path, \"the outputs pay the vault and the fee key\")\n  function relay() {\n    require(tx.outputs[0].script == new StructVault(policy));\n    require(tx.outputs[1].script == new SingleSig(0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798));\n  }\n\n  function unilateral(signature sig) tapscript {\n    require(older(policy.exitDelay));\n    require(checkSig(sig, policy.primary.key));\n  }\n}\n",
+      "single_sig.ark": "pragma arkade ^0.1.0;\n\ncontract SingleSig(\n  pubkey user\n) {\n  // Single signature spend path\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n\n  // Unilateral exit (CSV).\n  function unilateral(signature userSig) tapscript {\n    require(older(operatorExitDelay));\n    require(checkSig(userSig, user));\n  }\n}\n",
+      "struct_vault.ark": "pragma arkade ^0.1.0;\n\nstruct Signer {\n  pubkey key;\n  int weight;\n}\n\nstruct Policy {\n  Signer primary;\n  int[2] limits;\n  int exitDelay;\n}\n\ncontract StructVault(Policy policy) {\n  function update(Policy next, signature sig) {\n    require(checkSig(sig, policy.primary.key));\n\n    int total = 0;\n    for (i, limit) in next.limits {\n      total = total + limit;\n    }\n    require(total >= policy.primary.weight);\n\n    Policy local = {\n      primary: {\n        key: next.primary.key,\n        weight: total\n      },\n      limits: [next.limits[0], next.limits[1]],\n      exitDelay: policy.exitDelay\n    };\n    require(local.primary.weight == total);\n  }\n\n  function unilateral(signature sig) tapscript {\n    require(older(policy.exitDelay));\n    require(checkSig(sig, policy.primary.key));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-20T21:24:20.064386+00:00",
+  "fingerprint": "sha256:77b86da8e83e31dc855fc41a3e91cd9dbda2cd809800b4aa4a334cf3f4231ec4"
+}
