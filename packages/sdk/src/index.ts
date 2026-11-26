@@ -254,6 +254,7 @@ import {
     WsElectrumChainSource,
 } from "./providers/electrum";
 import type {
+    ElectrumSocket,
     TransactionHistory as ElectrumTransactionHistory,
     BlockHeader as ElectrumBlockHeader,
     Unspent as ElectrumUnspent,
@@ -1122,6 +1123,7 @@ export type {
     TxNotificationEvent,
     SweepTxNotification,
     ExplorerTransaction,
+    ElectrumSocket,
     ElectrumTransactionHistory,
     ElectrumBlockHeader,
     ElectrumUnspent,

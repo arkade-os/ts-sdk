@@ -48,6 +48,8 @@ style and have not been backfilled.
   `fallbackEmulatorPubkey`, since the request now names the key. With one
   given, a card advertising a different key is still skipped.
 
+- **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the server key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. rc.1's `<SERVER_KEY>` still reads as the server key, except in a contract that declares a constructor input named `SERVER_KEY`, which 0.1.0 no longer reserves: there it is that input, where it used to be silently replaced by the server key. A constructor input named `server` or `SERVER_EXIT_DELAY`, which 0.1.0 also no longer reserves, is refused as reserved by the SDK; it used to fail as a duplicate program parameter. For compatibility, `<OPERATOR_KEY:f>` is read as rc.1's server key plus `f`-tweaked emulator key (the emulator key alone in CSV leaves); `Arkade.contract()` rewrites eligible leaves when the co-signer is the server, as described below. Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
+
 ### Features
 
 - **New covenants name the operator key only tweaked once it is the
@@ -88,14 +90,38 @@ style and have not been backfilled.
   spend. Trees without such a leaf, swap offers included, build the same
   PSBTs as before, and an arkd that predates the field ignores it.
   `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
-
 ### Bug Fixes
 
+- **Tapscript signature checks refuse encodings that BIP-341 rejects.**
+  `verifyTapscriptSignatures`, which checks the server's signatures on
+  checkpoint and ark transactions, accepted a 65-byte signature ending in
+  `0x00`. It also accepted any signature longer than 65 bytes, verifying only
+  its first 64. Consensus rejects both: BIP-341 allows 64 bytes, or 65 ending
+  in a sighash type other than default. A transaction carrying either could
+  not be broadcast, so the SDK now refuses both.
+
+- **Published type declarations compile without `skipLibCheck`.** The
+  declaration bundler emitted `arkade`'s type-only exports as values once they
+  were split across chunks, so twenty of them, `arkade.Program` among them,
+  failed a strict consumer; local type aliases at the barrel keep them types. The
+  Electrum providers also referenced `ElectrumWS`, whose declarations need
+  `ws` types that the SDK does not ship. They now take an `ElectrumSocket`, the
+  four methods they call, which `ElectrumWS` still satisfies. Repositories are
+  `AsyncDisposable`, so a consumer needs `esnext.disposable` in `lib` (or
+  `@types/node`). The dist smoke test now type-checks ESM and CJS consumers
+  without `skipLibCheck`.
+
 - **`Ramps.offboardExact` documents what a cosign that failed after signing leaves open.** The error is rethrown and the boarding coins stay held, but an operator that kept the signed transaction can still complete it. A batch offboard cannot spend those coins to conflict with it: arkd refuses an intent with onchain inputs and onchain outputs (`INVALID_INTENT_PROOF`). The README and the method's doc now describe the options, so the caller picks the strategy. The hold's 6-block release is named, and `isCosignFallback`'s doc says `offboardExact` rethrows regardless.
+
+### Internal
+
+- **The legacy delegator provider is marked `@deprecated`.** `DelegateProvider`, `RestDelegateProvider`, `DelegateInfo` and `DelegateOptions` talk to the retired delegator; `ExecutorProvider` and `RestExecutorProvider` replace them. Nothing is removed.
 
 ## [0.5.13] - 2026-11-23
 
 ### Breaking Changes
+
+- **`@arkade-os/swap`: `AssetSwapRepository` is version 6, and a quote is funded at most once.** Version 6 adds the required `createSwapRecordIfAbsent(record)`: it inserts only when no record has that quote id, atomically across every client sharing the store, and resolves `true` only once committed. `accept()` creates the record through it and funds only when it returns `true`, so two runtimes sharing one store can no longer both fund a quote. It also adds `claimSwapFunding(id)`, which atomically flips a record's new `fundingSend` from `"unsent"` to `"claimed"` and resolves `true` only for the caller that flipped it. A second `accept()` of a stored record without a funding txid no longer sends again once its send may have started, because an empty indexer read does not prove the first attempt failed: it adopts a deposit found at the covenant, or returns the swap still `accepted`, and no longer throws `QuoteExpired` for it. A record whose failure provably came before the send started stays `"unsent"`, so a second `accept()` funds it, only after one runtime claims it. The funding constraints and deadline an interrupted acceptance recorded apply to that retry, and a record whose send may have started keeps them without sending again. The drive's startup restore no longer stamps a found deposit onto an unsent record, since that deposit belongs to another swap. An unsent record past its expiry is retired by `accept()` or the drive as cancelled with `{ reason: "send_not_started" }`; when another runtime holds the claim, both answer with the stored record, so the drive stops retrying the claim every poll, and a record written before `fundingSend` existed is never resent. The four built-in repositories implement both methods without a data migration. A custom repository fails to compile until it adds both methods; an untyped one throws before anything is funded. `SwapRecordCommon.fundingNotSubmitted` gains two proofs, `{ reason: "send_refused" }` (see Bug Fixes) and `{ reason: "send_not_started" }`, so narrow on `reason` before reading `validUntil`.
 
 - **An on-chain cosign that reached arkd is no longer followed by a batch settlement.** `Ramps.offboardExact` rethrows an arkd rejection of the signed transaction instead of settling the same amount through a batch, and a 404 or 501 from the cosign endpoint after the signed transaction was posted is reported as `OnchainCosignAmbiguousError`. Operators reporting a version older than v0.9.22 are never sent the signed transaction. With an operator whose version cannot be read and that lacks the endpoint, the first `offboardExact` in a process, and the first after each change of the operator's info (a fee change counts), now fails once and holds its coins until the spend is seen or 6 blocks pass; later calls settle as before.
 
@@ -271,7 +297,9 @@ style and have not been backfilled.
 
 ### Features
 
-- **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.
+- **`@arkade-os/swap`: a quote says what an asset deposit funds as its carrier.** `Quote.depositCarrierSats` is the sats funded beside an asset give leg: the solver's verified carrier on a negotiated quote, the operator's dust on a feed-priced one. Subtract it from a BTC take for the net proceeds; it is absent when BTC is given.
+
+- **`@arkade-os/swap`: exact BTC payouts and constrained funding.** An asset RFQ can pin the BTC it delivers with `amountOn: "take"`, and an asset deposit quote exposes its verified BTC carrier as `depositCarrierSats`. A wallet-funded `accept()` can name the VTXOs to spend and cap the BTC change fee. An interrupted acceptance keeps these constraints and the earliest recorded funding deadline. Constrained funding always submits with a deadline, the quote's expiry when none is given; a first attempt that misses it cancels the swap.
 
 - **`ExecutorProvider` can register and read the Executor's templates and
   artifacts.** The SDK's Executor client covered only delegations, so a caller
@@ -630,8 +658,28 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`send` refuses an asset recipient below dust instead of burning the asset.** A recipient amount below the wallet's pinned dust is routed to the subdust (`OP_RETURN`) script, which for an asset recipient destroys the asset. `validateRecipients` now throws `Asset recipient amount N is below dust D` before coin selection. A recipient with no amount still defaults to dust, and a BTC-only recipient still takes the subdust script. `arkAssetRail` defaults its carrier to 330 sats, so against an operator whose dust is higher it now refuses where it used to burn the asset; defaulting to the wallet's dust is left for a follow-up.
+
+- **`@arkade-os/swap`: a funding refused as below dust cancels the swap.** The new SDK refusal counts as a refusal before submission, so the swap ends `cancelled` with `send_refused` and its contract retired. If the operator lowered its dust after the wallet was created, a feed quote that gives an asset is refused at funding until the wallet is recreated.
+
+- **`@arkade-os/swap`: a funding refused before submission cancels the swap instead of leaving it pending.** With one funding attempt per quote, a record whose only send was refused would stay `accepted` with no txid for good: `accept()` no longer retries it, and the drive retired only an expired send deadline. When `send` refuses during coin selection (`Insufficient funds`, `Insufficient asset balance`, `Cannot form minimum change`, also as the service-worker client's `Send failed: Error: …`) or with `VtxoReservedError`, the offer is `cancelled` or the corridor swap `failed`, with `fundingNotSubmitted: { reason: "send_refused" }`, and its contract stops being watched, as an expired send deadline already did. Any other funding error still leaves the swap pending.
+
+- **`@arkade-os/swap`: quoted funding never pays change as a fee.** Funding passes `maxChangeFee: 0`, so change below the operator's VTXO minimum that the wallet cannot return is refused before submission, and the swap cancelled as above, instead of being paid as an offchain fee on top of the quote.
+
+- **`@arkade-os/swap`: a feed-priced asset deposit funds the carrier it was priced with.** A feed quote priced the deposit's carrier at 330 sats while funding sent the wallet's dust, so the two disagreed whenever the operator's dust was not 330. The quote now reads the operator's dust live, prices and records it, and funding sends that amount even if the operator's dust changes before `accept()`. An operator reporting a dust of 0, which is how a missing one reads, is refused at `quote()` with an error naming the operator.
+
+- **`@arkade-os/swap`: a feed-priced BTC deposit is priced at the operator's dust where the card charges for the delivered carrier.** A card that sets `charges_delivered_carrier` asks a BTC deposit for the carrier the solver delivers, which is the operator's dust, but the quote priced it at 330 sats because only an asset deposit read the dust. At a dust of 546 the covenant asked for more asset than the solver computes, so the solver never filled and the deposit sat until cancelled; below 330 the trader was overcharged. The quote now reads the operator's dust live for such a card, which makes `quote()` throw `OperatorUnreachable` when the operator is down; a BTC deposit on any other card still reads nothing. The read also now follows the amount check, so a missing amount is reported as that, not as an unreachable operator.
+
+- **`@arkade-os/swap`: a second `accept()` no longer adopts a deposit stamped on another swap.** Identical offers derive one covenant address, and the reconcile that recovers a lost funding txid took the first VTXO at the address whose amount matched. A swap whose send failed ambiguously could therefore adopt the deposit of an identical swap that was already funded and stamped, leaving both records claiming one deposit, so cancelling one spent the other's. The reconcile now skips a txid already stamped on another record at the same address. Two identical records that are both unstamped can still race for one deposit.
+
+- **`@arkade-os/swap`: a feed-priced quote on a CAIP-19 card can be accepted.** `accept()` built the covenant from the card's raw asset ids, which a current registry spells in CAIP-19, and failed with `invalid asset id format, must be hex` before recording anything. It now uses the quote's own legs.
+
+- **`@arkade-os/swap`: `validatePlan` checks dust on a BTC side spelled in CAIP-19.** It recognised BTC only as `btc`, so a plan from a current card, which spells BTC `arkade:bitcoin/slip44:0` or `arkade:mutinynet/slip44:1`, skipped the dust check and passed a BTC side below dust, on the cross-asset payment rail as well.
+
+- **`@arkade-os/swap`: `nostr-tools` is a regular dependency, no longer an optional peer.** The root declarations import its `SimplePool` type for `createNostrTransportFactory(pool?)`, so a consumer type-checking them without having installed the peer could not resolve it. The client still imports `nostr-tools` only once Nostr is used. A consumer pinning a different version now gets the swap package's own copy beside theirs.
+
 - **`@arkade-os/swap`: a resumed `accept()` no longer outlives its stored quote.** The retry checked expiry against the caller's quote object only, which no conflict check covers, so a quote carrying a later `expiresAt` could fund a stored, unfunded record past its expiry. The earlier of the stored and given expiries now applies.
-- 
+
 - **A full Executor store no longer pauses every request to that Executor.**
   An Executor at its delegation cap answers `registerDelegation` with gRPC
   `RESOURCE_EXHAUSTED`, which its gateway serves as a 429 without

@@ -248,6 +248,7 @@ describe("open RFQ selection", () => {
         );
         const { client, attempted, wallet } = await setup({ answer });
         const funding = await acceptWallet();
+        const sendCall = vi.spyOn(funding.wallet, "send");
         Object.assign(wallet, {
             getBalance: funding.wallet.getBalance,
             getContractManager: funding.wallet.getContractManager,
@@ -295,7 +296,7 @@ describe("open RFQ selection", () => {
         // the clamped deadline must satisfy the stored-record bound, or funding is refused
         await client.accept(quote);
         expect(send).toHaveLength(1);
-        expect(send[0]).toMatchObject({ validUntil: NOW + 24 });
+        expect(sendCall.mock.calls[0]?.[0]).toMatchObject({ validUntil: NOW + 24 });
         await client[Symbol.asyncDispose]();
     });
     it.each([

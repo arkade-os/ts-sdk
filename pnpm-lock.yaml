@@ -109,8 +109,8 @@ importers:
         version: 1.0.5
     devDependencies:
       '@arkade-os/compiler':
-        specifier: 0.1.0-rc.1
-        version: 0.1.0-rc.1
+        specifier: 0.1.0
+        version: 0.1.0
       '@vitest/coverage-v8':
         specifier: 4.1.12
         version: 4.1.12(vitest@4.1.12)
@@ -150,18 +150,18 @@ importers:
       light-bolt11-decoder:
         specifier: 3.2.0
         version: 3.2.0
+      nostr-tools:
+        specifier: 2.24.1
+        version: 2.24.1(typescript@5.9.2)
     devDependencies:
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5
-      nostr-tools:
-        specifier: 2.24.1
-        version: 2.24.1(typescript@5.9.2)
 
 packages:
 
-  '@arkade-os/compiler@0.1.0-rc.1':
-    resolution: {integrity: sha512-CEdNBYpq7qcb4j1bMyOzgOHDVnFs5CcduSTbSwGLcZT1mVdF5oDv6k1E9fddnWvVExNrYWwZEV9C8UcEYgl3pg==}
+  '@arkade-os/compiler@0.1.0':
+    resolution: {integrity: sha512-GNiltjTqAvIGclUSGbgIvb+OkpDY5c7hrml5WvhSH5oJv7zrytTVqvDmplOp+nrWpMpnl9rfQs2j/sAI902J3g==}
     engines: {node: '>=22.12.0'}
 
   '@arkade-os/solver-discovery@0.4.0':
@@ -3611,7 +3611,7 @@ packages:
 
 snapshots:
 
-  '@arkade-os/compiler@0.1.0-rc.1': {}
+  '@arkade-os/compiler@0.1.0': {}
 
   '@arkade-os/solver-discovery@0.4.0':
     dependencies:

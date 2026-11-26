@@ -3,7 +3,11 @@ import { SignedProof } from "./ark";
 import { baseFetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
-/** Delegate identity and fee information returned by `getDelegateInfo`. */
+/**
+ * Delegate identity and fee information returned by `getDelegateInfo`.
+ *
+ * @deprecated The legacy delegator is retired. Use `ExecutorProvider`.
+ */
 export interface DelegateInfo {
     /** Delegate public key. */
     pubkey: string;
@@ -13,7 +17,11 @@ export interface DelegateInfo {
     delegateAddress: string;
 }
 
-/** Optional delegate behavior flags. */
+/**
+ * Optional delegate behavior flags.
+ *
+ * @deprecated The legacy delegator is retired. Use `ExecutorProvider`.
+ */
 export interface DelegateOptions {
     /**
      * Tell the delegate not to replace an existing delegation (signed register intent + its
@@ -24,7 +32,11 @@ export interface DelegateOptions {
     rejectReplace?: boolean;
 }
 
-/** Provider interface for a remote delegation service. */
+/**
+ * Provider interface for a remote delegation service.
+ *
+ * @deprecated The legacy delegator is retired. Use `ExecutorProvider`.
+ */
 export interface DelegateProvider {
     /**
      * Request delegation for a signed register intent and its forfeit transactions.
@@ -43,6 +55,9 @@ export interface DelegateProvider {
 
 /**
  * REST-based delegate provider implementation.
+ *
+ * @deprecated The legacy delegator is retired. Use `RestExecutorProvider`.
+ *
  * @example
  * ```typescript
  * const provider = new RestDelegateProvider('https://delegate.example.com');

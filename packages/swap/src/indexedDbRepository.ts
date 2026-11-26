@@ -18,7 +18,7 @@ import {
 } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
-import type { SwapRecord } from "./client/record";
+import { claimedFunding, type SwapRecord } from "./client/record";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 /** Bump when adding an object store or index. `initDatabase` only runs inside
@@ -72,7 +72,7 @@ function initDatabase(db: IDBDatabase, _oldVersion: number, transaction: IDBTran
 
 /** Browser backend over the SDK's shared IndexedDB manager. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 5 as const;
+    readonly version = 6 as const;
     private readonly connection: ManagedConnection;
 
     constructor(dbName: string = DEFAULT_DB_NAME) {
@@ -172,6 +172,34 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         await this.write(STORE_SWAP_RECORDS, (store) => {
             store.put(record);
         });
+    }
+
+    async createSwapRecordIfAbsent(record: SwapRecord): Promise<boolean> {
+        let created = false;
+        // Readwrite transactions on one store never overlap, across tabs too.
+        await this.write(STORE_SWAP_RECORDS, (store) => {
+            const existing = store.getKey(record.id);
+            existing.onsuccess = () => {
+                if (existing.result !== undefined) return;
+                store.add(record);
+                created = true;
+            };
+        });
+        return created;
+    }
+
+    async claimSwapFunding(id: string): Promise<boolean> {
+        let claimed = false;
+        await this.write(STORE_SWAP_RECORDS, (store) => {
+            const existing = store.get(id);
+            existing.onsuccess = () => {
+                const next = existing.result && claimedFunding(existing.result as SwapRecord);
+                if (!next) return;
+                store.put(next);
+                claimed = true;
+            };
+        });
+        return claimed;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

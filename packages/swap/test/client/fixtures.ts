@@ -81,6 +81,7 @@ export const CHECKPOINT_TAPSCRIPT = hex.encode(
 /** What the wallet answers `getArkadeInfo()` with. */
 export const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
+    dust: 330n,
     unilateralExitDelay: 4096n,
     network: "regtest",
     deprecatedSigners: [],
@@ -632,7 +633,7 @@ export const compressed = (fill: number): string =>
 
 // ── What `accept()` needs behind it, and nothing the quote path had ─────────
 
-/** One `wallet.send` call, exactly as the accept path issued it. */
+/** One recipient of a `wallet.send` call, exactly as the accept path issued it. */
 export interface SentPayment {
     address: string;
     amount?: number;
@@ -655,6 +656,8 @@ export interface AcceptWallet {
     readonly wallet: IWallet;
     /** Every funding call, in order. */
     readonly sent: SentPayment[];
+    /** Every funding call's whole request, send options included. */
+    readonly requests: unknown[];
     /** Every contract row written, in order — first-writer-wins is modelled. */
     readonly contracts: WrittenContract[];
     /** Every watch-state change, in order. The offer route promotes its row. */
@@ -688,6 +691,7 @@ export const acceptWallet = async (
 ): Promise<AcceptWallet> => {
     const base = await hdWallet();
     const sent: SentPayment[] = [];
+    const requests: unknown[] = [];
     const contracts: WrittenContract[] = [];
     const watched: WatchStateCall[] = [];
     const deposits = new Map<
@@ -744,14 +748,15 @@ export const acceptWallet = async (
         // transactions for offer packets. An empty history is the honest answer
         // for a wallet that has funded nothing outside this test.
         getTransactionHistory: async () => [],
-        send: async (recipient: SentPayment) => {
+        send: async (request: SentPayment | { recipients: SentPayment[] }) => {
             const failure = over.failSend?.();
             if (failure) throw failure;
-            sent.push(recipient);
+            requests.push(request);
+            sent.push(...("recipients" in request ? request.recipients : [request]));
             return over.txid ?? FUNDING_TXID;
         },
     } as unknown as IWallet;
-    return { wallet, sent, contracts, watched, deposits };
+    return { wallet, sent, requests, contracts, watched, deposits };
 };
 
 /** The txid `acceptWallet`'s `send` returns unless told otherwise. */

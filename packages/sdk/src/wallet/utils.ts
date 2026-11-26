@@ -346,6 +346,10 @@ export function validateRecipients(
         if (amount <= 0) {
             throw new Error("Amount must be positive");
         }
+        // Below dust the output goes to OP_RETURN, which would burn the asset.
+        if ((recipient.assets?.length ?? 0) > 0 && amount < dustAmount) {
+            throw new Error(`Asset recipient amount ${amount} is below dust ${dustAmount}`);
+        }
 
         if (recipient.tapTree) {
             assertTapTreeDerivesAddress(recipient.address, recipient.tapTree, address);

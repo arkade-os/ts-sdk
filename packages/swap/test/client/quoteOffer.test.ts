@@ -12,7 +12,7 @@ import { QuoteExpired, QuoteVerificationFailed } from "../../src/client/errors";
 import { eligibleMarkets, marketRefOf } from "../../src/client/market";
 import { FEED_TTL_MS, feedFetch, quoteFromFeed } from "../../src/client/quoteOffer";
 import type { DiscoverySnapshot } from "../../src/client/discovery";
-import { USD_ASSET_ID, spotCard } from "./fixtures";
+import { USD_ASSET_ID, canonicalSpotCard, spotCard } from "./fixtures";
 
 const NOW = 1_700_000_000;
 
@@ -62,6 +62,7 @@ const quoteWith = (
                 market: marketRefOf(candidate, snapshot.ref),
                 legs,
                 endpoints,
+                operatorDust: async () => 330n,
                 amount: { value: 10_000n, on: "give", source: "caller" },
                 feed,
                 now: NOW,
@@ -98,6 +99,52 @@ describe("the margin", () => {
     });
 });
 
+describe("the carrier a BTC deposit is priced with", () => {
+    const charging = { ...canonicalSpotCard, charges_delivered_carrier: true };
+    const quoteOn = (card: typeof spotCard, operatorDust: () => Promise<bigint>) => {
+        const chosen: DiscoverySnapshot = { markets: [card], ref: snapshot.ref };
+        const [candidate] = eligibleMarkets(chosen, legs);
+        return quoteFromFeed({
+            quoteId: "q1",
+            candidate,
+            market: marketRefOf(candidate, chosen.ref),
+            legs,
+            endpoints,
+            operatorDust,
+            amount: { value: 10_000n, on: "give", source: "caller" },
+            feed: serving().feed,
+            now: NOW,
+        });
+    };
+
+    it("charges the operator's dust where the card charges for the delivered carrier", async () => {
+        const at330 = await quoteOn(charging, async () => 330n);
+        const at546 = await quoteOn(charging, async () => 546n);
+
+        // The charge comes off the BTC deposit before it is converted, so a larger carrier buys less.
+        expect(at546.quote.take.amount).toBeLessThan(at330.quote.take.amount);
+        expect(at546.quote.depositCarrierSats).toBeUndefined();
+        expect(at546.preparation.carrierSats).toBeUndefined();
+    });
+
+    it("reads no dust where the card does not charge for it", async () => {
+        const operatorDust = vi.fn(async () => 546n);
+
+        await quoteOn(canonicalSpotCard, operatorDust);
+
+        expect(operatorDust).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing amount before reading the operator", async () => {
+        const operatorDust = vi.fn(async () => 546n);
+
+        await expect(quoteWith({ operatorDust, amount: undefined }).run()).rejects.toThrow(
+            "an asset swap needs an amount",
+        );
+        expect(operatorDust).not.toHaveBeenCalled();
+    });
+});
+
 describe("the minted expiry", () => {
     it("expires with the feed value it was priced from", async () => {
         const { quote } = await quoteWith({}).run();
@@ -113,6 +160,7 @@ describe("the minted expiry", () => {
             market: marketRefOf(candidate, snapshot.ref),
             legs,
             endpoints,
+            operatorDust: async () => 330n,
             amount: { value: 10_000n, on: "give" as const, source: "caller" as const },
             feed,
         };
@@ -154,6 +202,7 @@ describe("the one check this backend runs", () => {
                 market: marketRefOf(candidate, canonicalSnapshot.ref),
                 legs,
                 endpoints,
+                operatorDust: async () => 330n,
                 amount: { value: 10_000n, on: "give", source: "caller" },
                 feed,
                 now: NOW,

@@ -205,25 +205,15 @@ writeFileSync(
     join(consumer, "package.json"),
     JSON.stringify({ name: "smoke-consumer", type: "module", private: true }),
 );
-writeFileSync(
-    join(consumer, "wallet-update.ts"),
-    `import { ServiceWorkerWallet, type WalletUpdate } from "@arkade-os/sdk";
-declare const wallet: ServiceWorkerWallet;
-const unsubscribe: () => void = wallet.onWalletUpdate((update: WalletUpdate) => {
-    if (update.type === "CONTRACT_EVENT") update.payload.event.type satisfies string;
-    else if (update.type === "UTXO_UPDATE") update.payload.coins.length satisfies number;
-    else update.payload.newVtxos.length satisfies number;
-});
-void unsubscribe;
-`,
-);
+const publicTypes = readFileSync(join(repoRoot, "scripts", "public-types.mts"), "utf8");
+writeFileSync(join(consumer, "public-types.mts"), publicTypes);
+writeFileSync(join(consumer, "public-types.cts"), publicTypes);
 {
     const r = runNode(
         [
             createRequire(import.meta.url).resolve("typescript/bin/tsc"),
             "--noEmit",
             "--strict",
-            "--skipLibCheck",
             "--target",
             "ES2022",
             "--module",
@@ -231,13 +221,15 @@ void unsubscribe;
             "--moduleResolution",
             "NodeNext",
             "--lib",
-            "ES2022,DOM",
-            "wallet-update.ts",
+            "ES2022,DOM,ESNext.Disposable",
+            "public-types.mts",
+            "public-types.cts",
         ],
         consumer,
     );
-    if (r.status === 0) ok("WalletUpdate public type and subscription compile for a consumer");
-    else fail(`WalletUpdate consumer → ${(r.stderr || r.stdout).trim()}`);
+    if (r.status === 0)
+        ok("Public namespace and WalletUpdate declarations compile strictly in ESM/CJS");
+    else fail(`Public declaration consumer → ${(r.stderr || r.stdout).trim()}`);
 }
 
 // Subpaths that must Node-import cleanly without optional Expo peers.
@@ -342,7 +334,7 @@ const compilerProbe = (load, expected) => `
     const root = ${load}("@arkade-os/sdk");
     if (Object.keys(root).length === 0) throw new Error("root SDK has no exports");
     const { compile } = ${load}("@arkade-os/sdk/compiler");
-    const source = "contract A(pubkey user) { function spend(signature s) tapscript { require(older(serverExitDelay)); require(checkSig(s, user)); } }";
+    const source = "contract A(pubkey user) { function spend(signature s) tapscript { require(older(operatorExitDelay)); require(checkSig(s, user)); } }";
     const outcome = await compile({ entry: "a.ark", files: { "a.ark": source } }).then(
         (r) => (r.program.functions.spend ? "compiled" : "no spend function"),
         (e) => (/npm install --save-exact @arkade-os\\/compiler/.test(e.message) ? "hinted" : e.stack),

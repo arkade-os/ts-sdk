@@ -10,7 +10,7 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
-import type { SwapRecord } from "../../client/record";
+import { claimedFunding, type SwapRecord } from "../../client/record";
 
 const SWAPS = "ArkadeAssetSwap";
 const RFQ_SWAPS = "ArkadeRfqSwap";
@@ -39,7 +39,7 @@ const MARKETS = "ArkadeAssetSwapMarketsCache";
  * consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class RealmAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 5 as const;
+    readonly version = 6 as const;
 
     constructor(private readonly realm: RealmLike) {}
 
@@ -138,6 +138,39 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
                 "modified",
             );
         });
+    }
+
+    async createSwapRecordIfAbsent(record: SwapRecord): Promise<boolean> {
+        let created = false;
+        this.realm.write(() => {
+            if (this.realm.objects(SWAP_RECORDS).filtered("id == $0", record.id).length > 0) return;
+            this.realm.create(
+                SWAP_RECORDS,
+                {
+                    id: record.id,
+                    family: record.family,
+                    updatedAt: record.updatedAt,
+                    data: JSON.stringify(record),
+                },
+                "never",
+            );
+            created = true;
+        });
+        return created;
+    }
+
+    async claimSwapFunding(id: string): Promise<boolean> {
+        let claimed = false;
+        this.realm.write(() => {
+            const [row] = [
+                ...this.realm.objects<{ data: string }>(SWAP_RECORDS).filtered("id == $0", id),
+            ];
+            const next = row && claimedFunding(JSON.parse(row.data) as SwapRecord);
+            if (!next) return;
+            row.data = JSON.stringify(next);
+            claimed = true;
+        });
+        return claimed;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

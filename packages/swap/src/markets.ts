@@ -27,6 +27,7 @@ import { assertNonNegativeMs, assertTimerMs, isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
 import { marketAssetId } from "./marketShape";
 import { BTC_ASSET_ID } from "./store";
+import { isAssetId, isBtcAsset } from "./client/assetId";
 
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
@@ -104,10 +105,10 @@ export const MARKETS_CACHE_TTL_MS = 10 * 60 * 1000;
 export const registryAnswered = (sources: readonly SourceReport[]): boolean =>
     sources.some((source) => source.sourceType === "registry" && source.ok);
 
-/** The optional `nostr-tools` peer is not installed: no card can arrive, so none is missing. */
+/** `nostr-tools` could not be loaded: no card can arrive, so none is missing. */
 class CardTransportUnavailable extends Error {}
 
-/** Lazy, so `nostr-tools` stays an optional peer; one instance, so a card seen once fills a miss. */
+/** Lazy, so `nostr-tools` loads only when cards are read; one instance, so a card seen once fills a miss. */
 let nostrFetcher: TransportCardFetcher | undefined;
 const nostrCards: TransportCardFetcher = {
     fetch: async (solvers, network) => {
@@ -259,8 +260,8 @@ export interface DiscoverMarketsOptions {
     repository?: AssetSwapRepository;
     /** Locally pinned solver cards to merge with the registry's markets. */
     localCards?: LocalCardInput[];
-    /** Reads the cards listed solvers publish on their own transports. Omitted means Nostr
-     * (needs the optional `nostr-tools` peer); `null` reads registry cards only. */
+    /** Reads the cards listed solvers publish on their own transports. Omitted means Nostr;
+     * `null` reads registry cards only. */
     transportCards?: TransportCardFetcher | null;
     /** Receives discovery warnings (stale index, skipped cards, …). */
     logger?: (...args: unknown[]) => void;
@@ -455,9 +456,10 @@ export const validatePlan = (
     if (plan.deposit.atomic > giveLimits.max) return "above-max";
     if (!withinLimits) return plan.receive.atomic < min.atomic ? "below-min" : "above-max";
     // A BTC side must survive as a VTXO; picked by asset id since BTC may be base or
-    // quote. Asset↔asset plans ride the SDK's own dust-sat carriers.
-    const depositIsBtc = plan.deposit.asset.id === BTC_ASSET_ID;
-    const receiveIsBtc = plan.receive.asset.id === BTC_ASSET_ID;
+    // quote, and spelled `btc` or in CAIP-19. Asset↔asset plans ride the SDK's own carriers.
+    const isBtc = (id: string): boolean => id === BTC_ASSET_ID || (isAssetId(id) && isBtcAsset(id));
+    const depositIsBtc = isBtc(plan.deposit.asset.id);
+    const receiveIsBtc = isBtc(plan.receive.asset.id);
     if (depositIsBtc || receiveIsBtc) {
         const btcSide = depositIsBtc ? plan.deposit.atomic : plan.receive.atomic;
         if (isSubdust(btcSide, dust)) return "below-dust";

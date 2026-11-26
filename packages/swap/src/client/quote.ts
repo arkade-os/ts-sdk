@@ -158,8 +158,9 @@ export interface Quote {
     readonly route: Route;
     /** What the trader gives, fee included. */
     readonly give: QuoteLeg;
-    /** BTC sats attached to an Arkade asset RFQ deposit, in addition to `give`. */
-    readonly carrierSats?: bigint;
+    /** Sats funded beside an asset give leg as its carrier; subtract from a BTC take for the net
+     * proceeds. Absent when BTC is given. */
+    readonly depositCarrierSats?: bigint;
     /** What the trader takes. */
     readonly take: QuoteLeg;
     /** Corridor routes: the hash both covenants commit to. */
