@@ -100,8 +100,8 @@ const sharedArgs = ({ user, server, exitDelay }: AssetSwapArgInputs) => ({
     ...(exitDelay && { exitDelay }),
 });
 
-const directedArgs = (inputs: AssetSwapArgInputs) => {
-    if (inputs.taker === undefined) throw new Error(`${ASSET_SWAP_DIRECTED} needs a taker key`);
+const directedArgs = (inputs: AssetSwapArgInputs, version: string = ASSET_SWAP_DIRECTED) => {
+    if (inputs.taker === undefined) throw new Error(`${version} needs a taker key`);
     return {
         receiver: inputs.receiver,
         amount: inputs.amount,
@@ -116,7 +116,7 @@ const directedArgs = (inputs: AssetSwapArgInputs) => {
 
 const nonceArgs = (version: string) => (inputs: AssetSwapArgInputs) => {
     if (inputs.nonce === undefined) throw new Error(`${version} needs a nonce`);
-    return { ...directedArgs(inputs), nonce: inputs.nonce };
+    return { ...directedArgs(inputs, version), nonce: inputs.nonce };
 };
 
 export const ASSET_SWAP_CONTRACTS: Readonly<Record<AssetSwapContractVersion, AssetSwapContract>> = {

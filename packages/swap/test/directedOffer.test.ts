@@ -191,6 +191,12 @@ describe("the directed contracts (asset-swap-directed)", () => {
             taker: TAKER,
         };
         expect(() => ASSET_SWAP_CONTRACTS[ASSET_SWAP_V2].args(inputs)).toThrow(/binds no taker/);
+        const nonce = assetRfqNonce(RFQ_ID);
+        for (const version of [ASSET_SWAP_DIRECTED_NONCE, ASSET_SWAP_DIRECTED_NONCE_V2]) {
+            expect(() =>
+                ASSET_SWAP_CONTRACTS[version].args({ ...inputs, taker: undefined, nonce }),
+            ).toThrow(`${version} needs a taker key`);
+        }
     });
 
     it("advertises the single-key nonce covenant last and still derives v2", () => {
