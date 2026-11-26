@@ -19,6 +19,7 @@ import type { Identity } from "../../src/identity";
 import {
     beforeEachFaucet,
     createTestArkWallet,
+    execCommand,
     faucetOffchain,
     randomP2TR,
     waitFor,
@@ -45,7 +46,7 @@ describe("ArkadeHTLC co-signed by arkd alone", () => {
     }
 
     /** A lockup whose receiver is the client's identity, or a random key without one. */
-    async function lockup(ark: arkade.Arkade, asset?: ArkadeHTLC.Options["asset"]) {
+    async function lockup(ark: arkade.Arkade, overrides: Partial<ArkadeHTLC.Options> = {}) {
         const preimage = crypto.getRandomValues(new Uint8Array(32));
         const receiverPkScript = randomP2TR();
         const senderPkScript = randomP2TR();
@@ -61,7 +62,7 @@ describe("ArkadeHTLC co-signed by arkd alone", () => {
             receiverScript: receiverPkScript.slice(2),
             senderScript: senderPkScript.slice(2),
             amount: AMOUNT,
-            asset,
+            ...overrides,
         };
         const contract = ark.contract(ArkadeHTLC.program, ArkadeHTLC.args(options));
         expect(hex.encode(contract.pkScript)).toBe(hex.encode(ArkadeHTLC.script(options).pkScript));
@@ -73,6 +74,8 @@ describe("ArkadeHTLC co-signed by arkd alone", () => {
                 contract.functions.nonInteractiveClaim({ tapscript: [preimage] }).from(coin),
             nonInteractiveRefund: (coin: VirtualCoin) =>
                 contract.functions.nonInteractiveRefund().from(coin),
+            nonInteractiveRefundWithoutReceiver: (coin: VirtualCoin) =>
+                contract.functions.nonInteractiveRefundWithoutReceiver().from(coin),
             claim: (coin: VirtualCoin) =>
                 contract.functions.claim({ tapscript: [preimage] }).from(coin),
         };
@@ -181,6 +184,40 @@ describe("ArkadeHTLC co-signed by arkd alone", () => {
         expect(refunded).toMatchObject({ txid, value: Number(AMOUNT - 4_000n) });
     });
 
+    it("refuses a nonInteractiveRefundWithoutReceiver before refundLocktime, and co-signs one after it", {
+        timeout: 120000,
+    }, async () => {
+        const ark = await connect();
+        const locked = await lockup(ark);
+        const lockedCoin = await fund(locked.contract, AMOUNT);
+        await expect(
+            locked
+                .nonInteractiveRefundWithoutReceiver(lockedCoin)
+                .to(locked.senderPkScript, AMOUNT)
+                .send(),
+        ).rejects.toMatchObject({
+            name: "FORFEIT_CLOSURE_LOCKED",
+            message: expect.stringMatching(
+                /closure is CLTV locked, 2000000000 > \d+ \(block time\)/,
+            ),
+        });
+
+        // arkd checks refundLocktime against the chain's median time past, not the wall clock.
+        const { mediantime } = JSON.parse(
+            execCommand("node regtest/regtest.mjs rpc getblockchaininfo"),
+        );
+        const htlc = await lockup(ark, { refundLocktime: BigInt(mediantime - 1) });
+        const coin = await fund(htlc.contract, AMOUNT);
+        const refund = () =>
+            htlc.nonInteractiveRefundWithoutReceiver(coin).to(htlc.senderPkScript, AMOUNT);
+        const { arkTx, checkpoints } = await refund().build();
+        for (const tx of [arkTx, ...checkpoints]) expect(tx.lockTime).toBe(mediantime - 1);
+
+        const { txid } = await refund().send();
+        const [refunded] = await vtxosAt(htlc.senderPkScript);
+        expect(refunded).toMatchObject({ txid, value: Number(AMOUNT) });
+    });
+
     it("spends the claim leaf on arkd's plain key, revealing both covenant hashes", {
         timeout: 120000,
     }, async () => {
@@ -234,9 +271,7 @@ describe("ArkadeHTLC co-signed by arkd alone", () => {
 
         const { txid, groupIndex } = assetExt.AssetId.fromString(assetId);
         const htlc = await lockup(await connect(SingleKey.fromRandomBytes()), {
-            txid,
-            groupIndex,
-            amount: ASSET_LOCKED,
+            asset: { txid, groupIndex, amount: ASSET_LOCKED },
         });
         const address = htlc.contract.address;
         await alice.wallet.send({
