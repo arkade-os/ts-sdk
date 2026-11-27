@@ -518,7 +518,11 @@ interface ServiceWorkerWalletOptions {
     identity: ReadonlyIdentity | Identity;
     /** Refuse a worker on another network before exposing a usable proxy. */
     expectedNetwork?: NetworkName;
-    /** Optional delegation service URL. */
+    /**
+     * Optional delegation service URL.
+     *
+     * @deprecated The delegator is retired; pass {@link executorUrl}.
+     */
     delegateUrl?: string;
     /**
      * URL of the Executor, the service that boards the wallet's deposits while it is offline. Only
