@@ -31,6 +31,7 @@ import {
 import { ConditionMultisigTapscript } from "../../src/script/tapscript";
 import { VtxoScript, scriptFromTapLeafScript } from "../../src/script/base";
 import {
+    ArkadeTweak,
     ConditionWitness,
     PrevoutTxField,
     VtxoTaprootTree,
@@ -131,6 +132,29 @@ describe("prepareOwnedInput", () => {
             [new Uint8Array(32).fill(8)],
         ]);
         expect(retried.getInput(0).unknown).toContainEqual(foreignField);
+    });
+
+    it("replaces Ark fields whose values do not decode", () => {
+        const tx = txWithInput();
+        const [tweakKey] = ArkadeTweak.encode([new Uint8Array(32)]);
+        const [witnessKey] = ConditionWitness.encode([]);
+        tx.updateInput(0, {
+            unknown: [
+                [tweakKey, new Uint8Array(31)],
+                [witnessKey, new Uint8Array([0xff])],
+            ],
+        });
+        const hash = new Uint8Array(32).fill(3);
+        const preimage = new Uint8Array(32).fill(7);
+        prepareOwnedInput(tx, {
+            index: 0,
+            coin,
+            path: { leaf: script.forfeit(), extraWitness: [preimage], arkadeTweaks: [hash] },
+            tapTree: script.encode(),
+        });
+        expect(getArkPsbtFields(tx, 0, ArkadeTweak)).toEqual([[hash]]);
+        expect(getArkPsbtFields(tx, 0, ConditionWitness)).toEqual([[preimage]]);
+        expect(tx.getInput(0).unknown).toHaveLength(3);
     });
 });
 

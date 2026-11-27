@@ -130,6 +130,12 @@ style and have not been backfilled.
   endpoint, which such a spend never reaches. It had blocked the onchain
   `fulfill` of `@arkade-os/swap` offers on arkd's key.
 
+- **Onchain cosign replaces malformed Ark fields on an input.** Before setting
+  an owned input's taptree, condition witness and `arkadetweak` fields,
+  `prepareOwnedInput` dropped the old ones it could decode. A condition
+  witness whose value did not decode was kept next to the new one, and a
+  malformed `arkadetweak` threw. Fields are now matched by their key alone.
+
 - **Signer classification accepts operator info without deprecated signers.**
   Providers that omit the list are treated as advertising only the active signer.
 

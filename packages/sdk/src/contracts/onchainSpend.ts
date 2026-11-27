@@ -23,6 +23,7 @@ import {
     PrevoutTxField,
     VtxoTaprootTree,
     getArkPsbtFields,
+    isArkPsbtField,
     setArkPsbtField,
 } from "../utils/unknownFields";
 import { computeArkadeScriptPublicKey } from "../arkade/tweak";
@@ -81,10 +82,7 @@ export function prepareOwnedInput(
         tx.updateInput(index, { tapLeafScript: undefined, tapScriptSig: undefined }, true);
     }
     const kept = unknown?.filter(
-        (u) =>
-            VtxoTaprootTree.decode(u) === null &&
-            ConditionWitness.decode(u) === null &&
-            ArkadeTweak.decode(u) === null,
+        (u) => ![VtxoTaprootTree, ConditionWitness, ArkadeTweak].some((c) => isArkPsbtField(u, c)),
     );
     if (kept && kept.length !== unknown!.length) {
         tx.updateInput(index, { unknown: undefined }, true);
