@@ -3243,6 +3243,15 @@ export class Wallet
     }
 
     /**
+     * @internal Called when `registerRenewal` succeeds: the receive key and the boarding key it
+     * just registered are the same until the sync separates them, so it runs now, not at the
+     * next poll.
+     */
+    onRenewalRegistered(): void {
+        void this.syncReceiveDelegation();
+    }
+
+    /**
      * Startup work for an Executor: refresh its watches (every wallet), then, with a descriptor
      * provider, rotate-on-board. The Executor boards a deposit into the renewal contract of its
      * key, so a coin there while that key is displayed means the address was used. Renewals and a

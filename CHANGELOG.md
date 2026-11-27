@@ -14,6 +14,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **An HD wallet separates its receive and boarding keys as soon as it registers renewal, not at the next poll.** `registerRenewal` registers the displayed boarding key, which on a fresh HD wallet is also the receive key, and `getAddress()` showed that key's renewal contract until the next poll (about a minute) rotated boarding. A payment in that window was still delegated and lost nothing, but spent the boarding rotation through the board path. `registerRenewal` now tells the wallet once it succeeds (`DelegatedWallet.onRenewalRegistered`, optional), and the wallet queues the same receive-delegation sync the poll runs. A static wallet does nothing, and a failure there never fails `registerRenewal`.
+
 - **The Executor refuses a `renewalWindow` under 180 seconds.** Only an upper bound existed, so `registerBoarding` and `registerRenewal` accepted `0`, a negative or a tiny window. The wallet steps in for a coin at a live renewal contract only at half the window, so such a window left it no time to act before the coin was swept, and the coin was recovered only afterwards. Half of 180 s covers one 60 s settlement poll and a batch round. Both calls now throw `renewalWindow Ns must be at least 180s`, as for a window not shorter than the operator's VTXO expiry. A stored watch with such a window is no longer refreshed: `registerRenewal` skips it with a warning and the wallet renews its coins itself. `ExecutorWatchRegistration.address` is documented as the delegated address, onchain for boarding and an Arkade address for renewal.
 
 ## [0.5.15] - 2026-11-26
