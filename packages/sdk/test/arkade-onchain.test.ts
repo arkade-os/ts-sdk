@@ -247,6 +247,38 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
     });
 
+    it("routes a splice-free leaf to arkd only when it tweaks the server key", async () => {
+        const { ark, submitOnchainTx, cosignOnchainTx } = await setup();
+        const contract = ark.contract(
+            {
+                ...program,
+                functions: {
+                    ...program.functions,
+                    sweep: {
+                        tapscript: { signers: [{ tweak: "$server", fn: "sweep" }], emulator: null },
+                        arkadeScript: { asm: payTo },
+                    },
+                    insured: {
+                        tapscript: { signers: [{ tweak: "$user", fn: "insured" }], emulator: null },
+                        arkadeScript: { asm: payTo },
+                    },
+                },
+            },
+            { receiver, amount: AMOUNT },
+        );
+        const spend = (fn: "sweep" | "insured") =>
+            contract.functions[fn]().from(COIN).to(out, AMOUNT).onchainFee(FEE).sendOnchain();
+
+        expect(await spend("sweep")).toBe("arkd-txid");
+        expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
+        expect(submitOnchainTx).not.toHaveBeenCalled();
+
+        // A constructor-key tweak has no splice either, but arkd holds no tweak of `$user`.
+        expect(await spend("insured")).toBe("broadcast-txid");
+        expect(submitOnchainTx).toHaveBeenCalledTimes(1);
+        expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
+    });
+
     it("rejects a covenant leaf containing the server key", async () => {
         const { contract } = await setup();
         await expect(

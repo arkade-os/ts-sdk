@@ -1450,6 +1450,18 @@ describe("singleOperatorKey", () => {
         );
     });
 
+    it("keeps a plain operator key where it stands, which the server tweak rewrite merges away", () => {
+        const art = claimLeaf(["<OPERATOR_KEY>", "<owner>", "<OPERATOR_KEY:claim>"]);
+        const tweak = { tweak: "$server", fn: "claim" };
+        expect(
+            programFromArtifact(art, { singleOperatorKey: true }).functions.claim.tapscript.signers,
+        ).toEqual(["$server", "$owner", tweak]);
+        expect(
+            tweakServerSigners(programFromArtifact(art), asServer).functions.claim.tapscript
+                .signers,
+        ).toEqual([tweak, "$owner"]);
+    });
+
     it("reads an operator key in a CSV leaf as the server tweaked by its function", () => {
         const art = claimLeaf(
             ["<owner>", "<OPERATOR_KEY:claim>"],
@@ -1473,6 +1485,20 @@ describe("singleOperatorKey", () => {
         expect(() => programFromArtifact(art, { singleOperatorKey: true })).toThrow(
             /needs a covenant/,
         );
+    });
+
+    it.each([
+        ["names another function's covenant", ["<OPERATOR_KEY:other>"], /must match group 'claim'/],
+        ["names no function", ["<OPERATOR_KEY:nope>"], /must match group 'claim'/],
+        [
+            "repeats a covenant",
+            ["<OPERATOR_KEY:claim>", "<OPERATOR_KEY:claim>"],
+            /duplicate emulator signer/,
+        ],
+    ])("refuses an operator key that %s, as the default read does", (_label, keys, error) => {
+        const art = claimLeaf(keys);
+        expect(() => programFromArtifact(art)).toThrow(error);
+        expect(() => programFromArtifact(art, { singleOperatorKey: true })).toThrow(error);
     });
 
     it("reads a linked child contract's operator keys the same way", () => {

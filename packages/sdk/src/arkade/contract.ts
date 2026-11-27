@@ -541,7 +541,9 @@ export class Arkade {
             info.forfeitPubkey ? toXOnly(hex.decode(info.forfeitPubkey), "forfeit key") : undefined,
         );
 
-        // A caller-supplied provider may predate `deprecatedSigners`.
+        // A caller-supplied provider may predate `deprecatedSigners`. Keys past their cutoff stay:
+        // arkd no longer signs with them, but neither does the emulator, so routing one to arkd
+        // only changes whose refusal the caller sees.
         const operatorKeys = new Set(
             [info.signerPubkey, ...(info.deprecatedSigners ?? []).map((s) => s.pubkey)]
                 .filter(Boolean)
