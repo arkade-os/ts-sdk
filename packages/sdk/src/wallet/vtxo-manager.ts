@@ -955,6 +955,30 @@ function renewalAddressOf(
 }
 
 /**
+ * Where a renewal pays and what it pays there. The address is judged on the smallest output
+ * `plan` produces, not on `gross`: the output fee and a split can bring a piece under what the
+ * Executor renews. `plan` takes the address because the output fee depends on its script.
+ */
+async function planRenewal(
+    wallet: IWallet,
+    gross: bigint,
+    inputs: readonly (ExtendedCoin | ExtendedVirtualCoin)[],
+    plan: (address: string) => bigint[],
+): Promise<{ arkAddress: string; amounts: bigint[] }> {
+    let arkAddress = await renewalAddressOf(wallet, gross, inputs);
+    let amounts = plan(arkAddress);
+    const smallest = amounts.reduce((a, b) => (b < a ? b : a));
+    const checked = await renewalAddressOf(wallet, smallest, inputs);
+    // The second answer can only be the wallet's own address, which has no Executor
+    // threshold: it is final.
+    if (checked !== arkAddress) {
+        arkAddress = checked;
+        amounts = plan(arkAddress);
+    }
+    return { arkAddress, amounts };
+}
+
+/**
  * Whether a contract's server signer classifies as non-`CURRENT` against the
  * fresh signer set. Mirrors the per-contract classification inside
  * `anyInputUnderDeprecatedSigner` (a missing `serverPubKey` contributes
@@ -1934,20 +1958,26 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const subtotal = subtotalOf(vtxos, net);
             // Read AFTER any rotation above, so the output fee is priced against
             // the script the renewed VTXO actually lands on.
-            const arkAddress = await renewalAddressOf(this.wallet, subtotal, vtxos);
-
-            const amounts = options?.split
-                ? planSplitOutputs(options.split, {
-                      subtotal,
-                      outputFeeOn: (amount) => offchainOutputFee(amount, estimator, arkAddress),
-                      maxAmount: vtxoMaxAmount,
-                      dust: dustAmount,
-                      address: arkAddress,
-                      // Read off the FINAL selection, so a cap that dropped the only
-                      // asset-bearing input frees the plan to split again.
-                      hasAssets: vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0),
-                  })
-                : [deductOffchainOutputFee(subtotal, estimator, arkAddress)];
+            // A settle has one destination, so every piece follows the smallest one.
+            const { arkAddress, amounts } = await planRenewal(
+                this.wallet,
+                subtotal,
+                vtxos,
+                (address) =>
+                    options?.split
+                        ? planSplitOutputs(options.split, {
+                              subtotal,
+                              outputFeeOn: (amount) =>
+                                  offchainOutputFee(amount, estimator, address),
+                              maxAmount: vtxoMaxAmount,
+                              dust: dustAmount,
+                              address,
+                              // Read off the FINAL selection, so a cap that dropped the only
+                              // asset-bearing input frees the plan to split again.
+                              hasAssets: vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0),
+                          })
+                        : [deductOffchainOutputFee(subtotal, estimator, address)],
+            );
 
             // Dust is judged on the NET output: a batch clearing dust gross can land under it.
             for (const amount of amounts) {
@@ -3195,16 +3225,22 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             await this.rotateForRecoverableInputs([...filteredBoarding, ...filteredVtxos], info);
         }
 
-        const arkAddress = await renewalAddressOf(this.wallet, totalAmount, [
-            ...filteredBoarding,
-            ...filteredVtxos,
-        ]);
-
-        const outputFee = estimator.evalOffchainOutput({
-            amount: totalAmount,
-            script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
-        });
-        totalAmount -= BigInt(outputFee.satoshis);
+        const grossAmount = totalAmount;
+        const { arkAddress, amounts } = await planRenewal(
+            this.wallet,
+            grossAmount,
+            [...filteredBoarding, ...filteredVtxos],
+            (address) => [
+                grossAmount -
+                    BigInt(
+                        estimator.evalOffchainOutput({
+                            amount: grossAmount,
+                            script: hex.encode(ArkAddress.decode(address).pkScript),
+                        }).satoshis,
+                    ),
+            ],
+        );
+        totalAmount = amounts[0];
 
         if (totalAmount < dustAmount) return;
 
