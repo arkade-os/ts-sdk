@@ -675,23 +675,40 @@ export class ExecutorManagerImpl implements IExecutorManager {
         );
     }
 
-    /** @internal {@link registerBoarding} for `descriptor`'s key; the displayed one by default. */
+    /**
+     * @internal {@link registerBoarding} for `descriptor`'s key; the displayed one by default.
+     * `pair: false` returns once the boarding watch exists: {@link pairRenewalAt} is the caller's.
+     */
     async registerBoardingAt(
         descriptor: string | undefined,
         options: DelegationOptions,
         registration: RegistrationOptions = {},
+        { pair = true }: { pair?: boolean } = {},
     ): Promise<ExecutorWatchRegistration> {
         const key = descriptor ?? (await this.displayedDescriptor());
         const context = this.lazyContext();
         const boarding =
             (await this.storedWatch(key, options, registration, "boarding")) ??
             (await this.registerAt(await context(), key, options, registration, "boarding"));
+        if (pair) await this.pairRenewalAt(key, boarding, options, registration);
+        return boarding;
+    }
+
+    /**
+     * @internal The renewal watch `boarding` pays into, when renewal is on. Best-effort: it never
+     * throws, and never undoes the boarding watch.
+     */
+    async pairRenewalAt(
+        descriptor: string,
+        boarding: ExecutorWatchRegistration,
+        options: DelegationOptions,
+        registration: RegistrationOptions = {},
+    ): Promise<void> {
         try {
-            await this.pairRenewal(context, key, boarding, options, registration);
+            await this.pairRenewal(this.lazyContext(), descriptor, boarding, options, registration);
         } catch (e) {
             console.warn("Failed to register the Executor renewal watch paired with boarding", e);
         }
-        return boarding;
     }
 
     /**
