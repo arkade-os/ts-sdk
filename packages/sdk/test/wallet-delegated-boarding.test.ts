@@ -22,6 +22,7 @@ import { collectContracts, type ContractFilter } from "../src/repositories/contr
 import { saveVtxosForContract } from "../src/contracts/vtxoOwnership";
 import { collectVtxos } from "../src/repositories/walletRepository";
 import { EXECUTOR_REQUEST_TIMEOUT_MS } from "../src/wallet/executor";
+import { MUTINYNET_EMULATOR_PUBKEY, RETIRED_EMULATOR_PUBKEYS } from "../src/networks";
 import { DEFAULT_TEMPLATE_IDS } from "../src/script/executor/executorTemplate";
 import { getOwnBoardingAddress } from "../src/wallet/utils";
 import { createMockExtendedVtxo } from "./contracts/helpers";
@@ -145,6 +146,7 @@ async function hdWalletWithWatch({
     delegation = "active",
     stat = false,
     rows = "live",
+    emulator = vectors.emulatorPubkey,
 }: {
     refuse?: boolean;
     coinAtRenewal?: boolean;
@@ -155,6 +157,8 @@ async function hdWalletWithWatch({
     delegation?: "active" | "expired" | "missing";
     stat?: boolean;
     rows?: "live" | "lapsed" | "none";
+    /** The emulator key the Executor reports and registers under; the stored rows keep the vectors'. */
+    emulator?: string;
 } = {}) {
     // an HD wallet subscribes to its contracts at boot
     vi.stubGlobal(
@@ -224,7 +228,7 @@ async function hdWalletWithWatch({
                         : {}),
                     batchCosignerPubKey: hex.decode(vectors.batchCosignerPubkey),
                     operatorPubKey: hex.decode(OPERATOR_PUBKEY_HEX),
-                    emulatorPubKey: hex.decode(vectors.emulatorPubkey),
+                    emulatorPubKey: hex.decode(emulator),
                 }),
             );
             return {
@@ -252,7 +256,7 @@ async function hdWalletWithWatch({
         if (delegation === "missing") throw new ExecutorRequestError("delegation not found", 404);
         return { delegation: { status: delegation }, coins: [] };
     });
-    const getInfo = vi.fn(executorInfo);
+    const getInfo = vi.fn(async () => ({ ...(await executorInfo()), emulatorPubkey: emulator }));
     const wallet = await Wallet.create({
         identity: hd,
         ...(stat ? {} : { walletMode: "hd" as const }),
@@ -1005,6 +1009,64 @@ describe("delegated boarding address on an HD wallet", () => {
         deadline.abort(new Error("timed out"));
 
         expect(await next).toBe(wallet.ownBoardingAddress());
+        await wallet.dispose();
+    });
+});
+
+describe("a rotated boarding key after the emulator pin rotated", () => {
+    // the stored watches carry the vectors' key, as a pin the SDK has since retired
+    beforeEach(() => {
+        RETIRED_EMULATOR_PUBKEYS.mutinynet = [vectors.emulatorPubkey];
+    });
+    afterEach(() => {
+        delete RETIRED_EMULATOR_PUBKEYS.mutinynet;
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it("shows its own address while the Executor still reports the retired key", async () => {
+        const { wallet, registerDelegation } = await hdWalletWithWatch();
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        const next = await wallet.getNewBoardingAddress();
+        expect(registerDelegation).not.toHaveBeenCalled();
+        expect(next).toBe(wallet.ownBoardingAddress());
+        expect(warn).toHaveBeenCalled();
+        await wallet.dispose();
+    });
+
+    it("registers under the current pin once the Executor reports it", async () => {
+        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+            emulator: MUTINYNET_EMULATOR_PUBKEY,
+        });
+
+        const next = await wallet.getNewBoardingAddress();
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        expect(next).not.toBe(wallet.ownBoardingAddress());
+        expect(next).not.toBe(boarding.script.onchainAddress(networks.mutinynet));
+        await wallet.dispose();
+    });
+
+    it("still revives a watch of the retired key under that key", async () => {
+        const { wallet, boarding, registerDelegation } = await hdWalletWithWatch({
+            delegation: "expired",
+        });
+
+        await boardChainIdle(wallet);
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        expect(await wallet.getBoardingAddress()).toBe(
+            boarding.script.onchainAddress(networks.mutinynet),
+        );
+        await wallet.dispose();
+    });
+
+    it("keeps an app's own override that is no pin", async () => {
+        delete RETIRED_EMULATOR_PUBKEYS.mutinynet;
+        const { wallet, registerDelegation } = await hdWalletWithWatch();
+
+        const next = await wallet.getNewBoardingAddress();
+        expect(registerDelegation).toHaveBeenCalledOnce();
+        expect(next).not.toBe(wallet.ownBoardingAddress());
         await wallet.dispose();
     });
 });

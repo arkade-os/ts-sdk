@@ -17,7 +17,12 @@ import {
     executorKeysOf,
 } from "../contracts/handlers/executor";
 import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
-import { networkFromOperatorInfo, resolveEmulatorPubkey } from "../networks";
+import {
+    type Network,
+    networkFromOperatorInfo,
+    resolveEmulatorPubkey,
+    trustedEmulatorOverride,
+} from "../networks";
 import { ArkAddress } from "../script/address";
 import {
     DEFAULT_TEMPLATE_IDS,
@@ -379,9 +384,9 @@ function statusMetadata(
 }
 
 /**
- * What registering `watch` again takes: its own params and expiry, and its own emulator key,
- * checked against the pin or approved when first registered, so registering refuses an Executor
- * that no longer holds it.
+ * What registering the SAME contract as `watch` again takes: its own params and expiry, and its
+ * own emulator key, which the address commits to, so registering refuses an Executor that no
+ * longer holds it. For a new key use {@link extensionOf}.
  */
 export function reRegistrationOf(watch: DelegatedContractWatch): {
     options: DelegationOptions;
@@ -399,6 +404,25 @@ export function reRegistrationOf(watch: DelegatedContractWatch): {
         registration: {
             expiresAt: typeof expiresAt === "number" && expiresAt > 0 ? expiresAt : undefined,
             emulatorPubkey: hex.encode(p.emulatorPubKey),
+        },
+    };
+}
+
+/**
+ * What registering a NEW key under `watch`'s params takes: as {@link reRegistrationOf}, except
+ * that a stored emulator key the network's pin has retired is dropped, so the new key registers
+ * under the current pin instead of carrying the retired one forward. An app's own override stays.
+ */
+export function extensionOf(
+    watch: DelegatedContractWatch,
+    network: Network,
+): ReturnType<typeof reRegistrationOf> {
+    const { options, registration } = reRegistrationOf(watch);
+    return {
+        options,
+        registration: {
+            ...registration,
+            emulatorPubkey: trustedEmulatorOverride(network, registration.emulatorPubkey!),
         },
     };
 }
