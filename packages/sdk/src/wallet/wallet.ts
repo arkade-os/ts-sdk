@@ -204,9 +204,12 @@ import { scopeOf } from "../contracts/scope";
 import {
     delegatedContracts,
     type DelegatedContractWatch,
+    type DelegationOptions,
     ExecutorManagerImpl,
+    type ExecutorWatchRegistration,
     type IExecutorManager,
     receiveTwin,
+    type RegistrationOptions,
     reRegistrationOf,
     sameDelegation,
 } from "./executor";
@@ -3083,7 +3086,8 @@ export class Wallet
      *
      * While an Executor boarding watch is live, the new key gets a watch of its own, and this
      * returns its delegated address; if that registration fails or times out, the new key's own
-     * address. It waits for the registration, unlike the rotation after a settle.
+     * address. It waits for the boarding watch, unlike the rotation after a settle, but not for
+     * the renewal watch paired with it, which follows on the board chain.
      *
      * @deprecated Use {@link getNewAddresses} — it mints any combination of
      * address types at one shared index, and reports the contract row behind
@@ -3100,24 +3104,37 @@ export class Wallet
     }
 
     /**
-     * Allocate the next boarding key, register its Executor watch, then swap the display.
+     * Allocate the next boarding key, register its Executor boarding watch, then swap the display.
      * Persisted before the swap, so a throw leaves the previous (watched) address displayed. The
      * row is tagged at allocation: a restart before the swap boots on the new key's own address,
-     * as after a failed registration.
+     * as after a failed registration. The renewal watch paired with it is queued after the swap:
+     * the new address needs only the boarding one, and the old address, just paid, stays shown
+     * until then.
      */
     private async rotateBoarding(): Promise<void> {
         const [minted] = await this.allocateAddresses(["boarding"], false, true);
         if (minted?.type !== "boarding" || !minted.allocated) return;
-        await this.extendBoardingWatch(minted.signingDescriptor);
+        const extended = await this.extendBoardingWatch(minted.signingDescriptor);
         // A signer rotation during the registration rebuilt the display under the new key: keep it.
         // The minted index stays burned, and the next rotation mints under the new signer.
         if (
-            toXOnlySignerHex(hex.encode(minted.tapscript.options.serverPubKey)) !==
+            toXOnlySignerHex(hex.encode(minted.tapscript.options.serverPubKey)) ===
             toXOnlySignerHex(hex.encode(this.arkServerPublicKey))
         ) {
-            return;
+            this.setBoardingTapscriptForRotation(minted.tapscript);
         }
-        this.setBoardingTapscriptForRotation(minted.tapscript);
+        const executor = this._executorManager;
+        if (!extended || !executor) return;
+        // Queued, not awaited: from inside a board-chain task it appends to the chain, and the
+        // dispose drain waits for it.
+        void this.onBoardChain(() =>
+            executor.pairRenewalAt(
+                minted.signingDescriptor,
+                extended.boarding,
+                extended.options,
+                extended.registration,
+            ),
+        );
     }
 
     /**
@@ -3136,23 +3153,37 @@ export class Wallet
     /**
      * Register the most recently registered live Executor boarding watch again for a rotated
      * key, so its deposits are boarded while the wallet is offline too. Not the displayed key's
-     * own watch: it may have none, and the parameters are wallet policy. While renewal is on, the
-     * registration pairs a renewal watch with it, after the boarding one, whose failure it never
-     * undoes. Best-effort: on failure the key shows its own address, which the wallet boards once
-     * online.
+     * own watch: it may have none, and the parameters are wallet policy. It registers the
+     * boarding watch alone and returns it; the renewal watch paired with it, while renewal is on,
+     * is the caller's to queue. Best-effort: on failure, undefined, and the key shows its own
+     * address, which the wallet boards once online.
      */
-    private async extendBoardingWatch(descriptor: string): Promise<void> {
-        if (!this._executorManager) return;
+    private async extendBoardingWatch(descriptor: string): Promise<
+        | {
+              boarding: ExecutorWatchRegistration;
+              options: DelegationOptions;
+              registration: RegistrationOptions;
+          }
+        | undefined
+    > {
+        if (!this._executorManager) return undefined;
         const server = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
         const watch = (await this.delegatedExecutorContracts("boarding")).find(
             (c) => c.live && c.signer === server,
         );
-        if (!watch) return;
+        if (!watch) return undefined;
         const { options, registration } = reRegistrationOf(watch);
         try {
-            await this._executorManager.registerBoardingAt(descriptor, options, registration);
+            const boarding = await this._executorManager.registerBoardingAt(
+                descriptor,
+                options,
+                registration,
+                { pair: false },
+            );
+            return { boarding, options, registration };
         } catch (e) {
             console.warn("Failed to register an Executor watch for the new boarding address", e);
+            return undefined;
         }
     }
 

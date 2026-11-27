@@ -134,6 +134,7 @@ async function walletWith(options: { executor: boolean; rows: boolean }) {
  * the contract manager in the background. `delegation` is what the Executor says of a watch it is
  * asked about: held, `expired`, or `missing` (a 404). `stat` makes it a static wallet at the
  * identity key; `rows` seeds its watches live, as `lapsed` (not live) or not at all.
+ * `holdRenewal` leaves only the renewal registrations pending until `openRenewal()`.
  */
 async function hdWalletWithWatch({
     refuse = false,
@@ -142,6 +143,7 @@ async function hdWalletWithWatch({
     lazy = false,
     renewalLive = false,
     failRenewal = false,
+    holdRenewal = false,
     delegation = "active",
     stat = false,
     rows = "live",
@@ -152,6 +154,7 @@ async function hdWalletWithWatch({
     lazy?: boolean;
     renewalLive?: boolean;
     failRenewal?: boolean;
+    holdRenewal?: boolean;
     delegation?: "active" | "expired" | "missing";
     stat?: boolean;
     rows?: "live" | "lapsed" | "none";
@@ -192,6 +195,10 @@ async function hdWalletWithWatch({
               fail = reject;
           })
         : undefined;
+    let openRenewal!: () => void;
+    const renewalGate = holdRenewal
+        ? new Promise<void>((resolve) => (openRenewal = resolve))
+        : undefined;
     const registerDelegation = vi.fn(
         async (
             templateId: string,
@@ -210,6 +217,7 @@ async function hdWalletWithWatch({
             }
             if (refuse) throw new Error("Executor unavailable");
             const template = templateId === DEFAULT_TEMPLATE_IDS.boarding ? "boarding" : "renewal";
+            if (template === "renewal") await renewalGate;
             if (failRenewal && template === "renewal") throw new Error("Executor unavailable");
             const num = (name: string) => Number(ScriptNum().decode(hex.decode(variables[name])));
             const script = ExecutorContractHandler.createScript(
@@ -277,6 +285,7 @@ async function hdWalletWithWatch({
         owner,
         open,
         fail,
+        openRenewal,
         walletRepository,
     };
 }
@@ -461,6 +470,7 @@ describe("delegated boarding address on an HD wallet", () => {
 
         const next = await wallet.getNewBoardingAddress();
         expect(next).not.toBe(first);
+        await boardChainIdle(wallet);
         // the new key got a boarding watch and the renewal watch its deposits land in
         expect(registerDelegation.mock.calls.map(([id]) => id).sort()).toEqual([
             DEFAULT_TEMPLATE_IDS.boarding,
@@ -476,6 +486,79 @@ describe("delegated boarding address on an HD wallet", () => {
         ).filter((c) => c.params.template === "renewal" && c.params.owner === renewalVars.owner);
         expect(newRenewal.metadata?.delegationStatus).toBe("active");
         await wallet.dispose();
+    });
+
+    it("shows the rotated address before its renewal watch is paired", async () => {
+        const { wallet, boarding, registerDelegation, openRenewal } = await hdWalletWithWatch({
+            renewalLive: true,
+            holdRenewal: true,
+        });
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+
+        const next = await wallet.getNewBoardingAddress();
+        expect(next).not.toBe(first);
+        expect(next).not.toBe(wallet.ownBoardingAddress());
+        expect(await wallet.getBoardingAddress()).toBe(next);
+        // the pairing was asked for and is still pending
+        await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledTimes(2));
+        const [[, boardingVars], [, renewalVars]] = registerDelegation.mock.calls;
+        const owner = (c: { params: Record<string, unknown> }) => c.params.owner;
+        const rows = () =>
+            collectContracts(wallet.contractRepository, { type: ["executor"] }).then((all) =>
+                all.filter(
+                    (c) => c.params.template === "renewal" && owner(c) === renewalVars.owner,
+                ),
+            );
+        expect(renewalVars.owner).toBe(boardingVars.owner);
+        // a row minted with the key is not yet the Executor's
+        expect((await rows()).map((c) => c.metadata?.delegationStatus)).not.toContain("active");
+
+        openRenewal();
+        await boardChainIdle(wallet);
+        const [newRenewal] = await rows();
+        expect(newRenewal.metadata?.delegationStatus).toBe("active");
+        await wallet.dispose();
+    });
+
+    it("keeps the new address and warns when the renewal pairing fails", async () => {
+        const { wallet, boarding } = await hdWalletWithWatch({
+            renewalLive: true,
+            failRenewal: true,
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const first = boarding.script.onchainAddress(networks.mutinynet);
+
+        const next = await wallet.getNewBoardingAddress();
+        await boardChainIdle(wallet);
+        expect(next).not.toBe(first);
+        expect(await wallet.getBoardingAddress()).toBe(next);
+        expect(warn).toHaveBeenCalledWith(
+            "Failed to register the Executor renewal watch paired with boarding",
+            expect.anything(),
+        );
+        warn.mockRestore();
+        await wallet.dispose();
+    });
+
+    it("waits for a pending pairing on dispose, and writes nothing after", async () => {
+        const { wallet, openRenewal, registerDelegation } = await hdWalletWithWatch({
+            renewalLive: true,
+            holdRenewal: true,
+        });
+        const repository = wallet.contractRepository;
+        const clear = vi.spyOn(repository, "clear");
+        const save = vi.spyOn(repository, "saveContract");
+
+        await wallet.getNewBoardingAddress();
+        await vi.waitFor(() => expect(registerDelegation).toHaveBeenCalledTimes(2));
+        const disposed = wallet.dispose();
+        expect(await settlesSoon(disposed)).toBe(false);
+
+        openRenewal();
+        await disposed;
+        // the pairing's row was written before the repository was cleared, none after
+        const lastSave = Math.max(...save.mock.invocationCallOrder);
+        expect(lastSave).toBeLessThan(Math.min(...clear.mock.invocationCallOrder));
     });
 
     it("registers boarding only when no renewal watch is live", async () => {
@@ -498,6 +581,7 @@ describe("delegated boarding address on an HD wallet", () => {
         const next = await wallet.getNewBoardingAddress();
         expect(next).not.toBe(first);
         expect(next).not.toBe(wallet.ownBoardingAddress());
+        await boardChainIdle(wallet);
         // both were attempted; only the boarding one took
         expect(registerDelegation).toHaveBeenCalledTimes(2);
         expect(registerDelegation.mock.calls[0][0]).toBe(DEFAULT_TEMPLATE_IDS.boarding);
