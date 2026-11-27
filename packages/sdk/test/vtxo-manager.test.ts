@@ -2461,7 +2461,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             await (manager as any).pollBoardingUtxos();
 
             expect(error).toHaveBeenCalledWith(
-                "Error refreshing the Executor watches:",
+                "Error refreshing the executor watches:",
                 expect.any(Error),
             );
             error.mockRestore();

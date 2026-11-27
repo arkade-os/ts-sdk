@@ -115,7 +115,7 @@ export interface ExecutorProvider {
     getTemplate?(id: string, options?: { signal?: AbortSignal }): Promise<ExecutorTemplateDetails>;
 }
 
-/** REST provider for the executor, the service that renews and boards a wallet's coins. */
+/** REST provider for an executor, a service that renews and boards a wallet's coins. */
 export class RestExecutorProvider implements ExecutorProvider {
     constructor(public url: string) {}
 
@@ -127,7 +127,7 @@ export class RestExecutorProvider implements ExecutorProvider {
         const url = this.endpoint("/v1/info");
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
-            throw await failure(response, "get Executor info");
+            throw await failure(response, "get executor info");
         }
 
         return parseExecutorInfo(await response.json());
@@ -137,13 +137,13 @@ export class RestExecutorProvider implements ExecutorProvider {
         const url = this.endpoint("/v1/templates");
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
-            throw await failure(response, "list Executor templates");
+            throw await failure(response, "list executor templates");
         }
         const data: unknown = await response.json();
         // The protobuf JSON gateway omits empty repeated fields.
         const templates = isObject(data) ? (data.templates ?? []) : undefined;
         if (!Array.isArray(templates)) {
-            throw new Error("Invalid Executor templates response");
+            throw new Error("Invalid executor templates response");
         }
         return templates.map(parseTemplate);
     }
@@ -181,11 +181,11 @@ export class RestExecutorProvider implements ExecutorProvider {
     ): Promise<ExecutorDelegationDetails> {
         const data = await this.getJson(
             `/v1/delegation?address=${encodeURIComponent(address)}`,
-            "get Executor delegation",
+            "get executor delegation",
             options.signal,
         );
         if (!isObject(data)) {
-            throw new Error("Invalid Executor delegation response");
+            throw new Error("Invalid executor delegation response");
         }
         return {
             delegation: parseDelegation(data.delegation),
@@ -200,7 +200,7 @@ export class RestExecutorProvider implements ExecutorProvider {
         const data = await this.postJson(
             "/v1/artifact",
             { document: documentText(document) },
-            "register Executor artifact",
+            "register executor artifact",
             options.signal,
         );
         return parseArtifact(isObject(data) ? data.artifact : undefined);
@@ -212,7 +212,7 @@ export class RestExecutorProvider implements ExecutorProvider {
     ): Promise<ExecutorArtifact> {
         const data = await this.getJson(
             `/v1/artifact/${encodeURIComponent(id)}`,
-            "get Executor artifact",
+            "get executor artifact",
             options.signal,
         );
         return parseArtifact(isObject(data) ? data.artifact : undefined);
@@ -225,7 +225,7 @@ export class RestExecutorProvider implements ExecutorProvider {
         const data = await this.postJson(
             "/v1/template",
             { document: documentText(document) },
-            "register Executor template",
+            "register executor template",
             options.signal,
         );
         return parseTemplateDetails(isObject(data) ? data.template : undefined);
@@ -237,7 +237,7 @@ export class RestExecutorProvider implements ExecutorProvider {
     ): Promise<ExecutorTemplateDetails> {
         const data = await this.getJson(
             `/v1/template/${encodeURIComponent(id)}`,
-            "get Executor template",
+            "get executor template",
             options.signal,
         );
         return parseTemplateDetails(isObject(data) ? data.template : undefined);
@@ -330,7 +330,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function requiredString(object: Record<string, unknown>, key: string, what = "info"): string {
     const value = object[key];
     if (typeof value !== "string" || value.length === 0) {
-        throw new Error(`Invalid Executor ${what}: missing ${key}`);
+        throw new Error(`Invalid executor ${what}: missing ${key}`);
     }
     return value;
 }
@@ -343,23 +343,23 @@ function parseInt64(value: unknown, label: string): number {
     if (typeof value === "number" || (typeof value === "string" && value.length > 0)) {
         const parsed = Number(value);
         if (!Number.isSafeInteger(parsed)) {
-            throw new Error(`Invalid Executor response: ${label} is not an integer`);
+            throw new Error(`Invalid executor response: ${label} is not an integer`);
         }
         return parsed;
     }
-    throw new Error(`Invalid Executor response: missing ${label}`);
+    throw new Error(`Invalid executor response: missing ${label}`);
 }
 
 function parseAmount(value: unknown, label: string): number {
     const amount = parseInt64(value, label);
-    if (amount < 0) throw new Error(`Invalid Executor response: ${label} is negative`);
+    if (amount < 0) throw new Error(`Invalid executor response: ${label} is negative`);
     return amount;
 }
 
 function parseVariables(value: unknown): Record<string, string> {
     if (value === undefined) return {};
     if (!isObject(value) || Object.values(value).some((v) => typeof v !== "string")) {
-        throw new Error("Invalid Executor delegation: variables are not strings");
+        throw new Error("Invalid executor delegation: variables are not strings");
     }
     return value as Record<string, string>;
 }
@@ -372,25 +372,25 @@ function parseOptionalInt64(value: unknown, label: string): number | undefined {
 function optionalArray(value: unknown, label: string): unknown[] {
     if (value === undefined) return [];
     if (!Array.isArray(value)) {
-        throw new Error(`Invalid Executor response: ${label} is not an array`);
+        throw new Error(`Invalid executor response: ${label} is not an array`);
     }
     return value;
 }
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
     if (!allowed.includes(value as T)) {
-        throw new Error(`Invalid Executor delegation: unknown ${label} ${String(value)}`);
+        throw new Error(`Invalid executor delegation: unknown ${label} ${String(value)}`);
     }
     return value as T;
 }
 
 function parseDelegation(value: unknown): ExecutorDelegation {
     if (!isObject(value)) {
-        throw new Error("Invalid Executor delegation");
+        throw new Error("Invalid executor delegation");
     }
     const templateId = value.templateId;
     if (typeof templateId !== "string" || templateId.length === 0) {
-        throw new Error("Invalid Executor delegation: missing templateId");
+        throw new Error("Invalid executor delegation: missing templateId");
     }
     return {
         id: parseInt64(value.id, "id"),
@@ -404,12 +404,12 @@ function parseDelegation(value: unknown): ExecutorDelegation {
 
 function parseInput(value: unknown): ExecutorDelegationInput {
     if (!isObject(value)) {
-        throw new Error("Invalid Executor delegation input");
+        throw new Error("Invalid executor delegation input");
     }
     const field = (key: string): string => {
         const v = value[key];
         if (typeof v !== "string" || v.length === 0) {
-            throw new Error(`Invalid Executor delegation input: missing ${key}`);
+            throw new Error(`Invalid executor delegation input: missing ${key}`);
         }
         return v;
     };
@@ -438,16 +438,16 @@ function parseCoin(value: unknown): DelegatedOutput {
 
 function parseTemplate(value: unknown): ExecutorTemplate {
     if (!isObject(value) || typeof value.id !== "string" || value.id.length === 0) {
-        throw new Error("Invalid Executor template: missing id");
+        throw new Error("Invalid executor template: missing id");
     }
     return { id: value.id, status: typeof value.status === "string" ? value.status : "" };
 }
 
 function parseTemplateDetails(value: unknown): ExecutorTemplateDetails {
-    if (!isObject(value)) throw new Error("Invalid Executor template");
+    if (!isObject(value)) throw new Error("Invalid executor template");
     const artifactIds = optionalArray(value.artifactIds, "artifactIds");
     if (artifactIds.some((id) => typeof id !== "string" || id.length === 0)) {
-        throw new Error("Invalid Executor template: artifactIds are not strings");
+        throw new Error("Invalid executor template: artifactIds are not strings");
     }
     return {
         id: requiredString(value, "id", "template"),
@@ -455,7 +455,7 @@ function parseTemplateDetails(value: unknown): ExecutorTemplateDetails {
         document: requiredString(value, "document", "template"),
         artifactIds: artifactIds as string[],
         params: optionalArray(value.params, "params").map((param) => {
-            if (!isObject(param)) throw new Error("Invalid Executor template param");
+            if (!isObject(param)) throw new Error("Invalid executor template param");
             return {
                 name: requiredString(param, "name", "template param"),
                 type: requiredString(param, "type", "template param"),
@@ -467,7 +467,7 @@ function parseTemplateDetails(value: unknown): ExecutorTemplateDetails {
 }
 
 function parseArtifact(value: unknown): ExecutorArtifact {
-    if (!isObject(value)) throw new Error("Invalid Executor artifact");
+    if (!isObject(value)) throw new Error("Invalid executor artifact");
     return {
         id: requiredString(value, "id", "artifact"),
         document: requiredString(value, "document", "artifact"),
@@ -476,7 +476,7 @@ function parseArtifact(value: unknown): ExecutorArtifact {
 }
 
 function parseExecutorInfo(value: unknown): ExecutorInfo {
-    if (!isObject(value)) throw new Error("Invalid Executor info");
+    if (!isObject(value)) throw new Error("Invalid executor info");
     const info: ExecutorInfo = {
         version: requiredString(value, "version"),
         network: requiredString(value, "network"),
@@ -499,9 +499,9 @@ function decodeCompressed(value: string, label: string): void {
     try {
         bytes = hex.decode(value);
     } catch {
-        throw new Error(`Invalid Executor info: ${label} is not hex`);
+        throw new Error(`Invalid executor info: ${label} is not hex`);
     }
     if (bytes.length !== 33 || (bytes[0] !== 0x02 && bytes[0] !== 0x03)) {
-        throw new Error(`Invalid Executor info: ${label} is not compressed`);
+        throw new Error(`Invalid executor info: ${label} is not compressed`);
     }
 }

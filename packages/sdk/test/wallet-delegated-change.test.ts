@@ -161,7 +161,7 @@ describe("a send's change from a delegated coin", () => {
 
         expect(changeOutput).toBe(fx.wallet.defaultContractScript);
         expect(warn).toHaveBeenCalledWith(
-            "Unable to inspect Executor renewal watches",
+            "Unable to inspect executor renewal watches",
             expect.any(Error),
         );
         await fx.wallet.dispose();
@@ -319,7 +319,7 @@ describe("the wallet's own renewals", () => {
 
         expect(await wallet.renewalAddress(10_000n)).toBe(wallet.arkAddress.encode());
         expect(warn).toHaveBeenCalledWith(
-            "Unable to inspect Executor renewal watches",
+            "Unable to inspect executor renewal watches",
             expect.any(Error),
         );
         await wallet.dispose();

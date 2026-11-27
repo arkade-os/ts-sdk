@@ -1757,7 +1757,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 return remaining <= Number(watch.contract.params.renewalWindow) * 500;
             });
         } catch (e) {
-            console.warn("Unable to inspect Executor renewal watches", e);
+            console.warn("Unable to inspect executor renewal watches", e);
             return vtxos;
         }
     }
@@ -3073,7 +3073,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             if (isExecutorRefreshCapable(wallet)) {
                 await runWithCrossInstanceLock(EXECUTOR_REFRESH_LOCK_NAME, () =>
                     wallet.refreshExecutorWatches().catch((e) => {
-                        console.error("Error refreshing the Executor watches:", e);
+                        console.error("Error refreshing the executor watches:", e);
                     }),
                 );
             }

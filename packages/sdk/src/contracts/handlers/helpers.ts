@@ -438,7 +438,7 @@ export function exitSequence(contract: Contract): number | undefined {
     if (contract.type === "executor") {
         const { template } = contract.params;
         if (template !== "renewal" && template !== "boarding") {
-            throw new Error(`unknown Executor template ${template}`);
+            throw new Error(`unknown executor template ${template}`);
         }
         const name = template === "boarding" ? "boardingExitDelay" : "exitDelay";
         const raw = contract.params[name];

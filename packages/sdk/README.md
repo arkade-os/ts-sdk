@@ -736,8 +736,8 @@ const balance = await manager.getRecoverableBalance()
 
 ### Executor
 
-The executor renews the wallet's virtual outputs and boards its deposits while the wallet is
-offline. It is opt-in: without it the wallet behaves as before.
+An executor renews the wallet's virtual outputs and boards its deposits while the wallet is
+offline. It is opt-in: without one the wallet behaves as before.
 
 ```typescript
 import { Wallet, RestExecutorProvider } from '@arkade-os/sdk'

@@ -152,7 +152,7 @@ describe("ExecutorContractHandler", () => {
         const p = params("renewal");
         expect(() =>
             ExecutorContractHandler.deserializeParams({ ...p, template: "renewal_watch" }),
-        ).toThrow(/unknown Executor template/);
+        ).toThrow(/unknown executor template/);
         expect(() =>
             ExecutorContractHandler.deserializeParams({ ...p, owner: vectors.owner.slice(2) }),
         ).toThrow(/compressed/);
@@ -168,7 +168,7 @@ describe("ExecutorContractHandler", () => {
     });
 
     it.each(["renewal", "boarding"] as const)(
-        "spends %s through forfeit with the operator and exit alone, never the emulator-enforced leaf",
+        "spends %s through forfeit with the operator and exit alone, never the function with Arkade Script",
         (template) => {
             const contract = contractOf(template);
             const s = ExecutorContractHandler.createScript(contract.params);

@@ -151,7 +151,7 @@ describe("getAddress with an Executor watch", () => {
 
         expect(await wallet.getAddress()).toBe(wallet.arkAddress.encode());
         expect(warn).toHaveBeenCalledWith(
-            "Unable to inspect Executor renewal watches",
+            "Unable to inspect executor renewal watches",
             expect.any(Error),
         );
         await wallet.dispose();

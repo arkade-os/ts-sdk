@@ -46,9 +46,9 @@ export namespace DefaultVtxo {
         readonly exitScript: string;
 
         /**
-         * Create the default virtual output script with one forfeit path and one exit path.
-         * @param extraLeaves leaves after forfeit and exit, e.g. the executor's emulator-enforced
-         * renewal leaf, which keeps the wallet's paths and adds one it never signs.
+         * Create the default virtual output script with one forfeit function and one exit path.
+         * @param extraLeaves functions after forfeit and exit, e.g. the executor's renewal function
+         * with Arkade Script, which keeps the wallet's functions and adds one it never signs.
          */
         constructor(
             readonly options: Options,
