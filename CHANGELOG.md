@@ -21,8 +21,11 @@ style and have not been backfilled.
   always set. A covenant whose co-signer key arkd holds, current or
   deprecated, is spent through arkd: `submitTx`/`finalizeTx` (two-step),
   `cosignOnchainTx`, and `registerIntent`/`submitSignedForfeitTxs`. Any other
-  covenant still goes through the emulator. A transaction or renewal mixing
-  the two is refused up front; spend them separately. Stored contracts keep
+  covenant still goes through the emulator. `Wallet.cosignOnchainTx` routes
+  each covenant input the same way, by whether its leaf names an arkd key
+  tweaked by its script, and drops the client's prevout txs before arkd,
+  which attaches its own and refuses duplicates. A transaction or renewal
+  mixing the two is refused up front; spend them separately. Stored contracts keep
   the key they were built with, so covenants on the old emulator key keep
   spending through the standalone emulator, which `{ network: "bitcoin" }`
   still wires. Against an arkd that does not run Arkade Script, new covenants
@@ -75,7 +78,8 @@ style and have not been backfilled.
   `{ singleOperatorKey: true }`, a compiled `<OPERATOR_KEY:f>` reads as
   `{ tweak: "$server", fn: f }` alone, the program `Arkade.contract()`'s rewrite
   gives, so `new ArkadeContract(...)` derives it too, whatever the client's
-  co-signer key. Without the option every artifact reads as before.
+  co-signer key. Without the option every artifact reads as before. Under
+  either read, `<OPERATOR_KEY:f>` in a leaf without a covenant is refused.
 
 - **Arkade spends reveal the script hashes of a contract's other covenants.**
   arkd checks that every forfeit leaf of a spent VTXO's tree names its signer
