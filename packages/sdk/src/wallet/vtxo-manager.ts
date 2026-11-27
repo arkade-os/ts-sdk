@@ -935,6 +935,10 @@ interface RenewalAddressWallet {
     renewalAddress(amount: bigint, inputScripts?: readonly string[]): Promise<string>;
 }
 
+function isRenewalAddressCapable(wallet: IWallet): wallet is IWallet & RenewalAddressWallet {
+    return typeof (wallet as Partial<RenewalAddressWallet>).renewalAddress === "function";
+}
+
 /** Where a renewal of `amount` pays: the wallet's choice, else its address. */
 function renewalAddressOf(
     wallet: IWallet,
@@ -947,11 +951,11 @@ function renewalAddressOf(
     if (inputs.some((input) => "assets" in input && (input.assets?.length ?? 0) > 0)) {
         return wallet.getAddress();
     }
-    if (typeof (wallet as Partial<RenewalAddressWallet>).renewalAddress !== "function") {
+    if (!isRenewalAddressCapable(wallet)) {
         return wallet.getAddress();
     }
     const scripts = inputs.flatMap((input) => ("script" in input ? [input.script] : []));
-    return (wallet as IWallet & RenewalAddressWallet).renewalAddress(amount, scripts);
+    return wallet.renewalAddress(amount, scripts);
 }
 
 /**
