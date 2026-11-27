@@ -250,9 +250,9 @@ describe("ExecutorContractHandler.discoverRange", () => {
         return {
             indexerProvider,
             onchainProvider: {
-                getCoins: vi.fn(async (address: string) =>
+                getTransactions: vi.fn(async (address: string) =>
                     found.boarding && address === vectors.boarding.address
-                        ? [{ txid: "aa".repeat(32), vout: 0, value: 1000, status: {} }]
+                        ? [{ txid: "aa".repeat(32), vout: [], status: { confirmed: true } }]
                         : [],
                 ),
             } as never,
@@ -266,7 +266,7 @@ describe("ExecutorContractHandler.discoverRange", () => {
 
     it.each([
         ["boarded coins at its renewal contract", { renewal: true }],
-        ["a deposit not boarded yet", { boarding: true }],
+        ["boarding history alone, no coin left and none boarded yet", { boarding: true }],
     ])("finds both contracts of a rotated key's watch from %s", async (_, found) => {
         const out = await ExecutorContractHandler.discoverRange!(entries, depsWith(found));
         expect(out.get(0)).toEqual([]);

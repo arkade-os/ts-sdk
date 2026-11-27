@@ -1397,6 +1397,51 @@ describe("Wallet.restore", () => {
         }
     }, 20_000);
 
+    it("HD: finds a rotated key whose deposit the Executor is boarding mid-restore", async () => {
+        const { wallet, hdProvider } = await makeHdWalletForTest();
+        try {
+            const keys = {
+                batchCosignerPubkey: executorVectors.batchCosignerPubkey,
+                operatorPubkey: `02${hex.encode(wallet.offchainTapscript.options.serverPubKey)}`,
+                emulatorPubkey: executorVectors.emulatorPubkey,
+            };
+            const delegation = {
+                exitDelay: 0x400001,
+                renewalWindow: 86400,
+                maxFee: 500,
+                boardingExitDelay: 0x400002,
+            };
+            await watchExecutorContracts(wallet, keys, delegation);
+            const descriptor = hdProvider.materializeDescriptorAt(3);
+            const boarding = ExecutorContractHandler.createScript(
+                ExecutorContractHandler.serializeParams({
+                    template: "boarding",
+                    owner: new Uint8Array([2, ...deriveDescriptorLeafPubKey(descriptor)]),
+                    ...delegation,
+                    batchCosignerPubKey: hex.decode(keys.batchCosignerPubkey),
+                    operatorPubKey: hex.decode(keys.operatorPubkey),
+                    emulatorPubKey: hex.decode(keys.emulatorPubkey),
+                }),
+            );
+            // the deposit is already spent into the board, whose VTXO the indexer has not seen
+            const address = boarding.onchainAddress(wallet.network);
+            vi.spyOn(wallet.onchainProvider, "getTransactions").mockImplementation(
+                async (addr: string) =>
+                    addr === address ? ([{ txid: "cc".repeat(32) }] as any) : [],
+            );
+
+            await wallet.restore({ gapLimit: 5 });
+
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(descriptor);
+            const [row] = await collectContracts(wallet.contractRepository, {
+                script: hex.encode(boarding.pkScript),
+            });
+            expect(row.metadata?.signingDescriptor).toBe(descriptor);
+        } finally {
+            await wallet.dispose();
+        }
+    }, 20_000);
+
     it("HD: finds a coin at the Executor twin of a rotated receive key", async () => {
         const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
         try {

@@ -209,7 +209,8 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
 
 /**
  * Both contracts of a watch at every index where either is used: its renewal contract holds
- * boarded coins, its boarding contract coins not boarded yet.
+ * boarded coins, its boarding contract is used once it has any transaction. History, not unspent
+ * coins: a deposit the Executor boards between the two probes is gone from both otherwise.
  */
 async function discoverExecutorRange(
     entries: readonly { index: number; descriptor: string }[],
@@ -229,7 +230,7 @@ async function discoverExecutorRange(
         })),
     );
     const onchain = deps.onchainNetwork;
-    const [used, funded] = await Promise.all([
+    const [used, touched] = await Promise.all([
         detectUsedScripts(
             deps.indexerProvider,
             pairs.map((p) => p.renewal.contract.script),
@@ -237,14 +238,17 @@ async function discoverExecutorRange(
         Promise.all(
             pairs.map(async ({ boarding }) =>
                 boarding && onchain
-                    ? (await deps.onchainProvider.getCoins(boarding.script.onchainAddress(onchain)))
-                          .length > 0
+                    ? (
+                          await deps.onchainProvider.getTransactions(
+                              boarding.script.onchainAddress(onchain),
+                          )
+                      ).length > 0
                     : false,
             ),
         ),
     ]);
     pairs.forEach(({ index, renewal, boarding }, i) => {
-        if (!used.has(renewal.contract.script) && !funded[i]) return;
+        if (!used.has(renewal.contract.script) && !touched[i]) return;
         out.get(index)!.push(renewal.contract, ...(boarding ? [boarding.contract] : []));
     });
     return out;
