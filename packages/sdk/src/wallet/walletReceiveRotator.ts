@@ -177,15 +177,15 @@ export interface RotatableWallet {
     getContractManager(): Promise<IContractManager>;
     getAddress(): Promise<string>;
     /**
-     * @internal Register the Executor twin of the receive key at `descriptor`, so it is renewed
-     * from the moment it is shown. Absent without an Executor. Never throws: a failure leaves
+     * @internal Register the executor twin of the receive key at `descriptor`, so it is renewed
+     * from the moment it is shown. Absent without an executor. Never throws: a failure leaves
      * the own address displayed.
      */
     registerReceiveTwin?(descriptor: string): Promise<void>;
 }
 
 /**
- * Whether `event` is a receipt at the displayed receive key: its own address, or its Executor
+ * Whether `event` is a receipt at the displayed receive key: its own address, or its executor
  * renewal contract, the twin shown in its place. The twin counts whether or not its watch is
  * still live: the coin arrived at an address the wallet showed.
  */

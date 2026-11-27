@@ -139,9 +139,9 @@ export interface BaseWalletConfig {
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
     /**
-     * Optional Executor, the service that boards the wallet's deposits while it is offline. Only a
+     * Optional executor, the service that boards the wallet's deposits while it is offline. Only a
      * `Wallet` registers watches, through `getExecutorManager()`; a readonly wallet reads them.
-     * Without one, the wallet behaves as it does without the Executor.
+     * Without one, the wallet behaves as it does without the executor.
      */
     executorProvider?: ExecutorProvider;
 }
@@ -1118,14 +1118,14 @@ export interface IReadonlyWallet {
 
     /**
      * @returns Arkade address to receive offchain funds at. It can change without a receipt,
-     * for instance once an Executor watches the wallet's key: do not store it. See
+     * for instance once an executor watches the wallet's key: do not store it. See
      * {@link getOwnAddress}.
      */
     getAddress(): Promise<string>;
 
     /**
      * @returns The wallet's own Arkade address under its current receive key, which
-     * {@link getAddress} answers until an Executor watches that key. For an address bound to the
+     * {@link getAddress} answers until an executor watches that key. For an address bound to the
      * wallet, such as an LNURL handle's. It rotates with an HD wallet's receive key.
      */
     getOwnAddress?(): Promise<string>;

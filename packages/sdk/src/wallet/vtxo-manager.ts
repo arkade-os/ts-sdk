@@ -161,7 +161,7 @@ class BoardingSignerChangedError extends Error {
  */
 const IMPORTED_RECOVERY_LOCK_NAME = "arkade-imported-recovery";
 
-/** Web Locks name for the Executor watch refresh: one context per origin asks the Executor. */
+/** Web Locks name for the executor watch refresh: one context per origin asks the executor. */
 const EXECUTOR_REFRESH_LOCK_NAME = "arkade-executor-refresh";
 
 /**
@@ -913,8 +913,8 @@ function isRecoveryContractCapable(
 }
 
 /**
- * A wallet that registers its Executor watches again when the service lets them lapse. Duck-typed
- * like {@link MigrationCapableWallet}: proxy wallets, and wallets without an Executor, have none.
+ * A wallet that registers its executor watches again when the service lets them lapse. Duck-typed
+ * like {@link MigrationCapableWallet}: proxy wallets, and wallets without an executor, have none.
  */
 interface ExecutorRefreshCapableWallet {
     /** Throttled and best-effort: safe to call on every poll. */
@@ -930,7 +930,7 @@ function isExecutorRefreshCapable(
     );
 }
 
-/** A wallet whose own renewals may pay into its Executor renewal contract; duck-typed likewise. */
+/** A wallet whose own renewals may pay into its executor renewal contract; duck-typed likewise. */
 interface RenewalAddressWallet {
     renewalAddress(amount: bigint, inputScripts?: readonly string[]): Promise<string>;
 }
@@ -943,7 +943,7 @@ function renewalAddressOf(
 ): Promise<string> {
     // settle() puts assets only on an output at getAddress(), so these renewals skip the wallet's own
     // rules: they pay the twin even for maxFee + dust or less, and when the coin sits at a live
-    // renewal contract the Executor missed
+    // renewal contract the executor missed
     if (inputs.some((input) => "assets" in input && (input.assets?.length ?? 0) > 0)) {
         return wallet.getAddress();
     }
@@ -1724,9 +1724,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Keep Executor-renewable delegated coins out of wallet renewal, with a safety fallback:
+     * Keep executor-renewable delegated coins out of wallet renewal, with a safety fallback:
      * fail-open, so an unreadable watch renews as before rather than leaving coins to a dead
-     * Executor.
+     * executor.
      */
     private async deferToExecutor(
         vtxos: NormalizedExtendedVirtualCoin[],
@@ -1795,7 +1795,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /**
      * Renew expiring virtual outputs (including recoverable ones) by settling them back to the
-     * wallet's address, refreshing their expiration time. Coins covered by a live Executor renewal
+     * wallet's address, refreshing their expiration time. Coins covered by a live executor renewal
      * watch are skipped, including for a manual call; use {@link IWallet.settle} to force them.
      *
      * @param eventCallback - Optional callback for settlement events
@@ -3066,7 +3066,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 await this.recoverImportedContracts();
             });
 
-            // Self-contained and throttled by the wallet, so a lapsed Executor watch is registered
+            // Self-contained and throttled by the wallet, so a lapsed executor watch is registered
             // again without stacking the poll backoff. Under its own lock: it takes no boarding
             // input, so other tabs' polls need not wait for its network calls.
             const wallet = this.wallet;

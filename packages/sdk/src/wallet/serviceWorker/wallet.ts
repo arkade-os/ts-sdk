@@ -521,9 +521,9 @@ interface ServiceWorkerWalletOptions {
     /** Optional delegation service URL. */
     delegateUrl?: string;
     /**
-     * URL of the Executor, the service that boards the wallet's deposits while it is offline. Only
+     * URL of the executor, the service that boards the wallet's deposits while it is offline. Only
      * a `ServiceWorkerWallet` registers watches; a readonly wallet reads them. Without one, the
-     * wallet behaves as it does without the Executor.
+     * wallet behaves as it does without the executor.
      */
     executorUrl?: string;
     /**

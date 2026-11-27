@@ -28,7 +28,7 @@ import {
 } from "./helpers";
 
 /**
- * Typed parameters for delegated contracts: a default template's variables and the Executor's
+ * Typed parameters for delegated contracts: a default template's variables and the executor's
  * keys. Keys are compressed, delays are BIP 68 sequences.
  */
 export interface ExecutorContractParams {
@@ -68,7 +68,7 @@ export function evenOwnerKey(xOnly: Uint8Array): Uint8Array {
     return key;
 }
 
-/** The serialized params of `owner`'s `template` contract under the Executor's `keys`. */
+/** The serialized params of `owner`'s `template` contract under the executor's `keys`. */
 export function executorContractParams(
     template: ExecutorDefault,
     owner: Uint8Array,
@@ -88,7 +88,7 @@ export function executorContractParams(
     });
 }
 
-/** The Executor keys a contract's params were derived from. */
+/** The executor keys a contract's params were derived from. */
 export function executorKeysOf(p: ExecutorContractParams): ExecutorContractKeys {
     return {
         batchCosignerPubkey: hex.encode(p.batchCosignerPubKey),
@@ -98,15 +98,15 @@ export function executorKeysOf(p: ExecutorContractParams): ExecutorContractKeys 
 }
 
 /**
- * Handler for the coins a wallet delegated to the Executor under its default templates:
- * virtual outputs at the renewal contract, which the Executor renews in place, and onchain
+ * Handler for the coins a wallet delegated to the executor under its default templates:
+ * virtual outputs at the renewal contract, which the executor renews in place, and onchain
  * deposits at the boarding contract, which it boards to the renewal contract. The scripts derive
- * from the bundled templates, the owner key, the params and the Executor's keys, so a restored
- * wallet needs no round-trip to the Executor.
+ * from the bundled templates, the owner key, the params and the executor's keys, so a restored
+ * wallet needs no round-trip to the executor.
  *
  * - forfeit: (Owner + Operator) multisig, the wallet's collaborative path
  * - exit: (Owner) + CSV, the wallet's unilateral path
- * - renew/board: (Operator + Emulator), emulator-enforced, the Executor's; never offered
+ * - renew/board: (Operator + Emulator), emulator-enforced, the executor's; never offered
  *
  * Restore probes every index under each of `deps.executorWatches`: an HD wallet registers a watch
  * per boarding key it rotates to.
@@ -165,7 +165,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
             ...(params.template === "boarding"
                 ? { boardingExitDelay: integer(params.boardingExitDelay, "boardingExitDelay") }
                 : {}),
-            // rows stored before the Executor's key rename hold it as cosignerPubKey
+            // rows stored before the executor's key rename hold it as cosignerPubKey
             batchCosignerPubKey: compressed(
                 params.batchCosignerPubKey ?? params.cosignerPubKey,
                 "batchCosignerPubKey",
