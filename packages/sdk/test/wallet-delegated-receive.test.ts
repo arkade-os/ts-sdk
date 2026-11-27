@@ -9,6 +9,7 @@ import {
     Wallet,
     type Contract,
 } from "../src";
+import { RETIRED_EMULATOR_PUBKEYS } from "../src/networks";
 import { saveVtxosForContract } from "../src/contracts/vtxoOwnership";
 import { collectContracts } from "../src/repositories/contractRepository";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
@@ -261,6 +262,27 @@ describe("an HD wallet's receive address under an Executor", () => {
         const repaired = await twinOf(wallet, wallet.offchainTapscript.options.pubKey);
         expect(await wallet.getAddress()).toBe(repaired.address);
         expect(provider).toHaveBeenCalledOnce();
+        await wallet.dispose();
+    });
+
+    it("registers no twin under a retired emulator key, and shows its own address", async () => {
+        const { wallet, executor } = await hdWallet();
+        const before = await twinOf(wallet, wallet.offchainTapscript.options.pubKey);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        RETIRED_EMULATOR_PUBKEYS.mutinynet = [vectors.emulatorPubkey];
+        try {
+            executor.registerDelegation.mockClear();
+            await receiveAt(wallet, before);
+        } finally {
+            delete RETIRED_EMULATOR_PUBKEYS.mutinynet;
+        }
+
+        expect(executor.registerDelegation).not.toHaveBeenCalled();
+        expect(await wallet.getAddress()).toBe(wallet.arkAddress.encode());
+        expect(warn).toHaveBeenCalledWith(
+            "Failed to register an Executor watch for the new receive address",
+            expect.any(Error),
+        );
         await wallet.dispose();
     });
 

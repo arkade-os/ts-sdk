@@ -112,6 +112,32 @@ const EMULATOR_PUBKEYS: Partial<Record<NetworkName, string>> = {
 };
 
 /**
+ * Pins a network has rotated away from, so a key stored under one is known to be stale. Each pin
+ * rotation moves the old constant here.
+ */
+export const RETIRED_EMULATOR_PUBKEYS: Partial<Record<NetworkName, readonly string[]>> = {};
+
+/**
+ * The emulator key a NEW registration may carry over from a stored one: `undefined` (resolve the
+ * current pin) when `stored` is the pin or a retired one, `stored` otherwise, as it was then the
+ * app's own override (private emulator, unpinned network, a rotation the app ran ahead of the SDK).
+ * A same-contract revive keeps its key and never goes through this.
+ *
+ * @internal
+ */
+export function trustedEmulatorOverride(
+    network: Network,
+    stored: string,
+    retired: Partial<Record<NetworkName, readonly string[]>> = RETIRED_EMULATOR_PUBKEYS,
+): string | undefined {
+    const name = network.name;
+    if (!name || !EMULATOR_PUBKEYS[name]) return stored;
+    const key = stored.toLowerCase();
+    if (key === EMULATOR_PUBKEYS[name] || retired[name]?.includes(key)) return undefined;
+    return stored;
+}
+
+/**
  * The pinned co-signer key for `network`, as 33-byte compressed lowercase hex.
  *
  * @throws if the network carries no name, or names one with no deployed emulator. Fail closed:

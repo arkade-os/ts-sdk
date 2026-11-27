@@ -207,7 +207,7 @@ import {
     ExecutorManagerImpl,
     type IExecutorManager,
     receiveTwin,
-    reRegistrationOf,
+    extensionOf,
     sameDelegation,
 } from "./executor";
 import { timelockToSequence } from "../utils/timelock";
@@ -3148,7 +3148,7 @@ export class Wallet
             (c) => c.live && c.signer === server,
         );
         if (!watch) return;
-        const { options, registration } = reRegistrationOf(watch);
+        const { options, registration } = extensionOf(watch, this.network);
         try {
             await this._executorManager.registerBoardingAt(descriptor, options, registration);
         } catch (e) {
@@ -3173,7 +3173,7 @@ export class Wallet
                 ),
             );
             if (!watch) return;
-            const { options, registration } = reRegistrationOf(watch);
+            const { options, registration } = extensionOf(watch, this.network);
             await executor.registerRenewalAt(descriptor, options, registration);
         } catch (e) {
             console.warn("Failed to register an Executor watch for the new receive address", e);
@@ -3228,7 +3228,7 @@ export class Wallet
                 script: this.defaultContractScript,
             });
             const descriptor = row?.metadata?.signingDescriptor;
-            const { options, registration } = reRegistrationOf(source);
+            const { options, registration } = extensionOf(source, this.network);
             await executor.registerRenewalAt(
                 typeof descriptor === "string"
                     ? descriptor
