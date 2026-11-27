@@ -2952,6 +2952,41 @@ describe("VtxoManager - Periodic settle cooldown", () => {
         }
     });
 
+    describe("destination of a periodic settle", () => {
+        const OWN =
+            "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
+        const TWIN =
+            "tark1qpumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqte34q663w07ee67632l8kxg3tlxr9xcd9ywfg6rswue7wz7wum7wygwf5ygk";
+
+        const settleOutputs = async (value: number, outputFee: string) => {
+            const utxo = makeUnexpiredUtxo(value);
+            const wallet = buildBoardingWallet([utxo]);
+            wallet.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: { offchainOutput: outputFee } },
+            });
+            // the Executor renews more than 500
+            wallet.renewalAddress = vi
+                .fn()
+                .mockImplementation(async (amount: bigint) => (amount > 500n ? TWIN : OWN));
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: false });
+            manager.dispose();
+            await (manager as any).runPeriodicSettle([utxo]);
+            return (wallet.settle as any).mock.calls[0][0].outputs;
+        };
+
+        it("pays the own address when the output fee takes it to what the Executor cannot renew", async () => {
+            expect(await settleOutputs(1000, "amount * 0.5")).toEqual([
+                { address: OWN, amount: 500n },
+            ]);
+        });
+
+        it("pays the renewal contract when the net amount is still renewable", async () => {
+            expect(await settleOutputs(10_000, "amount * 0.01")).toEqual([
+                { address: TWIN, amount: 9900n },
+            ]);
+        });
+    });
+
     it("grows cooldown exponentially with consecutive failures (capped)", async () => {
         const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
         const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);

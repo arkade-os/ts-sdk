@@ -332,3 +332,82 @@ describe("VtxoManager renews where the wallet says", () => {
         expect(outputs[0].address).toBe("arkade1myaddress");
     });
 });
+
+describe("VtxoManager judges the renewal destination on the smallest output", () => {
+    const OWN =
+        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
+    const TWIN = vectors.renewal.address;
+    const THRESHOLD = BigInt(MAX_FEE) + DUST;
+
+    function renewingWallet(vtxos: NormalizedExtendedVirtualCoin[], outputFee: string) {
+        const wallet = walletWith([], vtxos);
+        Object.assign(wallet, {
+            getAddress: vi.fn().mockResolvedValue(OWN),
+            // as Wallet.renewalAddress: the Executor does not renew maxFee + dust or less
+            renewalAddress: vi
+                .fn()
+                .mockImplementation(async (amount: bigint) => (amount > THRESHOLD ? TWIN : OWN)),
+        });
+        (
+            wallet as unknown as { arkProvider: { getInfo: ReturnType<typeof vi.fn> } }
+        ).arkProvider.getInfo.mockResolvedValue({
+            fees: { intentFee: { offchainOutput: outputFee } },
+            vtxoMaxAmount: -1n,
+        });
+        return wallet;
+    }
+
+    const outputsOf = (wallet: IWallet) =>
+        (wallet.settle as ReturnType<typeof vi.fn>).mock.calls[0][0].outputs;
+
+    it("pays the own address when the output fee takes the net amount to the threshold", async () => {
+        // 1250 is above 1100, the net 1050 is not
+        const wallet = renewingWallet([coin("51", { value: 1250 })], "200.0");
+
+        await new VtxoManager(wallet, {}).renewVtxos();
+
+        expect(outputsOf(wallet)).toEqual([{ address: OWN, amount: 1050n }]);
+    });
+
+    it("pays the own address for every piece when one is at or below the threshold", async () => {
+        const wallet = renewingWallet([coin("51", { value: 5000 })], "0.0");
+        // A settle has one destination, so the large piece follows the small one.
+        const split = { maxOutputs: 2, plan: () => [4000n, 1000n] };
+
+        await new VtxoManager(wallet, {}).renewVtxos(undefined, { split });
+
+        expect(outputsOf(wallet)).toEqual([
+            { address: OWN, amount: 4000n },
+            { address: OWN, amount: 1000n },
+        ]);
+    });
+
+    it("plans a split once more for the address it ends up paying", async () => {
+        const wallet = renewingWallet([coin("51", { value: 5000 })], "0.0");
+        const plan = vi.fn().mockReturnValue([4000n, 1000n]);
+
+        await new VtxoManager(wallet, {}).renewVtxos(undefined, { split: { maxOutputs: 2, plan } });
+
+        expect(plan.mock.calls.map(([context]) => context.address)).toEqual([TWIN, OWN]);
+    });
+
+    it("pays the renewal contract when every piece is renewable", async () => {
+        const wallet = renewingWallet([coin("51", { value: 5000 })], "0.0");
+        const split = { maxOutputs: 2, plan: () => [3000n, 2000n] };
+
+        await new VtxoManager(wallet, {}).renewVtxos(undefined, { split });
+
+        expect(outputsOf(wallet)).toEqual([
+            { address: TWIN, amount: 3000n },
+            { address: TWIN, amount: 2000n },
+        ]);
+    });
+
+    it("pays the renewal contract when the net amount is renewable", async () => {
+        const wallet = renewingWallet([coin("51", { value: 5000 })], "200.0");
+
+        await new VtxoManager(wallet, {}).renewVtxos();
+
+        expect(outputsOf(wallet)).toEqual([{ address: TWIN, amount: 4800n }]);
+    });
+});
