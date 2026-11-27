@@ -15,7 +15,7 @@ import { Batch } from "../wallet/batch";
 import { isNoMatchingIntentsError } from "../wallet/intentReconciliation";
 import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
-import { serverSignsKey, staticWitness } from "./program";
+import { operatorSignsKey, staticWitness } from "./program";
 
 const ABORTED = "renewProgramContractOutputs: aborted before the batch completed";
 /** What the renewal and its batch handler call on the server. */
@@ -62,18 +62,18 @@ export async function renewProgramContractOutputs(
     const renewals = targets.map(({ contract, coin, fn = "renew" }) => {
         const compiled = contract.vtxoScript.functionByName(fn);
         if (!compiled?.arkadeScript) {
-            throw new Error(`renewProgramContractOutputs: ${fn} is not a covenant function`);
+            throw new Error(`renewProgramContractOutputs: ${fn} has no Arkade Script`);
         }
         return { contract, coin, fn, compiled, arkadeScript: compiled.arkadeScript };
     });
-    // arkd signs the intent and the forfeits itself when it holds every leg's co-signer.
+    // The operator signs the proof and the forfeits itself when it holds every leg's cosigner key.
     const operated = renewals.filter(({ contract, compiled }) =>
         client.operatorCosignsLeaf(contract, compiled),
     ).length;
     const viaOperator = operated === targets.length;
     if (operated > 0 && !viaOperator) {
         throw new Error(
-            "renewProgramContractOutputs: covenants co-signed by arkd and by the emulator cannot renew in one batch; renew them separately",
+            "renewProgramContractOutputs: outputs that need the emulator and outputs the operator cosigns itself cannot renew in one batch; renew them separately",
         );
     }
     const emulator = viaOperator ? undefined : client.emulator;
@@ -104,7 +104,7 @@ export async function renewProgramContractOutputs(
         // No owner signs a renewal: a leaf naming any key but the server's could never complete.
         if (
             compiled.signerKeys.some(
-                (key) => !serverSignsKey(compiled, contract.keys.serverKey, key),
+                (key) => !operatorSignsKey(compiled, contract.keys.serverKey, key),
             )
         ) {
             throw new Error(
@@ -130,7 +130,7 @@ export async function renewProgramContractOutputs(
             arkadeScript,
             condition,
             witness: RawWitness.encode(stack),
-            tweaks: contract.vtxoScript.arkadeTweaks(compiled),
+            tweaks: contract.vtxoScript.arkadeScriptTweaks(compiled),
         };
     });
 
@@ -160,8 +160,8 @@ export async function renewProgramContractOutputs(
             proofTapLeafScript: compiled.tapLeafScript,
             // Written as ConditionWitness on the proof and the forfeits, where arkd evaluates it.
             ...(condition.length > 0 ? { extraWitness: condition } : {}),
-            // Proof input k+1 only; arkd reads no arkadetweak on a forfeit.
-            ...(tweaks.length > 0 ? { arkadeTweaks: tweaks } : {}),
+            // Proof input k+1 only; the operator reads no `arkadetweak` field on a forfeit.
+            ...(tweaks.length > 0 ? { arkadeScriptTweaks: tweaks } : {}),
         })),
         indexer,
     );
@@ -210,7 +210,7 @@ export async function renewProgramContractOutputs(
         [message, deleteMessage].map((m) => {
             const proof = Proof.create(m, coins, outputs);
             const psbt = base64.encode(proof.toPSBT());
-            // With no emulator the proof goes unsigned: arkd signs Arkade proofs on receipt.
+            // With no emulator the proof goes unsigned, and the operator signs it on receipt.
             return emulator ? emulator.submitIntent({ proof: psbt, message: m }) : psbt;
         }),
     );

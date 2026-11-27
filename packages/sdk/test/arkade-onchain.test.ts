@@ -15,7 +15,7 @@ import {
     type EmulatorProvider,
 } from "../src";
 import { scriptFromTapLeafScript } from "../src/script/base";
-import { ArkadeTweak, getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
+import { ArkadeScriptTweak, getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
 
 const xOnly = () => schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 const COIN = { txid: "ab".repeat(32), vout: 1, value: 10_000 };
@@ -152,7 +152,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(Extension.fromBytes(ext).getEmulatorPacket()!.entries[0].vin).toBe(0);
     });
 
-    it("reveals the hash of the tweak-only leaf on the input", async () => {
+    it("reveals the hash of a leaf that names only the tweaked operator key", async () => {
         const { ark } = await setup();
         const sweep = ["INSPECTVERSION", 2, "NUMEQUAL"] as arkade.AsmToken[];
         const contract = ark.contract(
@@ -175,16 +175,16 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
             .onchainFee(FEE)
             .buildOnchain();
 
-        // `covenantServer` keeps the plain server key and `covenant` the emulator's: only `sweep`.
+        // `covenantServer` names the plain operator key, `covenant` the emulator's: only `sweep`.
         const hash = (asm: arkade.AsmToken[]) =>
             arkade.arkadeScriptHash(arkade.resolveAsm(asm, { receiver, amount: AMOUNT }));
-        expect(getArkPsbtFields(tx, 0, ArkadeTweak)).toEqual([[hash(sweep)]]);
+        expect(getArkPsbtFields(tx, 0, ArkadeScriptTweak)).toEqual([[hash(sweep)]]);
     });
 
-    it("builds a unilateral CSV spend without revealing other covenant hashes", async () => {
+    it("builds an exit path spend without revealing other Arkade Script hashes", async () => {
         const { ark, userKey } = await setup();
-        const covenants = Array.from({ length: 17 }, (_, i) => {
-            const name = `covenant${i}`;
+        const scripted = Array.from({ length: 17 }, (_, i) => {
+            const name = `f${i}`;
             return [
                 name,
                 {
@@ -200,7 +200,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
                 { name: "user", type: "pubkey" },
             ],
             functions: {
-                ...Object.fromEntries(covenants),
+                ...Object.fromEntries(scripted),
                 exit: { tapscript: { signers: ["$user"], csv: { type: "blocks", value: 10n } } },
             },
         } satisfies arkade.Program;
@@ -216,7 +216,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
             .buildOnchain();
 
         expect(tx.getInput(0).sequence).toBe(10);
-        expect(getArkPsbtFields(tx, 0, ArkadeTweak)).toEqual([]);
+        expect(getArkPsbtFields(tx, 0, ArkadeScriptTweak)).toEqual([]);
     });
 
     it("covenant non-server leaf: emulator cosigns, then finalize and broadcast", async () => {
@@ -234,7 +234,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(raw.inputsLength).toBe(1);
     });
 
-    it("covenant leaf goes to arkd's cosign once arkd holds the co-signer key", async () => {
+    it("sends Arkade Script to the operator's cosign once it holds the cosigner key", async () => {
         const { contract, submitOnchainTx, cosignOnchainTx } = await setup(true);
         const txid = await contract.functions
             .covenant()
@@ -247,7 +247,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
     });
 
-    it("routes a splice-free leaf to arkd only when it tweaks the server key", async () => {
+    it("routes a splice-free leaf to the operator only when it tweaks the operator key", async () => {
         const { ark, submitOnchainTx, cosignOnchainTx } = await setup();
         const contract = ark.contract(
             {
@@ -273,7 +273,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
         expect(submitOnchainTx).not.toHaveBeenCalled();
 
-        // A constructor-key tweak has no splice either, but arkd holds no tweak of `$user`.
+        // A constructor-key tweak has no splice either, but the operator holds no tweak of `$user`.
         expect(await spend("insured")).toBe("broadcast-txid");
         expect(submitOnchainTx).toHaveBeenCalledTimes(1);
         expect(cosignOnchainTx).toHaveBeenCalledTimes(1);

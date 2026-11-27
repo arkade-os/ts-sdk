@@ -413,7 +413,7 @@ describe("emulator inputs", () => {
         expect(getArkPsbtFields(sent, 0, ConditionWitness)).toEqual([[preimage]]);
     });
 
-    it("drops the client's prevout txs before arkd, which attaches its own", async () => {
+    it("drops the client's prevout txs before the operator, which attaches its own", async () => {
         const tx = emulatorTx();
         setArkPsbtField(tx, 0, PrevoutTxField, new Uint8Array([1, 2, 3]));
         const arkProvider = { cosignOnchainTx: vi.fn(async (_: string) => "arkd-txid") };

@@ -12,7 +12,7 @@ import {
     SUPPORTED_PROGRAM_VERSION,
     ARKADE_TYPE_ENCODINGS,
     stringifyArtifact,
-    tweakServerSigners,
+    tweakOperatorSigners,
     validateParamValue,
     type ArkadeArgType,
     type ArkadeParamValue,
@@ -105,11 +105,11 @@ export function instantiatedContracts(program: Program): Record<string, Instanti
     return (program as { [INSTANTIATED]?: Record<string, Instantiation> })[INSTANTIATED] ?? {};
 }
 
-export function tweakInstantiatedServerSigners<P extends Program>(
+export function tweakInstantiatedOperatorSigners<P extends Program>(
     program: P,
     keys: ProgramKeys,
 ): P {
-    const tweaked = tweakServerSigners(program, keys);
+    const tweaked = tweakOperatorSigners(program, keys);
     if (tweaked === program) return program;
     const children = Object.entries(instantiatedContracts(program));
     if (children.length === 0) return tweaked;
@@ -118,7 +118,7 @@ export function tweakInstantiatedServerSigners<P extends Program>(
         [INSTANTIATED]: Object.fromEntries(
             children.map(([name, child]) => [
                 name,
-                { ...child, program: tweakInstantiatedServerSigners(child.program, keys) },
+                { ...child, program: tweakInstantiatedOperatorSigners(child.program, keys) },
             ]),
         ),
     };

@@ -60,12 +60,12 @@ describe("canonical facts survive save to load", () => {
         expectCanonical(deserializeVtxo(wire));
     });
 
-    it("never persists arkade tweaks", () => {
-        const vtxo = { ...makeVtxo(), arkadeTweaks: [new Uint8Array(32).fill(3)] };
+    it("never persists Arkade Script tweaks", () => {
+        const vtxo = { ...makeVtxo(), arkadeScriptTweaks: [new Uint8Array(32).fill(3)] };
 
-        expect(serializeVtxo(vtxo)).not.toHaveProperty("arkadeTweaks");
+        expect(serializeVtxo(vtxo)).not.toHaveProperty("arkadeScriptTweaks");
         expect(deserializeVtxo(JSON.parse(JSON.stringify(serializeVtxo(vtxo))))).not.toHaveProperty(
-            "arkadeTweaks",
+            "arkadeScriptTweaks",
         );
     });
 

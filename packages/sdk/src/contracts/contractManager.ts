@@ -2543,8 +2543,8 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         options?: { unspentOnly?: boolean },
     ): Promise<ExtendedContractVtxo[]> {
-        // Re-derived rather than read back: no repository backend persists `arkadeTweaks`, and
-        // every coin the wallet spends is read through here.
+        // Re-derived rather than read back: no repository backend persists
+        // `arkadeScriptTweaks`, and every coin the wallet spends is read through here.
         const { cache } = annotatableIn(
             new Map(contracts.map((contract) => [contract.script, contract])),
             contracts,
@@ -2552,15 +2552,19 @@ export class ContractManager implements IContractManager {
         );
         const res = await Promise.all(
             contracts.map((contract) => {
-                const arkadeTweaks = cache.get(contract.script)?.arkadeTweaks;
+                const arkadeScriptTweaks = cache.get(contract.script)?.arkadeScriptTweaks;
                 return getVtxosForContract(this.config.walletRepository, contract, options).then(
                     (vtxos) =>
                         vtxos.map(
                             (vtxo): ExtendedContractVtxo => ({
                                 ...vtxo,
                                 contractScript: contract.script,
-                                ...(arkadeTweaks
-                                    ? { arkadeTweaks: arkadeTweaks.map((hash) => hash.slice()) }
+                                ...(arkadeScriptTweaks
+                                    ? {
+                                          arkadeScriptTweaks: arkadeScriptTweaks.map((hash) =>
+                                              hash.slice(),
+                                          ),
+                                      }
                                     : {}),
                             }),
                         ),

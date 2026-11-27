@@ -38,9 +38,9 @@ function walletKeyFrom(context: PathContext): string | undefined {
 function tweaksOf(
     script: ArkadeProgramScript,
     fn: CompiledProgramFunction,
-): { arkadeTweaks?: Uint8Array[] } {
-    const arkadeTweaks = script.arkadeTweaks(fn);
-    return arkadeTweaks.length > 0 ? { arkadeTweaks } : {};
+): { arkadeScriptTweaks?: Uint8Array[] } {
+    const arkadeScriptTweaks = script.arkadeScriptTweaks(fn);
+    return arkadeScriptTweaks.length > 0 ? { arkadeScriptTweaks } : {};
 }
 
 /**
@@ -113,7 +113,7 @@ function pathsFor(
         if (opts.checkTimelocks && cltv !== undefined && !isCltvSatisfied(context, cltv)) {
             continue;
         }
-        // No arkadeTweaks: arkd never sees a spend it doesn't co-sign.
+        // No arkadeScriptTweaks: the operator never sees a spend it doesn't cosign.
         paths.push({
             leaf: fn.tapLeafScript,
             ...(sequence !== undefined ? { sequence } : {}),
@@ -215,7 +215,9 @@ export const ArkadeContractHandler: ContractHandler<ArkadeContractParams, Arkade
             forfeitTapLeafScript: selection.leaf,
             proofTapLeafScript: selection.leaf,
             tapTree: script.encode(),
-            ...(selection.arkadeTweaks ? { arkadeTweaks: selection.arkadeTweaks } : {}),
+            ...(selection.arkadeScriptTweaks
+                ? { arkadeScriptTweaks: selection.arkadeScriptTweaks }
+                : {}),
         };
     },
 };

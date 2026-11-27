@@ -91,7 +91,7 @@ import {
 } from "../utils/arkTransaction";
 import {
     ConditionWitness,
-    MAX_ARKADE_TWEAKS,
+    MAX_ARKADE_SCRIPT_TWEAKS,
     PrevArkTxField,
     setArkPsbtField,
 } from "../utils/unknownFields";
@@ -121,12 +121,12 @@ import {
 import type { ContractRepository } from "../repositories/contractRepository";
 import { InMemoryWalletRepository } from "../repositories/inMemory/walletRepository";
 import { resolveArkadeService, type ArkadeService, type ResolvedArkadeService } from "./service";
-import { instantiatedContracts, tweakInstantiatedServerSigners } from "./artifact";
+import { instantiatedContracts, tweakInstantiatedOperatorSigners } from "./artifact";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
     serializeArkadeContractParams,
-    serverSignsKey,
+    operatorSignsKey,
     witnessRefToBytes,
     validateParamValue,
     type ArkadeArgValue,
@@ -313,7 +313,10 @@ interface ArkadeConnectCommonOptions {
      * reports on `getInfo` — or the SDK default when the operator names none.
      */
     network?: Network;
-    /** New covenants' co-signer key (33-byte compressed hex), instead of arkd's `signerPubkey`. */
+    /**
+     * Cosigner key for the Arkade Script of new contracts (33-byte compressed hex), instead of
+     * the operator's `signerPubkey`.
+     */
     emulatorPubkey?: string;
     /**
      * The wallet's contract manager (`wallet.getContractManager()`). Enables
@@ -408,15 +411,18 @@ export function validateEmulatorPubkey(key: string): string {
 export class Arkade {
     readonly arkProvider: ArkadeServerProvider;
     readonly onchain?: Pick<OnchainProvider, "getRawTransaction" | "broadcastTransaction">;
-    /** The co-signing service, needed only for covenants on a key arkd does not hold. */
+    /** Needed only to spend contracts whose `emulatorKey` the operator does not hold. */
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
     readonly serverKey: Uint8Array;
     /** Bare protocol delay (blocks below 512, seconds otherwise), resolved only when needed. */
     readonly serverExitDelay?: bigint;
-    /** New covenants' co-signer key: `emulatorPubkey`, else arkd's; never the emulator's report. */
+    /**
+     * Cosigner key for new contracts' Arkade Script: `emulatorPubkey`, else the operator's
+     * `signerPubkey`. Never read from the emulator's own report.
+     */
     readonly emulatorKey: Uint8Array;
-    /** Every signer key arkd advertises, current and deprecated, as x-only hex. */
+    /** Every signer key the operator advertises, current and deprecated, as x-only hex. */
     readonly operatorKeys: ReadonlySet<string>;
     readonly checkpoint: CSVMultisigTapscript.Type;
     readonly indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
@@ -468,7 +474,7 @@ export class Arkade {
         this.ownsContractManager = fields.ownsContractManager ?? false;
     }
 
-    /** Whether arkd itself runs Arkade Script for covenants built on `emulatorKey`. */
+    /** Whether the operator itself runs Arkade Script for contracts built on `emulatorKey`. */
     operatorCosigns(emulatorKey: Uint8Array | undefined): boolean {
         return (
             emulatorKey !== undefined &&
@@ -477,9 +483,10 @@ export class Arkade {
     }
 
     /**
-     * Whether arkd co-signs `fn`. A leaf without the emulator splice is arkd's only if each of
-     * its tweaked keys is the server's, tweaked by `fn`'s covenant; one tweaking a constructor
-     * key, such as `<TWEAK:insurer:claim>`, stays with the emulator.
+     * Whether the operator itself cosigns `fn`. A leaf without the emulator splice goes to the
+     * operator only if each of its tweaked keys is the operator key tweaked by `fn`'s Arkade
+     * Script; one tweaking a constructor key, such as `<TWEAK:insurer:claim>`, stays with the
+     * emulator.
      */
     operatorCosignsLeaf(
         contract: { keys: { serverKey: Uint8Array; emulatorKey?: Uint8Array } },
@@ -491,7 +498,7 @@ export class Arkade {
         return fn.def.tapscript.signers.every(
             (signer, i) =>
                 !(typeof signer === "object" && "tweak" in signer) ||
-                serverSignsKey(fn, contract.keys.serverKey, fn.signerKeys[i]),
+                operatorSignsKey(fn, contract.keys.serverKey, fn.signerKeys[i]),
         );
     }
 
@@ -544,8 +551,8 @@ export class Arkade {
         );
 
         // A caller-supplied provider may predate `deprecatedSigners`. Keys past their cutoff stay:
-        // arkd no longer signs with them, but neither does the emulator, so routing one to arkd
-        // only changes whose refusal the caller sees.
+        // the operator no longer signs with them, but neither does the emulator, so routing one to
+        // the operator only changes whose refusal the caller sees.
         const operatorKeys = new Set(
             [info.signerPubkey, ...(info.deprecatedSigners ?? []).map((s) => s.pubkey)]
                 .filter(Boolean)
@@ -674,8 +681,9 @@ export class Arkade {
      * and the witness program of each contract they instantiate to the derived one
      * (see {@link ArkadeContract}'s constructor).
      * Struct and array params are passed whole by name (see {@link ArkadeNestedValue}).
-     * When the co-signer key is the operator's own, covenant leaves name the operator only tweaked
-     * by their covenant; the result's `program` is that rewritten one, which `register()` stores.
+     * When the cosigner key is the operator's own, a leaf that names the operator key beside the
+     * cosigner key names the operator key only tweaked by its function's Arkade Script instead.
+     * The result's `program` is that rewritten one, which `register()` stores.
      */
     contract<const P extends Program>(
         program: P,
@@ -705,15 +713,15 @@ export class Arkade {
         // Only creation rewrites; a restore compiles the stored program, keeping its address.
         const contract = new ArkadeContract(
             this,
-            tweakInstantiatedServerSigners(program, keys),
+            tweakInstantiatedOperatorSigners(program, keys),
             args,
         );
         const { vtxoScript } = contract;
         for (const fn of vtxoScript.compiled) {
-            const count = vtxoScript.arkadeTweaks(fn).length;
-            if (count > MAX_ARKADE_TWEAKS) {
+            const count = vtxoScript.arkadeScriptTweaks(fn).length;
+            if (count > MAX_ARKADE_SCRIPT_TWEAKS) {
                 throw new Error(
-                    `${fn.name}: a spend would reveal ${count} arkade tweak hashes; arkd accepts at most ${MAX_ARKADE_TWEAKS}`,
+                    `${fn.name}: a spend would reveal ${count} Arkade Script hashes; the operator accepts at most ${MAX_ARKADE_SCRIPT_TWEAKS}`,
                 );
             }
         }
@@ -1144,7 +1152,9 @@ export class ArkadeTransactionBuilder {
                     value: coin.value,
                     tapLeafScript: unlocker.fn.tapLeafScript,
                     tapTree: unlocker.contract.tapTree,
-                    arkadeTweaks: unlocker.contract.vtxoScript.arkadeTweaks(unlocker.fn),
+                    arkadeScriptTweaks: unlocker.contract.vtxoScript.arkadeScriptTweaks(
+                        unlocker.fn,
+                    ),
                 })),
                 ...this.fundingCoins,
             ],
@@ -1264,7 +1274,7 @@ export class ArkadeTransactionBuilder {
             path: {
                 leaf: fn.tapLeafScript,
                 extraWitness: condition,
-                arkadeTweaks: contract.vtxoScript.arkadeTweaks(fn),
+                arkadeScriptTweaks: contract.vtxoScript.arkadeScriptTweaks(fn),
             },
             tapTree: contract.tapTree,
         });
@@ -1328,7 +1338,7 @@ export class ArkadeTransactionBuilder {
                     (signer, i) =>
                         typeof signer === "object" &&
                         "tweak" in signer &&
-                        !serverSignsKey(fn, serverKey, fn.signerKeys[i]),
+                        !operatorSignsKey(fn, serverKey, fn.signerKeys[i]),
                 )
             ) {
                 throw new Error(
@@ -1338,7 +1348,7 @@ export class ArkadeTransactionBuilder {
             if (
                 fn.signerKeys.some(
                     (key) =>
-                        !serverSignsKey(fn, serverKey, key) &&
+                        !operatorSignsKey(fn, serverKey, key) &&
                         (!userKey || !equalBytes(key, userKey)),
                 )
             ) {
@@ -1382,14 +1392,14 @@ export class ArkadeTransactionBuilder {
             );
             if (operated) {
                 throw new Error(
-                    `${emulated.unlocker.fn.name}, ${operated.unlocker.fn.name}: covenants co-signed by the emulator and by arkd cannot share a transaction; spend them separately`,
+                    `${emulated.unlocker.fn.name}, ${operated.unlocker.fn.name}: inputs that need the emulator and inputs the operator cosigns itself cannot share a transaction; spend them separately`,
                 );
             }
             // Covenant path: the emulator runs the arkade script, adds the remaining
             // co-signatures (incl. the contract checkpoint) and finalizes with arkd.
             if (!client.emulator) {
                 throw new Error(
-                    `${emulated.unlocker.fn.name}: arkd does not hold this covenant's co-signer key, so the spend needs an \`emulator\` on the Arkade client`,
+                    `${emulated.unlocker.fn.name}: the operator does not hold this contract's cosigner key, so the spend needs an \`emulator\` on the Arkade client`,
                 );
             }
             return submitViaEmulator(client.emulator, { arkTx, checkpoints }, client.identity, {
@@ -1397,10 +1407,10 @@ export class ArkadeTransactionBuilder {
             });
         }
 
-        // arkd directly: pure tapscript, or covenants whose co-signer arkd itself holds.
+        // Straight to the operator: no Arkade Script, or Arkade Script on a key the operator holds.
         const identity = client.identity;
         if (!identity && userInputs.length > 0) {
-            throw new Error("a signing identity is required for non-covenant spends");
+            throw new Error("a signing identity is required to sign the user's inputs");
         }
         const userCheckpoints = new Set(userInputs.map((i) => checkpoints[i].id));
         // Checked before anything is signed.
@@ -1418,13 +1428,14 @@ export class ArkadeTransactionBuilder {
                 signCheckpoint: async (checkpoint) => {
                     if (!userCheckpoints.has(checkpoint.id)) return checkpoint;
                     if (!identity) {
-                        throw new Error("a signing identity is required for non-covenant spends");
+                        throw new Error("a signing identity is required to sign the user's inputs");
                     }
                     return identity.sign(checkpoint, [0]);
                 },
             },
             undefined,
-            // arkd keeps a checkpoint it signs alone two-step: no client signature selects one-shot.
+            // A checkpoint the operator signs alone stays two-step: no client signature
+            // selects one-shot.
             {
                 oneShot:
                     !inputs.some(({ unlocker }) => unlocker.fn.arkadeScript) &&

@@ -18,7 +18,7 @@ import type { OnchainProvider } from "../providers/onchain";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import {
-    ArkadeTweak,
+    ArkadeScriptTweak,
     ConditionWitness,
     PrevoutTxField,
     VtxoTaprootTree,
@@ -84,7 +84,7 @@ export function prepareOwnedInput(
         (u) =>
             VtxoTaprootTree.decode(u) === null &&
             ConditionWitness.decode(u) === null &&
-            ArkadeTweak.decode(u) === null,
+            ArkadeScriptTweak.decode(u) === null,
     );
     if (kept && kept.length !== unknown!.length) {
         tx.updateInput(index, { unknown: undefined }, true);
@@ -99,8 +99,8 @@ export function prepareOwnedInput(
     if (path.extraWitness?.length) {
         setArkPsbtField(tx, index, ConditionWitness, path.extraWitness);
     }
-    if (path.arkadeTweaks?.length) {
-        setArkPsbtField(tx, index, ArkadeTweak, path.arkadeTweaks);
+    if (path.arkadeScriptTweaks?.length) {
+        setArkPsbtField(tx, index, ArkadeScriptTweak, path.arkadeScriptTweaks);
     }
 }
 
@@ -117,7 +117,7 @@ export function emulatorInputIndexes(tx: Transaction): Set<number> {
     }
 }
 
-/** Packet inputs that arkd co-signs, mapped to the leaf keys that must sign before arkd. */
+/** Emulator packet inputs the operator cosigns itself, mapped to the leaf keys that sign first. */
 export function operatorCosignedInputs(
     tx: Transaction,
     operatorKeys: Uint8Array[],
@@ -151,7 +151,7 @@ export function operatorCosignedInputs(
     return operated;
 }
 
-/** Check PSBT signature entries before submission. arkd verifies the signatures. */
+/** Check PSBT signature entries before submission. The operator verifies the signatures. */
 export function assertOperatorPacketSignatures(
     tx: Transaction,
     operated: ReadonlyMap<number, Uint8Array[]>,
@@ -172,7 +172,7 @@ export function assertOperatorPacketSignatures(
         );
         if (missing) {
             throw new OnchainCosignPreflightError(
-                `input ${vin} requires a signature from co-signer ${hex.encode(missing)} before arkd can co-sign`,
+                `input ${vin} requires a signature from cosigner ${hex.encode(missing)} before the operator can cosign`,
             );
         }
     }
@@ -372,7 +372,7 @@ export function estimateOnchainCosignFee(nIn: number, nOut: number, feeRate: num
 export type OnchainSpendDeps = {
     arkProvider?: Pick<OperatorProvider, "cosignOnchainTx">;
     emulator?: Pick<EmulatorProvider, "submitOnchainTx">;
-    /** arkd itself runs the emulator inputs' Arkade Script, so they go to its cosign endpoint. */
+    /** The operator runs the contract inputs' Arkade Script, so they go to its cosign endpoint. */
     viaOperator?: boolean;
     onchainProvider: Pick<OnchainProvider, "broadcastTransaction" | "getRawTransaction">;
 };
@@ -396,8 +396,8 @@ export async function submitOnchainSpend(
             throw new Error("arkd-cosigned inputs present but no arkProvider configured");
         }
         if (!deps.arkProvider.cosignOnchainTx) throw new OnchainCosignUnsupportedError();
-        // arkd attaches its own prevout txs to a packet's tx without deduping, and its signer
-        // then refuses the duplicate keys as "invalid tx".
+        // The operator attaches its own prevout txs to a packet's tx without deduping, and its
+        // signer then refuses the duplicate keys as "invalid tx".
         if (emulated.size > 0) dropPrevoutTxs(tx);
         return deps.arkProvider.cosignOnchainTx(base64.encode(tx.toPSBT()));
     }

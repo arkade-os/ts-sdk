@@ -86,7 +86,7 @@ export function createArkadeBatchHandler(
     message: Proof.RegisterMessage,
     session: SignerSession,
     arkProvider: OperatorProvider,
-    /** Undefined when arkd itself runs the inputs' Arkade Script and signs at finalization. */
+    /** Undefined when the operator runs the inputs' Arkade Script and signs at finalization. */
     emulator: EmulatorProvider | undefined,
     network: Network,
     /**

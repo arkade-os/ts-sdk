@@ -201,6 +201,6 @@ describe("renewProgramContractOutputs", () => {
 
         await expect(
             arkade.renewProgramContractOutputs(keeper, [{ contract, coin, fn: "unilateral" }]),
-        ).rejects.toThrow(/unilateral is not a covenant function/);
+        ).rejects.toThrow(/unilateral has no Arkade Script/);
     });
 });
