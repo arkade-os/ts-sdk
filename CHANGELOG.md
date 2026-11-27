@@ -16,6 +16,10 @@ style and have not been backfilled.
 
 - **The Executor refuses a `renewalWindow` under 180 seconds.** Only an upper bound existed, so `registerBoarding` and `registerRenewal` accepted `0`, a negative or a tiny window. The wallet steps in for a coin at a live renewal contract only at half the window, so such a window left it no time to act before the coin was swept, and the coin was recovered only afterwards. Half of 180 s covers one 60 s settlement poll and a batch round. Both calls now throw `renewalWindow Ns must be at least 180s`, as for a window not shorter than the operator's VTXO expiry. A stored watch with such a window is no longer refreshed: `registerRenewal` skips it with a warning and the wallet renews its coins itself. `ExecutorWatchRegistration.address` is documented as the delegated address, onchain for boarding and an Arkade address for renewal.
 
+### Internal
+
+- **`VtxoManager` detects a wallet's `renewalAddress` through a named guard.** The duck-typed check sat inline in `renewalAddressOf`; `isRenewalAddressCapable` now holds it, the pattern `isMigrationCapable` and `isExecutorRefreshCapable` already follow. Behaviour is unchanged: the wallet keeps deciding where a renewal pays.
+
 ## [0.5.15] - 2026-11-26
 
 ### Breaking Changes
