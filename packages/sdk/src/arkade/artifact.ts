@@ -87,6 +87,12 @@ export interface ProgramFromArtifactOptions {
      * that reaches it.
      */
     contracts?: readonly ContractArtifact[];
+    /**
+     * Read `<OPERATOR_KEY:f>` as the server key tweaked by `f` alone, arkd's single co-signer. A leaf
+     * that also names the plain `<OPERATOR_KEY>` keeps both where they stand, unlike
+     * `Arkade.contract()`'s rewrite of the default read, which merges them into one signer.
+     */
+    singleOperatorKey?: boolean;
 }
 
 /** A contract a program instantiates; each constructor param is a parent param or a literal. */
@@ -420,6 +426,13 @@ function instantiationArg(
 const MAX_INSTANTIATIONS = 256;
 const MAX_INSTANTIATED_CHARS = 1 << 20;
 
+/** Budgets shared by every artifact one read reaches, and how all of them read operator keys. */
+interface ReadContext {
+    links: number;
+    chars: number;
+    singleOperatorKey: boolean;
+}
+
 /** Resolve `<CONTRACT:body>` in `parent` to the supplied artifact its pin names, read in turn. */
 function link(
     parent: ContractArtifact,
@@ -427,7 +440,7 @@ function link(
     body: string,
     supplied: Map<string, ContractArtifact>,
     stack: string[],
-    tree: { links: number; chars: number },
+    tree: ReadContext,
 ): Instantiation {
     const [, name, list] = body.match(/^([A-Za-z]\w*)\((.*)\)$/) ?? fail(`malformed '${body}'`);
     if (--tree.links < 0) {
@@ -522,8 +535,10 @@ function parseLeaf(
     hasCovenant: boolean,
     instantiations: Map<string, string>,
     extras: ArtifactWitnessElement[],
+    singleOperatorKey: boolean,
+    group: string,
 ): TapscriptSegment {
-    const asm = legacyOperatorLeaf(leaf.asm);
+    const asm = singleOperatorKey ? leaf.asm : legacyOperatorLeaf(leaf.asm);
     let index = 0;
 
     let condition: AsmToken[] | undefined;
@@ -558,6 +573,7 @@ function parseLeaf(
     const signers: SignerRef[] = [];
     let emulator: string | undefined;
     let emulatorIndex: number | undefined;
+    let operatorTweaked = false;
     while (index < asm.length) {
         const key = asm[index];
         const terminator = asm[index + 1];
@@ -573,7 +589,17 @@ function parseLeaf(
         }
         const inner = key.slice(1, -1);
         if (inner === "OPERATOR_KEY") signers.push("$server");
-        else if (inner.startsWith("TWEAK:")) {
+        else if (inner.startsWith("OPERATOR_KEY:")) {
+            if (!hasCovenant) fail(`leaf '${leaf.name}': ${key} needs a covenant`);
+            // The checks the default read makes on the `<EMULATOR_KEY:f>` it rewrites this to.
+            if (operatorTweaked) fail(`leaf '${leaf.name}': duplicate emulator signer`);
+            operatorTweaked = true;
+            const fn = inner.slice("OPERATOR_KEY:".length);
+            if (fn !== group) {
+                fail(`leaf '${leaf.name}': emulator covenant '${fn}' must match group '${group}'`);
+            }
+            signers.push({ tweak: "$server", fn });
+        } else if (inner.startsWith("TWEAK:")) {
             const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
             if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
             signers.push({ tweak: `$${base}`, fn });
@@ -620,15 +646,19 @@ function parseLeaf(
  *
  * `<OPERATOR_KEY>` reads as `server` and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`.
  * `<OPERATOR_KEY:f>` reads as the server key followed by the emulator key tweaked by `f`'s Arkade
- * Script, or the tweaked emulator key alone in a CSV leaf, until arkd and the emulator share one
- * operator key.
+ * Script, or the tweaked emulator key alone in a CSV leaf, unless `singleOperatorKey` is set.
  */
 export function programFromArtifact(
     artifact: ContractArtifact,
     options?: ProgramFromArtifactOptions | ContractDebugInfo,
 ): Program {
-    const { debug, contracts = [] }: ProgramFromArtifactOptions =
-        options && "functions" in options ? { debug: options } : (options ?? {});
+    const {
+        debug,
+        contracts = [],
+        singleOperatorKey = false,
+    }: ProgramFromArtifactOptions = options && "functions" in options
+        ? { debug: options }
+        : (options ?? {});
     const supplied = new Map<string, ContractArtifact>();
     for (const child of contracts) {
         if (!isContractArtifact(child)) fail("each of `contracts` must be an arkadec artifact");
@@ -637,6 +667,7 @@ export function programFromArtifact(
     return readArtifact(artifact, debug, supplied, [], {
         links: MAX_INSTANTIATIONS,
         chars: MAX_INSTANTIATED_CHARS,
+        singleOperatorKey,
     });
 }
 
@@ -645,7 +676,7 @@ function readArtifact(
     debug: ContractDebugInfo | undefined,
     supplied: Map<string, ContractArtifact>,
     stack: string[],
-    tree: { links: number; chars: number },
+    tree: ReadContext,
 ): Program {
     if (!isContractArtifact(artifact)) {
         fail(
@@ -748,6 +779,8 @@ function readArtifact(
                 group.arkade !== undefined,
                 instantiations,
                 extras,
+                tree.singleOperatorKey,
+                group.name,
             );
             if (
                 tapscript.emulator !== undefined &&
