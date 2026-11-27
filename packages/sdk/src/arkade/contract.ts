@@ -476,13 +476,22 @@ export class Arkade {
         );
     }
 
-    /** Whether arkd co-signs `fn`: a leaf without the emulator splice names, if anyone, the server tweaked. */
+    /**
+     * Whether arkd co-signs `fn`. A leaf without the emulator splice is arkd's only if each of
+     * its tweaked keys is the server's, tweaked by `fn`'s covenant; one tweaking a constructor
+     * key, such as `<TWEAK:insurer:claim>`, stays with the emulator.
+     */
     operatorCosignsLeaf(
-        contract: { keys: { emulatorKey?: Uint8Array } },
-        fn: Pick<CompiledProgramFunction, "def"> | undefined,
+        contract: { keys: { serverKey: Uint8Array; emulatorKey?: Uint8Array } },
+        fn: Pick<CompiledProgramFunction, "def" | "arkadeScript" | "signerKeys"> | undefined,
     ): boolean {
-        return (
-            fn?.def.tapscript.emulator === null || this.operatorCosigns(contract.keys.emulatorKey)
+        if (fn?.def.tapscript.emulator !== null) {
+            return this.operatorCosigns(contract.keys.emulatorKey);
+        }
+        return fn.def.tapscript.signers.every(
+            (signer, i) =>
+                !(typeof signer === "object" && "tweak" in signer) ||
+                serverSignsKey(fn, contract.keys.serverKey, fn.signerKeys[i]),
         );
     }
 
@@ -534,7 +543,9 @@ export class Arkade {
             info.forfeitPubkey ? toXOnly(hex.decode(info.forfeitPubkey), "forfeit key") : undefined,
         );
 
-        // A caller-supplied provider may predate `deprecatedSigners`.
+        // A caller-supplied provider may predate `deprecatedSigners`. Keys past their cutoff stay:
+        // arkd no longer signs with them, but neither does the emulator, so routing one to arkd
+        // only changes whose refusal the caller sees.
         const operatorKeys = new Set(
             [info.signerPubkey, ...(info.deprecatedSigners ?? []).map((s) => s.pubkey)]
                 .filter(Boolean)

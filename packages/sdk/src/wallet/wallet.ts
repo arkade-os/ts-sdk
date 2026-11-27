@@ -5619,6 +5619,8 @@ export class Wallet
         for (let i = 0; i < tx.outputsLength; i++) outSum += tx.getOutput(i).amount ?? 0n;
         if (outSum > inSum) throw new Error(`outputs ${outSum} exceed inputs ${inSum}`);
 
+        // Includes deprecated keys past their cutoff, which arkd no longer signs with; the emulator
+        // can't sign them either, so routing one to arkd only changes the refusal.
         const operated = operatorCosignedInputs(tx, [
             this._arkServerPublicKey,
             ...[...this._deprecatedSigners.keys()].map((k) => hex.decode(k)),

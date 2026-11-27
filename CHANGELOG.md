@@ -21,8 +21,10 @@ style and have not been backfilled.
   always set. A covenant whose co-signer key arkd holds, current or
   deprecated, is spent through arkd: `submitTx`/`finalizeTx` (two-step),
   `cosignOnchainTx`, and `registerIntent`/`submitSignedForfeitTxs`. Any other
-  covenant still goes through the emulator. A transaction or renewal mixing
-  the two is refused up front; spend them separately. Stored contracts keep
+  covenant still goes through the emulator, as does a leaf without the
+  emulator splice that tweaks a constructor key (such as
+  `<TWEAK:insurer:claim>`) rather than the server's. A transaction or
+  renewal mixing the two is refused up front; spend them separately. Stored contracts keep
   the key they were built with, so covenants on the old emulator key keep
   spending through the standalone emulator, which `{ network: "bitcoin" }`
   still wires. Against an arkd that does not run Arkade Script, new covenants
