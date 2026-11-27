@@ -174,6 +174,25 @@ describe("an HD wallet's receive address under an Executor", () => {
         await wallet.dispose();
     });
 
+    it("separates the receive and boarding keys as soon as renewal is registered, with no poll", async () => {
+        const { wallet } = await hdWallet({ opted: false });
+        const manager = (await wallet.getExecutorManager())!;
+        const first = await wallet.getBoardingAddress();
+        const refresh = vi.spyOn(wallet, "refreshExecutorWatches");
+
+        await manager.registerRenewal(
+            { renewalWindow: 1000, maxFee: 100, exitDelay: 144 },
+            { emulatorPubkey: vectors.emulatorPubkey },
+        );
+        await idle(wallet);
+
+        expect(refresh).not.toHaveBeenCalled();
+        expect(await wallet.getBoardingAddress()).not.toBe(first);
+        const twin = await twinOf(wallet, wallet.offchainTapscript.options.pubKey);
+        expect(await wallet.getAddress()).toBe(twin.address);
+        await wallet.dispose();
+    });
+
     it("registers a new twin when the app registers renewal with other params", async () => {
         const { wallet, executor } = await hdWallet();
         const manager = (await wallet.getExecutorManager())!;

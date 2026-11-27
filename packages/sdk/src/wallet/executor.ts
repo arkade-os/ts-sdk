@@ -102,6 +102,8 @@ export type DelegatedWallet = Pick<
 > & {
     /** The displayed receive tapscript, whose key a refresh keeps alive. */
     readonly offchainTapscript?: { readonly options: { readonly pubKey: Uint8Array } };
+    /** Called once `registerRenewal` has succeeded; its errors are ignored. */
+    onRenewalRegistered?(): void;
 };
 
 async function ownAddress(wallet: Pick<DelegatedWallet, "getOwnAddress" | "getAddress">) {
@@ -658,6 +660,11 @@ export class ExecutorManagerImpl implements IExecutorManager {
             throw new Error(
                 `Executor renewal registration failed for the keys ${[...failed].join(", ")}`,
             );
+        }
+        try {
+            this.wallet.onRenewalRegistered?.();
+        } catch {
+            // Best-effort: the poll does the same work.
         }
         return first;
     }
