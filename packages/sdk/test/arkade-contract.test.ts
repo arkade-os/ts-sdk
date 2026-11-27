@@ -445,9 +445,9 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const ark = await compilerClient(delay);
         const program = compilerExit();
         const contract = ark.contract(program);
-        expect(contract.args.SERVER_EXIT_DELAY).toBe(sequence);
+        expect(contract.args.OPERATOR_EXIT_DELAY).toBe(sequence);
         expect(contract.args.user).toEqual(receiver);
-        expect(contract.args.server).toEqual(server);
+        expect(contract.args.operatorKey).toEqual(server);
         const decoded = CSVMultisigTapscript.decode(contract.vtxoScript.compiled[0].leafScript);
         expect(decoded.params.timelock).toEqual(
             delay < 512n ? { type: "blocks", value: delay } : { type: "seconds", value: delay },
@@ -471,9 +471,15 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const invalid = await compilerClient(86_400n);
         expect(() => invalid.contract(compilerExit())).toThrow(/multiple of 512/);
         const ark = await compilerClient(144n);
-        expect(() => ark.contract(compilerExit(), { server: receiver })).toThrow(/reserved server/);
+        // The names SDK 0.5.15 and earlier used bind the reserved params too, and are checked.
+        expect(() => ark.contract(compilerExit(), { server: receiver })).toThrow(
+            /reserved operatorKey/,
+        );
         expect(() => ark.contract(compilerExit(), { SERVER_EXIT_DELAY: 10n })).toThrow(
-            /reserved SERVER_EXIT_DELAY/,
+            /reserved OPERATOR_EXIT_DELAY/,
+        );
+        expect(() => ark.contract(compilerExit(), { OPERATOR_EXIT_DELAY: 10n })).toThrow(
+            /reserved OPERATOR_EXIT_DELAY/,
         );
     });
 
@@ -483,11 +489,56 @@ describe("arkade.Arkade / ArkadeContract", () => {
             server,
             user: receiver,
         });
-        expect(() => ark.contract(compilerExit(), args)).toThrow(/reserved SERVER_EXIT_DELAY/);
+        expect(() => ark.contract(compilerExit(), args)).toThrow(/reserved OPERATOR_EXIT_DELAY/);
         Object.getPrototypeOf(args).SERVER_EXIT_DELAY = 144n;
         const contract = ark.contract(compilerExit(), args);
-        expect(Object.hasOwn(contract.args, "SERVER_EXIT_DELAY")).toBe(true);
-        expect(contract.args.SERVER_EXIT_DELAY).toBe(144n);
+        expect(Object.hasOwn(contract.args, "OPERATOR_EXIT_DELAY")).toBe(true);
+        expect(contract.args.OPERATOR_EXIT_DELAY).toBe(144n);
+    });
+
+    it("restores a program stored with the old reserved names, and binds either name", async () => {
+        const ark = await compilerClient(144n);
+        const program = compilerExit();
+        const contract = ark.contract(program);
+        // What SDK 0.5.15 and earlier stored for the same artifact.
+        const legacy = arkade.parseArtifact(
+            JSON.parse(
+                arkade
+                    .stringifyArtifact(program)
+                    .replaceAll("operatorKey", "server")
+                    .replaceAll("OPERATOR_EXIT_DELAY", "SERVER_EXIT_DELAY"),
+            ),
+        );
+        const legacyArgs = { user: receiver, server, SERVER_EXIT_DELAY: 144n };
+        const stored = arkade.serializeArkadeContractParams({
+            program: legacy,
+            args: legacyArgs,
+            serverKey: server,
+            userKey: receiver,
+        });
+        expect(Object.keys(JSON.parse(stored.args)).sort()).toEqual(Object.keys(legacyArgs).sort());
+        const restored = arkade.ArkadeContract.fromContract(ark, {
+            type: "arkade",
+            params: stored,
+        } as any);
+        expect(restored.address).toBe(contract.address);
+
+        expect(ark.contract(legacy, { operatorKey: server }).address).toBe(contract.address);
+        expect(ark.contract(program, { server }).address).toBe(contract.address);
+        expect(() => ark.contract(program, { server, operatorKey: server })).toThrow(
+            /pass 'operatorKey' or 'server', not both/,
+        );
+        // A new row stores the names its program declares, whichever name the caller passed.
+        const saved = arkade.serializeArkadeContractParams({
+            program,
+            args: legacyArgs,
+            serverKey: server,
+        });
+        expect(Object.keys(JSON.parse(saved.args)).sort()).toEqual([
+            "OPERATOR_EXIT_DELAY",
+            "operatorKey",
+            "user",
+        ]);
     });
 
     it("refuses CSV offchain spends before querying coins", async () => {
@@ -629,8 +680,11 @@ describe("arkade.Arkade / ArkadeContract", () => {
         }
         const policy: Policy = { owner: receiver, outs };
         const contract = ark.contract(program, { policy, oracles });
-        expect({ ...contract.args }).toEqual({ ...deployed, server });
-        expect({ ...ark.contract(program, deployed).args }).toEqual({ ...deployed, server });
+        expect({ ...contract.args }).toEqual({ ...deployed, operatorKey: server });
+        expect({ ...ark.contract(program, deployed).args }).toEqual({
+            ...deployed,
+            operatorKey: server,
+        });
         expect(() =>
             ark.contract(program, {
                 policy: { owner: receiver, outs },
@@ -742,7 +796,10 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             "expected.index": 12n,
             "expected.amount": 13n,
         };
-        expect(program.params!.map((p) => p.name)).toEqual([...Object.keys(deployed), "server"]);
+        expect(program.params!.map((p) => p.name)).toEqual([
+            ...Object.keys(deployed),
+            "operatorKey",
+        ]);
         const whole = {
             grid: [
                 [1n, 2n, 3n],
@@ -758,8 +815,11 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             expected: { type: 11n, index: 12n, amount: 13n },
         };
         const contract = ark.contract(program, whole);
-        expect({ ...contract.args }).toEqual({ ...deployed, server });
-        expect({ ...ark.contract(program, deployed).args }).toEqual({ ...deployed, server });
+        expect({ ...contract.args }).toEqual({ ...deployed, operatorKey: server });
+        expect({ ...ark.contract(program, deployed).args }).toEqual({
+            ...deployed,
+            operatorKey: server,
+        });
         // The covenant pushes grid[0][1], grid[1][2], board.cells[1][0] and expected.amount.
         const covenant = contract.vtxoScript.functionByName("spend")!.arkadeScript!;
         const pushes = arkade.ArkadeScript.decode(covenant).slice(2, 8);
