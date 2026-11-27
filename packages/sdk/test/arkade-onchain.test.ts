@@ -259,6 +259,58 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         ).rejects.toThrow(/without the Arkade server key/);
     });
 
+    it("sends a covenant leaf with the server key to arkd once arkd holds the co-signer key", async () => {
+        const { contract, submitOnchainTx, cosignOnchainTx } = await setup(true);
+        const txid = await contract.functions
+            .covenantServer()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .sendOnchain();
+        expect(txid).toBe("arkd-txid");
+        expect(submitOnchainTx).not.toHaveBeenCalled();
+        expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("routes a leaf to arkd only when it names an operator key tweaked by its covenant", async () => {
+        const { ark, contract } = await setup();
+        const check = ["INSPECTVERSION", 2, "NUMEQUAL"] as arkade.AsmToken[];
+        const withLegacy = ark.contract(
+            {
+                ...program,
+                functions: {
+                    ...program.functions,
+                    legacy: {
+                        tapscript: {
+                            signers: [{ tweak: "$user", fn: "legacy" }, "$server"],
+                            emulator: null,
+                        },
+                        arkadeScript: { asm: check },
+                    },
+                    operatorOnly: {
+                        tapscript: {
+                            signers: [{ tweak: "$server", fn: "operatorOnly" }],
+                            emulator: null,
+                        },
+                        arkadeScript: { asm: check.concat(["VERIFY", 1]) },
+                    },
+                },
+            },
+            { receiver, amount: AMOUNT },
+        );
+        const fn = (name: string) => withLegacy.vtxoScript.functionByName(name);
+        // No emulator splice, but nothing arkd holds is tweaked by the covenant: not arkd's.
+        expect(ark.operatorCosignsLeaf(fn("legacy"))).toBe(false);
+        expect(ark.operatorCosignsLeaf(fn("operatorOnly"))).toBe(true);
+        expect(ark.operatorCosignsLeaf(contract.vtxoScript.functionByName("covenant"))).toBe(false);
+        expect(ark.operatorCosignsLeaf(fn("collab"))).toBe(false);
+
+        const { ark: operated, contract: spliced } = await setup(true);
+        expect(operated.operatorCosignsLeaf(spliced.vtxoScript.functionByName("covenant"))).toBe(
+            true,
+        );
+    });
+
     it("user-only leaf is finalized and broadcast without arkd", async () => {
         const { contract, cosignOnchainTx, submitOnchainTx, broadcastTransaction } = await setup();
         const txid = await contract.functions

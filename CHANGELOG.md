@@ -116,6 +116,20 @@ style and have not been backfilled.
   other co-signers' PSBT signature entries before submission. arkd verifies
   the signatures before co-signing.
 
+- **`Arkade` routes a covenant leaf to arkd only when the leaf names an
+  operator key it holds.** `operatorCosignsLeaf` sent every leaf without the
+  emulator splice to arkd, even one naming no operator-tweaked key, such as
+  `[{ tweak: "$user", fn }, "$server"]`. The wallet-level onchain cosign sent
+  that same leaf to the emulator, so whichever service did not handle it
+  refused the spend. `send()`, `sendOnchain()` and
+  `renewProgramContractOutputs` now apply the wallet's test: the leaf names an
+  operator key, current or deprecated, tweaked by the leaf's own covenant.
+  `operatorCosignsLeaf` now takes only the compiled function.
+  `buildOnchain` also stops refusing a covenant leaf that keeps the plain
+  server key when arkd co-signs it. That refusal guarded the emulator's onchain
+  endpoint, which such a spend never reaches. It had blocked the onchain
+  `fulfill` of `@arkade-os/swap` offers on arkd's key.
+
 - **Signer classification accepts operator info without deprecated signers.**
   Providers that omit the list are treated as advertising only the active signer.
 

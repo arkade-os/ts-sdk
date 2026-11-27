@@ -67,9 +67,7 @@ export async function renewProgramContractOutputs(
         return { contract, coin, fn, compiled, arkadeScript: compiled.arkadeScript };
     });
     // arkd signs the intent and the forfeits itself when it holds every leg's co-signer.
-    const operated = renewals.filter(({ contract, compiled }) =>
-        client.operatorCosignsLeaf(contract, compiled),
-    ).length;
+    const operated = renewals.filter(({ compiled }) => client.operatorCosignsLeaf(compiled)).length;
     const viaOperator = operated === targets.length;
     if (operated > 0 && !viaOperator) {
         throw new Error(
