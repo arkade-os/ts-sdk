@@ -61,7 +61,7 @@ export interface ExecutorWatchMetadata {
 
 /** A watch both sides derived: the address to fund and what restores it. */
 export interface ExecutorWatchRegistration {
-    /** The delegated boarding address, onchain. */
+    /** The delegated address: onchain for boarding, an Arkade address for renewal. */
     address: string;
     templateId: string;
     /** The template's variables, canonical hex. */
@@ -429,11 +429,25 @@ function renewalScript(
 }
 
 /**
- * A window as long as the coin's life makes every renewed coin due again at once, each round
- * paying up to maxFee. Block-typed expiries (regtest only) have no fixed duration.
+ * The wallet steps in at half the window (vtxo-manager's deferToExecutor), which must leave a
+ * 60s settlement poll plus a batch round of about 30s; a shorter window is swept before it acts.
  */
-function windowPastExpiry(renewalWindow: number, lifetime: bigint | undefined): boolean {
-    return lifetime !== undefined && lifetime >= 512n && renewalWindow >= lifetime;
+const MIN_RENEWAL_WINDOW = 180;
+
+/**
+ * Why a window is unusable, if it is. One as long as the coin's life makes every renewed coin due
+ * again at once, each round paying up to maxFee. Block-typed expiries (regtest only) have no
+ * fixed duration.
+ */
+function renewalWindowFault(
+    renewalWindow: number,
+    lifetime: bigint | undefined,
+): string | undefined {
+    if (!(renewalWindow >= MIN_RENEWAL_WINDOW)) return `must be at least ${MIN_RENEWAL_WINDOW}s`;
+    if (lifetime !== undefined && lifetime >= 512n && renewalWindow >= lifetime) {
+        return `must be shorter than the operator's VTXO expiry of ${lifetime}s`;
+    }
+    return undefined;
 }
 
 /** An operator delay as a BIP 68 sequence: below 512 it counts blocks, else seconds. */
@@ -503,10 +517,11 @@ export interface IExecutorManager {
      *
      * It then covers every live boarding watch under the current operator, each under its own
      * params, which is where its coins sit: the displayed key's earlier watches, and each earlier
-     * rotated key's. A key whose renewal watch is already live, as stored, is not asked again. A watch under another emulator key than the Executor's, or with a window no
-     * longer shorter than the operator's VTXO expiry, cannot be registered: it is skipped with a
-     * warning, and the wallet renews its coins itself. The others are all tried before a failure
-     * is thrown, and the error names the keys that failed, so a retry covers the rest.
+     * rotated key's. A key whose renewal watch is already live, as stored, is not asked again.
+     * A watch under another emulator key than the Executor's, or with a window under 180s or not
+     * shorter than the operator's VTXO expiry, cannot be registered: it is skipped with a warning,
+     * and the wallet renews its coins itself. The others are all tried before a failure is thrown,
+     * and the error names the keys that failed, so a retry covers the rest.
      * `expiresAt` applies to every watch registered.
      *
      * This is the opt-in to receiving under delegation. While the displayed receive key's renewal
@@ -617,9 +632,10 @@ export class ExecutorManagerImpl implements IExecutorManager {
                     );
                     continue;
                 }
-                if (windowPastExpiry(p.renewalWindow, vtxoTreeExpiry)) {
+                const fault = renewalWindowFault(p.renewalWindow, vtxoTreeExpiry);
+                if (fault) {
                     console.warn(
-                        `Skipping the held key ${watch.owner}: its watch's renewalWindow ${p.renewalWindow}s is not shorter than the operator's VTXO expiry of ${vtxoTreeExpiry}s`,
+                        `Skipping the held key ${watch.owner}: its watch's renewalWindow ${p.renewalWindow}s ${fault}`,
                     );
                     continue;
                 }
@@ -897,7 +913,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             p.maxFee !== params.maxFee ||
             p.exitDelay !== params.exitDelay ||
             p.boardingExitDelay !== params.boardingExitDelay ||
-            windowPastExpiry(params.renewalWindow, operator.vtxoTreeExpiry)
+            renewalWindowFault(params.renewalWindow, operator.vtxoTreeExpiry) !== undefined
         ) {
             return undefined;
         }
@@ -987,11 +1003,8 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `Executor's emulator key ${info.emulatorPubkey} is not the trusted ${emulator}`,
             );
         }
-        if (windowPastExpiry(options.renewalWindow, operator.vtxoTreeExpiry)) {
-            throw new Error(
-                `renewalWindow ${options.renewalWindow}s must be shorter than the operator's VTXO expiry of ${operator.vtxoTreeExpiry}s`,
-            );
-        }
+        const fault = renewalWindowFault(options.renewalWindow, operator.vtxoTreeExpiry);
+        if (fault) throw new Error(`renewalWindow ${options.renewalWindow}s ${fault}`);
         const owner = await ownerKey(this.wallet.identity, descriptor);
         const params = resolveParams(options, operator, template);
         const keys: ExecutorContractKeys = {

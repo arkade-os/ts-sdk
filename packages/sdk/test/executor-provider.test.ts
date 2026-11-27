@@ -1108,6 +1108,50 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
         ]);
     });
 
+    it("refuses a window below 180s before asking the Executor to register, and accepts 180s", async () => {
+        for (const renewalWindow of [0, 179]) {
+            const { wallet: managed, provider } = await managedWallet();
+            const executor = new ExecutorManagerImpl(provider, managed);
+            for (const register of [executor.registerBoarding, executor.registerRenewal]) {
+                await expect(
+                    register.call(executor, { ...params, renewalWindow }, trusted),
+                ).rejects.toThrow(`renewalWindow ${renewalWindow}s must be at least 180s`);
+            }
+            expect(provider.registerDelegation).not.toHaveBeenCalled();
+        }
+        const { wallet: managed, provider } = await managedWallet();
+        const executor = new ExecutorManagerImpl(provider, managed);
+        const floor = { ...params, renewalWindow: 180 };
+        await expect(executor.registerBoarding(floor, trusted)).resolves.toBeDefined();
+        await expect(executor.registerRenewal(floor, trusted)).resolves.toBeDefined();
+    });
+
+    it("skips a boarding watch whose window is below 180s, warning with its key", async () => {
+        const { wallet: managed, manager, provider } = await managedWallet();
+        // registered by a release that took any window
+        await holdBoardingWatch(managed, `tr(${heldKeys[0]})`, {
+            params: { ...params, renewalWindow: 179 },
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await new ExecutorManagerImpl(provider, managed).registerRenewal(params, trusted);
+
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining(
+                `${heldKeys[0]}: its watch's renewalWindow 179s must be at least`,
+            ),
+        );
+        warn.mockRestore();
+        // no live renewal watch (its sibling row is "local"), so the wallet renews that key's coins itself
+        expect(provider.registerDelegation.mock.calls.map(([, v]) => v.owner)).toEqual([
+            vectors.owner,
+        ]);
+        expect(await rowsOf(manager, "renewal")).toEqual([
+            `${OWNER}/500/active`,
+            `${HELD[0]}/500/local`,
+        ]);
+    });
+
     it("reads the Executor and the operator once, however many keys it registers", async () => {
         const { wallet: managed, provider } = await managedWallet();
         // the x-only key of 4G, a third held key
