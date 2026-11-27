@@ -40,6 +40,7 @@ import { getNetwork, NetworkName } from "../networks";
 import { createAssetPacket } from "./asset";
 import { Extension } from "../extension";
 
+/** @deprecated The delegator is retired; use {@link getExecutorManager}. */
 export interface IDelegateManager {
     /**
      * Delegate virtual outputs to the remote delegation service.
@@ -66,6 +67,7 @@ export interface IDelegateManager {
     getDelegateInfo(): Promise<DelegateInfo>;
 }
 
+/** @deprecated The delegator is retired; use {@link getExecutorManager}. */
 export class DelegateManagerImpl implements IDelegateManager {
     /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
     constructor(
