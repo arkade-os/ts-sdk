@@ -74,8 +74,11 @@ style and have not been backfilled.
 - **`programFromArtifact` reads arkd's single co-signer key on request.** With
   `{ singleOperatorKey: true }`, a compiled `<OPERATOR_KEY:f>` reads as
   `{ tweak: "$server", fn: f }` alone, the program `Arkade.contract()`'s rewrite
-  gives, so `new ArkadeContract(...)` derives it too, whatever the client's
-  co-signer key. Without the option every artifact reads as before.
+  gives for a leaf that does not also name the plain `<OPERATOR_KEY>`, so
+  `new ArkadeContract(...)` derives it too, whatever the client's co-signer key.
+  A leaf that names both keeps each where it stands, where the rewrite puts the
+  tweaked key in the plain one's place. Without the option every artifact reads
+  as before.
 
 - **Arkade spends reveal the script hashes of a contract's other covenants.**
   arkd checks that every forfeit leaf of a spent VTXO's tree names its signer

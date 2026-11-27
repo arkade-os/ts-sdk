@@ -87,7 +87,11 @@ export interface ProgramFromArtifactOptions {
      * that reaches it.
      */
     contracts?: readonly ContractArtifact[];
-    /** Read `<OPERATOR_KEY:f>` as the server key tweaked by `f` alone, arkd's single co-signer. */
+    /**
+     * Read `<OPERATOR_KEY:f>` as the server key tweaked by `f` alone, arkd's single co-signer. A leaf
+     * that also names the plain `<OPERATOR_KEY>` keeps both where they stand, unlike
+     * `Arkade.contract()`'s rewrite of the default read, which merges them into one signer.
+     */
     singleOperatorKey?: boolean;
 }
 
@@ -532,6 +536,7 @@ function parseLeaf(
     instantiations: Map<string, string>,
     extras: ArtifactWitnessElement[],
     singleOperatorKey: boolean,
+    group: string,
 ): TapscriptSegment {
     const asm = singleOperatorKey ? leaf.asm : legacyOperatorLeaf(leaf.asm);
     let index = 0;
@@ -568,6 +573,7 @@ function parseLeaf(
     const signers: SignerRef[] = [];
     let emulator: string | undefined;
     let emulatorIndex: number | undefined;
+    let operatorTweaked = false;
     while (index < asm.length) {
         const key = asm[index];
         const terminator = asm[index + 1];
@@ -585,7 +591,14 @@ function parseLeaf(
         if (inner === "OPERATOR_KEY") signers.push("$server");
         else if (inner.startsWith("OPERATOR_KEY:")) {
             if (!hasCovenant) fail(`leaf '${leaf.name}': ${key} needs a covenant`);
-            signers.push({ tweak: "$server", fn: inner.slice("OPERATOR_KEY:".length) });
+            // The checks the default read makes on the `<EMULATOR_KEY:f>` it rewrites this to.
+            if (operatorTweaked) fail(`leaf '${leaf.name}': duplicate emulator signer`);
+            operatorTweaked = true;
+            const fn = inner.slice("OPERATOR_KEY:".length);
+            if (fn !== group) {
+                fail(`leaf '${leaf.name}': emulator covenant '${fn}' must match group '${group}'`);
+            }
+            signers.push({ tweak: "$server", fn });
         } else if (inner.startsWith("TWEAK:")) {
             const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
             if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
@@ -767,6 +780,7 @@ function readArtifact(
                 instantiations,
                 extras,
                 tree.singleOperatorKey,
+                group.name,
             );
             if (
                 tapscript.emulator !== undefined &&
