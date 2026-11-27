@@ -521,10 +521,10 @@ function parseLeaf(
     let csv: TapscriptSegment["csv"];
     let cltv: TapscriptSegment["cltv"];
     if (asm.length >= index + 3 && asm[index + 2] === "OP_DROP") {
-        // Persisted bindings name the exit delay SERVER_EXIT_DELAY.
+        // rc.1 names the exit delay SERVER_EXIT_DELAY.
         const operand =
-            asm[index] === "<OPERATOR_EXIT_DELAY>"
-                ? "$SERVER_EXIT_DELAY"
+            asm[index] === "<SERVER_EXIT_DELAY>"
+                ? "$OPERATOR_EXIT_DELAY"
                 : asm[index].startsWith("<") && asm[index].endsWith(">")
                   ? `$${asm[index].slice(1, -1)}`
                   : BigInt(asm[index]);
@@ -551,7 +551,7 @@ function parseLeaf(
             fail(`leaf '${leaf.name}': unsupported key operand '${key}'`);
         }
         const inner = key.slice(1, -1);
-        if (inner === "OPERATOR_KEY") signers.push("$server");
+        if (inner === "OPERATOR_KEY") signers.push("$operatorKey");
         else if (inner.startsWith("TWEAK:")) {
             const [, base, fn] = inner.match(/^TWEAK:([^:]+):([^:]+)$/) ?? [];
             if (!base || !fn) fail(`leaf '${leaf.name}': malformed tweak '${key}'`);
@@ -591,16 +591,17 @@ function parseLeaf(
 }
 
 /**
- * Adds `server`, and one `bytes32` param per `<CONTRACT:Name(…)>` placeholder, which an
+ * Adds `operatorKey`, and one `bytes32` param per `<CONTRACT:Name(…)>` placeholder, which an
  * `ArkadeContract` binds to that contract's witness program when it is built. Each `Name` needs its
  * artifact in `options.contracts` and its pin in the artifact's own `contracts`, or this throws.
  * With the build's `debug` file, passed bare or as `debug`, each covenant segment also carries its
  * `sourceMap`.
  *
- * `<OPERATOR_KEY>` reads as `server` and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`.
- * `<OPERATOR_KEY:f>` reads as the server key followed by the emulator key tweaked by `f`'s Arkade
- * Script, or the tweaked emulator key alone in a CSV leaf, until arkd and the emulator share one
- * operator key.
+ * `<OPERATOR_KEY>` reads as the `operatorKey` param and `<OPERATOR_EXIT_DELAY>` as the
+ * `OPERATOR_EXIT_DELAY` param. Programs built by SDK 0.5.15 and earlier name them `server` and
+ * `SERVER_EXIT_DELAY`, and args may pass either name. `<OPERATOR_KEY:f>` reads as the operator
+ * key followed by the emulator key tweaked by `f`'s Arkade Script, or the tweaked emulator key
+ * alone in a function with a CSV, until arkd and the emulator share one operator key.
  */
 export function programFromArtifact(
     artifact: ContractArtifact,
@@ -749,18 +750,21 @@ function readArtifact(
         }
     }
 
-    // ponytail: 0.1.0 frees these names; they move to `operator`/`OPERATOR_EXIT_DELAY`, which it
-    // reserves, with the single operator key migration.
+    // The SDK binds the operator key and exit delay. Their names in SDK 0.5.15 and earlier stay
+    // reserved too, because args may still pass them.
+    const reserved = ["operatorKey", "OPERATOR_EXIT_DELAY", "server", "SERVER_EXIT_DELAY"];
     for (const input of artifact.constructorInputs) {
-        if (isNamed(input) && (input.name === "server" || input.name === "SERVER_EXIT_DELAY")) {
+        if (isNamed(input) && reserved.includes(input.name)) {
             fail(`constructor input '${input.name}' is reserved by the SDK; rename it`);
         }
     }
     const params: InputDef[] = [
         ...artifact.constructorInputs.flatMap((input) => flatten(input, structsByName, budget)),
-        { name: "server", type: "pubkey" },
-        ...(Object.values(functions).some((fn) => fn.tapscript.csv?.value === "$SERVER_EXIT_DELAY")
-            ? [{ name: "SERVER_EXIT_DELAY", type: "int" as const }]
+        { name: "operatorKey", type: "pubkey" },
+        ...(Object.values(functions).some(
+            (fn) => fn.tapscript.csv?.value === "$OPERATOR_EXIT_DELAY",
+        )
+            ? [{ name: "OPERATOR_EXIT_DELAY", type: "int" as const }]
             : []),
         ...[...instantiations.keys()].map((name) => ({
             name,

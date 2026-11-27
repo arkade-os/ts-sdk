@@ -133,7 +133,7 @@ export function instantiate(
             `unknown artifact ${(construction.definition as { artifact: string }).artifact}`,
         );
     const operatorKey = hex.decode(keys.operatorPubkey).subarray(1);
-    const args: Record<string, Value> = { server: operatorKey };
+    const args: Record<string, Value> = { operatorKey };
     for (const [field, binding] of Object.entries(construction.arguments)) {
         if (typeof binding === "string") {
             const value = variables[binding.slice(1, -1)];

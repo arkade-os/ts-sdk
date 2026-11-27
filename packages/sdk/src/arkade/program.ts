@@ -273,7 +273,7 @@ export function resolveCsvTimelock(
  * Resolve an `asm` array to bytes: substitute `$param` placeholders from `bind`,
  * pass everything else (opcode names, numbers, raw byte pushes) through to the
  * Arkade script encoder. The SDK does not interpret opcodes — this is pure
- * substitution + encoding. To embed a signer key (server, user, or any
+ * substitution + encoding. To embed a signer key (`operatorKey`, `user`, or any
  * other), pass it as a `$param` in the constructor args. Compiler `<...>`
  * placeholders are normalized by {@link programFromArtifact} before this step.
  */
@@ -447,6 +447,47 @@ export function validateProgram(program: Program, args: Record<string, ArkadePar
     }
 }
 
+/** The params the SDK binds itself, by name, with the name SDK 0.5.15 and earlier used. */
+const RESERVED_PARAMS = { operatorKey: "server", OPERATOR_EXIT_DELAY: "SERVER_EXIT_DELAY" };
+
+/**
+ * The name `program` declares a reserved param under: its own name, or the old one in a program
+ * built by SDK 0.5.15 or earlier. A program that declares both keeps the old one reserved.
+ */
+export function declaredParamName(
+    program: Program,
+    name: keyof typeof RESERVED_PARAMS,
+): string | undefined {
+    const declared = (program.params ?? []).map((p) => p.name);
+    const old = RESERVED_PARAMS[name];
+    return declared.includes(old) ? old : declared.includes(name) ? name : undefined;
+}
+
+/**
+ * `args` with each reserved param under the name `program` declares, so `server` and
+ * `SERVER_EXIT_DELAY` still bind a program that declares `operatorKey` and `OPERATOR_EXIT_DELAY`,
+ * and the new names bind a program that declares the old ones. Passing both names throws.
+ */
+export function withDeclaredParamNames<T>(
+    program: Program,
+    args: Record<string, T>,
+): Record<string, T> {
+    let out = args;
+    for (const name of Object.keys(RESERVED_PARAMS) as (keyof typeof RESERVED_PARAMS)[]) {
+        const to = declaredParamName(program, name);
+        const from = to === name ? RESERVED_PARAMS[name] : name;
+        // Read `args`, not the copy: the copy drops inherited values, which must still bind.
+        if (!to || program.params?.some((p) => p.name === from) || args[from] === undefined) {
+            continue;
+        }
+        if (args[to] !== undefined) throw new Error(`program: pass '${to}' or '${from}', not both`);
+        if (out === args) out = Object.assign(Object.create(null), args);
+        out[to] = args[from];
+        delete out[from];
+    }
+    return out;
+}
+
 // --- Compilation -----------------------------------------------------------
 
 /** The signer keys a program is compiled against. */
@@ -545,12 +586,14 @@ function compileFunctions(
         throw new Error("ArkadeContract: program has no functions");
     }
     validateProgram(program, args);
+    const operatorKey = declaredParamName(program, "operatorKey");
+    const operatorArg = operatorKey === undefined ? undefined : args[operatorKey];
     if (
-        args.server !== undefined &&
-        (!(args.server instanceof Uint8Array) || !equalBytes(args.server, keys.serverKey))
+        operatorArg !== undefined &&
+        (!(operatorArg instanceof Uint8Array) || !equalBytes(operatorArg, keys.serverKey))
     ) {
         throw new Error(
-            "ArkadeContract: reserved server parameter must match the contract server key",
+            `ArkadeContract: reserved ${operatorKey} parameter must match the contract's operator key`,
         );
     }
     const defs = names.map((n) => functions[n]);
@@ -635,14 +678,18 @@ function compileFunctions(
 export class ArkadeProgramScript extends VtxoScript {
     /** Spending paths in declaration order. */
     readonly compiled: CompiledProgramFunction[];
+    /** The constructor args, with each reserved param under the name `program` declares. */
+    readonly args: Record<string, ArkadeParamValue>;
 
     constructor(
         readonly program: Program,
-        readonly args: Record<string, ArkadeParamValue>,
+        args: Record<string, ArkadeParamValue>,
         readonly keys: ProgramKeys,
     ) {
-        const partial = compileFunctions(program, args, keys);
+        const bound = withDeclaredParamNames(program, args);
+        const partial = compileFunctions(program, bound, keys);
         super(partial.map((p) => p.leafScript));
+        this.args = bound;
         this.compiled = partial.map((p) => ({
             ...p,
             tapLeafScript: this.findLeaf(hex.encode(p.leafScript)),
@@ -878,7 +925,7 @@ function parseTypedArgValue(name: string, type: ArkadeArgType, v: unknown): Arka
 /** Serialize {@link ArkadeContractParams} to the string map `Contract.params` requires. */
 export function serializeArkadeContractParams(typed: ArkadeContractParams): Record<string, string> {
     const args: Record<string, string | number> = Object.create(null);
-    for (const [k, v] of Object.entries(typed.args)) {
+    for (const [k, v] of Object.entries(withDeclaredParamNames(typed.program, typed.args))) {
         args[k] = serializeArgValue(v);
     }
     return {

@@ -31,12 +31,12 @@
  *         { name: "hash", type: "bytes20" },
  *         { name: "receiver", type: "pubkey" },
  *         { name: "amount", type: "int" },
- *         { name: "server", type: "pubkey" },
+ *         { name: "operatorKey", type: "pubkey" },
  *     ],
  *     functions: {
  *         claim: {
  *             tapscript: {
- *                 signers: ["$server"],
+ *                 signers: ["$operatorKey"],
  *                 asm: ["HASH160", "$hash", "EQUAL"],
  *                 inputs: [{ name: "preimage", type: "bytes" }],
  *                 witness: ["preimage"],
@@ -47,7 +47,7 @@
  * } satisfies Program;
  *
  * const arkade = await Arkade.connect({ arkade: ark, emulator, indexer, identity, network });
- * // `server` is declared in `params`, so it defaults to the client's operator key.
+ * // `operatorKey` is declared in `params`, so it defaults to the client's operator key.
  * const htlc = arkade.contract(htlcProgram, { hash, receiver, amount: 10_000n });
  * // `preimage` is typed Uint8Array; calling `claim()` with no args is a type error.
  * const { txid } = await htlc.functions.claim({ tapscript: [preimage] }).to(receiver, 10_000n).send();
@@ -118,10 +118,12 @@ import { resolveArkadeService, type ArkadeService, type ResolvedArkadeService } 
 import { instantiatedContracts } from "./artifact";
 import {
     ArkadeProgramScript,
+    declaredParamName,
     deserializeArkadeContractParams,
     serializeArkadeContractParams,
     witnessRefToBytes,
     validateParamValue,
+    withDeclaredParamNames,
     type ArkadeArgValue,
     type ArkadeFunction,
     type ArkadeParamValue,
@@ -626,35 +628,36 @@ export class Arkade {
      * Instantiate a contract from a program and its constructor arguments. `const` inference keeps
      * the program's literal type, so `functions` is strongly typed.
      *
-     * Declared `server`/`user` params default to the client's keys. Compiler
+     * Declared `operatorKey`/`user` params default to the client's keys. Compiler
      * artifacts reserve the operator key and exit delay to the connected operator,
      * and the witness program of each contract they instantiate to the derived one
-     * (see {@link ArkadeContract}'s constructor).
+     * (see {@link ArkadeContract}'s constructor). A program built by SDK 0.5.15 or earlier
+     * declares `server` and `SERVER_EXIT_DELAY`, and `args` may pass either name.
      * Struct and array params are passed whole by name (see {@link ArkadeNestedValue}).
      */
     contract<const P extends Program>(
         program: P,
         args: Record<string, ArkadeNestedValue> = {},
     ): ArkadeContract<P> {
+        args = withDeclaredParamNames(program, args);
         const declared = (program.params ?? []).map((p) => p.name);
-        if (declared.includes("server") && args.server === undefined) {
-            args = { ...args, server: this.serverKey };
+        const operatorKey = declaredParamName(program, "operatorKey");
+        if (operatorKey && args[operatorKey] === undefined) {
+            args = { ...args, [operatorKey]: this.serverKey };
         }
         if (declared.includes("user") && args.user === undefined && this.userKey) {
             args = { ...args, user: this.userKey };
         }
-        if (declared.includes("SERVER_EXIT_DELAY")) {
+        const exitDelay = declaredParamName(program, "OPERATOR_EXIT_DELAY");
+        if (exitDelay) {
             const sequence = exitDelaySequence(this.serverExitDelay);
-            if (
-                args.SERVER_EXIT_DELAY !== undefined &&
-                args.SERVER_EXIT_DELAY !== sequence &&
-                args.SERVER_EXIT_DELAY !== Number(sequence)
-            ) {
+            const passed = args[exitDelay];
+            if (passed !== undefined && passed !== sequence && passed !== Number(sequence)) {
                 throw new Error(
-                    "compiler artifact: reserved SERVER_EXIT_DELAY must match the connected server",
+                    `compiler artifact: reserved ${exitDelay} must match the connected operator`,
                 );
             }
-            args = { ...args, SERVER_EXIT_DELAY: sequence };
+            args = { ...args, [exitDelay]: sequence };
         }
         return new ArkadeContract(this, program, args);
     }
@@ -695,7 +698,9 @@ export class ArkadeContract<P extends Program = Program> {
         keys?: ProgramKeys,
     ) {
         this.args = Object.create(null);
-        for (const [name, value] of Object.entries(args)) flattenValue(name, value, this.args);
+        for (const [name, value] of Object.entries(withDeclaredParamNames(program, args))) {
+            flattenValue(name, value, this.args);
+        }
         this.keys = keys ?? {
             serverKey: client.serverKey,
             userKey: client.userKey,
@@ -1431,7 +1436,7 @@ function witnessBytes(
     return witnessRefToBytes(ref, args[segment], contract.args);
 }
 
-/** The server exit delay as the BIP68 sequence `<SERVER_EXIT_DELAY>` binds. */
+/** The operator's exit delay as the BIP68 sequence `<OPERATOR_EXIT_DELAY>` binds. */
 function exitDelaySequence(delay: bigint | undefined): bigint {
     if (delay === undefined || delay <= 0n)
         throw new Error("compiler artifact: server must provide a positive unilateral exit delay");
@@ -1457,7 +1462,9 @@ function instantiate(
 ): void {
     const defs = new Map((program.params ?? []).map((def) => [def.name, def]));
     for (const [param, child] of Object.entries(instantiatedContracts(program))) {
-        const childArgs: Record<string, ArkadeParamValue> = { server: keys.serverKey };
+        const childArgs: Record<string, ArkadeParamValue> = {
+            [declaredParamName(child.program, "operatorKey") ?? "operatorKey"]: keys.serverKey,
+        };
         for (const [name, from] of Object.entries(child.args)) {
             if (typeof from !== "string") {
                 childArgs[name] = from;
@@ -1471,9 +1478,8 @@ function instantiate(
             validateParamValue(defs.get(from)!, value);
             childArgs[name] = value;
         }
-        if (child.program.params?.some((p) => p.name === "SERVER_EXIT_DELAY")) {
-            childArgs.SERVER_EXIT_DELAY = exitDelaySequence(exitDelay);
-        }
+        const delayName = declaredParamName(child.program, "OPERATOR_EXIT_DELAY");
+        if (delayName) childArgs[delayName] = exitDelaySequence(exitDelay);
         instantiate(child.program, childArgs, keys, exitDelay);
         const key = new ArkadeProgramScript(child.program, childArgs, keys).tweakedPublicKey;
         const passed = args[param];

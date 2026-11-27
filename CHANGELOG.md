@@ -12,6 +12,14 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **`programFromArtifact` refuses a constructor parameter named `operatorKey`.** The SDK now declares the operator key under that name (see Features), so a parameter of that name would collide with it. Compiler 0.1.0 accepts the name, and [compiler#327](https://github.com/arkade-os/compiler/issues/327) proposes reserving it. Rename the parameter in the source and recompile. Saved contracts are not affected, because a stored row holds its program and never reads the artifact again.
+
+### Features
+
+- **Programs name the operator key `operatorKey` and the exit delay `OPERATOR_EXIT_DELAY`.** The SDK declared them as `server` and `SERVER_EXIT_DELAY`, while the compiler's placeholders are `<OPERATOR_KEY>` and `<OPERATOR_EXIT_DELAY>`. `programFromArtifact` now declares the new names. The old ones still work: args may pass either name, whichever the program declares, and passing both throws. A program that declares the old names, such as one stored by SDK 0.5.15 or written by hand, keeps them, so stored contracts load unchanged and no address changes. A new row stores the names its program declares. `ProgramKeys.serverKey` and the `serverKey` a row stores are unchanged. A hand-written program that declares `operatorKey` and not `server` now has it bound to the operator key, as `server` is. In SDK 0.5.15 and earlier, `ArkadeContract.fromContract` cannot load a row stored by this release whose program instantiates other contracts.
+
 ### Bug Fixes
 
 - **The Executor refuses a `renewalWindow` under 180 seconds.** Only an upper bound existed, so `registerBoarding` and `registerRenewal` accepted `0`, a negative or a tiny window. The wallet steps in for a coin at a live renewal contract only at half the window, so such a window left it no time to act before the coin was swept, and the coin was recovered only afterwards. Half of 180 s covers one 60 s settlement poll and a batch round. Both calls now throw `renewalWindow Ns must be at least 180s`, as for a window not shorter than the operator's VTXO expiry. A stored watch with such a window is no longer refreshed: `registerRenewal` skips it with a warning and the wallet renews its coins itself. `ExecutorWatchRegistration.address` is documented as the delegated address, onchain for boarding and an Arkade address for renewal.

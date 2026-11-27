@@ -104,7 +104,7 @@ describe("reading an arkadec artifact", () => {
             expect(program.params![0]).toEqual({ name: "value", type });
             expect(program.functions.spend.arkadeScript?.inputs).toEqual([{ name: "input", type }]);
             const keys = { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY };
-            const args = { value, server: SERVER_KEY };
+            const args = { value, operatorKey: SERVER_KEY };
             const script = new ArkadeProgramScript(program, args, keys);
             const restored = deserializeArkadeContractParams(
                 serializeArkadeContractParams({ program, args, ...keys }),
@@ -283,14 +283,14 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
         );
-        expect(program.params?.map((param) => param.name)).toEqual(["SERVER_KEY", "server"]);
+        expect(program.params?.map((param) => param.name)).toEqual(["SERVER_KEY", "operatorKey"]);
         expect(program.functions.claim.arkadeScript?.asm[0]).toBe("$SERVER_KEY");
         expect(program.functions.claim.tapscript).toMatchObject({
-            signers: ["$SERVER_KEY", "$server"],
+            signers: ["$SERVER_KEY", "$operatorKey"],
             emulator: "claim",
             emulatorIndex: 2,
         });
-        expect(program.functions.exit.tapscript.signers).toEqual(["$SERVER_KEY", "$server"]);
+        expect(program.functions.exit.tapscript.signers).toEqual(["$SERVER_KEY", "$operatorKey"]);
     });
 
     it("keeps every leaf in a multi-leaf covenant group", () => {
@@ -568,7 +568,7 @@ describe("reading an arkadec artifact", () => {
             { name: "votes.0", type: "bool" },
             { name: "votes.1", type: "bool" },
             { name: "exit", type: "int" },
-            { name: "server", type: "pubkey" },
+            { name: "operatorKey", type: "pubkey" },
         ]);
         expect(program.functions.spend.arkadeScript?.witness).toEqual([
             "request.threshold",
@@ -670,7 +670,7 @@ describe("reading an arkadec artifact", () => {
             "policies.1.owners.0.vout",
             "policies.1.owners.1.txid",
             "policies.1.owners.1.vout",
-            "server",
+            "operatorKey",
         ]);
         expect(program.functions.spend.arkadeScript!.witness).toEqual(names.slice(0, 6).reverse());
     });
@@ -831,7 +831,7 @@ describe("reading an arkadec artifact", () => {
             }),
         );
         expect(program.functions.race.tapscript.signers).toEqual([
-            "$server",
+            "$operatorKey",
             { tweak: "$insurer", fn: "claim" },
         ]);
         const script = new ArkadeProgramScript(
@@ -899,7 +899,7 @@ describe("reading an arkadec artifact", () => {
         expect(Object.keys(program.functions)).toEqual(["claim", "race"]);
         expect(program.functions.claim.tapscript.emulator).toBe("claim");
         expect(program.functions.race.tapscript).toMatchObject({
-            signers: ["$server", { tweak: "$insurer", fn: "claim" }],
+            signers: ["$operatorKey", { tweak: "$insurer", fn: "claim" }],
             emulator: null,
         });
         expect(program.functions.race.arkadeScript).toEqual(program.functions.claim.arkadeScript);
@@ -955,7 +955,7 @@ describe("reading an arkadec artifact", () => {
         const keys = { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY };
         const script = new ArkadeProgramScript(program, args, keys);
         expect(program.functions.claim.tapscript.emulatorIndex).toBe(position);
-        expect(program.functions.claim.tapscript.signers).toEqual(["$server", "$owner"]);
+        expect(program.functions.claim.tapscript.signers).toEqual(["$operatorKey", "$owner"]);
         expect(script.compiled[0].leafScript).toEqual(
             assemble(asm, {
                 SERVER_KEY,
@@ -1132,6 +1132,16 @@ describe("reading an arkadec artifact", () => {
             "a constructor input named SERVER_EXIT_DELAY",
             demo({ constructorInputs: [{ name: "SERVER_EXIT_DELAY", type: "int" }] }),
             /'SERVER_EXIT_DELAY' is reserved by the SDK/,
+        ],
+        [
+            "a constructor input named operatorKey",
+            demo({ constructorInputs: [{ name: "operatorKey", type: "pubkey" }] }),
+            /'operatorKey' is reserved by the SDK/,
+        ],
+        [
+            "a constructor input named OPERATOR_EXIT_DELAY",
+            demo({ constructorInputs: [{ name: "OPERATOR_EXIT_DELAY", type: "int" }] }),
+            /'OPERATOR_EXIT_DELAY' is reserved by the SDK/,
         ],
         [
             "an operator key in a covenant",
