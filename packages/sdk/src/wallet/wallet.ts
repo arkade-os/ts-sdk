@@ -372,9 +372,9 @@ export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 
-/** The Executor expires a watch that never held a coin after 168h; daily keeps that margin. */
+/** The executor expires a watch that never held a coin after 168h; daily keeps that margin. */
 const EXECUTOR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
-/** Wallet-state setting: when the Executor last answered a refresh, in unix ms. */
+/** Wallet-state setting: when the executor last answered a refresh, in unix ms. */
 const EXECUTOR_REFRESHED_KEY = "executorRefreshedAt";
 /** How long a failed registration of the receive key's twin waits before the poll tries again. */
 const EXECUTOR_RECEIVE_RETRY_MS = 10 * 60 * 1000;
@@ -691,7 +691,7 @@ export interface BoardingUtxoGroup {
     /** CSV exit timelock decoded from THIS tapscript's exit leaf. */
     csvTimelock: RelativeTimelock;
     coins: ExtendedCoin[];
-    /** A live Executor boarding watch: the Executor boards these, settle leaves them alone. */
+    /** A live executor boarding watch: the executor boards these, settle leaves them alone. */
     delegated?: true;
 }
 
@@ -1031,7 +1031,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Arkade's retired delegator keys when this wallet's operator is Arkade's and it has an
-     * Executor: apps that drop `delegateUrl` do so to move to it. Discovery only.
+     * executor: apps that drop `delegateUrl` do so to move to it. Discovery only.
      */
     protected retiredDelegateKeys(): Uint8Array[] {
         if (!this.executorProvider) return [];
@@ -1134,7 +1134,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Fired after boarding rotation, or a new onchain contract such as an Executor boarding watch,
+     * Fired after boarding rotation, or a new onchain contract such as an executor boarding watch,
      * so a live {@link notifyIncomingFunds} watcher re-subscribes to the fresh address in-session
      * instead of missing deposits until its next re-init.
      */
@@ -1393,7 +1393,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * The wallet's own address, under its own key: what its hrp and operator key are read from.
      * Not where to receive; that is {@link getAddress}, which answers the delegated twin once the
-     * Executor watches this key.
+     * executor watches this key.
      */
     get arkAddress(): ArkAddress {
         return this.offchainTapscript.address(this.network.hrp, this.arkServerPublicKey);
@@ -1413,7 +1413,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Returns the Arkade address to receive at: the delegated twin of the current receive key
-     * while its Executor renewal watch is live, so the Executor renews what lands here while the
+     * while its executor renewal watch is live, so the executor renews what lands here while the
      * wallet is offline; the wallet's own address otherwise. See
      * {@link IExecutorManager.registerRenewal}.
      *
@@ -1428,8 +1428,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Where receives go under `serverPubKey`: the live Executor renewal watch of the receive key
-     * (the delegated twin), else `own`. With `amount`, a twin the Executor cannot renew it at
+     * Where receives go under `serverPubKey`: the live executor renewal watch of the receive key
+     * (the delegated twin), else `own`. With `amount`, a twin the executor cannot renew it at
      * (`maxFee + dust` or less) gives way to `own`. Fail-open: a lookup must not fail a receive.
      *
      * Callers read `own` and `serverPubKey` before their first await, then pass them here.
@@ -1452,15 +1452,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return own;
     }
 
-    /** Whether the Executor can renew `amount` at `watch`: not for `maxFee + dust` or less. */
+    /** Whether the executor can renew `amount` at `watch`: not for `maxFee + dust` or less. */
     protected renews(watch: DelegatedContractWatch, amount: bigint): boolean {
         return amount > BigInt(watch.contract.params.maxFee) + this.dustAmount;
     }
 
     /**
-     * Returns the onchain boarding address used to move funds into Arkade: with an Executor
+     * Returns the onchain boarding address used to move funds into Arkade: with an executor
      * configured and a boarding watch registered, the delegated boarding address, whose deposits
-     * the Executor boards into the wallet's renewal contract while the wallet is offline.
+     * the executor boards into the wallet's renewal contract while the wallet is offline.
      */
     async getBoardingAddress(): Promise<string> {
         return (
@@ -1484,7 +1484,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * The Executor contracts of this wallet's keys, most recently registered first: the
+     * The executor contracts of this wallet's keys, most recently registered first: the
      * identity's, or one its `signingDescriptor` derives. Read from the contract repository, not
      * the contract manager: a boarding or renewal read must not start its indexer sync. Reads
      * follow registrations made through any wallet front-end.
@@ -1499,7 +1499,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
     }
 
-    /** Encoded tap trees of the live boarding watches, whose deposits the Executor boards. */
+    /** Encoded tap trees of the live boarding watches, whose deposits the executor boards. */
     protected async liveDelegatedBoardingTrees(): Promise<Set<string>> {
         return new Set(
             (await this.delegatedExecutorContracts("boarding"))
@@ -2120,8 +2120,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 console.warn("Skipping malformed boarding contract", c.script, e);
             }
         }
-        // Deposits at the Executor's boarding addresses are the wallet's until boarded: shown, and
-        // exited through the owner's leaf if the Executor never boards them.
+        // Deposits at the executor's boarding addresses are the wallet's until boarded: shown, and
+        // exited through the owner's leaf if the executor never boards them.
         for (const c of await this.delegatedExecutorContracts("boarding")) {
             if (allowed.has(c.signer)) add(c.script);
         }
@@ -2249,7 +2249,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, an
-     * unresolved intent locks or a live Executor watch leaves to the Executor, for SDK picks. The getter itself lists them: callers that mirror it
+     * unresolved intent locks or a live executor watch leaves to the executor, for SDK picks. The getter itself lists them: callers that mirror it
      * (the worker's cache and broadcasts, balances) must not see a settle's inputs vanish, and then
      * stay gone if it fails.
      */
@@ -2919,7 +2919,7 @@ export class Wallet
 
     private _receiveRotatorInstalled = false;
 
-    /** Rotates the boarding address once the Executor boards a deposit at it. */
+    /** Rotates the boarding address once the executor boards a deposit at it. */
     private _executorBoardUnsub?: () => void;
     private _executorBootInstalled = false;
     private _executorBoardChain: Promise<void> = Promise.resolve();
@@ -3081,7 +3081,7 @@ export class Wallet
      * {@link maybeRotateBoardingAfterBoard} on every settle consuming a boarding UTXO; retired
      * addresses stay reachable through {@link getBoardingUtxos}.
      *
-     * While an Executor boarding watch is live, the new key gets a watch of its own, and this
+     * While an executor boarding watch is live, the new key gets a watch of its own, and this
      * returns its delegated address; if that registration fails or times out, the new key's own
      * address. It waits for the registration, unlike the rotation after a settle.
      *
@@ -3090,7 +3090,7 @@ export class Wallet
      * each. Note the difference in display behaviour: this method *swaps* the
      * advertised boarding address, where `getNewAddresses` mints side
      * addresses and leaves {@link getBoardingAddress} alone. It also registers
-     * no Executor watch: a deposit at its boarding address waits for this
+     * no executor watch: a deposit at its boarding address waits for this
      * wallet's own settle. To keep this method's behaviour, keep calling this
      * method.
      */
@@ -3100,7 +3100,7 @@ export class Wallet
     }
 
     /**
-     * Allocate the next boarding key, register its Executor watch, then swap the display.
+     * Allocate the next boarding key, register its executor watch, then swap the display.
      * Persisted before the swap, so a throw leaves the previous (watched) address displayed. The
      * row is tagged at allocation: a restart before the swap boots on the new key's own address,
      * as after a failed registration.
@@ -3134,7 +3134,7 @@ export class Wallet
     }
 
     /**
-     * Register the most recently registered live Executor boarding watch again for a rotated
+     * Register the most recently registered live executor boarding watch again for a rotated
      * key, so its deposits are boarded while the wallet is offline too. Not the displayed key's
      * own watch: it may have none, and the parameters are wallet policy. While renewal is on, the
      * registration pairs a renewal watch with it, after the boarding one, whose failure it never
@@ -3157,7 +3157,7 @@ export class Wallet
     }
 
     /**
-     * @internal Register the Executor twin of the receive key at `descriptor`, under the params
+     * @internal Register the executor twin of the receive key at `descriptor`, under the params
      * of {@link delegationSource}: none means the app never opted in, and nothing is done.
      * Only the displayed key gets one: look-ahead addresses may have been issued to others and
      * are not delegated. Never throws: on failure the own address is shown until
@@ -3201,7 +3201,7 @@ export class Wallet
      * - the displayed receive key gets its twin when a rotation could not register one, or a new
      *   one when the app registered renewal with other params since.
      *
-     * A failure is not tried again for a few minutes, as the Executor may be down.
+     * A failure is not tried again for a few minutes, as the executor may be down.
      */
     private syncReceiveDelegation(): Promise<void> {
         const executor = this._executorManager;
@@ -3243,8 +3243,8 @@ export class Wallet
     }
 
     /**
-     * Startup work for an Executor: refresh its watches (every wallet), then, with a descriptor
-     * provider, rotate-on-board. The Executor boards a deposit into the renewal contract of its
+     * Startup work for an executor: refresh its watches (every wallet), then, with a descriptor
+     * provider, rotate-on-board. The executor boards a deposit into the renewal contract of its
      * key, so a coin there while that key is displayed means the address was used. Renewals and a
      * delegated coin's change land there too, and the trigger is still correct.
      */
@@ -3280,8 +3280,8 @@ export class Wallet
     }
 
     /**
-     * @internal Register again the Executor watches the service let lapse, see
-     * {@link ExecutorManagerImpl.refreshWatches}; runs at startup for every wallet with an Executor
+     * @internal Register again the executor watches the service let lapse, see
+     * {@link ExecutorManagerImpl.refreshWatches}; runs at startup for every wallet with an executor
      * and from the poll of the {@link VtxoManager} every cycle. At most once a day, reloads
      * included. Its writes go on the board chain, so they never interleave a rotation's
      * registration, and a rotation waits for one write at most. Concurrent calls share one run.
@@ -3308,7 +3308,7 @@ export class Wallet
             this._executorRefreshedAt = Math.max(this._executorRefreshedAt, stored);
             if (Date.now() - this._executorRefreshedAt < EXECUTOR_REFRESH_INTERVAL_MS) return;
         }
-        // Stamped before the call: an unreachable Executor is tried again next interval, not
+        // Stamped before the call: an unreachable executor is tried again next interval, not
         // every poll. Stored only once it answered, so a reload retries a failed refresh.
         const at = Date.now();
         this._executorRefreshedAt = at;
@@ -4081,7 +4081,7 @@ export class Wallet
     }
 
     /**
-     * The delegations of the persisted Executor contracts, owner aside, so restore finds them at
+     * The delegations of the persisted executor contracts, owner aside, so restore finds them at
      * every key: {@link watchExecutorContracts} before `restore()` covers the rotated ones too.
      */
     private async executorWatchTemplates(): Promise<ExecutorWatchTemplate[]> {
@@ -4706,7 +4706,7 @@ export class Wallet
         return this._delegateManager;
     }
 
-    /** Returns the Executor manager when an Executor is configured. */
+    /** Returns the executor manager when an executor is configured. */
     async getExecutorManager(): Promise<IExecutorManager | undefined> {
         return this._executorManager;
     }
@@ -5153,7 +5153,7 @@ export class Wallet
      * consuming a boarding UTXO (a non-VTXO, non-arknote input) is the trigger. No-op without a
      * descriptor provider. Best-effort: the settle has committed, so failures are only logged.
      *
-     * With an Executor the rotation runs in the background, as its watch is a network round the
+     * With an executor the rotation runs in the background, as its watch is a network round the
      * settle (and the tx lock it holds) must not wait on. The old key's delegated address stays
      * displayed, still watched, until the new watch exists: the brief reuse is intended.
      */
@@ -5645,7 +5645,7 @@ export class Wallet
         const candidates = (await this.onchainCoins(manager))
             .filter(({ coin, contract, script }) => {
                 if (named) return named.has(vtxoOutpoint(coin));
-                // a live watch's deposits are the Executor's to board
+                // a live watch's deposits are the executor's to board
                 return (
                     isContractGenericallySpendable(contract) &&
                     !delegated.has(hex.encode(script.encode()))
@@ -7241,7 +7241,7 @@ export class Wallet
 
     /**
      * Change follows its inputs: a send spending a coin at a live renewal watch returns the change
-     * to that contract, so the Executor keeps renewing it. Otherwise it goes where receives go.
+     * to that contract, so the executor keeps renewing it. Otherwise it goes where receives go.
      * Fail-open: a send must not fail over a delegation lookup.
      */
     private async changeTapscriptFor(
@@ -7264,7 +7264,7 @@ export class Wallet
         return this.destinationTapscript(serverPubKey, own, BigInt(changeAmount));
     }
 
-    /** The live Executor renewal watches under `signer`, the operator's x-only key. */
+    /** The live executor renewal watches under `signer`, the operator's x-only key. */
     private async liveRenewalWatches(signer: string): Promise<DelegatedContractWatch[]> {
         return (await this.delegatedExecutorContracts("renewal")).filter(
             (w) => w.live && w.signer === signer,
@@ -7273,8 +7273,8 @@ export class Wallet
 
     /**
      * @internal Where the wallet's own renewals pay `amount`: {@link getAddress}, except for
-     * `maxFee + dust` or less, which the Executor cannot renew, and when any of `inputScripts`
-     * sits at a live renewal contract, whatever the reason: the Executor had its chance at that
+     * `maxFee + dust` or less, which the executor cannot renew, and when any of `inputScripts`
+     * sits at a live renewal contract, whatever the reason: the executor had its chance at that
      * coin, and paying it back there only repeats the miss. Both pay the wallet's own address.
      * Fail-open: a renewal must not fail over a delegation lookup.
      *

@@ -2163,7 +2163,7 @@ export class ContractManager implements IContractManager {
     }
 
     /**
-     * The onchain side of hydrating new Executor contracts: stores their coins, and the sync's
+     * The onchain side of hydrating new executor contracts: stores their coins, and the sync's
      * retarget adds their addresses to the onchain watch. Best-effort: the next sync retries.
      */
     private async syncNewOnchain(contracts: Contract[]): Promise<void> {

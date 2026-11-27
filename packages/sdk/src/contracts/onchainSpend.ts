@@ -158,7 +158,7 @@ export function assertCosignable(
 }
 
 /**
- * A boarding script: a `boarding` contract, an Executor boarding watch, or the `default` row an
+ * A boarding script: a `boarding` contract, an executor boarding watch, or the `default` row an
  * equal-delay boarding script coalesced onto (widened to `both`). Scope alone does not qualify: any
  * contract type may be onchain-scoped, and its coins are not the wallet's to re-board. A `default`
  * row's CSV must match the boarding CSV, which makes its script byte-identical to that key's

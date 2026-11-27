@@ -166,7 +166,7 @@ export function resolveEmulatorPubkey(network: Network, override?: string): stri
 }
 
 /**
- * Arkade's delegators, retired by the Executor, with the operator signers each co-signed under.
+ * Arkade's delegators, retired by the executor, with the operator signers each co-signed under.
  * Discovery still derives their `delegate` contracts so coins delegated before the switch are
  * found on restore; never used to mint. No regtest entry: each local stack has its own keys.
  */

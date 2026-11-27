@@ -736,7 +736,7 @@ const balance = await manager.getRecoverableBalance()
 
 ### Executor
 
-The Executor renews the wallet's virtual outputs and boards its deposits while the wallet is
+The executor renews the wallet's virtual outputs and boards its deposits while the wallet is
 offline. It is opt-in: without it the wallet behaves as before.
 
 ```typescript
@@ -754,7 +754,7 @@ await executor?.registerBoarding(params)
 await executor?.registerRenewal(params)
 ```
 
-Call both at every startup: they are idempotent, and the Executor expires a watch that never
+Call both at every startup: they are idempotent, and the executor expires a watch that never
 held a coin. See `registerBoarding` and `registerRenewal` for the details.
 
 #### Receiving
@@ -765,14 +765,14 @@ held a coin. See `registerBoarding` and `registerRenewal` for the details.
   when you show it, never store it.
 - `getOwnAddress()` is the wallet's own address, for anything bound to the wallet, such as an
   LNURL handle. On an HD wallet it rotates with the receive key.
-- `getBoardingAddress()` answers the delegated boarding address; the Executor boards a deposit
+- `getBoardingAddress()` answers the delegated boarding address; the executor boards a deposit
   there into the renewal contract.
 - Not delegated: look-ahead addresses and `getNewAddresses`. What lands there is renewed by the
   wallet itself.
 
 #### Trust and privacy
 
-- The Executor can delay a renewal or a board, not spend: it spends only through leaves the
+- The executor can delay a renewal or a board, not spend: it spends only through leaves the
   emulator enforces, which pay the wallet. The wallet keeps its own paths and renews a coin
   itself once half the `renewalWindow` is left.
 - It sees the amount and time of every payment to a twin, and can link an HD wallet's twins to
@@ -780,7 +780,7 @@ held a coin. See `registerBoarding` and `registerRenewal` for the details.
 
 ### Delegation
 
-> **Deprecated**: the delegator is retired; use the [Executor](#executor).
+> **Deprecated**: the delegator is retired; use the [executor](#executor).
 
 Delegation allows users to outsource virtual output renewal to a third-party delegation service.
 

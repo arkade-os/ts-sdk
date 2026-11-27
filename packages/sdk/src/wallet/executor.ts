@@ -66,7 +66,7 @@ export interface ExecutorWatchRegistration {
     templateId: string;
     /** The template's variables, canonical hex. */
     variables: Record<string, string>;
-    /** The Executor's keys the wallet's delegated contracts are derived from. */
+    /** The executor's keys the wallet's delegated contracts are derived from. */
     keys: ExecutorContractKeys;
     /** The parameters the contracts were derived from, exit delays resolved. */
     params: DelegationParams;
@@ -145,7 +145,7 @@ function registeredAt(contract: Contract): number {
 }
 
 /**
- * The wallet-owned Executor watches of one template, most recently registered first. A watch is
+ * The wallet-owned executor watches of one template, most recently registered first. A watch is
  * the wallet's when its owner is the identity key, or one the row's `signingDescriptor` derives;
  * it is live while the service reported it active and it has not expired.
  */
@@ -380,7 +380,7 @@ function statusMetadata(
 
 /**
  * What registering `watch` again takes: its own params and expiry, and its own emulator key,
- * checked against the pin or approved when first registered, so registering refuses an Executor
+ * checked against the pin or approved when first registered, so registering refuses an executor
  * that no longer holds it.
  */
 export function reRegistrationOf(watch: DelegatedContractWatch): {
@@ -475,7 +475,7 @@ function resolveParams(
 }
 
 /**
- * Registers Executor watches. Renewal keeps renewal-contract coins alive while the wallet is
+ * Registers executor watches. Renewal keeps renewal-contract coins alive while the wallet is
  * offline; boarding moves onchain deposits into the corresponding renewal contract.
  */
 export interface IExecutorManager {
@@ -483,17 +483,17 @@ export interface IExecutorManager {
     /** The default template ids; throws unless the service lists them as active. */
     defaultTemplates(): Promise<Record<ExecutorDefault, string>>;
     /**
-     * Watch the displayed boarding address's key: the Executor boards every deposit there
+     * Watch the displayed boarding address's key: the executor boards every deposit there
      * into the wallet's renewal contract, a virtual output the wallet spends and renews as its
      * own. The wallet watches both contracts. Without `expiresAt` the watch has no deadline of
-     * its own, but the Executor expires one that never receives a coin after an idle window: the
+     * its own, but the executor expires one that never receives a coin after an idle window: the
      * wallet registers it again while it is online. Registering again returns the existing watch
      * unchanged, from the stored row when it is the key's newest live watch under the same params:
-     * the Executor is not asked, and `delegation` is absent. An HD wallet registers a new watch
+     * the executor is not asked, and `delegation` is absent. An HD wallet registers a new watch
      * each time it rotates the boarding address.
      *
      * The address derives from the key, `params`, the operator's exit delays when `params` omits
-     * them, and the Executor's keys: registering again on a restored wallet finds the same watch
+     * them, and the executor's keys: registering again on a restored wallet finds the same watch
      * only while none of them changed. The returned `keys` and `params` restore it regardless,
      * through {@link watchExecutorContracts}.
      *
@@ -518,7 +518,7 @@ export interface IExecutorManager {
      * It then covers every live boarding watch under the current operator, each under its own
      * params, which is where its coins sit: the displayed key's earlier watches, and each earlier
      * rotated key's. A key whose renewal watch is already live, as stored, is not asked again.
-     * A watch under another emulator key than the Executor's, or with a window under 180s or not
+     * A watch under another emulator key than the executor's, or with a window under 180s or not
      * shorter than the operator's VTXO expiry, cannot be registered: it is skipped with a warning,
      * and the wallet renews its coins itself. The others are all tried before a failure is thrown,
      * and the error names the keys that failed, so a retry covers the rest.
@@ -526,7 +526,7 @@ export interface IExecutorManager {
      *
      * This is the opt-in to receiving under delegation. While the displayed receive key's renewal
      * watch is live, `getAddress()` answers that contract, the key's delegated twin, so the
-     * Executor renews what lands there while the wallet is offline: payments, change, `settle()`
+     * executor renews what lands there while the wallet is offline: payments, change, `settle()`
      * outputs, renewals and swap payouts and refunds all follow it. The wallet's own address
      * answers when there is no live twin. The address changes once, the first time a twin is live:
      * apps that store the output of `getAddress()` must not keep it. An HD wallet registers one
@@ -534,16 +534,16 @@ export interface IExecutorManager {
      * earlier is still renewed. Look-ahead addresses and `getNewAddresses` are not delegated, and
      * are covered from the wallet's own first renewal of what lands there.
      *
-     * The Executor sees the amount and time of every receipt at a twin, and with an HD wallet it
+     * The executor sees the amount and time of every receipt at a twin, and with an HD wallet it
      * can link the addresses of one wallet. It can delay a renewal, not spend.
      *
      * A send's change returns to the live renewal contract of its first delegated input, else goes
      * to `getAddress()`. The wallet's own renewals pay to `getAddress()`, unless the amount is
      * `maxFee + dust` or less. A renewal spending a coin at a live renewal contract pays to the
-     * wallet's own address instead: the Executor missed that coin, so paying it back repeats the
+     * wallet's own address instead: the executor missed that coin, so paying it back repeats the
      * miss. A renewal of a coin that carries assets is the exception to both: `settle()` places
      * assets only at `getAddress()`, so it pays that address, whatever the amount and wherever the
-     * coin sat. Under an Executor that keeps failing, a coin alternates: one fallback renewal out,
+     * coin sat. Under an executor that keeps failing, a coin alternates: one fallback renewal out,
      * one ordinary renewal back in.
      */
     registerRenewal(
@@ -563,7 +563,7 @@ interface RegistrationContext {
     server: string;
 }
 
-/** Client-side watch registration with the Executor. */
+/** Client-side watch registration with the executor. */
 export class ExecutorManagerImpl implements IExecutorManager {
     constructor(
         readonly executorProvider: ExecutorProvider,
@@ -695,7 +695,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
     }
 
     /**
-     * Register again the live watches the Executor no longer holds. It expires a client delegation
+     * Register again the live watches the executor no longer holds. It expires a client delegation
      * that never held a coin after an idle window, and reports no deadline for it: the row stays
      * live, and the wallet keeps advertising an address nobody watches. Registering an expired
      * watch again revives it at the same address, keeping its registration time: only an explicit
@@ -704,7 +704,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
      *
      * Only a watch the wallet still needs is revived: the displayed boarding and receive keys', the
      * most recently registered other key's, and a renewal watch whose contract holds an unspent
-     * coin, which the Executor must keep renewing while the wallet is offline. A lapsed watch of
+     * coin, which the executor must keep renewing while the wallet is offline. A lapsed watch of
      * any other key ends instead: it never held a coin, or none is left, and reviving it would
      * repeat for every rotation, forever.
      *
@@ -712,7 +712,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
      * them with its rotations holds those back for one write, never for the whole refresh.
      * `stopped` ends the refresh between watches, and turns a write still queued into a no-op.
      *
-     * Throws when a live watch is held and the Executor or the operator cannot be reached; a
+     * Throws when a live watch is held and the executor or the operator cannot be reached; a
      * wallet with none reaches neither.
      * @internal
      */
@@ -750,7 +750,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         }
     }
 
-    /** What the Executor says of `watch`; an unknown watch is a lost one, so "expired". */
+    /** What the executor says of `watch`; an unknown watch is a lost one, so "expired". */
     private async serviceStatus(
         context: RegistrationContext,
         template: ExecutorDefault,
@@ -995,7 +995,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         /** A refresh keeps the row's registration time, which picks the boarding address. */
         refresh = false,
     ): Promise<ExecutorWatchRegistration> {
-        // Pinned, as in Arkade.connect: holding the emulator key, the Executor could sign the
+        // Pinned, as in Arkade.connect: holding the emulator key, the executor could sign the
         // emulator-enforced leaf itself, past its covenant. Matching addresses cannot show it.
         const emulator = resolveEmulatorPubkey(network, emulatorPubkey);
         if (info.emulatorPubkey.toLowerCase() !== emulator) {

@@ -8,7 +8,7 @@ export type { ExecutorContractKeys };
 export interface ExecutorInfo extends ExecutorContractKeys {
     version: string;
     network: string;
-    /** Seals template secrets for this Executor; absent when it has no sealing key. */
+    /** Seals template secrets for this executor; absent when it has no sealing key. */
     sealingPubkey?: string;
 }
 
@@ -115,7 +115,7 @@ export interface ExecutorProvider {
     getTemplate?(id: string, options?: { signal?: AbortSignal }): Promise<ExecutorTemplateDetails>;
 }
 
-/** REST provider for the Executor, the service that renews and boards a wallet's coins. */
+/** REST provider for the executor, the service that renews and boards a wallet's coins. */
 export class RestExecutorProvider implements ExecutorProvider {
     constructor(public url: string) {}
 
@@ -272,7 +272,7 @@ export class RestExecutorProvider implements ExecutorProvider {
     }
 }
 
-/** Only the Executor's own NOT_FOUND says it lacks the record, not a proxy's 404 page. */
+/** Only the executor's own NOT_FOUND says it lacks the record, not a proxy's 404 page. */
 async function notFoundFailure(
     response: Response,
     what: string,
@@ -296,7 +296,7 @@ async function failure(
     );
 }
 
-/** A 429 is a rate limit unless it is the Executor's RESOURCE_EXHAUSTED: a store at its cap. */
+/** A 429 is a rate limit unless it is the executor's RESOURCE_EXHAUSTED: a store at its cap. */
 async function postErrorBody(url: string, response: Response): Promise<string> {
     let body: string | undefined;
     try {

@@ -324,7 +324,7 @@ export interface DiscoveryDeps {
     delegatePubKey?: Uint8Array;
     /** Retired delegators' keys (x-only). Discovery only, never minted. */
     retiredDelegatePubKeys?: Uint8Array[];
-    /** The wallet's Executor delegations, probed at every index; none when absent. */
+    /** The wallet's executor delegations, probed at every index; none when absent. */
     executorWatches?: readonly ExecutorWatchTemplate[];
 }
 
