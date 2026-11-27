@@ -483,8 +483,8 @@ export class Arkade {
     }
 
     /**
-     * Whether the operator itself cosigns `fn`. A leaf without the emulator splice goes to the
-     * operator only if each of its tweaked keys is the operator key tweaked by `fn`'s Arkade
+     * Whether the operator itself cosigns `fn`. A function without the emulator splice goes to
+     * the operator only if each of its tweaked keys is the operator key tweaked by `fn`'s Arkade
      * Script; one tweaking a constructor key, such as `<TWEAK:insurer:claim>`, stays with the
      * emulator.
      */
@@ -681,8 +681,8 @@ export class Arkade {
      * and the witness program of each contract they instantiate to the derived one
      * (see {@link ArkadeContract}'s constructor).
      * Struct and array params are passed whole by name (see {@link ArkadeNestedValue}).
-     * When the cosigner key is the operator's own, a leaf that names the operator key beside the
-     * cosigner key names the operator key only tweaked by its function's Arkade Script instead.
+     * When the cosigner key is the operator's own, a function that names the operator key beside
+     * the cosigner key names the operator key only tweaked by its Arkade Script instead.
      * The result's `program` is that rewritten one, which `register()` stores.
      */
     contract<const P extends Program>(

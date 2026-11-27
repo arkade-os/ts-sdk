@@ -158,7 +158,7 @@ async function seededWallet(program: arkade.Program) {
 
     const wallet = await Wallet.create({
         // Key 1: its x-only pubkey is TEST_PUB_KEY, the program's `$user`, so the
-        // router can actually sign the contract's `collab` leaf.
+        // router can actually sign the contract's `collab` function.
         identity: SingleKey.fromHex("00".repeat(31) + "01"),
         indexerProvider: offlineIndexer(),
         storage: { walletRepository, contractRepository },
@@ -235,7 +235,7 @@ describe("arkadetweak on wallet-level spends", () => {
         expect(getArkPsbtFields(checkpoint, 0, ArkadeScriptTweak)).toEqual([]);
     });
 
-    it("adds no field to an offchain send of a coin whose leaves all name the plain operator key", async () => {
+    it("adds no field to an offchain send of a coin whose functions all name the plain operator key", async () => {
         const { wallet, contract } = await seededWallet(plainOperatorKey);
         const submit = vi
             .spyOn(wallet.arkProvider, "submitTx")
@@ -282,7 +282,7 @@ describe("arkadetweak on wallet-level spends", () => {
         expect(getArkPsbtFields(tx, 0, ArkadeScriptTweak)).toEqual([[PAY_HASH]]);
     });
 
-    it("adds no onchain field when every leaf names the plain operator key", () => {
+    it("adds no onchain field when every function names the plain operator key", () => {
         const contract = contractFor(plainOperatorKey);
         const script = ArkadeContractHandler.createScript(contract.params);
         const path = ArkadeContractHandler.selectPath(script, contract, {

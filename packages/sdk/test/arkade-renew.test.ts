@@ -176,7 +176,7 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).not.toHaveBeenCalled();
     });
 
-    it("renews a contract whose leaf names the operator key only tweaked by its Arkade Script", async () => {
+    it("renews a contract whose function names the operator key only tweaked by its Arkade Script", async () => {
         const { ark, target, registerIntent } = await keeper(
             () =>
                 (async function* () {
@@ -428,7 +428,7 @@ describe("renewProgramContractOutputs", () => {
         expect(getArkPsbtFields(tx, 1, ConditionWitness)).toEqual([[PREIMAGE]]);
     });
 
-    it("reveals the other Arkade Script hashes on the proof input when a leaf names only the tweaked operator key", async () => {
+    it("reveals the other Arkade Script hashes on the proof input when a function names only the tweaked operator key", async () => {
         const { ark, target, registerIntent } = await keeper(() =>
             (async function* () {
                 throw new Error("stream closed");

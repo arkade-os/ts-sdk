@@ -117,7 +117,7 @@ export function emulatorInputIndexes(tx: Transaction): Set<number> {
     }
 }
 
-/** Emulator packet inputs the operator cosigns itself, mapped to the leaf keys that sign first. */
+/** Emulator packet inputs the operator cosigns itself, mapped to the keys that sign before it. */
 export function operatorCosignedInputs(
     tx: Transaction,
     operatorKeys: Uint8Array[],

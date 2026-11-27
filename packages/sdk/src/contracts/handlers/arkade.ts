@@ -34,7 +34,7 @@ function walletKeyFrom(context: PathContext): string | undefined {
     }
 }
 
-/** The `arkadetweak` field of a spend through `fn`, omitted when no leaf needs one. */
+/** The `arkadetweak` field of a spend through `fn`, omitted when no function needs one. */
 function tweaksOf(
     script: ArkadeProgramScript,
     fn: CompiledProgramFunction,

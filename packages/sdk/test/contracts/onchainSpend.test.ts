@@ -431,7 +431,7 @@ describe("emulator inputs", () => {
         expect(getArkPsbtFields(sent, 0, ConditionWitness)).toEqual([[preimage]]);
     });
 
-    it("finds the packet inputs whose leaf names an operator key tweaked by their script", () => {
+    it("finds the packet inputs whose function names an operator key tweaked by their script", () => {
         const tweakedB = computeArkadeScriptPublicKey(keyB, new Uint8Array([0x51]));
         const leaf = ConditionMultisigTapscript.encode({
             conditionScript: Script.encode(["SHA256", sha256(preimage), "EQUAL"]),
@@ -443,7 +443,7 @@ describe("emulator inputs", () => {
         expect(operatorCosignedInputs(tx, [keyA])).toEqual(new Map());
     });
 
-    it("ignores tweaked operator key bytes in the leaf condition", () => {
+    it("ignores tweaked operator key bytes in the function's condition", () => {
         const tweakedB = computeArkadeScriptPublicKey(keyB, new Uint8Array([0x51]));
         const leaf = ConditionMultisigTapscript.encode({
             conditionScript: Script.encode([

@@ -168,8 +168,8 @@ export const MAX_ARKADE_SCRIPT_TWEAKS = 16;
 
 /**
  * ArkadeScriptTweak reveals the hashes of the Arkade Scripts that tweak the operator's signer key
- * in leaves the input does not spend, so the operator can check the contract's script tree
- * without running those scripts.
+ * in functions the input does not spend through, so the operator can check the contract without
+ * running those scripts.
  *
  * Key: [0xde] || "arkadetweak". Value: 1 to 16 32-byte hashes, concatenated.
  */

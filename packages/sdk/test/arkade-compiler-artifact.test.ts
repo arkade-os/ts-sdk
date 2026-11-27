@@ -1334,7 +1334,7 @@ describe("tweakOperatorSigners", () => {
         );
     });
 
-    it("keeps every other key in order, across the leaves of one group", () => {
+    it("keeps every other key in order, across the functions of one group", () => {
         const [user, owner] = [pub(0x12), pub(0x13)];
         const program = programFromArtifact(
             demo({

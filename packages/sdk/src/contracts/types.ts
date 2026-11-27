@@ -401,7 +401,7 @@ export interface DerivedContractTapscripts {
     /** @deprecated Use {@link proofTapLeafScript}. */
     intentTapLeafScript?: TapLeafScript;
     tapTree: Bytes;
-    /** Arkade Script hashes a spend of the chosen leaf must reveal; absent when none needs one. */
+    /** Arkade Script hashes that a spend through the chosen function reveals; absent when none. */
     arkadeScriptTweaks?: Bytes[];
 }
 

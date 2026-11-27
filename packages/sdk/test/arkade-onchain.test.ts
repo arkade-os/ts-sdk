@@ -152,7 +152,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(Extension.fromBytes(ext).getEmulatorPacket()!.entries[0].vin).toBe(0);
     });
 
-    it("reveals the hash of a leaf that names only the tweaked operator key", async () => {
+    it("reveals the hash of a function that names only the tweaked operator key", async () => {
         const { ark } = await setup();
         const sweep = ["INSPECTVERSION", 2, "NUMEQUAL"] as arkade.AsmToken[];
         const contract = ark.contract(
@@ -247,7 +247,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
     });
 
-    it("routes a splice-free leaf to the operator only when it tweaks the operator key", async () => {
+    it("routes a splice-free function to the operator only when it tweaks the operator key", async () => {
         const { ark, submitOnchainTx, cosignOnchainTx } = await setup();
         const contract = ark.contract(
             {

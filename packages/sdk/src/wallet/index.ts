@@ -866,7 +866,7 @@ export type ExtendedVirtualCoin = TapLeaves &
 
 /**
  * The Arkade Script hashes a spend of this coin must reveal, so the operator can recognize its key,
- * tweaked by them, in the leaves the spend does not use. Absent when no leaf needs one.
+ * tweaked by them, in the functions the spend does not use. Absent when no function needs one.
  */
 export type ArkadeScriptTweaks = { arkadeScriptTweaks?: Bytes[] };
 

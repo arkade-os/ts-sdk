@@ -886,7 +886,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
         const tweakOnly = program({ signers: [{ tweak: "$server", fn: "pay" }], emulator: null });
         const payHash = arkade.arkadeScriptHash(arkade.resolveAsm(payTo, args));
 
-        it("reveals the Arkade Script hash of each other leaf that names only the tweaked operator key", async () => {
+        it("reveals the Arkade Script hash of each other function that names only the tweaked operator key", async () => {
             const { ark } = await connect();
             const contract = ark.contract(tweakOnly, { receiver, amount: AMOUNT, user });
             const { arkTx } = await ark
@@ -901,7 +901,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             expect(getArkPsbtFields(arkTx, 1, ArkadeScriptTweak)).toEqual([[payHash]]);
         });
 
-        it("adds no field when every forfeit leaf names the plain operator key", async () => {
+        it("adds no field when every function names the plain operator key", async () => {
             const { ark } = await connect();
             const contract = ark.contract(program({ signers: ["$server"] }), {
                 receiver,
@@ -1194,7 +1194,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             expect(captured.arkTx).toBeUndefined();
         });
 
-        it("sends a leaf naming only the tweaked operator key to the operator, whatever the contract's emulator key", async () => {
+        it("routes a function that names only the tweaked operator key to the operator, whatever the contract's emulator key", async () => {
             const { ark, captured, toOperator } = await connectToOperator(
                 "02" + hex.encode(pub(0x15)),
             );

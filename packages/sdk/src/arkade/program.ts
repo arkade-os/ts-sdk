@@ -658,9 +658,9 @@ export class ArkadeProgramScript extends VtxoScript {
 
     /**
      * Hashes of the contract's Arkade Scripts other than `spent`'s, which the emulator packet
-     * carries, for its input's `ArkadeScriptTweak` field: the operator checks that every forfeit
-     * leaf names its key, and recognizes a tweaked key only by a script hash it knows. Empty
-     * unless some forfeit leaf names the operator key only tweaked.
+     * carries, for its input's `ArkadeScriptTweak` field: the operator checks that every function
+     * without a CSV delay names its key, and recognizes a tweaked key only by a script hash it
+     * knows. Empty unless such a function names the operator key only tweaked.
      */
     arkadeScriptTweaks(spent: CompiledProgramFunction): Uint8Array[] {
         if (spent.def.tapscript.csv) return [];
@@ -669,7 +669,7 @@ export class ArkadeProgramScript extends VtxoScript {
         for (const { arkadeScript } of this.compiled) {
             if (arkadeScript) scripts.set(hex.encode(arkadeScript), arkadeScript);
         }
-        // The operator accepts a leaf on its plain key alone: only leaves without it need a tweak.
+        // A function that names the plain operator key needs no tweak revealed.
         const needed = new Map<string, Uint8Array>();
         for (const { def, leafScript } of this.compiled) {
             if (def.tapscript.csv) continue;
@@ -686,8 +686,8 @@ export class ArkadeProgramScript extends VtxoScript {
 }
 
 /**
- * For a cosigner key that is the operator's own: the leaf of a function with Arkade Script that
- * names `$server` beside the spliced cosigner names only `$server` tweaked by that script, in
+ * For a cosigner key that is the operator's own: a function with Arkade Script that names
+ * `$server` beside the spliced cosigner names only `$server` tweaked by that script, in
  * `$server`'s place. All else is unchanged.
  */
 export function tweakOperatorSigners<P extends Program>(program: P, keys: ProgramKeys): P {
@@ -722,7 +722,10 @@ export function tweakOperatorSigners<P extends Program>(program: P, keys: Progra
     return { ...program, functions } as P;
 }
 
-/** Whether `key` in `fn`'s leaf is the operator key, plain or tweaked by `fn`'s Arkade Script. */
+/**
+ * Whether `key`, named in `fn`'s Tapscript, is the operator key, plain or tweaked by `fn`'s
+ * Arkade Script.
+ */
 export function operatorSignsKey(
     fn: Pick<CompiledProgramFunction, "arkadeScript">,
     operatorKey: Uint8Array,
