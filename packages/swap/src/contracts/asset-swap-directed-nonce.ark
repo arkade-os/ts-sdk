@@ -13,17 +13,17 @@ contract AssetSwapDirectedNonce(
         @allow(self-comparison, "commits the nonce without imposing a spend condition")
         require(nonce == nonce);
         int i = this.activeInputIndex;
-        require(tx.outputs[i].assets.lookup(assetTxid, assetGroupIndex) >= amount);
+        require(tx.outputs[i].assets.lookup(AssetId { txid: assetTxid, gidx: assetGroupIndex }) >= amount);
         let paid = tx.outputs[i].script;
         require(paid.version == 1);
         require(paid.program == receiver);
     }
 
-    function fulfill(signature takerSig, signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([taker, server, emulator], [takerSig, serverSig, emulatorSig], 3));
+    function fulfill(signature takerSig, signature operatorSig) tapscript {
+        require(checkMultisig([taker, tweak(operator, fulfill)], [takerSig, operatorSig]));
     }
 
-    function cancel(signature userSig, signature serverSig) tapscript {
-        require(checkMultisig([user, server], [userSig, serverSig], 2));
+    function cancel(signature userSig, signature operatorSig) tapscript {
+        require(checkMultisig([user, operator], [userSig, operatorSig]));
     }
 }

@@ -22,9 +22,12 @@ style and have not been backfilled.
   deprecated, is spent through arkd: `submitTx`/`finalizeTx` (two-step),
   `cosignOnchainTx`, and `registerIntent`/`submitSignedForfeitTxs`. Any other
   covenant still goes through the emulator, as does a leaf without the
-  emulator splice that tweaks a constructor key (such as
-  `<TWEAK:insurer:claim>`) rather than the server's. A transaction or
-  renewal mixing the two is refused up front; spend them separately. Stored contracts keep
+  emulator splice that tweaks a constructor key rather than an operator key.
+  `Wallet.cosignOnchainTx` routes
+  each covenant input the same way, by whether its leaf names an arkd key
+  tweaked by its script, and drops the client's prevout txs before arkd,
+  which attaches its own and refuses duplicates. A transaction or renewal
+  mixing the two is refused up front; spend them separately. Stored contracts keep
   the key they were built with, so covenants on the old emulator key keep
   spending through the standalone emulator, which `{ network: "bitcoin" }`
   still wires. Against an arkd that does not run Arkade Script, new covenants
@@ -80,7 +83,8 @@ style and have not been backfilled.
   `new ArkadeContract(...)` derives it too, whatever the client's co-signer key.
   A leaf that names both keeps each where it stands, where the rewrite puts the
   tweaked key in the plain one's place. Without the option every artifact reads
-  as before.
+  as before. Under either read, `<OPERATOR_KEY:f>` in a leaf without a covenant
+  is refused.
 
 - **Arkade spends reveal the script hashes of a contract's other covenants.**
   arkd checks that every forfeit leaf of a spent VTXO's tree names its signer
@@ -121,6 +125,26 @@ style and have not been backfilled.
   other co-signers' PSBT signature entries before submission. arkd verifies
   the signatures before co-signing.
 
+- **`Arkade` routes a covenant leaf to arkd only when the leaf names an
+  operator key it holds.** `operatorCosignsLeaf` sent every leaf without the
+  emulator splice to arkd, even one naming no operator-tweaked key, such as
+  `[{ tweak: "$user", fn }, "$server"]`. The wallet-level onchain cosign sent
+  that same leaf to the emulator, so whichever service did not handle it
+  refused the spend. `send()`, `sendOnchain()` and
+  `renewProgramContractOutputs` now apply the wallet's test: the leaf names an
+  operator key, current or deprecated, tweaked by the leaf's own covenant.
+  `operatorCosignsLeaf` now takes only the compiled function.
+  `buildOnchain` also stops refusing a covenant leaf that keeps the plain
+  server key when arkd co-signs it. That refusal guarded the emulator's onchain
+  endpoint, which such a spend never reaches. It had blocked the onchain
+  `fulfill` of `@arkade-os/swap` offers on arkd's key.
+
+- **Onchain cosign replaces malformed Ark fields on an input.** Before setting
+  an owned input's taptree, condition witness and `arkadetweak` fields,
+  `prepareOwnedInput` dropped the old ones it could decode. A condition
+  witness whose value did not decode was kept next to the new one, and a
+  malformed `arkadetweak` threw. Fields are now matched by their key alone.
+
 - **Signer classification accepts operator info without deprecated signers.**
   Providers that omit the list are treated as advertising only the active signer.
 
@@ -146,6 +170,12 @@ style and have not been backfilled.
 - **`Ramps.offboardExact` documents what a cosign that failed after signing leaves open.** The error is rethrown and the boarding coins stay held, but an operator that kept the signed transaction can still complete it. A batch offboard cannot spend those coins to conflict with it: arkd refuses an intent with onchain inputs and onchain outputs (`INVALID_INTENT_PROOF`). The README and the method's doc now describe the options, so the caller picks the strategy. The hold's 6-block release is named, and `isCosignFallback`'s doc says `offboardExact` rethrows regardless.
 
 ### Internal
+
+- **The nonce swap pair compiles with `arkadec` 0.1.1.** `fulfill` names
+  `taker` and the operator key tweaked by `fulfill`, `cancel` names `user`
+  and the operator key, and the asset lookup takes an `AssetId`. The default
+  read of these artifacts is the program the 0.1.0-rc.1 ones gave, so no
+  deposit moves; a test pins both addresses.
 
 - **The legacy delegator provider is marked `@deprecated`.** `DelegateProvider`, `RestDelegateProvider`, `DelegateInfo` and `DelegateOptions` talk to the retired delegator; `ExecutorProvider` and `RestExecutorProvider` replace them. Nothing is removed.
 

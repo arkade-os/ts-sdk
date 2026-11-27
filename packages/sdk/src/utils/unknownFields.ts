@@ -52,6 +52,14 @@ export function setArkPsbtField<T>(
     });
 }
 
+/** Whether `field` has `coder`'s key, whatever its value, so a malformed one can be replaced. */
+export function isArkPsbtField(
+    field: NonNullable<TransactionInputUpdate["unknown"]>[number],
+    coder: Pick<ArkPsbtFieldCoder<unknown>, "key">,
+): boolean {
+    return checkKeyMatch(field[0], coder.key);
+}
+
 /**
  * getArkPsbtFields returns all the values of the given coder for the input at inputIndex
  * Multiple fields of the same type can exist in a single input.

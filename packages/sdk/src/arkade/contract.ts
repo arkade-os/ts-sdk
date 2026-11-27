@@ -122,6 +122,7 @@ import type { ContractRepository } from "../repositories/contractRepository";
 import { InMemoryWalletRepository } from "../repositories/inMemory/walletRepository";
 import { resolveArkadeService, type ArkadeService, type ResolvedArkadeService } from "./service";
 import { instantiatedContracts, tweakInstantiatedServerSigners } from "./artifact";
+import { computeArkadeScriptPublicKey } from "./tweak";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
@@ -477,22 +478,19 @@ export class Arkade {
     }
 
     /**
-     * Whether arkd co-signs `fn`. A leaf without the emulator splice is arkd's only if each of
-     * its tweaked keys is the server's, tweaked by `fn`'s covenant; one tweaking a constructor
-     * key, such as `<TWEAK:insurer:claim>`, stays with the emulator.
+     * Whether arkd co-signs covenant leaf `fn`: its leaf names an operator key tweaked by the
+     * leaf's own covenant, the same test the Wallet's onchain cosign routes by.
      */
     operatorCosignsLeaf(
-        contract: { keys: { serverKey: Uint8Array; emulatorKey?: Uint8Array } },
-        fn: Pick<CompiledProgramFunction, "def" | "arkadeScript" | "signerKeys"> | undefined,
+        fn: Pick<CompiledProgramFunction, "arkadeScript" | "leafScript"> | undefined,
     ): boolean {
-        if (fn?.def.tapscript.emulator !== null) {
-            return this.operatorCosigns(contract.keys.emulatorKey);
-        }
-        return fn.def.tapscript.signers.every(
-            (signer, i) =>
-                !(typeof signer === "object" && "tweak" in signer) ||
-                serverSignsKey(fn, contract.keys.serverKey, fn.signerKeys[i]),
-        );
+        const script = fn?.arkadeScript;
+        if (!script) return false;
+        const leafKeys: Uint8Array[] = decodeTapscript(fn.leafScript).params.pubkeys;
+        return [...this.operatorKeys].some((key) => {
+            const tweaked = computeArkadeScriptPublicKey(hex.decode(key), script);
+            return leafKeys.some((leafKey) => equalBytes(leafKey, tweaked));
+        });
     }
 
     /**
@@ -1226,9 +1224,9 @@ export class ArkadeTransactionBuilder {
         }
         const { coin, unlocker } = this.inputs[0];
         const { contract, fn } = unlocker;
-        if (fn.arkadeScript && this.serverSigns(unlocker)) {
+        if (fn.arkadeScript && this.serverSigns(unlocker) && !this.client.operatorCosignsLeaf(fn)) {
             throw new Error(
-                "covenant onchain spends require a leaf without the Arkade server key (the emulator's onchain endpoint refuses leaves containing it)",
+                "covenant onchain spends the emulator co-signs require a leaf without the Arkade server key (the emulator's onchain endpoint refuses leaves containing it)",
             );
         }
         const outputsSum = this.outputs.reduce((s, o) => s + (o.amount ?? 0n), 0n);
@@ -1291,9 +1289,7 @@ export class ArkadeTransactionBuilder {
         return submitOnchainSpend(signed, this.serverSigns(unlocker) ? new Set([0]) : new Set(), {
             arkProvider: client.arkProvider,
             emulator: client.emulator,
-            viaOperator:
-                !!unlocker.fn.arkadeScript &&
-                client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
+            viaOperator: client.operatorCosignsLeaf(unlocker.fn),
             onchainProvider: client.onchain!,
         });
     }
@@ -1370,16 +1366,10 @@ export class ArkadeTransactionBuilder {
         });
 
         const emulated = inputs.find(
-            ({ unlocker }) =>
-                unlocker.fn.arkadeScript &&
-                !client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
+            ({ unlocker }) => unlocker.fn.arkadeScript && !client.operatorCosignsLeaf(unlocker.fn),
         );
         if (emulated) {
-            const operated = inputs.find(
-                ({ unlocker }) =>
-                    unlocker.fn.arkadeScript &&
-                    client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
-            );
+            const operated = inputs.find(({ unlocker }) => client.operatorCosignsLeaf(unlocker.fn));
             if (operated) {
                 throw new Error(
                     `${emulated.unlocker.fn.name}, ${operated.unlocker.fn.name}: covenants co-signed by the emulator and by arkd cannot share a transaction; spend them separately`,

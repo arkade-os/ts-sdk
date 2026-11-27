@@ -73,6 +73,12 @@ const directions: [string, Terms, string][] = [
     ],
 ];
 
+// Derived from the arkadec 0.1.0-rc.1 nonce artifacts: recompiling them must not move a deposit.
+const NONCE_GOLDEN: Record<string, string> = {
+    "asset-swap-directed": "51200e7a3788788224fb43de30dab0370cead26a8b0ba66f48a9298201695116462f",
+    "sats-swap-directed": "5120326d47e757be1ce70df45f1967b0aa2bae49b1182a476f47c4d5329fe00f90aa",
+};
+
 const artifact = (name: string) =>
     JSON.parse(readFileSync(new URL(`../src/contracts/${name}.json`, import.meta.url), "utf8"));
 
@@ -199,12 +205,13 @@ describe("a directed deposit bound to an RFQ nonce", () => {
         expect(() => assetRfqNonce("ab".repeat(31))).toThrow();
     });
 
-    it.each(directions)("binds %s without changing the cancel or exit leaf", (_, terms) => {
+    it.each(directions)("binds %s without changing the cancel or exit leaf", (name, terms) => {
         const directed = { ...terms, taker: TAKER };
         const old = offerContract(directed, operatorPubkey);
         const offer = { ...directed, nonce: assetRfqNonce(RFQ_ID) };
         const compiled = offerContract(offer, operatorPubkey, ASSET_SWAP_DIRECTED_NONCE);
         expect(compiled.pkScript).not.toEqual(old.pkScript);
+        expect(hex.encode(compiled.pkScript)).toBe(NONCE_GOLDEN[name]);
         expect(compiled.functionByName("fulfill")?.signerKeys).toEqual(
             old.functionByName("fulfill")?.signerKeys,
         );

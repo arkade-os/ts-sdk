@@ -65,13 +65,7 @@
               "encoding": "schnorr-64"
             },
             {
-              "name": "serverSig",
-              "type": "signature",
-              "encoding": "schnorr-64",
-              "injected": true
-            },
-            {
-              "name": "emulatorSig",
+              "name": "operatorSig",
               "type": "signature",
               "encoding": "schnorr-64",
               "injected": true
@@ -80,9 +74,7 @@
           "asm": [
             "<taker>",
             "OP_CHECKSIGVERIFY",
-            "<SERVER_KEY>",
-            "OP_CHECKSIGVERIFY",
-            "<EMULATOR_KEY:fulfill>",
+            "<OPERATOR_KEY:fulfill>",
             "OP_CHECKSIG"
           ]
         }
@@ -100,7 +92,7 @@
               "encoding": "schnorr-64"
             },
             {
-              "name": "serverSig",
+              "name": "operatorSig",
               "type": "signature",
               "encoding": "schnorr-64",
               "injected": true
@@ -109,26 +101,27 @@
           "asm": [
             "<user>",
             "OP_CHECKSIGVERIFY",
-            "<SERVER_KEY>",
+            "<OPERATOR_KEY>",
             "OP_CHECKSIG"
           ]
         }
       ]
     }
   ],
+  "codeHash": "sha256:99b312934c9b1326c671f64994a8817b77441692c8255ad267f903b51570aec4",
   "source": {
     "entry": "asset-swap-directed-nonce.ark",
     "files": {
-      "asset-swap-directed-nonce.ark": "pragma arkade ^0.1.0;\n\ncontract AssetSwapDirectedNonce(\n    pubkey receiver,\n    int amount,\n    bytes32 assetTxid,\n    int assetGroupIndex,\n    pubkey user,\n    pubkey taker,\n    bytes32 nonce\n) {\n    function fulfill() {\n        @allow(self-comparison, \"commits the nonce without imposing a spend condition\")\n        require(nonce == nonce);\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].assets.lookup(assetTxid, assetGroupIndex) >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function fulfill(signature takerSig, signature serverSig, signature emulatorSig) tapscript {\n        require(checkMultisig([taker, server, emulator], [takerSig, serverSig, emulatorSig], 3));\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
+      "asset-swap-directed-nonce.ark": "pragma arkade ^0.1.0;\n\ncontract AssetSwapDirectedNonce(\n    pubkey receiver,\n    int amount,\n    bytes32 assetTxid,\n    int assetGroupIndex,\n    pubkey user,\n    pubkey taker,\n    bytes32 nonce\n) {\n    function fulfill() {\n        @allow(self-comparison, \"commits the nonce without imposing a spend condition\")\n        require(nonce == nonce);\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].assets.lookup(AssetId { txid: assetTxid, gidx: assetGroupIndex }) >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function fulfill(signature takerSig, signature operatorSig) tapscript {\n        require(checkMultisig([taker, tweak(operator, fulfill)], [takerSig, operatorSig]));\n    }\n\n    function cancel(signature userSig, signature operatorSig) tapscript {\n        require(checkMultisig([user, operator], [userSig, operatorSig]));\n    }\n}\n"
     }
   },
   "compiler": {
     "name": "arkadec",
-    "version": "0.1.0-rc.1",
+    "version": "0.1.1",
     "options": {
       "optimize": true
     }
   },
-  "updatedAt": "2026-11-21T12:29:53.470578800+00:00",
-  "fingerprint": "sha256:2f73e3cff1728678b084400eec2cac058c6f4ba5fe131859d31a2723a75c56a6"
+  "updatedAt": "2026-11-26T16:15:28.442362200+00:00",
+  "fingerprint": "sha256:65b8feeb390143abf9b17a66f0a499cd19e2540148cea6c1bc8954880eea01ab"
 }
