@@ -82,6 +82,10 @@ jobs:
               test/e2e/arkade-renew.test.ts
               test/e2e/arkadeCash.test.ts
               test/e2e/liquidation.test.ts
+          # Needs an arkd whose signer runs Arkade Script (ArkLabsHQ/arkd#127).
+          - package: sdk
+            group: arkade-htlc
+            test_files: test/e2e/arkade-htlc.test.ts
           - package: sdk
             group: settlement-delegation
             test_files: >-

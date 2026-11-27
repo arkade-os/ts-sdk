@@ -82,6 +82,19 @@ style and have not been backfilled.
   tweaked key in the plain one's place. Without the option every artifact reads
   as before.
 
+- **`ArkadeHTLC`, an offchain HTLC compiled from Arkade Script.** Its six
+  signature leaves are `VHTLC.ScriptV2`'s for the same keys and timelocks,
+  byte for byte. In its three covenant leaves the operator's one key is
+  arkd's signer key tweaked by the covenant, read with `singleOperatorKey`,
+  so no emulator key enters the address. The claim covenant requires the
+  receiver's output to hold at least the input's value and `amount`, and with
+  `asset` at least `asset.amount` of it; the refund covenants require the
+  sender's output to hold at least the input's value. Both carry the input's
+  assets to that output. `ArkadeHTLC.script(options)` derives the lockup
+  without a client, and
+  `arkade.contract(ArkadeHTLC.program, ArkadeHTLC.args(options))` makes it
+  spendable. Nothing uses it yet, and `VHTLC` lockups are unchanged.
+
 - **Arkade spends reveal the script hashes of a contract's other covenants.**
   arkd checks that every forfeit leaf of a spent VTXO's tree names its signer
   key, plain or tweaked by an arkade script hash it knows, and the emulator

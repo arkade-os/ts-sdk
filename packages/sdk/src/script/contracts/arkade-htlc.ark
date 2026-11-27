@@ -1,0 +1,85 @@
+pragma arkade ^0.1.0;
+
+// Arkade HTLC: an offchain lockup. Covenant paths are co-signed by the operator key alone,
+// tweaked by the covenant they enforce, and the claim pays at least the agreed amount.
+contract ArkadeHTLC(
+  pubkey sender,
+  pubkey receiver,
+  bytes20 preimageHash,
+  int refundLocktime,
+  int unilateralClaimDelay,
+  int unilateralRefundDelay,
+  int unilateralRefundWithoutReceiverDelay,
+  bytes32 receiverScript,
+  bytes32 senderScript,
+  int amount,
+  AssetId asset,
+  int assetAmount
+) {
+  @allow(unsigned-spend-path, "nonInteractiveClaim also needs the preimage, and pays the receiver")
+  function payReceiver() {
+    int i = this.activeInputIndex;
+    let paid = tx.outputs[i].script;
+    require(paid.version == 1);
+    require(paid.program == receiverScript);
+    require(tx.outputs[i].value >= max(tx.input.current.value, amount));
+    require(this.tunnel(i, {script: false, value: false, assets: true}));
+    if (assetAmount > 0) {
+      require(tx.outputs[i].assets.lookup(asset) >= assetAmount);
+    }
+  }
+
+  @allow(unsigned-spend-path, "the refund covenants pay the sender")
+  function paySender() {
+    int i = this.activeInputIndex;
+    let paid = tx.outputs[i].script;
+    require(paid.version == 1);
+    require(paid.program == senderScript);
+    require(tx.outputs[i].value >= tx.input.current.value);
+    require(this.tunnel(i, {script: false, value: false, assets: true}));
+  }
+
+  function claim(bytes32 preimage, signature receiverSig, signature operatorSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(checkMultisig([receiver, operator], [receiverSig, operatorSig]));
+  }
+
+  function refund(signature senderSig, signature receiverSig, signature operatorSig) tapscript {
+    require(checkMultisig([sender, receiver, operator], [senderSig, receiverSig, operatorSig]));
+  }
+
+  function refundWithoutReceiver(signature senderSig, signature operatorSig) tapscript {
+    require(after(refundLocktime));
+    require(checkMultisig([sender, operator], [senderSig, operatorSig]));
+  }
+
+  function unilateralClaim(bytes32 preimage, signature receiverSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(older(unilateralClaimDelay));
+    require(checkSig(receiverSig, receiver));
+  }
+
+  function unilateralRefund(signature senderSig, signature receiverSig) tapscript {
+    require(older(unilateralRefundDelay));
+    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));
+  }
+
+  function unilateralRefundWithoutReceiver(signature senderSig) tapscript {
+    require(older(unilateralRefundWithoutReceiverDelay));
+    require(checkSig(senderSig, sender));
+  }
+
+  function nonInteractiveClaim(bytes32 preimage, signature operatorSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(checkSig(operatorSig, tweak(operator, payReceiver)));
+  }
+
+  function nonInteractiveRefund(signature receiverSig, signature operatorSig) tapscript {
+    require(checkMultisig([receiver, tweak(operator, paySender)], [receiverSig, operatorSig]));
+  }
+
+  function nonInteractiveRefundWithoutReceiver(signature operatorSig) tapscript {
+    require(after(refundLocktime));
+    require(checkSig(operatorSig, tweak(operator, paySender)));
+  }
+}

@@ -79,6 +79,7 @@ import type {
 } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
+import { ArkadeHTLC } from "./script/contracts/arkadeHtlc";
 import { DefaultVtxo } from "./script/default";
 import { DelegateVtxo } from "./script/delegate";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope, MessageBus } from "./worker/messageBus";
@@ -803,6 +804,7 @@ export {
     DelegateVtxo,
     VtxoScript,
     VHTLC,
+    ArkadeHTLC,
     assembleBtcdTaprootTree,
     scriptFromTapLeafScript,
     // Enums

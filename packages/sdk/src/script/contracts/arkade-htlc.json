@@ -1,0 +1,400 @@
+{
+  "formatVersion": 1,
+  "contractName": "ArkadeHTLC",
+  "constructorInputs": [
+    {
+      "name": "sender",
+      "type": "pubkey"
+    },
+    {
+      "name": "receiver",
+      "type": "pubkey"
+    },
+    {
+      "name": "preimageHash",
+      "type": "bytes20"
+    },
+    {
+      "name": "refundLocktime",
+      "type": "int"
+    },
+    {
+      "name": "unilateralClaimDelay",
+      "type": "int"
+    },
+    {
+      "name": "unilateralRefundDelay",
+      "type": "int"
+    },
+    {
+      "name": "unilateralRefundWithoutReceiverDelay",
+      "type": "int"
+    },
+    {
+      "name": "receiverScript",
+      "type": "bytes32"
+    },
+    {
+      "name": "senderScript",
+      "type": "bytes32"
+    },
+    {
+      "name": "amount",
+      "type": "int"
+    },
+    {
+      "name": "asset",
+      "type": "AssetId"
+    },
+    {
+      "name": "assetAmount",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "payReceiver",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "<assetAmount>",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_DUP",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "1",
+          "OP_NUMEQUALVERIFY",
+          "<receiverScript>",
+          "OP_EQUALVERIFY",
+          "OP_DUP",
+          "OP_INSPECTOUTPUTVALUE",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTINPUTVALUE",
+          "<amount>",
+          "OP_MAX",
+          "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY",
+          "OP_DUP",
+          "4",
+          "0",
+          "OP_TUNNEL",
+          "OP_VERIFY",
+          "OP_OVER",
+          "0",
+          "OP_GREATERTHAN",
+          "OP_IF",
+          "OP_DUP",
+          "<asset.txid>",
+          "<asset.gidx>",
+          "OP_INSPECTOUTASSETLOOKUP",
+          "OP_VERIFY",
+          "OP_2",
+          "OP_PICK",
+          "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY",
+          "OP_ENDIF",
+          "OP_2DROP",
+          "OP_1"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "nonInteractiveClaim",
+          "witness": [
+            {
+              "name": "preimage",
+              "type": "bytes32",
+              "encoding": "raw-32"
+            },
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "OP_SIZE",
+            "32",
+            "OP_EQUALVERIFY",
+            "OP_HASH160",
+            "<preimageHash>",
+            "OP_EQUAL",
+            "OP_VERIFY",
+            "<OPERATOR_KEY:payReceiver>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "paySender",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_DUP",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "1",
+          "OP_NUMEQUALVERIFY",
+          "<senderScript>",
+          "OP_EQUALVERIFY",
+          "OP_DUP",
+          "OP_INSPECTOUTPUTVALUE",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTINPUTVALUE",
+          "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY",
+          "4",
+          "0",
+          "OP_TUNNEL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "nonInteractiveRefund",
+          "witness": [
+            {
+              "name": "receiverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<receiver>",
+            "OP_CHECKSIGVERIFY",
+            "<OPERATOR_KEY:paySender>",
+            "OP_CHECKSIG"
+          ]
+        },
+        {
+          "name": "nonInteractiveRefundWithoutReceiver",
+          "witness": [
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<refundLocktime>",
+            "OP_CHECKLOCKTIMEVERIFY",
+            "OP_DROP",
+            "<OPERATOR_KEY:paySender>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "claim",
+      "leaves": [
+        {
+          "name": "claim",
+          "witness": [
+            {
+              "name": "preimage",
+              "type": "bytes32",
+              "encoding": "raw-32"
+            },
+            {
+              "name": "receiverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "OP_SIZE",
+            "32",
+            "OP_EQUALVERIFY",
+            "OP_HASH160",
+            "<preimageHash>",
+            "OP_EQUAL",
+            "OP_VERIFY",
+            "<receiver>",
+            "OP_CHECKSIGVERIFY",
+            "<OPERATOR_KEY>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "refund",
+      "leaves": [
+        {
+          "name": "refund",
+          "witness": [
+            {
+              "name": "senderSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "receiverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<sender>",
+            "OP_CHECKSIGVERIFY",
+            "<receiver>",
+            "OP_CHECKSIGVERIFY",
+            "<OPERATOR_KEY>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "refundWithoutReceiver",
+      "leaves": [
+        {
+          "name": "refundWithoutReceiver",
+          "witness": [
+            {
+              "name": "senderSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "operatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<refundLocktime>",
+            "OP_CHECKLOCKTIMEVERIFY",
+            "OP_DROP",
+            "<sender>",
+            "OP_CHECKSIGVERIFY",
+            "<OPERATOR_KEY>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateralClaim",
+      "leaves": [
+        {
+          "name": "unilateralClaim",
+          "witness": [
+            {
+              "name": "preimage",
+              "type": "bytes32",
+              "encoding": "raw-32"
+            },
+            {
+              "name": "receiverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "OP_SIZE",
+            "32",
+            "OP_EQUALVERIFY",
+            "OP_HASH160",
+            "<preimageHash>",
+            "OP_EQUAL",
+            "OP_VERIFY",
+            "<unilateralClaimDelay>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<receiver>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateralRefund",
+      "leaves": [
+        {
+          "name": "unilateralRefund",
+          "witness": [
+            {
+              "name": "senderSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "receiverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<unilateralRefundDelay>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<sender>",
+            "OP_CHECKSIGVERIFY",
+            "<receiver>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateralRefundWithoutReceiver",
+      "leaves": [
+        {
+          "name": "unilateralRefundWithoutReceiver",
+          "witness": [
+            {
+              "name": "senderSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<unilateralRefundWithoutReceiverDelay>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<sender>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "codeHash": "sha256:5d58e749e6ddcd46b30add050f3a2d13537a991e063974034d2d5c3d5b8bc11b",
+  "source": {
+    "entry": "arkade-htlc.ark",
+    "files": {
+      "arkade-htlc.ark": "pragma arkade ^0.1.0;\n\n// Arkade HTLC: an offchain lockup. Covenant paths are co-signed by the operator key alone,\n// tweaked by the covenant they enforce, and the claim pays at least the agreed amount.\ncontract ArkadeHTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes20 preimageHash,\n  int refundLocktime,\n  int unilateralClaimDelay,\n  int unilateralRefundDelay,\n  int unilateralRefundWithoutReceiverDelay,\n  bytes32 receiverScript,\n  bytes32 senderScript,\n  int amount,\n  AssetId asset,\n  int assetAmount\n) {\n  @allow(unsigned-spend-path, \"nonInteractiveClaim also needs the preimage, and pays the receiver\")\n  function payReceiver() {\n    int i = this.activeInputIndex;\n    let paid = tx.outputs[i].script;\n    require(paid.version == 1);\n    require(paid.program == receiverScript);\n    require(tx.outputs[i].value >= max(tx.input.current.value, amount));\n    require(this.tunnel(i, {script: false, value: false, assets: true}));\n    if (assetAmount > 0) {\n      require(tx.outputs[i].assets.lookup(asset) >= assetAmount);\n    }\n  }\n\n  @allow(unsigned-spend-path, \"the refund covenants pay the sender\")\n  function paySender() {\n    int i = this.activeInputIndex;\n    let paid = tx.outputs[i].script;\n    require(paid.version == 1);\n    require(paid.program == senderScript);\n    require(tx.outputs[i].value >= tx.input.current.value);\n    require(this.tunnel(i, {script: false, value: false, assets: true}));\n  }\n\n  function claim(bytes32 preimage, signature receiverSig, signature operatorSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(checkMultisig([receiver, operator], [receiverSig, operatorSig]));\n  }\n\n  function refund(signature senderSig, signature receiverSig, signature operatorSig) tapscript {\n    require(checkMultisig([sender, receiver, operator], [senderSig, receiverSig, operatorSig]));\n  }\n\n  function refundWithoutReceiver(signature senderSig, signature operatorSig) tapscript {\n    require(after(refundLocktime));\n    require(checkMultisig([sender, operator], [senderSig, operatorSig]));\n  }\n\n  function unilateralClaim(bytes32 preimage, signature receiverSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(older(unilateralClaimDelay));\n    require(checkSig(receiverSig, receiver));\n  }\n\n  function unilateralRefund(signature senderSig, signature receiverSig) tapscript {\n    require(older(unilateralRefundDelay));\n    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));\n  }\n\n  function unilateralRefundWithoutReceiver(signature senderSig) tapscript {\n    require(older(unilateralRefundWithoutReceiverDelay));\n    require(checkSig(senderSig, sender));\n  }\n\n  function nonInteractiveClaim(bytes32 preimage, signature operatorSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(checkSig(operatorSig, tweak(operator, payReceiver)));\n  }\n\n  function nonInteractiveRefund(signature receiverSig, signature operatorSig) tapscript {\n    require(checkMultisig([receiver, tweak(operator, paySender)], [receiverSig, operatorSig]));\n  }\n\n  function nonInteractiveRefundWithoutReceiver(signature operatorSig) tapscript {\n    require(after(refundLocktime));\n    require(checkSig(operatorSig, tweak(operator, paySender)));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.1",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-26T14:32:15.633325800+00:00",
+  "fingerprint": "sha256:afdddadc59f3353671cadf7ca3a992701d9fc3df66f24623932ce98bf8de30c2"
+}
