@@ -14,6 +14,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`restore()` no longer misses an Executor deposit boarded during the scan.** An index counted as used only while its boarding deposit was unspent or its boarded coin was already indexed, so a restore that read between the two skipped it. It now counts any transaction at the delegated boarding address.
+
 - **The Executor refuses a `renewalWindow` under 180 seconds.** Only an upper bound existed, so `registerBoarding` and `registerRenewal` accepted `0`, a negative or a tiny window. The wallet steps in for a coin at a live renewal contract only at half the window, so such a window left it no time to act before the coin was swept, and the coin was recovered only afterwards. Half of 180 s covers one 60 s settlement poll and a batch round. Both calls now throw `renewalWindow Ns must be at least 180s`, as for a window not shorter than the operator's VTXO expiry. A stored watch with such a window is no longer refreshed: `registerRenewal` skips it with a warning and the wallet renews its coins itself. `ExecutorWatchRegistration.address` is documented as the delegated address, onchain for boarding and an Arkade address for renewal.
 
 ## [0.5.15] - 2026-11-26

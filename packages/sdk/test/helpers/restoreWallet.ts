@@ -220,7 +220,8 @@ export function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
 /**
  * Mock onchain provider. `fundedOnchain` is the set of on-chain (P2TR)
  * addresses the provider reports as holding an unspent coin — the single
- * signal the boarding discovery probe (`OnchainProvider.getCoins`) reads.
+ * signal the boarding discovery probe (`OnchainProvider.getCoins`) reads; it also has a transaction
+ * in `getTransactions`, which the Executor's probe reads.
  * Empty by default (no boarding funds), so existing restore tests are
  * unaffected.
  */
@@ -240,8 +241,9 @@ export function makeMockOnchain(fundedOnchain: Set<string> = new Set()): Onchain
         async getTxOutspends() {
             return [];
         },
-        async getTransactions() {
-            return [];
+        async getTransactions(address: string) {
+            // a funded address has history, which the Executor boarding probe reads
+            return fundedOnchain.has(address) ? [{ txid: uniqueTxid(address) }] : [];
         },
         async getTxStatus() {
             return { confirmed: false };
