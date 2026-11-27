@@ -100,9 +100,9 @@ export function defaultVariables(
 }
 
 /**
- * The contract of a default template for owner, from the keys and params alone. Its functions
- * come in this order: forfeit (owner + operator), exit (owner after CSV), then the one with
- * Arkade Script.
+ * The contract of a default template for owner, from the keys and params alone. Leaves are in
+ * function order: forfeit (owner + operator), exit (owner after CSV), then the one with Arkade
+ * Script.
  */
 export function defaultContract(
     kind: ExecutorDefault,
