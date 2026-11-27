@@ -47,7 +47,7 @@ export namespace DefaultVtxo {
 
         /**
          * Create the default virtual output script with one forfeit function and one exit path.
-         * @param extraLeaves functions after forfeit and exit, e.g. the executor's renewal function
+         * @param extraLeaves functions after forfeit and exit, e.g. an executor's renewal function
          * with Arkade Script, which keeps the wallet's functions and adds one it never signs.
          */
         constructor(

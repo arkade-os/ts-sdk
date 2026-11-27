@@ -372,7 +372,7 @@ export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 
-/** The executor expires a watch that never held a coin after 168h; daily keeps that margin. */
+/** An executor expires a watch that never held a coin after 168h; daily keeps that margin. */
 const EXECUTOR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** Wallet-state setting: when the executor last answered a refresh, in unix ms. */
 const EXECUTOR_REFRESHED_KEY = "executorRefreshedAt";

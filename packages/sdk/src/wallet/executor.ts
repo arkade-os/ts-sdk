@@ -563,7 +563,7 @@ interface RegistrationContext {
     server: string;
 }
 
-/** Client-side watch registration with the executor. */
+/** Client-side watch registration with an executor. */
 export class ExecutorManagerImpl implements IExecutorManager {
     constructor(
         readonly executorProvider: ExecutorProvider,

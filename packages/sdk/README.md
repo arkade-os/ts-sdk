@@ -772,9 +772,9 @@ held a coin. See `registerBoarding` and `registerRenewal` for the details.
 
 #### Trust and privacy
 
-- The executor can delay a renewal or a board, not spend: it spends only through leaves the
-  emulator enforces, which pay the wallet. The wallet keeps its own paths and renews a coin
-  itself once half the `renewalWindow` is left.
+- The executor can delay a renewal or a board, not spend: it spends only through functions with
+  operator-enforced conditions, which pay the wallet. The wallet keeps its own functions and
+  renews a coin itself once half the `renewalWindow` is left.
 - It sees the amount and time of every payment to a twin, and can link an HD wallet's twins to
   one wallet.
 

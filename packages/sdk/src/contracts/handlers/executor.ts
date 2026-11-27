@@ -28,7 +28,7 @@ import {
 } from "./helpers";
 
 /**
- * Typed parameters for delegated contracts: a default template's variables and the executor's
+ * Typed parameters for delegated contracts: a default template's variables and an executor's
  * keys. Keys are compressed, delays are BIP 68 sequences.
  */
 export interface ExecutorContractParams {
@@ -68,7 +68,7 @@ export function evenOwnerKey(xOnly: Uint8Array): Uint8Array {
     return key;
 }
 
-/** The serialized params of `owner`'s `template` contract under the executor's `keys`. */
+/** The serialized params of `owner`'s `template` contract under an executor's `keys`. */
 export function executorContractParams(
     template: ExecutorDefault,
     owner: Uint8Array,
@@ -98,7 +98,7 @@ export function executorKeysOf(p: ExecutorContractParams): ExecutorContractKeys 
 }
 
 /**
- * Handler for the coins a wallet delegated to the executor under its default templates:
+ * Handler for the coins a wallet delegated to an executor under its default templates:
  * virtual outputs at the renewal contract, which the executor renews in place, and onchain
  * deposits at the boarding contract, which it boards to the renewal contract. The scripts derive
  * from the bundled templates, the owner key, the params and the executor's keys, so a restored
@@ -165,7 +165,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
             ...(params.template === "boarding"
                 ? { boardingExitDelay: integer(params.boardingExitDelay, "boardingExitDelay") }
                 : {}),
-            // rows stored before the executor's key rename hold it as cosignerPubKey
+            // rows stored before the key rename in 0.5.15 hold it as cosignerPubKey
             batchCosignerPubKey: compressed(
                 params.batchCosignerPubKey ?? params.cosignerPubKey,
                 "batchCosignerPubKey",
