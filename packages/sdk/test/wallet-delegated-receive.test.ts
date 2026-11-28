@@ -251,7 +251,7 @@ describe("an HD wallet's receive address under an Executor", () => {
         expect(await wallet.getAddress()).toBe(wallet.arkAddress.encode());
         expect(wallet.arkAddress.encode()).not.toBe(before.address);
         expect(warn).toHaveBeenCalledWith(
-            "Failed to register an Executor watch for the new receive address",
+            "Failed to register an executor watch for the new receive address",
             expect.any(Error),
         );
 

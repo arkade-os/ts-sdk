@@ -5,9 +5,9 @@ import { hex } from "@scure/base";
 
 /**
  * DefaultVtxo is the default implementation of a VtxoScript.
- * It contains 1 forfeit path and 1 exit path.
- * - forfeit = (Alice + Server)
- * - exit = (Alice) after csvTimelock
+ * It contains one function that needs the operator's signature and one exit path.
+ * - `forfeit()` = (Alice + Server)
+ * - `exit()` = (Alice) after csvTimelock
  */
 export namespace DefaultVtxo {
     /**
@@ -46,9 +46,10 @@ export namespace DefaultVtxo {
         readonly exitScript: string;
 
         /**
-         * Create the default virtual output script with one forfeit path and one exit path.
-         * @param extraLeaves leaves after forfeit and exit, e.g. the executor's emulator-enforced
-         * renewal leaf, which keeps the wallet's paths and adds one it never signs.
+         * Create the default virtual output script, with one function that needs the operator's
+         * signature and one exit path.
+         * @param extraLeaves functions after those two, e.g. an executor's renewal function with
+         * Arkade Script, which keeps the wallet's functions and adds one it never signs.
          */
         constructor(
             readonly options: Options,

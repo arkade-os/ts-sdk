@@ -411,7 +411,7 @@ describe("RestExecutorProvider", () => {
         const provider = new RestExecutorProvider("https://executor.test");
         const getTemplate = () => provider.getTemplate("tpl-1");
         for (const [call, body, error] of [
-            [() => provider.registerArtifact("{}"), {}, "Invalid Executor artifact"],
+            [() => provider.registerArtifact("{}"), {}, "Invalid executor artifact"],
             [() => provider.getArtifact("art-1"), { artifact: { id: "a" } }, "missing document"],
             [
                 () => provider.getArtifact("art-1"),
@@ -536,7 +536,7 @@ describe("ExecutorManagerImpl.register", () => {
     it("refuses a watch the service returns as no longer active", async () => {
         const manager = new ExecutorManagerImpl(makeProvider({ status: "expired" }), wallet);
         await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
-            `Executor watch ${vectors.boarding.address} is expired`,
+            `executor watch ${vectors.boarding.address} is expired`,
         );
         // the row carries what the service said, so the wallet stops advertising the address
         expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
@@ -556,7 +556,7 @@ describe("ExecutorManagerImpl.register", () => {
             wallet,
         );
         await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
-            `Executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
+            `executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
         );
         expect(contractManager.createContract).not.toHaveBeenCalled();
         expect(contractManager.updateContract).not.toHaveBeenCalled();
@@ -618,7 +618,7 @@ describe("ExecutorManagerImpl.register", () => {
         const provider = makeProvider();
         const manager = new ExecutorManagerImpl(provider, wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            `Executor's emulator key ${vectors.emulatorPubkey} is not the trusted ${REGTEST_EMULATOR_PUBKEY}`,
+            `executor's emulator key ${vectors.emulatorPubkey} is not the trusted ${REGTEST_EMULATOR_PUBKEY}`,
         );
         expect(provider.registerDelegation).not.toHaveBeenCalled();
     });
@@ -680,7 +680,7 @@ describe("ExecutorManagerImpl.register", () => {
         });
         const manager = new ExecutorManagerImpl(provider, wallet);
         await expect(manager.registerBoarding(params, trusted)).rejects.toThrow(
-            "Executor runs on bitcoin, the wallet's operator on regtest",
+            "executor runs on bitcoin, the wallet's operator on regtest",
         );
         expect(provider.registerDelegation).not.toHaveBeenCalled();
     });
@@ -912,7 +912,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
             wallet,
         );
         await expect(manager.registerRenewal(params, trusted)).rejects.toThrow(
-            `Executor derived a different address: expected ${vectors.renewal.address}, got tark1pother`,
+            `executor derived a different address: expected ${vectors.renewal.address}, got tark1pother`,
         );
         expect(contractManager.createContract).not.toHaveBeenCalled();
         expect(contractManager.updateContract).not.toHaveBeenCalled();
@@ -1244,7 +1244,7 @@ describe("ExecutorManagerImpl.registerRenewal", () => {
 
         const pending = new ExecutorManagerImpl(provider, managed).registerRenewal(params, trusted);
         await expect(pending).rejects.toThrow(
-            `Executor renewal registration failed for the keys ${heldKeys[0]}`,
+            `executor renewal registration failed for the keys ${heldKeys[0]}`,
         );
         // the second key was still tried and registered; same-timestamp rows have no stable order
         const owners = provider.registerDelegation.mock.calls.map(([, v]) => v.owner);

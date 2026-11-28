@@ -242,7 +242,7 @@ function warnStatusless(contract: Contract): void {
     }
     warnedStatusless.add(contract.script);
     console.warn(
-        `Executor renewal watch ${contract.address} has no delegation status, as after a restore: the wallet shows its own address until registerRenewal() confirms it`,
+        `executor renewal watch ${contract.address} has no delegation status, as after a restore: the wallet shows its own address until registerRenewal() confirms it`,
     );
 }
 
@@ -563,7 +563,7 @@ interface RegistrationContext {
     server: string;
 }
 
-/** Client-side watch registration with the executor. */
+/** Client-side watch registration with an executor. */
 export class ExecutorManagerImpl implements IExecutorManager {
     constructor(
         readonly executorProvider: ExecutorProvider,
@@ -581,7 +581,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const missing = Object.entries(ids).filter(([, id]) => !active.has(id));
         if (missing.length > 0) {
             throw new Error(
-                `Executor does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
+                `executor does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
             );
         }
         return ids;
@@ -628,7 +628,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 // would repeat at every startup. The wallet renews the coins itself.
                 if (keys.emulatorPubkey !== first.keys.emulatorPubkey.toLowerCase()) {
                     console.warn(
-                        `Skipping the held key ${watch.owner}: its watch uses another emulator key than the Executor's`,
+                        `Skipping the held key ${watch.owner}: its watch uses another emulator key than the executor's`,
                     );
                     continue;
                 }
@@ -656,7 +656,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         }
         if (failed.size > 0) {
             throw new Error(
-                `Executor renewal registration failed for the keys ${[...failed].join(", ")}`,
+                `executor renewal registration failed for the keys ${[...failed].join(", ")}`,
             );
         }
         return first;
@@ -689,7 +689,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         try {
             await this.pairRenewal(context, key, boarding, options, registration);
         } catch (e) {
-            console.warn("Failed to register the Executor renewal watch paired with boarding", e);
+            console.warn("Failed to register the executor renewal watch paired with boarding", e);
         }
         return boarding;
     }
@@ -741,7 +741,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                     });
                 } catch (e) {
                     console.warn(
-                        `Failed to refresh the Executor ${template} watch`,
+                        `Failed to refresh the executor ${template} watch`,
                         watch.owner,
                         e,
                     );
@@ -965,7 +965,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         ]);
         if (info.network !== operator.network) {
             throw new Error(
-                `Executor runs on ${info.network}, the wallet's operator on ${operator.network}`,
+                `executor runs on ${info.network}, the wallet's operator on ${operator.network}`,
             );
         }
         // the watch address commits to the service's operator key, so it must be the wallet's
@@ -973,7 +973,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const server = hex.encode(serverPubKey);
         if (info.operatorPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
-                `Executor's operator key ${info.operatorPubkey} is not the wallet's operator ${server}`,
+                `executor's operator key ${info.operatorPubkey} is not the wallet's operator ${server}`,
             );
         }
         return {
@@ -995,12 +995,12 @@ export class ExecutorManagerImpl implements IExecutorManager {
         /** A refresh keeps the row's registration time, which picks the boarding address. */
         refresh = false,
     ): Promise<ExecutorWatchRegistration> {
-        // Pinned, as in Arkade.connect: holding the emulator key, the executor could sign the
-        // emulator-enforced leaf itself, past its covenant. Matching addresses cannot show it.
+        // Pinned, as in Arkade.connect: holding the emulator key, the executor could sign for the
+        // function with Arkade Script itself, past its covenant. Matching addresses cannot show it.
         const emulator = resolveEmulatorPubkey(network, emulatorPubkey);
         if (info.emulatorPubkey.toLowerCase() !== emulator) {
             throw new Error(
-                `Executor's emulator key ${info.emulatorPubkey} is not the trusted ${emulator}`,
+                `executor's emulator key ${info.emulatorPubkey} is not the trusted ${emulator}`,
             );
         }
         const fault = renewalWindowFault(options.renewalWindow, operator.vtxoTreeExpiry);
@@ -1039,13 +1039,13 @@ export class ExecutorManagerImpl implements IExecutorManager {
             (template === "boarding" ? !input.onchain : input.onchain)
         ) {
             throw new Error(
-                `Executor's ${template} delegation has ${delegation.inputs.length} inputs, expected one ${template === "boarding" ? "onchain" : "offchain"} input`,
+                `executor's ${template} delegation has ${delegation.inputs.length} inputs, expected one ${template === "boarding" ? "onchain" : "offchain"} input`,
             );
         }
         // bech32 is case-insensitive, and the service may answer in upper case
         if (input.address.toLowerCase() !== watchAddress) {
             throw new Error(
-                `Executor derived a different address: expected ${watchAddress}, got ${input.address}`,
+                `executor derived a different address: expected ${watchAddress}, got ${input.address}`,
             );
         }
         const registered: ExecutorWatchMetadata = {
@@ -1076,7 +1076,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             });
         }
         if (delegation.status !== "active") {
-            throw new Error(`Executor watch ${watchAddress} is ${delegation.status}`);
+            throw new Error(`executor watch ${watchAddress} is ${delegation.status}`);
         }
         return { address: watchAddress, templateId, variables, keys, params, delegation };
     }

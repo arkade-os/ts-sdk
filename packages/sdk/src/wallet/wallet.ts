@@ -372,7 +372,7 @@ export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 
-/** The executor expires a watch that never held a coin after 168h; daily keeps that margin. */
+/** An executor expires a watch that never held a coin after 168h; daily keeps that margin. */
 const EXECUTOR_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** Wallet-state setting: when the executor last answered a refresh, in unix ms. */
 const EXECUTOR_REFRESHED_KEY = "executorRefreshedAt";
@@ -1447,7 +1447,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             );
             if (twin && (amount === undefined || this.renews(twin, amount))) return twin.script;
         } catch (e) {
-            console.warn("Unable to inspect Executor renewal watches", e);
+            console.warn("Unable to inspect executor renewal watches", e);
         }
         return own;
     }
@@ -3152,7 +3152,7 @@ export class Wallet
         try {
             await this._executorManager.registerBoardingAt(descriptor, options, registration);
         } catch (e) {
-            console.warn("Failed to register an Executor watch for the new boarding address", e);
+            console.warn("Failed to register an executor watch for the new boarding address", e);
         }
     }
 
@@ -3176,7 +3176,7 @@ export class Wallet
             const { options, registration } = reRegistrationOf(watch);
             await executor.registerRenewalAt(descriptor, options, registration);
         } catch (e) {
-            console.warn("Failed to register an Executor watch for the new receive address", e);
+            console.warn("Failed to register an executor watch for the new receive address", e);
         }
     }
 
@@ -3238,7 +3238,7 @@ export class Wallet
             );
         }).catch((e) => {
             this._receiveSyncFailedAt = Date.now();
-            console.warn("Failed to keep the receive address under Executor delegation", e);
+            console.warn("Failed to keep the receive address under executor delegation", e);
         });
     }
 
@@ -3270,7 +3270,7 @@ export class Wallet
                 const manager = eager ?? (await this.getContractManager());
                 await manager.whenBooted?.().catch(() => undefined);
             } catch (e) {
-                console.warn("Failed to boot the contracts for the Executor refresh", e);
+                console.warn("Failed to boot the contracts for the executor refresh", e);
                 return;
             }
             // First: a rotation then extends from watches that are still held.
@@ -3318,7 +3318,7 @@ export class Wallet
                 stopped: () => this._executorStopping,
             });
         } catch (e) {
-            console.warn("Failed to refresh the Executor watches", e);
+            console.warn("Failed to refresh the executor watches", e);
             return;
         }
         // Cut short: the next start refreshes again.
@@ -3329,7 +3329,7 @@ export class Wallet
         await updateWalletState(this.walletRepository, (state) => ({
             ...state,
             settings: { ...state.settings, [EXECUTOR_REFRESHED_KEY]: at },
-        })).catch((e) => console.warn("Failed to store the Executor refresh time", e));
+        })).catch((e) => console.warn("Failed to store the executor refresh time", e));
     }
 
     /**
@@ -3343,7 +3343,7 @@ export class Wallet
             try {
                 await this.rotateBoarding();
             } catch (e) {
-                console.warn("Failed to rotate boarding address after Executor board", e);
+                console.warn("Failed to rotate boarding address after executor board", e);
             }
         });
     }
@@ -3367,7 +3367,7 @@ export class Wallet
                 return;
             }
         } catch (e) {
-            console.warn("Failed to look for an Executor board at boot", e);
+            console.warn("Failed to look for an executor board at boot", e);
         }
     }
 
@@ -3818,7 +3818,7 @@ export class Wallet
             const held = await this.liveRenewalWatches(previousSigner).catch(() => []);
             if (held.length > 0) {
                 console.warn(
-                    "Executor delegations stay under the previous operator key, and getAddress() shows the own address: call registerRenewal() again to delegate under the new one",
+                    "executor delegations stay under the previous operator key, and getAddress() shows the own address: call registerRenewal() again to delegate under the new one",
                 );
             }
         }
@@ -7258,7 +7258,7 @@ export class Wallet
                 return this.renews(watch, BigInt(changeAmount)) ? watch.script : own;
             }
         } catch (e) {
-            console.warn("Unable to inspect Executor renewal watches", e);
+            console.warn("Unable to inspect executor renewal watches", e);
             return own;
         }
         return this.destinationTapscript(serverPubKey, own, BigInt(changeAmount));
@@ -7296,7 +7296,7 @@ export class Wallet
                     return addressOf(own);
                 }
             } catch (e) {
-                console.warn("Unable to inspect Executor renewal watches", e);
+                console.warn("Unable to inspect executor renewal watches", e);
                 return addressOf(own);
             }
         }

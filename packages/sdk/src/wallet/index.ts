@@ -139,9 +139,9 @@ export interface BaseWalletConfig {
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
     /**
-     * Optional executor, the service that boards the wallet's deposits while it is offline. Only a
+     * Optional executor, a service that boards the wallet's deposits while it is offline. Only a
      * `Wallet` registers watches, through `getExecutorManager()`; a readonly wallet reads them.
-     * Without one, the wallet behaves as it does without the executor.
+     * Without one, the wallet behaves as it does without an executor.
      */
     executorProvider?: ExecutorProvider;
 }

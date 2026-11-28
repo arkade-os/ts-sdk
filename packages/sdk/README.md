@@ -736,8 +736,8 @@ const balance = await manager.getRecoverableBalance()
 
 ### Executor
 
-The executor renews the wallet's virtual outputs and boards its deposits while the wallet is
-offline. It is opt-in: without it the wallet behaves as before.
+An executor renews the wallet's virtual outputs and boards its deposits while the wallet is
+offline. It is opt-in: without one the wallet behaves as before.
 
 ```typescript
 import { Wallet, RestExecutorProvider } from '@arkade-os/sdk'
@@ -772,9 +772,9 @@ held a coin. See `registerBoarding` and `registerRenewal` for the details.
 
 #### Trust and privacy
 
-- The executor can delay a renewal or a board, not spend: it spends only through leaves the
-  emulator enforces, which pay the wallet. The wallet keeps its own paths and renews a coin
-  itself once half the `renewalWindow` is left.
+- The executor can delay a renewal or a board, not spend: it spends only through functions with
+  operator-enforced conditions, which pay the wallet. The wallet keeps its own functions and
+  renews a coin itself once half the `renewalWindow` is left.
 - It sees the amount and time of every payment to a twin, and can link an HD wallet's twins to
   one wallet.
 

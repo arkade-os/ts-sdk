@@ -8,7 +8,7 @@ import delegatedBoarding from "./delegated_boarding.json";
 import delegatedVtxo from "./delegated_vtxo.json";
 import renewDocument from "./renew.json";
 
-/** The executor's keys a delegated contract derives from, compressed hex. */
+/** An executor's keys, which a delegated contract derives from, in compressed hex. */
 export interface ExecutorContractKeys {
     batchCosignerPubkey: string;
     operatorPubkey: string;
@@ -19,7 +19,7 @@ export interface ExecutorContractKeys {
 export interface DelegationParams {
     /** BIP 68 sequence of the owner's exit from a delegated virtual output, at least the operator's. */
     exitDelay: number;
-    /** Seconds before expiry the executor renews a virtual output. */
+    /** Seconds before expiry that an executor renews a virtual output. */
     renewalWindow: number;
     /** Satoshis a renewal may cost. */
     maxFee: number;
@@ -27,7 +27,7 @@ export interface DelegationParams {
     boardingExitDelay?: number;
 }
 
-/** A delegation as restore scans for it: the executor's keys and the params, owner aside. */
+/** A delegation as restore scans for it: an executor's keys and the params, owner aside. */
 export interface ExecutorWatchTemplate {
     keys: ExecutorContractKeys;
     params: DelegationParams;
@@ -101,7 +101,8 @@ export function defaultVariables(
 
 /**
  * The contract of a default template for owner, from the keys and params alone. Leaves are in
- * function order: forfeit (owner + operator), exit (owner after CSV), then the emulator-enforced leaf.
+ * function order: owner + operator, the exit path (owner after CSV), then the one with Arkade
+ * Script.
  */
 export function defaultContract(
     kind: ExecutorDefault,
