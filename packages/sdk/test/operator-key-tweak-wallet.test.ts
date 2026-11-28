@@ -3,7 +3,7 @@ import { base64, hex } from "@scure/base";
 import {
     arkade,
     ArkadeContractHandler,
-    ArkadeScriptTweak,
+    OperatorKeyTweak,
     ContractManager,
     getArkPsbtFields,
     InMemoryContractRepository,
@@ -176,18 +176,18 @@ const coinOf = async (wallet: Wallet, contract: Contract): Promise<ExtendedVirtu
 const output = { script: new Uint8Array([0x51, 0x20, ...RECEIVER]), amount: BigInt(VALUE - 500) };
 
 describe("arkadetweak on wallet-level spends", () => {
-    it("annotation carries the contract's Arkade Script tweaks", () => {
-        expect(deriveContractTapscripts(contractFor(tweakOnly)).arkadeScriptTweaks).toEqual([
+    it("annotation carries the contract's operator key tweaks", () => {
+        expect(deriveContractTapscripts(contractFor(tweakOnly)).operatorKeyTweaks).toEqual([
             PAY_HASH,
         ]);
         expect(
-            deriveContractTapscripts(contractFor(plainOperatorKey)).arkadeScriptTweaks,
+            deriveContractTapscripts(contractFor(plainOperatorKey)).operatorKeyTweaks,
         ).toBeUndefined();
     });
 
     it("stamps the tweaks onto the coins read back for spending", async () => {
         const { wallet, contract } = await seededWallet(tweakOnly);
-        expect((await coinOf(wallet, contract)).arkadeScriptTweaks).toEqual([PAY_HASH]);
+        expect((await coinOf(wallet, contract)).operatorKeyTweaks).toEqual([PAY_HASH]);
     });
 
     it("re-derives the tweaks a column-mapped repository cannot store", async () => {
@@ -206,7 +206,7 @@ describe("arkadetweak on wallet-level spends", () => {
         ]);
 
         const [row] = await collectScriptVtxos(walletRepository, contract.script);
-        expect(row.arkadeScriptTweaks).toBeUndefined();
+        expect(row.operatorKeyTweaks).toBeUndefined();
 
         const manager = await ContractManager.create({
             indexerProvider: offlineIndexer(),
@@ -214,11 +214,11 @@ describe("arkadetweak on wallet-level spends", () => {
             walletRepository,
         });
         const [{ vtxos }] = await manager.getStoredContractsWithVtxos();
-        expect(vtxos[0].arkadeScriptTweaks).toEqual([PAY_HASH]);
+        expect(vtxos[0].operatorKeyTweaks).toEqual([PAY_HASH]);
         await manager.dispose();
     });
 
-    it("sets ArkadeScriptTweak on the virtual transaction's input of an offchain send, never on its checkpoint", async () => {
+    it("sets OperatorKeyTweak on the virtual transaction's input of an offchain send, never on its checkpoint", async () => {
         const { wallet, contract } = await seededWallet(tweakOnly);
         const submit = vi
             .spyOn(wallet.arkProvider, "submitTx")
@@ -230,9 +230,9 @@ describe("arkadetweak on wallet-level spends", () => {
 
         const [arkTxB64, checkpointsB64] = submit.mock.calls[0] as [string, string[]];
         const arkTx = Transaction.fromPSBT(base64.decode(arkTxB64));
-        expect(getArkPsbtFields(arkTx, 0, ArkadeScriptTweak)).toEqual([[PAY_HASH]]);
+        expect(getArkPsbtFields(arkTx, 0, OperatorKeyTweak)).toEqual([[PAY_HASH]]);
         const checkpoint = Transaction.fromPSBT(base64.decode(checkpointsB64[0]));
-        expect(getArkPsbtFields(checkpoint, 0, ArkadeScriptTweak)).toEqual([]);
+        expect(getArkPsbtFields(checkpoint, 0, OperatorKeyTweak)).toEqual([]);
     });
 
     it("adds no field to an offchain send of a coin whose functions all name the plain operator key", async () => {
@@ -246,10 +246,10 @@ describe("arkadetweak on wallet-level spends", () => {
         ).rejects.toThrow("captured");
 
         const arkTx = Transaction.fromPSBT(base64.decode(submit.mock.calls[0][0] as string));
-        expect(getArkPsbtFields(arkTx, 0, ArkadeScriptTweak)).toEqual([]);
+        expect(getArkPsbtFields(arkTx, 0, OperatorKeyTweak)).toEqual([]);
     });
 
-    it("sets ArkadeScriptTweak on the proof input the coin lands on", async () => {
+    it("sets OperatorKeyTweak on the proof input the coin lands on", async () => {
         const { wallet, contract } = await seededWallet(tweakOnly);
         const registration = await wallet.makeRegisterIntentSignature(
             [await coinOf(wallet, contract)],
@@ -258,18 +258,18 @@ describe("arkadetweak on wallet-level spends", () => {
             [],
         );
         const proof = Transaction.fromPSBT(base64.decode(registration.proof));
-        expect(getArkPsbtFields(proof, 1, ArkadeScriptTweak)).toEqual([[PAY_HASH]]);
-        expect(getArkPsbtFields(proof, 0, ArkadeScriptTweak)).toEqual([]);
+        expect(getArkPsbtFields(proof, 1, OperatorKeyTweak)).toEqual([[PAY_HASH]]);
+        expect(getArkPsbtFields(proof, 0, OperatorKeyTweak)).toEqual([]);
     });
 
-    it("sets ArkadeScriptTweak on the onchain input the handler's path selects", () => {
+    it("sets OperatorKeyTweak on the onchain input the handler's path selects", () => {
         const contract = contractFor(tweakOnly);
         const script = ArkadeContractHandler.createScript(contract.params);
         const path = ArkadeContractHandler.selectPath(script, contract, {
             collaborative: true,
             currentTime: Date.now(),
         })!;
-        expect(path.arkadeScriptTweaks).toEqual([PAY_HASH]);
+        expect(path.operatorKeyTweaks).toEqual([PAY_HASH]);
 
         const tx = new Transaction({ version: 2, allowUnknown: true, allowUnknownInputs: true });
         tx.addInput({ txid: hex.decode("ef".repeat(32)), index: 0 });
@@ -279,7 +279,7 @@ describe("arkadetweak on wallet-level spends", () => {
             path,
             tapTree: script.encode(),
         });
-        expect(getArkPsbtFields(tx, 0, ArkadeScriptTweak)).toEqual([[PAY_HASH]]);
+        expect(getArkPsbtFields(tx, 0, OperatorKeyTweak)).toEqual([[PAY_HASH]]);
     });
 
     it("adds no onchain field when every function names the plain operator key", () => {
@@ -289,7 +289,7 @@ describe("arkadetweak on wallet-level spends", () => {
             collaborative: true,
             currentTime: Date.now(),
         })!;
-        expect(path.arkadeScriptTweaks).toBeUndefined();
+        expect(path.operatorKeyTweaks).toBeUndefined();
 
         const tx = new Transaction({ version: 2, allowUnknown: true, allowUnknownInputs: true });
         tx.addInput({ txid: hex.decode("ef".repeat(32)), index: 0 });
@@ -299,7 +299,7 @@ describe("arkadetweak on wallet-level spends", () => {
             path,
             tapTree: script.encode(),
         });
-        expect(getArkPsbtFields(tx, 0, ArkadeScriptTweak)).toEqual([]);
+        expect(getArkPsbtFields(tx, 0, OperatorKeyTweak)).toEqual([]);
     });
 
     it("hands each read its own copy of the hashes", async () => {
@@ -323,9 +323,9 @@ describe("arkadetweak on wallet-level spends", () => {
         });
 
         const [{ vtxos: first }] = await manager.getStoredContractsWithVtxos();
-        first[0].arkadeScriptTweaks![0].fill(0);
+        first[0].operatorKeyTweaks![0].fill(0);
         const [{ vtxos: second }] = await manager.getStoredContractsWithVtxos();
-        expect(second[0].arkadeScriptTweaks).toEqual([PAY_HASH]);
+        expect(second[0].operatorKeyTweaks).toEqual([PAY_HASH]);
         await manager.dispose();
     });
 
@@ -345,6 +345,6 @@ describe("arkadetweak on wallet-level spends", () => {
             currentTime: Date.now(),
         });
         expect(paths).toHaveLength(1);
-        expect(paths[0].arkadeScriptTweaks).toBeUndefined();
+        expect(paths[0].operatorKeyTweaks).toBeUndefined();
     });
 });

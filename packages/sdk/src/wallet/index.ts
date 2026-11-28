@@ -851,7 +851,7 @@ export type TapLeaves = {
 export type ExtendedCoin = TapLeaves &
     EncodedVtxoScript &
     Coin &
-    ArkadeScriptTweaks & { extraWitness?: Bytes[] };
+    OperatorKeyTweaks & { extraWitness?: Bytes[] };
 
 /**
  * Virtual output data enriched with tapscript and witness data.
@@ -862,13 +862,13 @@ export type ExtendedCoin = TapLeaves &
 export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin &
-    ArkadeScriptTweaks & { extraWitness?: Bytes[] };
+    OperatorKeyTweaks & { extraWitness?: Bytes[] };
 
 /**
  * The Arkade Script hashes a spend of this coin must reveal, so the operator can recognize its key,
  * tweaked by them, in the functions the spend does not use. Absent when no function needs one.
  */
-export type ArkadeScriptTweaks = { arkadeScriptTweaks?: Bytes[] };
+export type OperatorKeyTweaks = { operatorKeyTweaks?: Bytes[] };
 
 import type { NormalizedExtendedVirtualCoin, NormalizedVtxoPage } from "./vtxo";
 

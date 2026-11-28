@@ -171,7 +171,7 @@ describe("fillOffer against the REAL Arkade builder", () => {
         expect(txid).toBe(built().id);
     });
 
-    it("goes to the operator, needing no emulator, once it holds the offer's cosigner key", async () => {
+    it("goes to the operator, needing no emulator, once it holds the offer's emulator key", async () => {
         reset();
         state.vtxos = [deposit()];
         state.deprecatedSigners = [{ pubkey: hex.encode(offer.emulatorPubkey), cutoffDate: 0n }];

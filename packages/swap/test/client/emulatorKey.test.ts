@@ -55,7 +55,7 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
-describe("quote() names the cosigner key on every RFQ request", () => {
+describe("quote() names the emulator key on every RFQ request", () => {
     it.each(ROUTES)("%s: the operator's x-only key, or the override", async (_route, input) => {
         const byDefault = await clientOn();
         await byDefault.client.quote(input());

@@ -15,7 +15,7 @@ import { Batch } from "../wallet/batch";
 import { isNoMatchingIntentsError } from "../wallet/intentReconciliation";
 import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
-import { operatorSignsKey, staticWitness } from "./program";
+import { isOperatorKey, staticWitness } from "./program";
 
 const ABORTED = "renewProgramContractOutputs: aborted before the batch completed";
 /** What the renewal and its batch handler call on the server. */
@@ -66,9 +66,9 @@ export async function renewProgramContractOutputs(
         }
         return { contract, coin, fn, compiled, arkadeScript: compiled.arkadeScript };
     });
-    // The operator signs the proof and the forfeits itself when it holds every leg's cosigner key.
+    // The operator signs the proof and the forfeits itself when it holds every leg's emulator key.
     const operated = renewals.filter(({ contract, compiled }) =>
-        client.operatorCosignsLeaf(contract, compiled),
+        client.operatorCosignsFunction(contract, compiled),
     ).length;
     const viaOperator = operated === targets.length;
     if (operated > 0 && !viaOperator) {
@@ -104,7 +104,7 @@ export async function renewProgramContractOutputs(
         // No owner signs a renewal: a leaf naming any key but the server's could never complete.
         if (
             compiled.signerKeys.some(
-                (key) => !operatorSignsKey(compiled, contract.keys.serverKey, key),
+                (key) => !isOperatorKey(compiled, contract.keys.serverKey, key),
             )
         ) {
             throw new Error(
@@ -130,7 +130,7 @@ export async function renewProgramContractOutputs(
             arkadeScript,
             condition,
             witness: RawWitness.encode(stack),
-            tweaks: contract.vtxoScript.arkadeScriptTweaks(compiled),
+            tweaks: contract.vtxoScript.operatorKeyTweaks(compiled),
         };
     });
 
@@ -161,7 +161,7 @@ export async function renewProgramContractOutputs(
             // Written as ConditionWitness on the proof and the forfeits, where arkd evaluates it.
             ...(condition.length > 0 ? { extraWitness: condition } : {}),
             // Proof input k+1 only; the operator reads no `arkadetweak` field on a forfeit.
-            ...(tweaks.length > 0 ? { arkadeScriptTweaks: tweaks } : {}),
+            ...(tweaks.length > 0 ? { operatorKeyTweaks: tweaks } : {}),
         })),
         indexer,
     );

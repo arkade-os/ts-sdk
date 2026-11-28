@@ -15,7 +15,7 @@ import {
     type EmulatorProvider,
 } from "../src";
 import { scriptFromTapLeafScript } from "../src/script/base";
-import { ArkadeScriptTweak, getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
+import { OperatorKeyTweak, getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
 
 const xOnly = () => schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 const COIN = { txid: "ab".repeat(32), vout: 1, value: 10_000 };
@@ -178,7 +178,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         // `covenantServer` names the plain operator key, `covenant` the emulator's: only `sweep`.
         const hash = (asm: arkade.AsmToken[]) =>
             arkade.arkadeScriptHash(arkade.resolveAsm(asm, { receiver, amount: AMOUNT }));
-        expect(getArkPsbtFields(tx, 0, ArkadeScriptTweak)).toEqual([[hash(sweep)]]);
+        expect(getArkPsbtFields(tx, 0, OperatorKeyTweak)).toEqual([[hash(sweep)]]);
     });
 
     it("builds an exit path spend without revealing other Arkade Script hashes", async () => {
@@ -216,7 +216,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
             .buildOnchain();
 
         expect(tx.getInput(0).sequence).toBe(10);
-        expect(getArkPsbtFields(tx, 0, ArkadeScriptTweak)).toEqual([]);
+        expect(getArkPsbtFields(tx, 0, OperatorKeyTweak)).toEqual([]);
     });
 
     it("covenant non-server leaf: emulator cosigns, then finalize and broadcast", async () => {
@@ -234,7 +234,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(raw.inputsLength).toBe(1);
     });
 
-    it("sends Arkade Script to the operator's cosign once it holds the cosigner key", async () => {
+    it("sends Arkade Script to the operator's cosign once it holds the emulator key", async () => {
         const { contract, submitOnchainTx, cosignOnchainTx } = await setup(true);
         const txid = await contract.functions
             .covenant()

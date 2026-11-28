@@ -14,7 +14,7 @@ import {
     deserializeArkadeContractParams,
     serializeArkadeContractParams,
     stringifyArtifact,
-    tweakOperatorSigners,
+    rewriteToTweakedOperatorKey,
     type ArkadeParamValue,
     type Program,
 } from "../src/arkade/program";
@@ -1295,7 +1295,7 @@ describe("reading a debug file", () => {
     );
 });
 
-describe("tweakOperatorSigners", () => {
+describe("rewriteToTweakedOperatorKey", () => {
     const pub = (byte: number) => schnorr.getPublicKey(new Uint8Array(32).fill(byte));
     const server = pub(0x11);
     const asOperator = { serverKey: server, emulatorKey: hex.decode(`03${hex.encode(server)}`) };
@@ -1310,7 +1310,7 @@ describe("tweakOperatorSigners", () => {
 
     it("names the operator key only tweaked by its Arkade Script, in the operator key's place", () => {
         const escrow = programFromArtifact(artifact);
-        const rewritten = tweakOperatorSigners(escrow, asOperator);
+        const rewritten = rewriteToTweakedOperatorKey(escrow, asOperator);
         const { emulatorIndex: _, ...complete } = escrow.functions.complete.tapscript;
         expect(rewritten.functions.complete.tapscript).toEqual({
             ...complete,
@@ -1318,7 +1318,7 @@ describe("tweakOperatorSigners", () => {
             emulator: null,
         });
         expect(rewritten.functions.unilateral).toBe(escrow.functions.unilateral);
-        expect(tweakOperatorSigners(rewritten, asOperator)).toEqual(rewritten);
+        expect(rewriteToTweakedOperatorKey(rewritten, asOperator)).toEqual(rewritten);
 
         const args = { ...ARGS, server };
         const before = new ArkadeProgramScript(escrow, args, asOperator);
@@ -1365,7 +1365,7 @@ describe("tweakOperatorSigners", () => {
                 ],
             }),
         );
-        const rewritten = tweakOperatorSigners(program, asOperator);
+        const rewritten = rewriteToTweakedOperatorKey(program, asOperator);
         expect(rewritten.functions.a.tapscript.signers).toEqual([
             "$user",
             { tweak: "$server", fn: "g" },
@@ -1383,12 +1383,12 @@ describe("tweakOperatorSigners", () => {
         expect(leafKeys(after, "b")).toEqual([t]);
     });
 
-    it("leaves the program alone when the cosigner key is not the operator's", () => {
+    it("leaves the program alone when the emulator key is not the operator's", () => {
         const escrow = programFromArtifact(artifact);
-        expect(tweakOperatorSigners(escrow, { serverKey: server, emulatorKey: EMULATOR_KEY })).toBe(
-            escrow,
-        );
-        expect(tweakOperatorSigners(escrow, { serverKey: server })).toBe(escrow);
+        expect(
+            rewriteToTweakedOperatorKey(escrow, { serverKey: server, emulatorKey: EMULATOR_KEY }),
+        ).toBe(escrow);
+        expect(rewriteToTweakedOperatorKey(escrow, { serverKey: server })).toBe(escrow);
     });
 
     it("keeps a splice that names another function's Arkade Script, which compiling still refuses", () => {
@@ -1404,7 +1404,7 @@ describe("tweakOperatorSigners", () => {
                 b: { tapscript: { signers: ["$server"] }, arkadeScript: { asm: [2] } },
             },
         } satisfies Program;
-        const rewritten = tweakOperatorSigners(program, asOperator);
+        const rewritten = rewriteToTweakedOperatorKey(program, asOperator);
         expect(rewritten.functions.a).toBe(program.functions.a);
         expect(rewritten.functions.b.tapscript.signers).toEqual([{ tweak: "$server", fn: "b" }]);
         expect(() => new ArkadeProgramScript(rewritten, { server }, asOperator)).toThrow(

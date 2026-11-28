@@ -14,7 +14,7 @@ import {
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import {
-    ArkadeScriptTweak,
+    OperatorKeyTweak,
     ConditionWitness,
     getArkPsbtFields,
     setArkPsbtField,
@@ -33,7 +33,7 @@ export type ArkTxInput = {
     // the script used to spend the virtual output
     tapLeafScript: TapLeafScript;
     // Set on the virtual transaction's input only: the operator reads none on a checkpoint.
-    arkadeScriptTweaks?: Uint8Array[];
+    operatorKeyTweaks?: Uint8Array[];
 } & EncodedVtxoScript &
     Pick<VirtualCoin, "txid" | "vout" | "value">;
 
@@ -88,8 +88,8 @@ export function buildOffchainTx(
     );
 
     for (const [i, input] of inputs.entries()) {
-        if (input.arkadeScriptTweaks?.length)
-            setArkPsbtField(arkTx, i, ArkadeScriptTweak, input.arkadeScriptTweaks);
+        if (input.operatorKeyTweaks?.length)
+            setArkPsbtField(arkTx, i, OperatorKeyTweak, input.operatorKeyTweaks);
     }
 
     return {

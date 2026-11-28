@@ -658,11 +658,11 @@ export class ArkadeProgramScript extends VtxoScript {
 
     /**
      * Hashes of the contract's Arkade Scripts other than `spent`'s, which the emulator packet
-     * carries, for its input's `ArkadeScriptTweak` field: the operator checks that every function
+     * carries, for its input's `OperatorKeyTweak` field: the operator checks that every function
      * without a CSV delay names its key, and recognizes a tweaked key only by a script hash it
      * knows. Empty unless such a function names the operator key only tweaked.
      */
-    arkadeScriptTweaks(spent: CompiledProgramFunction): Uint8Array[] {
+    operatorKeyTweaks(spent: CompiledProgramFunction): Uint8Array[] {
         if (spent.def.tapscript.csv) return [];
         const { serverKey } = this.keys;
         const scripts = new Map<string, Uint8Array>();
@@ -686,11 +686,11 @@ export class ArkadeProgramScript extends VtxoScript {
 }
 
 /**
- * For a cosigner key that is the operator's own: a function with Arkade Script that names
- * `$server` beside the spliced cosigner names only `$server` tweaked by that script, in
+ * For an emulator key that is the operator's own: a function with Arkade Script that names
+ * `$server` beside the spliced emulator key names only `$server` tweaked by that script, in
  * `$server`'s place. All else is unchanged.
  */
-export function tweakOperatorSigners<P extends Program>(program: P, keys: ProgramKeys): P {
+export function rewriteToTweakedOperatorKey<P extends Program>(program: P, keys: ProgramKeys): P {
     const { serverKey, emulatorKey } = keys;
     if (!emulatorKey || !equalBytes(toXOnly(emulatorKey, "emulator key"), serverKey)) {
         return program;
@@ -726,7 +726,7 @@ export function tweakOperatorSigners<P extends Program>(program: P, keys: Progra
  * Whether `key`, named in `fn`'s Tapscript, is the operator key, plain or tweaked by `fn`'s
  * Arkade Script.
  */
-export function operatorSignsKey(
+export function isOperatorKey(
     fn: Pick<CompiledProgramFunction, "arkadeScript">,
     operatorKey: Uint8Array,
     key: Uint8Array,

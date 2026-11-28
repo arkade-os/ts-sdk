@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { RawWitness, Script } from "@scure/btc-signer";
-import { ArkadeScriptTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { OperatorKeyTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import {
     arkade,
     ArkadeContractHandler,
@@ -865,7 +865,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
         expect(captured.arkTx).toBeUndefined();
     });
 
-    describe("ArkadeScriptTweak", () => {
+    describe("OperatorKeyTweak", () => {
         const user = xOnly();
         const out = new Uint8Array([0x51, 0x20, ...receiver]);
         const program = (pay: arkade.TapscriptSegment) =>
@@ -897,8 +897,8 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
                 .build();
 
             // `refund` keeps the plain operator key, so the operator accepts it without its tweak.
-            expect(getArkPsbtFields(arkTx, 0, ArkadeScriptTweak)).toEqual([[payHash]]);
-            expect(getArkPsbtFields(arkTx, 1, ArkadeScriptTweak)).toEqual([[payHash]]);
+            expect(getArkPsbtFields(arkTx, 0, OperatorKeyTweak)).toEqual([[payHash]]);
+            expect(getArkPsbtFields(arkTx, 1, OperatorKeyTweak)).toEqual([[payHash]]);
         });
 
         it("adds no field when every function names the plain operator key", async () => {
@@ -910,7 +910,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             });
             const { arkTx } = await contract.functions.collab().from(COIN).to(out, AMOUNT).build();
 
-            expect(getArkPsbtFields(arkTx, 0, ArkadeScriptTweak)).toEqual([]);
+            expect(getArkPsbtFields(arkTx, 0, OperatorKeyTweak)).toEqual([]);
         });
 
         it("reads a spliced emulator key as the operator's only when it is the operator's key", async () => {
@@ -922,7 +922,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
                     { receiver, amount: AMOUNT, server, user },
                     { serverKey: server, emulatorKey: emulator },
                 );
-                return vtxoScript.arkadeScriptTweaks(vtxoScript.functionByName("collab")!);
+                return vtxoScript.operatorKeyTweaks(vtxoScript.functionByName("collab")!);
             };
 
             expect(tweaks(server)).toEqual([payHash]);
@@ -1084,7 +1084,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
         });
     });
 
-    describe("with the operator as cosigner", () => {
+    describe("with the operator's key as the emulator key", () => {
         const pub = (byte: number) => schnorr.getPublicKey(new Uint8Array(32).fill(byte));
         const operator = pub(0x11);
         const escrow = arkade.programFromArtifact(
@@ -1174,7 +1174,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             expect(ark.contract(escrow, escrowArgs).address).not.toBe(LEGACY_ADDRESS);
         });
 
-        it("spends a rewritten contract through the operator, which holds its cosigner key", async () => {
+        it("spends a rewritten contract through the operator, which holds its emulator key", async () => {
             const { ark, captured, toOperator } = await connectToOperator();
             const contract = ark.contract(htlcProgram(), args);
             const leaf = ConditionMultisigTapscript.encode({

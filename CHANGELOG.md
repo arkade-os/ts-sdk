@@ -20,7 +20,7 @@ style and have not been backfilled.
   explicit `emulatorPubkey`, which no longer needs an `emulator` provider.
   `Arkade.emulatorKey` is therefore always set. A spend through a function
   with Arkade Script goes to the operator when it holds the contract's
-  cosigner key, current or deprecated: `submitTx`/`finalizeTx` (two-step),
+  emulator key, current or deprecated: `submitTx`/`finalizeTx` (two-step),
   `cosignOnchainTx`, and `registerIntent`/`submitSignedForfeitTxs`. Any other
   such spend still goes through the emulator, and so does a function without
   the emulator splice that tweaks a constructor key (such as
@@ -37,7 +37,7 @@ style and have not been backfilled.
   the same key (an explicit `emulatorPubkey`, else the operator's
   `signerPubkey`), so `testnet` and `signet` no longer need an override.
 
-- **`@arkade-os/swap` names the cosigner key on every RFQ request.** Each
+- **`@arkade-os/swap` names the emulator key on every RFQ request.** Each
   `rfq_request` whose quote builds a contract with Arkade Script (Lightning
   and onchain sends and receives, and `requestArkadeSwap` swaps) carries the
   key as `profile.emulator_pubkey`, in x-only hex, and the solver's address is
@@ -45,20 +45,20 @@ style and have not been backfilled.
   refuses these requests. `requestArkadeSwap` therefore always reads the
   operator's info live, even without a `receiveAddress`, since the key comes
   from it. `fillOffer` no longer needs an `emulator`: the operator cosigns a
-  fill of an offer whose cosigner key it holds. Solver rendezvous accepts any
+  fill of an offer whose emulator key it holds. Solver rendezvous accepts any
   well-formed card when the payment rails are given no
   `fallbackEmulatorPubkey`, since the request now names the key. With one
   given, a card advertising a different key is still skipped.
 
-- **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the operator key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. rc.1's `<SERVER_KEY>` still reads as the operator key, except in a contract that declares a constructor parameter named `SERVER_KEY`, which 0.1.0 no longer reserves: there it is that parameter, where it used to be silently replaced by the operator key. A constructor parameter named `server` or `SERVER_EXIT_DELAY`, which 0.1.0 also no longer reserves, is refused as reserved by the SDK; it used to fail as a duplicate program parameter. For compatibility, `<OPERATOR_KEY:f>` is read as rc.1's operator key plus `f`-tweaked emulator key (the emulator key alone in functions with a CSV delay); `Arkade.contract()` rewrites eligible functions when the cosigner key is the operator's own, as described below. Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
+- **`@arkade-os/sdk/compiler` uses `@arkade-os/compiler` 0.1.0.** `compile()` takes 0.1.0 source, and recompiling a contract can change its address; stored contracts and rc.1 artifacts, `@arkade-os/swap`'s included, read as before. `programFromArtifact` reads 0.1.0's `<OPERATOR_KEY>` as the operator key and `<OPERATOR_EXIT_DELAY>` as `SERVER_EXIT_DELAY`. rc.1's `<SERVER_KEY>` still reads as the operator key, except in a contract that declares a constructor parameter named `SERVER_KEY`, which 0.1.0 no longer reserves: there it is that parameter, where it used to be silently replaced by the operator key. A constructor parameter named `server` or `SERVER_EXIT_DELAY`, which 0.1.0 also no longer reserves, is refused as reserved by the SDK; it used to fail as a duplicate program parameter. For compatibility, `<OPERATOR_KEY:f>` is read as rc.1's operator key plus `f`-tweaked emulator key (the emulator key alone in functions with a CSV delay); `Arkade.contract()` rewrites eligible functions when the emulator key is the operator's own, as described below. Opcode `0xb3` decodes as `MERKLEBRANCHROOT`; `MERKLEBRANCHVERIFY` still encodes to it.
 
 - **`programFromArtifact` derives the key of each contract an artifact instantiates.** `new SingleSig(receiver)` compiles to a `<CONTRACT:SingleSig(<receiver>)>` placeholder that the caller had to fill with the child's key by hand, unchecked, so a wrong key made the covenant pay someone else. Pass the child artifacts instead, as `programFromArtifact(htlc, { contracts: [singleSig] })` or the same option to `compile()`: each must match the code hash its parent pins, and building the contract derives the child's key. An artifact with a placeholder now throws when a child is missing, does not match or is not pinned. To migrate, recompile the parent with arkadec 0.1.0 or later, pass its children in `contracts`, and stop passing the key. Saved contracts store only the resolved key and restore without the children.
 
 ### Features
 
-- **New contracts name the operator key only tweaked when it is the cosigner
+- **New contracts name the operator key only tweaked when it is the emulator
   key.** A function with Arkade Script can name `$server` and also splice in
-  the cosigner key. When the client's cosigner key is the operator's own
+  the emulator key. When the client's emulator key is the operator's own
   `signerPubkey` (compared x-only), that function named both `X` and
   `tweak(X, script)`. `Arkade.contract()` now rewrites `$server` in place to
   `{ tweak: "$server", fn }`, with the function whose Arkade Script the splice
@@ -69,10 +69,10 @@ style and have not been backfilled.
   their address. `send()` and `renewProgramContractOutputs` accept the
   operator key tweaked by the spent function's Arkade Script as the
   operator's. `@arkade-os/swap` offers, `new ArkadeContract(...)` and
-  `ArkadeProgramScript` are not rewritten, and with any other cosigner key
+  `ArkadeProgramScript` are not rewritten, and with any other emulator key
   nothing changes. An app that re-derives a contract from its artifact through
   `contract()`, instead of restoring its row, gets the new address once the
-  cosigner key is the operator's.
+  emulator key is the operator's.
 
 - **Spends reveal the Arkade Script hashes of a contract's other functions.**
   The operator checks that every function without a CSV delay in a spent
@@ -82,7 +82,7 @@ style and have not been backfilled.
   tweaked, such as one that needs no user signature, therefore needs its hash
   revealed whenever the coin is spent through another function. When a program
   contract has such a function, every spend now sets the new
-  `ArkadeScriptTweak` PSBT input field (`0xde || "arkadetweak"`, 1 to 16
+  `OperatorKeyTweak` PSBT input field (`0xde || "arkadetweak"`, 1 to 16
   32-byte hashes). It goes on the virtual transaction's input, the onchain
   input or the proof input. The field lists the Arkade Script hashes of the
   functions that lack the plain operator key, the spent one aside: the
@@ -96,26 +96,26 @@ style and have not been backfilled.
   `Arkade.contract()` already when a spend through any function that needs the
   operator's signature would need more. Contracts without such a function,
   swap offers included, build the same PSBTs as before, and `arkd` releases
-  that predate the field ignore it. `ArkadeScriptTweak` and
-  `ArkadeProgramScript.arkadeScriptTweaks()` are exported.
+  that predate the field ignore it. `OperatorKeyTweak` and
+  `ArkadeProgramScript.operatorKeyTweaks()` are exported.
 
 - **`@arkade-os/swap` negotiates swaps between two Arkade assets.** `quote()`, `exchange()` and open RFQ bids use a configured pair and require the solver to support `asset-swap-directed-nonce`. The quote must publish the operator's minimum output value for the deposit's sats carrier. The quoted spread is reported in the receive asset's units.
 - **Two-asset RFQ swaps can pay a specified recipient.** Set `assetPayment.receiveAddress` on a directed quote or an exact-payout open RFQ. Explicit carrier modes require a BTC deposit.
 
 ### Bug Fixes
 
-- **Cosigner routing uses the selected function.** Renewal rejects missing
-  functions and functions with no Arkade Script before it chooses a cosigner.
-  Onchain routing compares the tweaked operator key with the selected
-  function's decoded signing keys, so bytes in a condition cannot select the
-  operator. Linked child contracts use the same signer rewrite as direct
-  creation, so the parent commits to the child's directly derived address.
-  Spends through an exit path omit the operator's tweak hashes, and stay
-  buildable when the contract's functions that need the operator's signature
-  reach the disclosure limit. Spends that the operator cosigns itself enforce
-  its input limit, and require the PSBT signature entries of any other
-  cosigners before submission. The operator verifies the signatures before it
-  cosigns.
+- **Routing to the operator or the emulator uses the selected function.**
+  Renewal rejects missing functions and functions with no Arkade Script
+  before it chooses between them. Onchain routing compares the tweaked
+  operator key with the selected function's decoded signing keys, so bytes in
+  a condition cannot select the operator. Linked child contracts get the same
+  rewrite as direct creation, so the parent commits to the child's directly
+  derived address. Spends through an exit path omit the operator key tweaks,
+  and stay buildable when the contract's functions that need the operator's
+  signature reach the disclosure limit. Spends that the operator cosigns
+  itself enforce its input limit, and require the PSBT signature entries of
+  any other cosigners before submission. The operator verifies the signatures
+  before it cosigns.
 
 - **Signer classification accepts operator info without deprecated signers.**
   Providers that omit the list are treated as advertising only the active signer.

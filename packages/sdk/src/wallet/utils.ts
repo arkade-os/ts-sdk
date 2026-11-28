@@ -58,7 +58,7 @@ export function extendCoinWithTapscript(
  */
 export type ContractTapscripts = Pick<
     ExtendedVirtualCoin,
-    "forfeitTapLeafScript" | "proofTapLeafScript" | "tapTree" | "arkadeScriptTweaks"
+    "forfeitTapLeafScript" | "proofTapLeafScript" | "tapTree" | "operatorKeyTweaks"
 >;
 
 /**
@@ -90,9 +90,7 @@ export function deriveContractTapscripts(contract: Contract): ContractTapscripts
             forfeitTapLeafScript: derived.forfeitTapLeafScript,
             proofTapLeafScript: proofTapLeafScriptOf(derived),
             tapTree: derived.tapTree,
-            ...(derived.arkadeScriptTweaks
-                ? { arkadeScriptTweaks: derived.arkadeScriptTweaks }
-                : {}),
+            ...(derived.operatorKeyTweaks ? { operatorKeyTweaks: derived.operatorKeyTweaks } : {}),
         };
     }
     const legacy = script as DefaultVtxo.Script | DelegateVtxo.Script;
@@ -122,9 +120,9 @@ function cloneContractTapscripts(tapscripts: ContractTapscripts): ContractTapscr
         forfeitTapLeafScript: cloneTapLeafScript(tapscripts.forfeitTapLeafScript),
         proofTapLeafScript: cloneTapLeafScript(tapscripts.proofTapLeafScript),
         tapTree: new Uint8Array(tapscripts.tapTree),
-        ...(tapscripts.arkadeScriptTweaks
+        ...(tapscripts.operatorKeyTweaks
             ? {
-                  arkadeScriptTweaks: tapscripts.arkadeScriptTweaks.map(
+                  operatorKeyTweaks: tapscripts.operatorKeyTweaks.map(
                       (hash) => new Uint8Array(hash),
                   ),
               }

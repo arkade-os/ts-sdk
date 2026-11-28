@@ -334,7 +334,7 @@ export interface RfqStatus {
     [key: string]: unknown;
 }
 
-const namedCosigner = (key: Uint8Array | undefined) =>
+const namedEmulatorKey = (key: Uint8Array | undefined) =>
     key === undefined ? {} : { emulator_pubkey: hex.encode(key) };
 
 /** The rfq_request for the lightning send profile. BOLT11 is exact-out: the invoice fixes the
@@ -359,7 +359,7 @@ export const lightningSendRequest = (input: {
         invoice: input.invoice,
         refund_address: input.refundAddress,
         client_refund_pubkey: hex.encode(input.senderPubkey),
-        ...namedCosigner(input.emulatorPubkey),
+        ...namedEmulatorKey(input.emulatorPubkey),
     },
 });
 
@@ -416,7 +416,7 @@ export const arkadeSwapRequest = (input: {
         profile: {
             maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
             maker_public_key: normalizeMakerPublicKey(input.makerPublicKey),
-            ...namedCosigner(input.emulatorPubkey),
+            ...namedEmulatorKey(input.emulatorPubkey),
         },
     };
 };
@@ -1691,7 +1691,7 @@ export const onchainSendRequest = (input: {
         payout_pubkey: hex.encode(input.payoutPubkey),
         refund_address: input.refundAddress,
         client_refund_pubkey: hex.encode(input.senderPubkey),
-        ...namedCosigner(input.emulatorPubkey),
+        ...namedEmulatorKey(input.emulatorPubkey),
     },
 });
 
@@ -1724,7 +1724,7 @@ export const lightningReceiveRequest = (input: {
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
         ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
-        ...namedCosigner(input.emulatorPubkey),
+        ...namedEmulatorKey(input.emulatorPubkey),
     },
 });
 

@@ -150,7 +150,7 @@ export interface PathSelection {
     extraWitness?: Bytes[];
 
     /** Arkade Script hashes this spend reveals in its `arkadetweak` PSBT input field. */
-    arkadeScriptTweaks?: Bytes[];
+    operatorKeyTweaks?: Bytes[];
 
     /**
      * nSequence for the spending input, BIP-68 encoded when the leaf
@@ -402,7 +402,7 @@ export interface DerivedContractTapscripts {
     intentTapLeafScript?: TapLeafScript;
     tapTree: Bytes;
     /** Arkade Script hashes that a spend through the chosen function reveals; absent when none. */
-    arkadeScriptTweaks?: Bytes[];
+    operatorKeyTweaks?: Bytes[];
 }
 
 /**

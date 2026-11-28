@@ -18,7 +18,7 @@ import type { OnchainProvider } from "../providers/onchain";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import {
-    ArkadeScriptTweak,
+    OperatorKeyTweak,
     ConditionWitness,
     PrevoutTxField,
     VtxoTaprootTree,
@@ -84,7 +84,7 @@ export function prepareOwnedInput(
         (u) =>
             VtxoTaprootTree.decode(u) === null &&
             ConditionWitness.decode(u) === null &&
-            ArkadeScriptTweak.decode(u) === null,
+            OperatorKeyTweak.decode(u) === null,
     );
     if (kept && kept.length !== unknown!.length) {
         tx.updateInput(index, { unknown: undefined }, true);
@@ -99,8 +99,8 @@ export function prepareOwnedInput(
     if (path.extraWitness?.length) {
         setArkPsbtField(tx, index, ConditionWitness, path.extraWitness);
     }
-    if (path.arkadeScriptTweaks?.length) {
-        setArkPsbtField(tx, index, ArkadeScriptTweak, path.arkadeScriptTweaks);
+    if (path.operatorKeyTweaks?.length) {
+        setArkPsbtField(tx, index, OperatorKeyTweak, path.operatorKeyTweaks);
     }
 }
 

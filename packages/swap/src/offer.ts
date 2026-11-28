@@ -918,7 +918,7 @@ export function resolveReceivePkScript(
     return address.pkScript;
 }
 
-/** X-only cosigner key for a swap contract's Arkade Script: `override`, else the operator's. */
+/** X-only emulator key for a swap contract's Arkade Script: `override`, else the operator's. */
 export function emulatorPubkeyFor(
     info: Pick<OperatorInfo, "signerPubkey">,
     override?: string,
@@ -1290,7 +1290,7 @@ export async function fillOffer(
 
         assetCarrierSats?: bigint;
 
-        /** Not needed when the operator holds the offer's cosigner key: it cosigns the fill. */
+        /** Not needed when the operator holds the offer's emulator key: it cosigns the fill. */
         emulator?: EmulatorProvider | string;
 
         emulatorPubkey?: string;

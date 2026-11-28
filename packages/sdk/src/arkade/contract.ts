@@ -91,7 +91,7 @@ import {
 } from "../utils/arkTransaction";
 import {
     ConditionWitness,
-    MAX_ARKADE_SCRIPT_TWEAKS,
+    MAX_OPERATOR_KEY_TWEAKS,
     PrevArkTxField,
     setArkPsbtField,
 } from "../utils/unknownFields";
@@ -121,12 +121,12 @@ import {
 import type { ContractRepository } from "../repositories/contractRepository";
 import { InMemoryWalletRepository } from "../repositories/inMemory/walletRepository";
 import { resolveArkadeService, type ArkadeService, type ResolvedArkadeService } from "./service";
-import { instantiatedContracts, tweakInstantiatedOperatorSigners } from "./artifact";
+import { instantiatedContracts, rewriteInstantiatedToTweakedOperatorKey } from "./artifact";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
     serializeArkadeContractParams,
-    operatorSignsKey,
+    isOperatorKey,
     witnessRefToBytes,
     validateParamValue,
     type ArkadeArgValue,
@@ -314,7 +314,7 @@ interface ArkadeConnectCommonOptions {
      */
     network?: Network;
     /**
-     * Cosigner key for the Arkade Script of new contracts (33-byte compressed hex), instead of
+     * Emulator key for the Arkade Script of new contracts (33-byte compressed hex), instead of
      * the operator's `signerPubkey`.
      */
     emulatorPubkey?: string;
@@ -418,7 +418,7 @@ export class Arkade {
     /** Bare protocol delay (blocks below 512, seconds otherwise), resolved only when needed. */
     readonly serverExitDelay?: bigint;
     /**
-     * Cosigner key for new contracts' Arkade Script: `emulatorPubkey`, else the operator's
+     * Emulator key for new contracts' Arkade Script: `emulatorPubkey`, else the operator's
      * `signerPubkey`. Never read from the emulator's own report.
      */
     readonly emulatorKey: Uint8Array;
@@ -488,7 +488,7 @@ export class Arkade {
      * Script; one tweaking a constructor key, such as `<TWEAK:insurer:claim>`, stays with the
      * emulator.
      */
-    operatorCosignsLeaf(
+    operatorCosignsFunction(
         contract: { keys: { serverKey: Uint8Array; emulatorKey?: Uint8Array } },
         fn: Pick<CompiledProgramFunction, "def" | "arkadeScript" | "signerKeys"> | undefined,
     ): boolean {
@@ -498,12 +498,12 @@ export class Arkade {
         return fn.def.tapscript.signers.every(
             (signer, i) =>
                 !(typeof signer === "object" && "tweak" in signer) ||
-                operatorSignsKey(fn, contract.keys.serverKey, fn.signerKeys[i]),
+                isOperatorKey(fn, contract.keys.serverKey, fn.signerKeys[i]),
         );
     }
 
     /**
-     * Connect and resolve the operator key, checkpoint closure and (if present) the cosigner key.
+     * Connect and resolve the operator key, checkpoint closure and emulator key.
      *
      * @example
      * ```typescript
@@ -681,8 +681,8 @@ export class Arkade {
      * and the witness program of each contract they instantiate to the derived one
      * (see {@link ArkadeContract}'s constructor).
      * Struct and array params are passed whole by name (see {@link ArkadeNestedValue}).
-     * When the cosigner key is the operator's own, a function that names the operator key beside
-     * the cosigner key names the operator key only tweaked by its Arkade Script instead.
+     * When the emulator key is the operator's own, a function that names the operator key beside
+     * the emulator key names the operator key only tweaked by its Arkade Script instead.
      * The result's `program` is that rewritten one, which `register()` stores.
      */
     contract<const P extends Program>(
@@ -713,15 +713,15 @@ export class Arkade {
         // Only creation rewrites; a restore compiles the stored program, keeping its address.
         const contract = new ArkadeContract(
             this,
-            tweakInstantiatedOperatorSigners(program, keys),
+            rewriteInstantiatedToTweakedOperatorKey(program, keys),
             args,
         );
         const { vtxoScript } = contract;
         for (const fn of vtxoScript.compiled) {
-            const count = vtxoScript.arkadeScriptTweaks(fn).length;
-            if (count > MAX_ARKADE_SCRIPT_TWEAKS) {
+            const count = vtxoScript.operatorKeyTweaks(fn).length;
+            if (count > MAX_OPERATOR_KEY_TWEAKS) {
                 throw new Error(
-                    `${fn.name}: a spend would reveal ${count} Arkade Script hashes; the operator accepts at most ${MAX_ARKADE_SCRIPT_TWEAKS}`,
+                    `${fn.name}: a spend would reveal ${count} Arkade Script hashes; the operator accepts at most ${MAX_OPERATOR_KEY_TWEAKS}`,
                 );
             }
         }
@@ -1152,9 +1152,7 @@ export class ArkadeTransactionBuilder {
                     value: coin.value,
                     tapLeafScript: unlocker.fn.tapLeafScript,
                     tapTree: unlocker.contract.tapTree,
-                    arkadeScriptTweaks: unlocker.contract.vtxoScript.arkadeScriptTweaks(
-                        unlocker.fn,
-                    ),
+                    operatorKeyTweaks: unlocker.contract.vtxoScript.operatorKeyTweaks(unlocker.fn),
                 })),
                 ...this.fundingCoins,
             ],
@@ -1274,7 +1272,7 @@ export class ArkadeTransactionBuilder {
             path: {
                 leaf: fn.tapLeafScript,
                 extraWitness: condition,
-                arkadeScriptTweaks: contract.vtxoScript.arkadeScriptTweaks(fn),
+                operatorKeyTweaks: contract.vtxoScript.operatorKeyTweaks(fn),
             },
             tapTree: contract.tapTree,
         });
@@ -1303,7 +1301,7 @@ export class ArkadeTransactionBuilder {
             emulator: client.emulator,
             viaOperator:
                 !!unlocker.fn.arkadeScript &&
-                client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
+                client.operatorCosignsFunction(unlocker.contract, unlocker.fn),
             onchainProvider: client.onchain!,
         });
     }
@@ -1338,7 +1336,7 @@ export class ArkadeTransactionBuilder {
                     (signer, i) =>
                         typeof signer === "object" &&
                         "tweak" in signer &&
-                        !operatorSignsKey(fn, serverKey, fn.signerKeys[i]),
+                        !isOperatorKey(fn, serverKey, fn.signerKeys[i]),
                 )
             ) {
                 throw new Error(
@@ -1348,7 +1346,7 @@ export class ArkadeTransactionBuilder {
             if (
                 fn.signerKeys.some(
                     (key) =>
-                        !operatorSignsKey(fn, serverKey, key) &&
+                        !isOperatorKey(fn, serverKey, key) &&
                         (!userKey || !equalBytes(key, userKey)),
                 )
             ) {
@@ -1382,13 +1380,13 @@ export class ArkadeTransactionBuilder {
         const emulated = inputs.find(
             ({ unlocker }) =>
                 unlocker.fn.arkadeScript &&
-                !client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
+                !client.operatorCosignsFunction(unlocker.contract, unlocker.fn),
         );
         if (emulated) {
             const operated = inputs.find(
                 ({ unlocker }) =>
                     unlocker.fn.arkadeScript &&
-                    client.operatorCosignsLeaf(unlocker.contract, unlocker.fn),
+                    client.operatorCosignsFunction(unlocker.contract, unlocker.fn),
             );
             if (operated) {
                 throw new Error(
@@ -1399,7 +1397,7 @@ export class ArkadeTransactionBuilder {
             // co-signatures (incl. the contract checkpoint) and finalizes with arkd.
             if (!client.emulator) {
                 throw new Error(
-                    `${emulated.unlocker.fn.name}: the operator does not hold this contract's cosigner key, so the spend needs an \`emulator\` on the Arkade client`,
+                    `${emulated.unlocker.fn.name}: the operator does not hold this contract's emulator key, so the spend needs an \`emulator\` on the Arkade client`,
                 );
             }
             return submitViaEmulator(client.emulator, { arkTx, checkpoints }, client.identity, {

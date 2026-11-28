@@ -6,7 +6,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import { arkade, CSVMultisigTapscript, networks, type VirtualCoin } from "../src";
 import { Transaction } from "../src/utils/transaction";
-import { ArkadeScriptTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { OperatorKeyTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import { Extension } from "../src/extension";
 import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../src/extension/asset";
 import { SettlementEventType } from "../src/providers/ark";
@@ -320,7 +320,7 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 
-    it("registers without the emulator once the operator holds the cosigner key", async () => {
+    it("registers without the emulator once the operator holds the emulator key", async () => {
         const { ark, target, registerIntent } = await keeper(
             () =>
                 (async function* () {
@@ -340,7 +340,7 @@ describe("renewProgramContractOutputs", () => {
         ["renew", "renew them separately"],
         ["missing", "missing has no Arkade Script"],
         ["unilateral", "unilateral has no Arkade Script"],
-    ])("rejects mixed cosigner targets with second function %s", async (fn, error) => {
+    ])("rejects mixed operator and emulator targets with second function %s", async (fn, error) => {
         const { ark, target, registerIntent } = await keeper(() => (async function* () {})());
         const viaOperator = new arkade.ArkadeContract(ark, renewable, target.contract.args, {
             serverKey: ark.serverKey,
@@ -459,8 +459,8 @@ describe("renewProgramContractOutputs", () => {
         ).rejects.toThrow(/stream closed/);
         const { proof } = (registerIntent.mock.calls[0] as unknown[])[0] as { proof: string };
         const tx = Transaction.fromPSBT(base64.decode(proof));
-        expect(getArkPsbtFields(tx, 1, ArkadeScriptTweak)).toEqual([]);
-        expect(getArkPsbtFields(tx, 2, ArkadeScriptTweak)).toEqual([
+        expect(getArkPsbtFields(tx, 1, OperatorKeyTweak)).toEqual([]);
+        expect(getArkPsbtFields(tx, 2, OperatorKeyTweak)).toEqual([
             [arkade.arkadeScriptHash(arkade.resolveAsm(sweep, {}))],
         ]);
     });
