@@ -128,7 +128,7 @@ async function setup(hd: boolean) {
                     id: "boarding-refresh",
                     tag: DEFAULT_MESSAGE_TAG,
                     type: path,
-                    payload: { arkServerUrl: "http://localhost:7070" },
+                    payload: {},
                 },
                 walletRequestBinding,
             ),

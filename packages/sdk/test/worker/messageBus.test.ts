@@ -4,6 +4,8 @@ import {
     InMemoryContractRepository,
     InMemoryBatchRegistrationRepository,
     ReadonlyWallet,
+    RestIndexerProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
     getNetwork,
@@ -118,7 +120,7 @@ async function sendInit(id = "init-1") {
             tag: "INITIALIZE_MESSAGE_BUS",
             config: {
                 wallet: { publicKey: "00".repeat(33) },
-                arkServer: { url: "http://localhost" },
+                operatorUrl: "http://localhost",
             },
         } as never,
         source: { postMessage: vi.fn() } as never,
@@ -611,7 +613,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
                 tag: "INITIALIZE_MESSAGE_BUS",
                 config: {
                     wallet: { publicKey: "00".repeat(33) },
-                    arkServer: { url: "http://localhost" },
+                    operatorUrl: "http://localhost",
                     messageTimeouts: { SETTLE: 100 },
                 },
             } as never,
@@ -662,7 +664,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
                 tag: "INITIALIZE_MESSAGE_BUS",
                 config: {
                     wallet: { publicKey: "00".repeat(33) },
-                    arkServer: { url: "http://localhost" },
+                    operatorUrl: "http://localhost",
                     messageTimeouts: { SETTLE: 100 },
                 },
             } as never,
@@ -679,7 +681,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
                 tag: "INITIALIZE_MESSAGE_BUS",
                 config: {
                     wallet: { publicKey: "00".repeat(33) },
-                    arkServer: { url: "http://localhost" },
+                    operatorUrl: "http://localhost",
                     messageTimeouts: { GET_BALANCE: 200 },
                 },
             } as never,
@@ -1126,7 +1128,7 @@ describe("MessageBus init serialization (Iteration 1)", () => {
 
     const initConfig = {
         wallet: { publicKey: "00".repeat(33) },
-        arkServer: { url: "http://localhost" },
+        operatorUrl: "http://localhost",
     };
 
     function sendInit(id: string, source: { postMessage: (m: unknown) => void }) {
@@ -1270,7 +1272,7 @@ describe("MessageBus init serialization (Iteration 1)", () => {
                     messageTag: handler.messageTag,
                     messageTimeouts: {},
                     inflightRequests: new Map(),
-                    initConfig: { arkServer: { url } },
+                    initConfig: { operatorUrl: url },
                     expectedWalletScope: binding.scope,
                     expectedNetwork: binding.network,
                     walletRequestBinding: binding,
@@ -1524,7 +1526,7 @@ describe("MessageBus init serialization (Iteration 1)", () => {
 describe("MessageBus default buildServices", () => {
     const config = {
         wallet: { type: "single-key", privateKey: "15".repeat(32) },
-        arkServer: { url: "https://ark.example.test" },
+        operatorUrl: "https://ark.example.test",
     } as never;
 
     const buildServices = async (intentRepository?: BatchRegistrationRepository) => {
@@ -1587,6 +1589,48 @@ describe("MessageBus default buildServices", () => {
         createReadonly.mockRestore();
         expect(signing.onchainProvider).toBe(onchainProvider);
         expect(readonly.onchainProvider).toBe(onchainProvider);
+    });
+
+    it("reads the operator URL that a page from an older SDK sends as arkServer", async () => {
+        const bus = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            {
+                messageHandlers: [],
+            },
+        );
+        const create = vi.spyOn(Wallet, "create").mockResolvedValue({
+            dispose: vi.fn(),
+            network: { name: "bitcoin" },
+            indexerProvider: {},
+        } as unknown as Wallet);
+        await (bus as any).buildServices({
+            wallet: { type: "single-key", privateKey: "15".repeat(32) },
+            arkServer: { url: "https://older-page.example.test" },
+        });
+        const [{ arkProvider, indexerProvider }] = create.mock.calls[0];
+        create.mockRestore();
+        expect((arkProvider as RestOperatorProvider).serverUrl).toBe(
+            "https://older-page.example.test",
+        );
+        expect((indexerProvider as RestIndexerProvider).serverUrl).toBe(
+            "https://older-page.example.test",
+        );
+    });
+
+    it("refuses a config with no operator URL instead of using the mainnet default", async () => {
+        const bus = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            {
+                messageHandlers: [],
+            },
+        );
+        await expect(
+            (bus as any).buildServices({
+                wallet: { type: "single-key", privateKey: "15".repeat(32) },
+            }),
+        ).rejects.toThrow("Message bus config needs an operatorUrl");
     });
 });
 

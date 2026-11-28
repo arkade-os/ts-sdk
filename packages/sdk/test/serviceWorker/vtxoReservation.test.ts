@@ -56,7 +56,7 @@ async function setup(
             inflightRequests: new Map(),
             messageTimeouts: {},
             identity: proxyIdentity,
-            initConfig: { arkServer: { url: operatorUrl } },
+            initConfig: { operatorUrl },
         }) as ServiceWorkerWallet,
         binding,
     );

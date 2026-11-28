@@ -79,7 +79,7 @@ async function setup() {
         messageTag: handler.messageTag,
         messageTimeouts: {},
         inflightRequests: new Map(),
-        initConfig: { arkServer: { url: context.url } },
+        initConfig: { operatorUrl: context.url },
         expectedWalletScope: context.binding.scope,
         expectedNetwork: context.network,
         walletRequestBinding: context.binding,

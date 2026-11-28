@@ -50,7 +50,7 @@ describe("AsyncStorageTaskQueue", () => {
 
     it("persists config", async () => {
         const queue = new AsyncStorageTaskQueue(new FakeAsyncStorage(), "queue:test");
-        const config = { arkServerUrl: "https://ark.example", version: 1 };
+        const config = { operatorUrl: "https://ark.example", version: 1 };
         await queue.persistConfig(config);
         expect(await queue.loadConfig()).toEqual(config);
     });

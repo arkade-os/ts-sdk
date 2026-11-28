@@ -1268,7 +1268,7 @@ export interface SponsorFillInput {
  */
 export async function fillOffer(
     wallet: IWallet,
-    arkServerUrl: string,
+    operatorUrl: string,
     offerHex: string | OfferBinding,
     opts: {
         fund: FillFunding[];
@@ -1299,7 +1299,7 @@ export async function fillOffer(
         emulatorPubkey,
     } = opts;
     const target = typeof offerHex === "string" ? decodeOffer(hex.decode(offerHex)) : offerHex;
-    const contract = await connectFillContract(wallet, arkServerUrl, target, {
+    const contract = await connectFillContract(wallet, operatorUrl, target, {
         swapAddress,
         emulator,
         emulatorPubkey,
@@ -1320,7 +1320,7 @@ export async function fillOffer(
 
 export async function connectFillContract(
     wallet: IWallet,
-    arkServerUrl: string,
+    operatorUrl: string,
     offer: Offer | OfferBinding,
     opts: {
         swapAddress?: string;
@@ -1331,8 +1331,8 @@ export async function connectFillContract(
     const { swapAddress, emulator, emulatorPubkey } = opts;
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
-        arkade: new RestOperatorProvider(arkServerUrl),
-        indexer: new RestIndexerProvider(arkServerUrl),
+        arkade: new RestOperatorProvider(operatorUrl),
+        indexer: new RestIndexerProvider(operatorUrl),
         identity: wallet.identity,
         contractManager,
         ...(emulator !== undefined

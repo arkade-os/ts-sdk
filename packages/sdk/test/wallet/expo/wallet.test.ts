@@ -111,7 +111,7 @@ describe("ExpoWallet", () => {
 
         const wallet = await ExpoWallet.setup({
             identity: {} as any,
-            arkServerUrl: "https://ark.example",
+            operatorUrl: "https://ark.example",
             esploraUrl: "https://esplora.example",
             storage: {} as any,
             background: {
@@ -121,7 +121,7 @@ describe("ExpoWallet", () => {
 
         expect(walletCreateMock).toHaveBeenCalledTimes(1);
         expect(taskQueue.persistConfig).toHaveBeenCalledWith({
-            arkServerUrl: "https://ark.example",
+            operatorUrl: "https://ark.example",
             pubkeyHex: "010203",
             serverPubKeyHex: "040506",
             exitTimelockValue: "77",
@@ -159,7 +159,7 @@ describe("ExpoWallet", () => {
 
         const wallet = await ExpoWallet.setup({
             identity: {} as any,
-            arkServerUrl: "https://ark.example",
+            operatorUrl: "https://ark.example",
             esploraUrl: "https://esplora.example",
             storage: {} as any,
             background: {
@@ -192,7 +192,7 @@ describe("ExpoWallet", () => {
 
         const wallet = await ExpoWallet.setup({
             identity: {} as any,
-            arkServerUrl: "https://ark.example",
+            operatorUrl: "https://ark.example",
             esploraUrl: "https://esplora.example",
             storage: {} as any,
             background: {
