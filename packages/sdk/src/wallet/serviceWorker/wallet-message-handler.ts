@@ -1652,7 +1652,7 @@ export class WalletMessageHandler
                             const report = await readArkadeCash(
                                 request.token,
                                 readonlyWallet.indexerProvider,
-                                await readonlyWallet.getArkadeInfo(),
+                                await readonlyWallet.getOperatorInfo(),
                                 readonlyWallet.onchainProvider,
                             );
                             return this.tagged({

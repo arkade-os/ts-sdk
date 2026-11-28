@@ -78,7 +78,7 @@ export const CHECKPOINT_TAPSCRIPT = hex.encode(
     }).script,
 );
 
-/** What the wallet answers `getArkadeInfo()` with. */
+/** What the wallet answers `getOperatorInfo()` with. */
 export const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
     dust: 330n,
@@ -97,7 +97,7 @@ export const hdWallet = async (
         getContractManager?: () => Promise<unknown>;
         info?: unknown;
         /** For the reads that must fail: `info` answers, this one decides. */
-        getArkadeInfo?: () => Promise<unknown>;
+        getOperatorInfo?: () => Promise<unknown>;
     } = {},
 ): Promise<IWallet> => {
     const identity = MnemonicIdentity.fromMnemonic(
@@ -109,7 +109,7 @@ export const hdWallet = async (
         identity,
         getAddress: async () => WALLET_ADDRESS,
         getBoardingAddress: async () => BOARDING_ADDRESS,
-        getArkadeInfo: over.getArkadeInfo ?? (async () => over.info ?? ARK_INFO),
+        getOperatorInfo: over.getOperatorInfo ?? (async () => over.info ?? ARK_INFO),
         getContractManager:
             over.getContractManager ??
             (async () => {

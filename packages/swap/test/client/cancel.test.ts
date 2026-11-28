@@ -147,7 +147,7 @@ const build = async (
     const base = fakeWallet({ contracts, identity: {} });
     const wallet = {
         ...(base.wallet as unknown as Record<string, unknown>),
-        getArkadeInfo: async () => ({}),
+        getOperatorInfo: async () => ({}),
         getArkadeBroadcaster: async () => ({
             submitTx: async () => ({}),
             finalizeTx: async () => {},
@@ -478,7 +478,7 @@ describe("the drive cancels a directed deposit its quote let lapse", () => {
         const contracts = fakeContracts([]);
         const wallet = {
             ...(fakeWallet({ contracts, identity: {} }).wallet as unknown as object),
-            getArkadeInfo: async () => ({}),
+            getOperatorInfo: async () => ({}),
             getArkadeBroadcaster: async () => ({
                 submitTx: async () => ({}),
                 finalizeTx: async () => {},

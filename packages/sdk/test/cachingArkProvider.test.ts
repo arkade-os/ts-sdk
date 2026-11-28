@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { CachingArkProvider } from "../src/providers/cachingArk";
-import { ArkadeInfo, ArkProvider, RestArkProvider } from "../src/providers/ark";
+import { OperatorInfo, ArkProvider, RestArkProvider } from "../src/providers/ark";
 import { extractOperatorProviderUrl } from "../src/wallet/wallet";
 import { jsonResponse } from "./helpers/response";
 
 const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 
-function fakeInfo(digest: string): ArkadeInfo {
+function fakeInfo(digest: string): OperatorInfo {
     return {
         boardingExitDelay: 0n,
         checkpointTapscript: "",
@@ -30,15 +30,15 @@ function fakeInfo(digest: string): ArkadeInfo {
     };
 }
 
-function fakeInner(getInfo: () => Promise<ArkadeInfo>) {
-    const listeners = new Set<(info: ArkadeInfo) => void>();
+function fakeInner(getInfo: () => Promise<OperatorInfo>) {
+    const listeners = new Set<(info: OperatorInfo) => void>();
     return {
         getInfo,
-        onServerInfoChanged: (listener: (info: ArkadeInfo) => void) => {
+        onServerInfoChanged: (listener: (info: OperatorInfo) => void) => {
             listeners.add(listener);
             return () => listeners.delete(listener);
         },
-        emit: (info: ArkadeInfo) => listeners.forEach((l) => l(info)),
+        emit: (info: OperatorInfo) => listeners.forEach((l) => l(info)),
     };
 }
 
@@ -98,9 +98,9 @@ describe("CachingArkProvider", () => {
     });
 
     it("dedupes concurrent misses into a single inner call", async () => {
-        let resolveInner!: (info: ArkadeInfo) => void;
+        let resolveInner!: (info: OperatorInfo) => void;
         const getInfo = vi.fn().mockReturnValue(
-            new Promise<ArkadeInfo>((resolve) => {
+            new Promise<OperatorInfo>((resolve) => {
                 resolveInner = resolve;
             }),
         );
@@ -131,9 +131,9 @@ describe("CachingArkProvider", () => {
     });
 
     it("keeps an event-cached rotation over an older in-flight fetch result", async () => {
-        let resolveInner!: (info: ArkadeInfo) => void;
+        let resolveInner!: (info: OperatorInfo) => void;
         const getInfo = vi.fn().mockReturnValue(
-            new Promise<ArkadeInfo>((resolve) => {
+            new Promise<OperatorInfo>((resolve) => {
                 resolveInner = resolve;
             }),
         );
@@ -151,9 +151,9 @@ describe("CachingArkProvider", () => {
 
     it("does not extend the TTL of an event-cached rotation with the older fetch's clock", async () => {
         vi.useFakeTimers();
-        let resolveInner!: (info: ArkadeInfo) => void;
+        let resolveInner!: (info: OperatorInfo) => void;
         const getInfo = vi.fn().mockReturnValueOnce(
-            new Promise<ArkadeInfo>((resolve) => {
+            new Promise<OperatorInfo>((resolve) => {
                 resolveInner = resolve;
             }),
         );
@@ -203,7 +203,7 @@ describe("CachingArkProvider", () => {
         const provider = new CachingArkProvider(new RestArkProvider("http://ark.test"), 60_000);
         await provider.getInfo();
 
-        const seen: ArkadeInfo[] = [];
+        const seen: OperatorInfo[] = [];
         provider.onServerInfoChanged((info) => seen.push(info));
 
         digest = "d2";

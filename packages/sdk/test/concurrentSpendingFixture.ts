@@ -10,7 +10,7 @@ import {
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { OperatorInfo } from "../src/providers/ark";
 import type { BatchRegistrationRepository } from "../src/repositories/intentRepository";
 import type { VtxoReservationRepository } from "../src/repositories/vtxoReservationRepository";
 import { SingleKey } from "../src/identity/singleKey";
@@ -20,7 +20,7 @@ const HOUR = 3_600_000;
 
 export const BTC_ADDR = "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx";
 
-const arkInfo = (): ArkadeInfo => ({
+const arkInfo = (): OperatorInfo => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",

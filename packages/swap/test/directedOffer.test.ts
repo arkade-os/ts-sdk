@@ -459,7 +459,7 @@ describe("a cancel built from the binding", () => {
             getAddress: async () =>
                 new ArkAddress(operatorPubkey, keys.makerPkScript.subarray(2), "tark").encode(),
             getContractManager: async () => undefined,
-            getArkadeInfo: async () => ({
+            getOperatorInfo: async () => ({
                 signerPubkey: `02${hex.encode(operatorPubkey)}`,
                 checkpointTapscript: hex.encode(CHECKPOINT),
                 network: "regtest",

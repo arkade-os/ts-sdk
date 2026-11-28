@@ -262,7 +262,7 @@ export class InconsistentRoute extends Error {
 }
 
 /**
- * `getArkadeInfo({ requireLive: true })` failed while deriving a covenant. A
+ * `getOperatorInfo({ requireLive: true })` failed while deriving a covenant. A
  * snapshot would bind the covenant to a signer key the operator may no longer
  * co-sign for, so this fails closed rather than falling back.
  *

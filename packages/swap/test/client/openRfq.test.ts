@@ -182,7 +182,7 @@ describe("open RFQ selection", () => {
     });
     it("never publishes when disposal races the initial operator read", async () => {
         const { client, wallet } = await setup();
-        const info = await wallet.getArkadeInfo();
+        const info = await wallet.getOperatorInfo();
         let reading!: () => void;
         let release!: (value: typeof info) => void;
         const started = new Promise<void>((resolve) => {
@@ -191,7 +191,7 @@ describe("open RFQ selection", () => {
         const gate = new Promise<typeof info>((resolve) => {
             release = resolve;
         });
-        vi.spyOn(wallet, "getArkadeInfo").mockImplementation(async () => {
+        vi.spyOn(wallet, "getOperatorInfo").mockImplementation(async () => {
             reading();
             return gate;
         });
@@ -343,9 +343,9 @@ describe("open RFQ selection", () => {
     });
     it("does not publish when cancellation races an asset recipient check", async () => {
         const { client, wallet } = await setup();
-        const info = await wallet.getArkadeInfo();
+        const info = await wallet.getOperatorInfo();
         const controller = new AbortController();
-        vi.spyOn(wallet, "getArkadeInfo").mockImplementation(async (read) => {
+        vi.spyOn(wallet, "getOperatorInfo").mockImplementation(async (read) => {
             if (read?.requireLive) controller.abort(new Error("cancelled recipient check"));
             return info;
         });
@@ -360,9 +360,9 @@ describe("open RFQ selection", () => {
     });
     it("refuses a changed operator network even when both networks share an address prefix", async () => {
         const { client, wallet, attempted } = await setup();
-        const info = await wallet.getArkadeInfo();
+        const info = await wallet.getOperatorInfo();
         const live = vi
-            .spyOn(wallet, "getArkadeInfo")
+            .spyOn(wallet, "getOperatorInfo")
             .mockImplementation(async (read) =>
                 read?.requireLive ? { ...info, network: "mutinynet" } : info,
             );

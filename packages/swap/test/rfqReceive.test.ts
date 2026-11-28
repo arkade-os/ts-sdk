@@ -70,7 +70,7 @@ const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 const COVCLAIMD_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x22), true);
 const PAYOUT_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
-/** What every wallet below answers `getArkadeInfo()` with: the server info the
+/** What every wallet below answers `getOperatorInfo()` with: the server info the
  * receive flows used to fetch over the wire, now sourced off the wallet. */
 const ARK_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
@@ -623,7 +623,7 @@ const hdWallet = async (
     return {
         identity,
         getAddress: async () => PAYOUT_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getOperatorInfo: async () => ARK_INFO,
         getContractManager: async () => ({ createContract }),
         getCurrentSigningDescriptor: () => provider.getCurrentSigningDescriptor(),
         getNextSigningDescriptor: () => provider.getNextSigningDescriptor(),
@@ -648,7 +648,7 @@ const staticWallet = (createContract: () => Promise<unknown> = async () => ({}))
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         ),
         getAddress: async () => PAYOUT_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getOperatorInfo: async () => ARK_INFO,
         getContractManager: async () => ({ createContract }),
     }) as unknown as IWallet;
 

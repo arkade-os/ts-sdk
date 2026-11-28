@@ -91,7 +91,7 @@ const contractManager = {
 const wallet = {
     identity: { xOnlyPublicKey: async () => makerKey },
     getAddress: async () => makerAddress,
-    getArkadeInfo: async () => ({ ...arkInfo(), unilateralExitDelay: state.unilateralExitDelay }),
+    getOperatorInfo: async () => ({ ...arkInfo(), unilateralExitDelay: state.unilateralExitDelay }),
     getContractManager: async () => contractManager,
 } as unknown as IWallet;
 
@@ -266,9 +266,9 @@ describe("offer contract registration", () => {
         const reads: unknown[] = [];
         const counted = {
             ...wallet,
-            getArkadeInfo: async (opts?: unknown) => {
+            getOperatorInfo: async (opts?: unknown) => {
                 reads.push(opts);
-                return { ...(await wallet.getArkadeInfo()), vtxoMinAmount: 1_500n };
+                return { ...(await wallet.getOperatorInfo()), vtxoMinAmount: 1_500n };
             },
         } as unknown as IWallet;
         const request = (transport: AttestingRfqTransport) =>

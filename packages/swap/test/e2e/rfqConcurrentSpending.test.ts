@@ -95,7 +95,7 @@ const invoice = (): string =>
 
 /** A solver that quotes back the maker's own derivation (see rfqDrive.test.ts). */
 const stubTransport = async (wallet: Wallet): Promise<AttestingRfqTransport> => {
-    const info = await wallet.getArkadeInfo();
+    const info = await wallet.getOperatorInfo();
     const operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     const hrp = ArkAddress.decode(await wallet.getAddress()).hrp;
@@ -172,7 +172,7 @@ const fourCoinWallet = async (concurrentSpending: boolean) => {
         discovery: { snapshot: [CARD] },
         transportFor: () => transport,
     });
-    const { fees } = await wallet.getArkadeInfo();
+    const { fees } = await wallet.getOperatorInfo();
     const exit = (amount: bigint) =>
         new Ramps(wallet).offboardExact({ destinationAddress: BTC_ADDR, feeInfo: fees, amount });
     return { wallet, client, exit, address };

@@ -19,7 +19,7 @@ import { ArkAddress, CSVMultisigTapscript, SingleKey, asset, type IWallet } from
 // cancel.test.ts's pattern: spread the real module, override only the
 // network seam these functions must never touch (RestEmulatorProvider).
 // Nothing else needs stubbing: the server info these three used to fetch over
-// the wire now comes off the wallet itself (`getArkadeInfo`), so none of them
+// the wire now comes off the wallet itself (`getOperatorInfo`), so none of them
 // constructs a provider at all.
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
     const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
@@ -95,7 +95,7 @@ const wallet = {
     // The server info every entrypoint here used to fetch from `arkServerUrl`
     // is now the wallet's own answer — one object, so a covenant derived
     // in-flow and one derived by the transport stub agree by construction.
-    getArkadeInfo: async () => ARK_INFO,
+    getOperatorInfo: async () => ARK_INFO,
     // Every maker entrypoint here registers its covenant with the contract
     // manager before handing back an address — `createOffer` via
     // `registerOfferContract`, the two request* paths via

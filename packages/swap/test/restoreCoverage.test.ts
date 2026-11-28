@@ -104,7 +104,7 @@ const wallet = {
         state.managerCalls++;
         return contractManager;
     },
-    getArkadeInfo: async () => new RestOperatorProvider("http://ark").getInfo(),
+    getOperatorInfo: async () => new RestOperatorProvider("http://ark").getInfo(),
 } as unknown as IWallet;
 
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");

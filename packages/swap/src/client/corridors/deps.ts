@@ -295,7 +295,7 @@ export const liveOperatorInfo = async (
 ): Promise<OperatorInfo> => {
     const requireLive = opts.requireLive ?? true;
     try {
-        return await wallet.getArkadeInfo({ requireLive });
+        return await wallet.getOperatorInfo({ requireLive });
     } catch (cause) {
         throw new OperatorUnreachable(
             `the Arkade server info could not be read${requireLive ? " live" : ""}: ${

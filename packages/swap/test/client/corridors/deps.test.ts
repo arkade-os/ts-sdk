@@ -325,18 +325,18 @@ describe("resolveCorridorDeps", () => {
 
 describe("resolveCorridorBase", () => {
     const info = { network: "regtest", signerPubkey: OPERATOR_SIGNER, deprecatedSigners: [] };
-    const walletAnswering = (getArkadeInfo: IWallet["getArkadeInfo"]): IWallet =>
-        ({ getArkadeInfo }) as IWallet;
+    const walletAnswering = (getOperatorInfo: IWallet["getOperatorInfo"]): IWallet =>
+        ({ getOperatorInfo }) as IWallet;
 
     it("reads live, and derives the network and signer set from that one read", async () => {
-        const getArkadeInfo = vi.fn(async () => info as unknown as OperatorInfo);
+        const getOperatorInfo = vi.fn(async () => info as unknown as OperatorInfo);
         const base = await resolveCorridorBase({
-            wallet: walletAnswering(getArkadeInfo),
+            wallet: walletAnswering(getOperatorInfo),
             operator: {} as SwapOperator,
         });
         // A snapshot would bind a covenant to a signer key the operator may no
         // longer co-sign for.
-        expect(getArkadeInfo).toHaveBeenCalledWith({ requireLive: true });
+        expect(getOperatorInfo).toHaveBeenCalledWith({ requireLive: true });
         expect(base.networkName).toBe("regtest");
         expect(base.network.hrp).toBe("tark");
         expect(base.signerSet.active).toBe(OPERATOR_SIGNER);
@@ -374,18 +374,20 @@ describe("resolveCorridorBase", () => {
         // `requireLive` is the whole point: a snapshot binds a covenant to a
         // signer key the operator may no longer co-sign for, so a wallet that
         // could answer from cache still refuses here.
-        const getArkadeInfo = vi.fn(async (opts?: { requireLive?: boolean }) => {
+        const getOperatorInfo = vi.fn(async (opts?: { requireLive?: boolean }) => {
             if (opts?.requireLive) throw new ProviderUnavailableError("offline");
             return info as unknown as OperatorInfo;
         });
         await expect(
             resolveCorridorBase({
-                wallet: walletAnswering(getArkadeInfo as IWallet["getArkadeInfo"]),
+                wallet: walletAnswering(getOperatorInfo as IWallet["getOperatorInfo"]),
                 operator: {} as SwapOperator,
             }),
         ).rejects.toBeInstanceOf(OperatorUnreachable);
         await expect(
-            (walletAnswering(getArkadeInfo as IWallet["getArkadeInfo"]) as IWallet).getArkadeInfo(),
+            (
+                walletAnswering(getOperatorInfo as IWallet["getOperatorInfo"]) as IWallet
+            ).getOperatorInfo(),
         ).resolves.toMatchObject({ network: "regtest" });
     });
 

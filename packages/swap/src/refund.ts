@@ -105,7 +105,7 @@ export const walletOperator = (wallet: IWallet): SwapOperator => {
     let broadcaster: Promise<Awaited<ReturnType<IWallet["getArkadeBroadcaster"]>>> | undefined;
     const broadcasting = () => (broadcaster ??= wallet.getArkadeBroadcaster());
     return {
-        getInfo: () => wallet.getArkadeInfo({ requireLive: true }),
+        getInfo: () => wallet.getOperatorInfo({ requireLive: true }),
         submitTx: async (...args) => (await broadcasting()).submitTx(...args),
         finalizeTx: async (...args) => (await broadcasting()).finalizeTx(...args),
     };

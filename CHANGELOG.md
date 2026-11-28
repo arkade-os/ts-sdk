@@ -16,6 +16,10 @@ style and have not been backfilled.
 
 - **The Executor refuses a `renewalWindow` under 180 seconds.** Only an upper bound existed, so `registerBoarding` and `registerRenewal` accepted `0`, a negative or a tiny window. The wallet steps in for a coin at a live renewal contract only at half the window, so such a window left it no time to act before the coin was swept, and the coin was recovered only afterwards. Half of 180 s covers one 60 s settlement poll and a batch round. Both calls now throw `renewalWindow Ns must be at least 180s`, as for a window not shorter than the operator's VTXO expiry. A stored watch with such a window is no longer refreshed: `registerRenewal` skips it with a warning and the wallet renews its coins itself. `ExecutorWatchRegistration.address` is documented as the delegated address, onchain for boarding and an Arkade address for renewal.
 
+### Internal
+
+- **`@arkade-os/swap`: the operator's info comes from `getOperatorInfo`.** Swap still called the deprecated `getArkadeInfo` alias, and the SDK's own code still used the old names in three files. `IReadonlyWallet` has required `getOperatorInfo` since 0.5.13, so only an untyped test double that stubs `getArkadeInfo` alone must add it. Both old names stay as deprecated aliases.
+
 ## [0.5.15] - 2026-11-26
 
 ### Breaking Changes

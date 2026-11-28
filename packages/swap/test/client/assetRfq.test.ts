@@ -289,7 +289,7 @@ describe("quote() on a negotiated asset market", () => {
     ])("quotes and funds an exact two-asset payout to $recipient", async ({ receiveAddress }) => {
         const wallet = await acceptWallet();
         Object.assign(wallet.wallet, {
-            getArkadeInfo: async () => ({ ...ARK_INFO, vtxoMinAmount: 546n }),
+            getOperatorInfo: async () => ({ ...ARK_INFO, vtxoMinAmount: 546n }),
         });
         const { client, transport, repository } = await setup({
             wallet,
@@ -890,7 +890,9 @@ describe("accept() on a negotiated asset market", () => {
 
     it("funds the carrier the solver published, and keeps it on the record", async () => {
         const wallet = await acceptWallet();
-        Object.assign(wallet.wallet, { getArkadeInfo: async () => ({ ...ARK_INFO, dust: 546n }) });
+        Object.assign(wallet.wallet, {
+            getOperatorInfo: async () => ({ ...ARK_INFO, dust: 546n }),
+        });
         const base = solverFor(CLOCK);
         const { client, repository } = await setup({
             wallet,
@@ -967,7 +969,9 @@ describe("accept() on a negotiated asset market", () => {
 
     it("prices a feed BTC deposit's delivered carrier at the operator's dust, and records none", async () => {
         const wallet = await acceptWallet();
-        Object.assign(wallet.wallet, { getArkadeInfo: async () => ({ ...ARK_INFO, dust: 546n }) });
+        Object.assign(wallet.wallet, {
+            getOperatorInfo: async () => ({ ...ARK_INFO, dust: 546n }),
+        });
         const card = { ...canonicalSpotCard, charges_delivered_carrier: true };
         const { client, repository } = await setup({ wallet, snapshot: [card] });
         const quote = await client.quote(buy());
@@ -987,7 +991,7 @@ describe("accept() on a negotiated asset market", () => {
         const wallet = await acceptWallet();
         Object.assign(wallet.wallet, {
             // the client's own parse reads a snapshot; only a live read fails
-            getArkadeInfo: async (opts?: { requireLive?: boolean }) => {
+            getOperatorInfo: async (opts?: { requireLive?: boolean }) => {
                 if (opts?.requireLive) throw new Error("operator down");
                 return ARK_INFO;
             },
@@ -999,7 +1003,7 @@ describe("accept() on a negotiated asset market", () => {
 
     it("refuses a feed BTC deposit on a charging card when the operator reports no dust", async () => {
         const wallet = await acceptWallet();
-        Object.assign(wallet.wallet, { getArkadeInfo: async () => ({ ...ARK_INFO, dust: 0n }) });
+        Object.assign(wallet.wallet, { getOperatorInfo: async () => ({ ...ARK_INFO, dust: 0n }) });
         const card = { ...canonicalSpotCard, charges_delivered_carrier: true };
         const { client } = await setup({ wallet, snapshot: [card] });
 
@@ -1018,7 +1022,7 @@ describe("accept() on a negotiated asset market", () => {
             const wallet = await acceptWallet();
             let reported = dust;
             Object.assign(wallet.wallet, {
-                getArkadeInfo: async () => ({ ...ARK_INFO, dust: reported }),
+                getOperatorInfo: async () => ({ ...ARK_INFO, dust: reported }),
             });
             const { client, repository } = await setup({ wallet, snapshot: [card] });
             const quote = await client.quote(sell());
@@ -1038,7 +1042,7 @@ describe("accept() on a negotiated asset market", () => {
 
     it("refuses a feed asset deposit when the operator reports no dust", async () => {
         const wallet = await acceptWallet();
-        Object.assign(wallet.wallet, { getArkadeInfo: async () => ({ ...ARK_INFO, dust: 0n }) });
+        Object.assign(wallet.wallet, { getOperatorInfo: async () => ({ ...ARK_INFO, dust: 0n }) });
         const { client } = await setup({ wallet, snapshot: [canonicalSpotCard] });
 
         await expect(client.quote(sell())).rejects.toThrow(

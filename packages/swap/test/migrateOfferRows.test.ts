@@ -85,7 +85,7 @@ const managed = async (rows: Contract[] = []) => {
         identity: { xOnlyPublicKey: async () => makerKey },
         getAddress: async () => makerAddress,
         getContractManager: async () => manager,
-        getArkadeInfo: async () => new RestOperatorProvider("http://ark").getInfo(),
+        getOperatorInfo: async () => new RestOperatorProvider("http://ark").getInfo(),
     } as unknown as IWallet;
     return { manager, wallet };
 };
