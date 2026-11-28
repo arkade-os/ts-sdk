@@ -182,7 +182,9 @@ type Initialize = {
     id: string;
     config: {
         wallet: SerializedIdentity;
-        arkServer: {
+        operatorUrl?: string;
+        /** @deprecated Sent by pages from older SDKs, read when `operatorUrl` is absent. */
+        arkServer?: {
             url: string;
             publicKey?: string;
         };
@@ -578,7 +580,10 @@ export class MessageBus {
     }
 
     private async buildServices(config: Initialize["config"]): Promise<MessageBusServices> {
-        const arkProvider = new RestOperatorProvider(config.arkServer.url);
+        const operatorUrl = config.operatorUrl ?? config.arkServer?.url;
+        // Both providers would fall back to the mainnet operator in silence.
+        if (!operatorUrl) throw new Error("Message bus config needs an operatorUrl");
+        const arkProvider = new RestOperatorProvider(operatorUrl);
         const storage = {
             walletRepository: this.walletRepository,
             contractRepository: this.contractRepository,
@@ -587,7 +592,7 @@ export class MessageBus {
         const delegateProvider = config.delegateUrl
             ? new RestDelegateProvider(config.delegateUrl)
             : undefined;
-        const indexerProvider = new RestIndexerProvider(config.arkServer.url);
+        const indexerProvider = new RestIndexerProvider(operatorUrl);
         const executorProvider = config.executorUrl
             ? new RestExecutorProvider(config.executorUrl)
             : undefined;
@@ -597,7 +602,7 @@ export class MessageBus {
         if (isSigningSerialized(serialized)) {
             const identity = hydrateIdentity(serialized) as Identity;
             const reservationScope = vtxoReservationScope(
-                config.arkServer.url,
+                operatorUrl,
                 await identity.xOnlyPublicKey(),
             );
             if (this.reservationStore?.scope !== reservationScope) {
@@ -612,7 +617,6 @@ export class MessageBus {
             const wallet = await Wallet.create({
                 identity,
                 arkProvider,
-                arkServerPublicKey: config.arkServer.publicKey,
                 indexerProvider,
                 onchainProvider: this.onchainProvider,
                 storage: {
@@ -646,7 +650,6 @@ export class MessageBus {
             lazyInitialization: config.lazyInitialization,
             identity,
             arkProvider,
-            arkServerPublicKey: config.arkServer.publicKey,
             indexerProvider,
             onchainProvider: this.onchainProvider,
             storage,
@@ -659,10 +662,7 @@ export class MessageBus {
             arkProvider,
             walletRequestBinding: readonlyWallet.network.name
                 ? {
-                      scope: vtxoReservationScope(
-                          config.arkServer.url,
-                          await identity.xOnlyPublicKey(),
-                      ),
+                      scope: vtxoReservationScope(operatorUrl, await identity.xOnlyPublicKey()),
                       network: readonlyWallet.network.name,
                   }
                 : undefined,

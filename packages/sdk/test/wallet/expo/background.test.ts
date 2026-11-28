@@ -60,7 +60,7 @@ describe("expo background task helpers", () => {
     it("defines and executes the background task happy path", async () => {
         const taskQueue = {
             loadConfig: vi.fn().mockResolvedValue({
-                arkServerUrl: "https://ark.example",
+                operatorUrl: "https://ark.example",
                 pubkeyHex: "01".repeat(32),
                 serverPubKeyHex: "02".repeat(32),
                 exitTimelockValue: "77",
@@ -140,10 +140,39 @@ describe("expo background task helpers", () => {
         expect(runTasksMock).not.toHaveBeenCalled();
     });
 
-    it("returns Failed when the executor throws", async () => {
+    it("builds the providers from a config that an older SDK saved under arkServerUrl", async () => {
         const taskQueue = {
             loadConfig: vi.fn().mockResolvedValue({
                 arkServerUrl: "https://ark.example",
+                pubkeyHex: "01".repeat(32),
+                serverPubKeyHex: "02".repeat(32),
+                exitTimelockValue: "77",
+                exitTimelockType: "blocks",
+            }),
+            getResults: vi.fn().mockResolvedValue([]),
+            acknowledgeResults: vi.fn().mockResolvedValue(undefined),
+            getTasks: vi.fn().mockResolvedValue([]),
+            addTask: vi.fn().mockResolvedValue(undefined),
+        };
+        runTasksMock.mockResolvedValue([]);
+
+        const { defineExpoBackgroundTask } = await loadBackground();
+
+        defineExpoBackgroundTask("ark-legacy-config-task", {
+            taskQueue: taskQueue as any,
+            walletRepository: {} as any,
+            contractRepository: {} as any,
+        });
+        await defineTaskMock.mock.calls[0][1]();
+
+        expect(expoIndexerProviderCtorMock).toHaveBeenCalledWith("https://ark.example");
+        expect(expoArkProviderCtorMock).toHaveBeenCalledWith("https://ark.example");
+    });
+
+    it("returns Failed when the executor throws", async () => {
+        const taskQueue = {
+            loadConfig: vi.fn().mockResolvedValue({
+                operatorUrl: "https://ark.example",
                 pubkeyHex: "01".repeat(32),
                 serverPubKeyHex: "02".repeat(32),
                 exitTimelockValue: "77",

@@ -187,13 +187,13 @@ export class ExpoWallet
         // Persist wallet params so the background handler can rehydrate
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
-            const arkServerUrl = extractOperatorProviderUrl(wallet.arkProvider);
+            const operatorUrl = extractOperatorProviderUrl(wallet.arkProvider);
 
-            if (typeof arkServerUrl === "string" && arkServerUrl.length > 0) {
+            if (typeof operatorUrl === "string" && operatorUrl.length > 0) {
                 const timelock = wallet.offchainTapscript.options.csvTimelock;
 
                 const bgConfig: PersistedBackgroundConfig = {
-                    arkServerUrl,
+                    operatorUrl,
                     pubkeyHex: hex.encode(wallet.offchainTapscript.options.pubKey),
                     serverPubKeyHex: hex.encode(wallet.offchainTapscript.options.serverPubKey),
                     exitTimelockValue: timelock.value.toString(),

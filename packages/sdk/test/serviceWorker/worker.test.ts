@@ -76,10 +76,7 @@ const defaultInitConfig = {
     wallet: {
         privateKey: "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c",
     },
-    arkServer: {
-        url: "https://ark.example.test",
-        publicKey: "initConfig.arkServerPublicKey",
-    },
+    operatorUrl: "https://ark.example.test",
 };
 
 describe("Worker", () => {
@@ -210,10 +207,7 @@ describe("Worker", () => {
             wallet: {
                 privateKey: "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c",
             },
-            arkServer: {
-                url: "initConfig.arkServerUrl",
-                publicKey: "initConfig.arkServerPublicKey",
-            },
+            operatorUrl: "initConfig.operatorUrl",
         };
 
         const buildServicesSpy = vi.fn(async () => ({
@@ -338,10 +332,7 @@ describe("Worker buildServices identity hydration", () => {
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     const TEST_PRIVATE_KEY_HEX = "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c";
 
-    const arkServer = {
-        url: "https://ark.example.test",
-        publicKey: "arkServerPublicKey",
-    };
+    const operatorUrl = "https://ark.example.test";
 
     beforeEach(() => {
         vi.resetAllMocks();
@@ -382,7 +373,7 @@ describe("Worker buildServices identity hydration", () => {
             data: {
                 tag: "INITIALIZE_MESSAGE_BUS",
                 id: "init",
-                config: { wallet: walletConfig, arkServer, ...initConfig },
+                config: { wallet: walletConfig, operatorUrl, ...initConfig },
             },
             source,
         });

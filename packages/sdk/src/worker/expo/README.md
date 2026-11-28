@@ -132,7 +132,7 @@ Foreground resume:
 
 The background handler runs in a fresh JS context with no shared memory. `ExpoWallet.setup()` persists a lightweight config blob (`PersistedBackgroundConfig`) containing:
 
-- `arkServerUrl` — to create `ExpoIndexerProvider` / `ExpoOperatorProvider`
+- `operatorUrl` — to create `ExpoIndexerProvider` / `ExpoOperatorProvider`
 - `pubkeyHex`, `serverPubKeyHex`, `exitTimelock` — to reconstruct `DefaultVtxo.Script` and `extendVtxo`
 
 This avoids an `arkProvider.getInfo()` network call during the short background window.

@@ -154,7 +154,7 @@ sw.postMessage({
     tag: "INITIALIZE_MESSAGE_BUS",
     config: {
         wallet,
-        arkServer: { url: "https://..." },
+        operatorUrl: "https://...",
     },
 });
 

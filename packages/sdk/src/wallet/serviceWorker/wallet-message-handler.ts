@@ -216,8 +216,6 @@ export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
 export type RequestInitWallet = RequestEnvelope & {
     type: "INIT_WALLET";
     payload: {
-        arkServerUrl: string;
-        arkServerPublicKey?: string;
         lazyBoarding?: boolean;
     };
 };

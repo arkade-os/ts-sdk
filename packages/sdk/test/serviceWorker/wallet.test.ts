@@ -161,7 +161,7 @@ const createServiceWorkerHarness = (
     const serviceWorker = {
         postMessage: vi.fn((wireMessage: any) => {
             if (wireMessage.tag === "INITIALIZE_MESSAGE_BUS") {
-                operatorUrl = wireMessage.config.arkServer.url;
+                operatorUrl = wireMessage.config.operatorUrl;
             }
             const message = walletRequestOf(wireMessage);
             if (handlePing && message.tag === "PING") {
@@ -253,7 +253,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await ServiceWorkerReadonlyWallet.setup({
             serviceWorkerPath: "/sw.js",
             serviceWorkerActivationTimeoutMs: 30_000,
-            arkServer: { url: "https://ark.example" },
+            operatorUrl: "https://ark.example",
             identity: {} as any,
         });
 
@@ -1449,11 +1449,10 @@ describe("sendMessage reinitialize on SW restart", () => {
     const stubConfig = {
         initConfig: {
             wallet: { publicKey: "deadbeef" },
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
         },
         initWalletPayload: {
             key: { publicKey: "deadbeef" },
-            arkServerUrl: "https://ark.test",
         },
     };
 
@@ -1461,7 +1460,7 @@ describe("sendMessage reinitialize on SW restart", () => {
         const wallet = createWallet(serviceWorker, tag);
         bindTestWallet(
             wallet,
-            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.arkServer.url),
+            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.operatorUrl),
         );
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
@@ -1472,7 +1471,7 @@ describe("sendMessage reinitialize on SW restart", () => {
         const wallet = createSWWallet(serviceWorker, tag);
         bindTestWallet(
             wallet,
-            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.arkServer.url),
+            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.operatorUrl),
         );
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
@@ -1939,11 +1938,10 @@ describe("preflight ping", () => {
     const stubConfig = {
         initConfig: {
             wallet: { publicKey: "deadbeef" },
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
         },
         initWalletPayload: {
             key: { publicKey: "deadbeef" },
-            arkServerUrl: "https://ark.test",
         },
     };
 
@@ -1951,7 +1949,7 @@ describe("preflight ping", () => {
         const wallet = createWallet(serviceWorker, tag);
         bindTestWallet(
             wallet,
-            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.arkServer.url),
+            testWalletBinding(STUB_XONLY_PUBLIC_KEY, stubConfig.initConfig.operatorUrl),
         );
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
@@ -2203,7 +2201,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2221,7 +2219,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         const factory = readonly ? ServiceWorkerReadonlyWallet : ServiceWorkerWallet;
         const wallet = await factory.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
             lazyInitialization: true,
@@ -2235,7 +2233,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         expect(getInitWalletMessage(serviceWorker).payload.lazyBoarding).toBe(true);
     });
 
-    it("ServiceWorkerWallet.create uses the default Arkade server URL when omitted", async () => {
+    it("ServiceWorkerWallet.create uses the default operator URL when omitted", async () => {
         const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const { serviceWorker } = await setup(identity);
 
@@ -2245,12 +2243,38 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
             storage: storage(),
         });
 
-        expect(getInitializeMessage(serviceWorker).config.arkServer.url).toBe(
+        expect(getInitializeMessage(serviceWorker).config.operatorUrl).toBe(
             DEFAULT_ARKADE_SERVER_URL,
         );
-        expect(getInitWalletMessage(serviceWorker).payload.arkServerUrl).toBe(
-            DEFAULT_ARKADE_SERVER_URL,
-        );
+    });
+
+    it("ServiceWorkerWallet.create still reads the deprecated arkServer option", async () => {
+        const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const { serviceWorker } = await setup(identity);
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServer: { url: "https://ark.test" },
+            identity,
+            storage: storage(),
+        });
+
+        expect(getInitializeMessage(serviceWorker).config.operatorUrl).toBe("https://ark.test");
+    });
+
+    it("ServiceWorkerWallet.create refuses operatorUrl and arkServer together", async () => {
+        const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const { serviceWorker } = await setup(identity);
+
+        await expect(
+            ServiceWorkerWallet.create({
+                serviceWorker: serviceWorker as any,
+                operatorUrl: "https://ark.test",
+                arkServer: { url: "https://ark.test" },
+                identity,
+                storage: storage(),
+            }),
+        ).rejects.toThrow("Pass either `operatorUrl` or `arkServer`, not both");
     });
 
     it("ServiceWorkerWallet.create forwards walletMode to the worker init config", async () => {
@@ -2261,7 +2285,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             walletMode: "hd",
             storage: storage(),
@@ -2280,7 +2304,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             minBatchExpirySeconds: 3_600n,
             storage: storage(),
@@ -2298,7 +2322,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2307,7 +2331,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         expect(config.minBatchExpirySeconds).toBeUndefined();
     });
 
-    it("ServiceWorkerReadonlyWallet.create uses the default Arkade server URL when omitted", async () => {
+    it("ServiceWorkerReadonlyWallet.create uses the default operator URL when omitted", async () => {
         const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const identity = await signing.toReadonly();
         const { serviceWorker } = await setup(identity);
@@ -2318,10 +2342,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
             storage: storage(),
         });
 
-        expect(getInitializeMessage(serviceWorker).config.arkServer.url).toBe(
-            DEFAULT_ARKADE_SERVER_URL,
-        );
-        expect(getInitWalletMessage(serviceWorker).payload.arkServerUrl).toBe(
+        expect(getInitializeMessage(serviceWorker).config.operatorUrl).toBe(
             DEFAULT_ARKADE_SERVER_URL,
         );
     });
@@ -2334,7 +2355,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2354,7 +2375,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2376,7 +2397,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2396,7 +2417,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2418,7 +2439,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2439,7 +2460,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2461,7 +2482,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });
@@ -2483,7 +2504,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         await expect(
             ServiceWorkerWallet.create({
                 serviceWorker: serviceWorker as any,
-                arkServer: { url: "https://ark.test" },
+                operatorUrl: "https://ark.test",
                 identity: readonly as any,
                 storage: storage(),
             }),
@@ -2543,7 +2564,7 @@ describe("ServiceWorker identity boundary assertion", () => {
         await expect(
             ServiceWorkerWallet.create({
                 serviceWorker: serviceWorker as any,
-                arkServer: { url: "https://ark.test" },
+                operatorUrl: "https://ark.test",
                 identity,
                 storage: storage(),
             }),
@@ -2591,7 +2612,7 @@ describe("ServiceWorker identity boundary assertion", () => {
 
         const wallet = await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServer: { url: "https://ark.test" },
+            operatorUrl: "https://ark.test",
             identity,
             storage: storage(),
         });

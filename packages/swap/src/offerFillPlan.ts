@@ -51,7 +51,7 @@ export interface BuildOfferFillPlanOpts {
 /** Builds an unsigned offer fill without signing or submitting the spend. */
 export async function buildOfferFillPlan(
     wallet: IWallet,
-    arkServerUrl: string,
+    operatorUrl: string,
     offerHex: string | OfferBinding,
     opts: BuildOfferFillPlanOpts,
 ): Promise<JointGraph> {
@@ -65,7 +65,7 @@ export async function buildOfferFillPlan(
         sponsor,
     } = opts;
     const target = typeof offerHex === "string" ? decodeOffer(hex.decode(offerHex)) : offerHex;
-    const contract = await connectFillContract(wallet, arkServerUrl, target, { swapAddress });
+    const contract = await connectFillContract(wallet, operatorUrl, target, { swapAddress });
     const offer = offerOf(target, contract.pkScript);
     const vtxos = await contract.getUtxos();
     const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });

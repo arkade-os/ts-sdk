@@ -33,7 +33,9 @@ import { getRandomId } from "../utils";
  * without a network call.
  */
 export interface PersistedBackgroundConfig {
-    arkServerUrl: string;
+    operatorUrl: string;
+    /** @deprecated The key older SDKs saved the operator URL under. */
+    arkServerUrl?: string;
     pubkeyHex: string;
     serverPubKeyHex: string;
     exitTimelockValue: string;
@@ -97,8 +99,10 @@ export function defineExpoBackgroundTask(
                 return BackgroundTask.BackgroundTaskResult.Success;
             }
 
-            const indexerProvider = new ExpoIndexerProvider(config.arkServerUrl);
-            const arkProvider = new ExpoOperatorProvider(config.arkServerUrl);
+            // The task can run after an app update, before setup() saves the new key.
+            const operatorUrl = config.operatorUrl ?? config.arkServerUrl;
+            const indexerProvider = new ExpoIndexerProvider(operatorUrl);
+            const arkProvider = new ExpoOperatorProvider(operatorUrl);
 
             const deps = createTaskDependencies({
                 walletRepository,

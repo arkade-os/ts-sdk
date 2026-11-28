@@ -71,7 +71,6 @@ describe("WalletMessageHandler handleMessage", () => {
             type: "INIT_WALLET",
             payload: {
                 key: { publicKey: "00" },
-                arkServerUrl: "http://example.com",
             },
         } as any;
 
@@ -3095,7 +3094,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         await dispatch(updater, {
             ...baseMessage(),
             type: "INIT_WALLET",
-            payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+            payload: { lazyBoarding: true },
         } as any);
 
         expect(rw.getBoardingTxs).not.toHaveBeenCalled();
@@ -3683,7 +3682,7 @@ describe("WalletMessageHandler event-push generations", () => {
             const pending = dispatch(updater, {
                 ...baseMessage(),
                 type: "INIT_WALLET",
-                payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+                payload: { lazyBoarding: true },
             } as any).then((response) => {
                 completed = true;
                 return response;
@@ -3916,7 +3915,7 @@ describe("WalletMessageHandler event-push generations", () => {
             const message = {
                 ...baseMessage(),
                 type: "INIT_WALLET",
-                payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+                payload: { lazyBoarding: true },
             } as any;
             expect(await dispatch(updater, message)).toMatchObject({
                 type: "WALLET_INITIALIZED",
@@ -3951,7 +3950,7 @@ describe("WalletMessageHandler event-push generations", () => {
         const message = {
             ...baseMessage(),
             type: "INIT_WALLET",
-            payload: { arkServerUrl: "http://localhost:7070" },
+            payload: {},
         } as any;
 
         await dispatch(updater, message);

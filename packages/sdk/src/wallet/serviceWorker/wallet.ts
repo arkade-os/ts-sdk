@@ -481,7 +481,7 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
  * // SIMPLE: Recommended approach
  * const wallet = await ServiceWorkerWallet.setup({
  *   serviceWorkerPath: '/service-worker.js',
- *   arkServer: { url: 'https://arkade.computer' },
+ *   operatorUrl: 'https://arkade.computer',
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
  * });
  *
@@ -489,7 +489,7 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
  * const serviceWorker = await setupServiceWorker("/service-worker.js");
  * const wallet = await ServiceWorkerWallet.create({
  *   serviceWorker,
- *   arkServer: { url: 'https://arkade.computer' },
+ *   operatorUrl: 'https://arkade.computer',
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
  * });
  *
@@ -503,7 +503,9 @@ interface ServiceWorkerWalletOptions {
     lazyInitialization?: boolean;
     /** Defer boarding and history loading; render boarding.loaded=false as unknown. */
     lazyBoarding?: boolean;
-    /** The operator's endpoint. */
+    /** The operator's URL. */
+    operatorUrl?: string;
+    /** @deprecated Use {@link operatorUrl}. */
     arkServer?: {
         url: string;
         /** @deprecated Ignored, as `BaseWalletConfig.arkServerPublicKey`. */
@@ -598,10 +600,7 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
 type MessageBusInitConfig = {
     lazyInitialization?: boolean;
     wallet: SerializedIdentity;
-    arkServer: {
-        url: string;
-        publicKey?: string;
-    };
+    operatorUrl: string;
     delegateUrl?: string;
     executorUrl?: string;
     timeoutMs?: number;
@@ -776,18 +775,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         wallet: W,
         options: ServiceWorkerWalletCreateOptions,
         serializedWallet: SerializedIdentity,
-        busConfig: Omit<MessageBusInitConfig, "wallet" | "arkServer" | "messageTimeouts">,
+        busConfig: Omit<MessageBusInitConfig, "wallet" | "operatorUrl" | "messageTimeouts">,
     ): Promise<W> {
-        const arkServer = { ...(options.arkServer ?? { url: DEFAULT_ARKADE_SERVER_URL }) };
+        if (options.operatorUrl !== undefined && options.arkServer !== undefined) {
+            throw new Error("Pass either `operatorUrl` or `arkServer`, not both");
+        }
+        const operatorUrl =
+            options.operatorUrl ?? options.arkServer?.url ?? DEFAULT_ARKADE_SERVER_URL;
         wallet.expectedWalletScope = vtxoReservationScope(
-            arkServer.url,
+            operatorUrl,
             await wallet.identity.xOnlyPublicKey(),
         );
         wallet.expectedNetwork = options.expectedNetwork;
         const initWalletPayload = {
             lazyBoarding: options.lazyBoarding,
-            arkServerUrl: arkServer.url,
-            arkServerPublicKey: arkServer.publicKey,
         };
 
         // Precompute the merged timeout map so page-side waiting and
@@ -810,7 +811,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
-            arkServer,
+            operatorUrl,
             ...busConfig,
             messageTimeouts,
         };
@@ -853,7 +854,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * ```typescript
      * const wallet = await ServiceWorkerReadonlyWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
-     *   arkServer: { url: 'https://arkade.computer' },
+     *   operatorUrl: 'https://arkade.computer',
      *   identity: ReadonlySingleKey.fromPublicKey('your_public_key_hex')
      * });
      * ```
@@ -2135,7 +2136,7 @@ export class ServiceWorkerWallet
      * ```typescript
      * const wallet = await ServiceWorkerWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
-     *   arkServer: { url: 'https://arkade.computer' },
+     *   operatorUrl: 'https://arkade.computer',
      *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
      * });
      * ```
@@ -2391,7 +2392,7 @@ export class ServiceWorkerWallet
         const snapshot = outpoints.map(({ txid, vout }) => ({ txid, vout }));
         const config = await this.buildInitConfig();
         const scope = vtxoReservationScope(
-            config.arkServer.url,
+            config.operatorUrl,
             await this.identity.xOnlyPublicKey(),
         );
         const message: RequestReserveVtxos = {

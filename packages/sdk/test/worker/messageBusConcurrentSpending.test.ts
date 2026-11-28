@@ -25,7 +25,7 @@ describe("MessageBus default buildServices", () => {
 
             await (bus as any).buildServices({
                 wallet: { type: "single-key", privateKey: "15".repeat(32) },
-                arkServer: { url: "https://ark.example.test" },
+                operatorUrl: "https://ark.example.test",
                 concurrentSpending,
             });
 

@@ -12,6 +12,10 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Features
+
+- **`ServiceWorkerWallet` takes `operatorUrl`.** The `arkServer` option stays as a deprecated alias, and passing both throws. The worker's init config names the URL `operatorUrl` too. A worker still accepts `arkServer` from an older page, but a new page needs an updated worker. `ExpoWallet.setup` saves the background config under `operatorUrl`, and the background task still reads one that an older SDK saved under `arkServerUrl`. The `INIT_WALLET` message drops `arkServerUrl` and `arkServerPublicKey`, which no worker has read since 0.5.9.
+
 ### Bug Fixes
 
 - **The Executor refuses a `renewalWindow` under 180 seconds.** Only an upper bound existed, so `registerBoarding` and `registerRenewal` accepted `0`, a negative or a tiny window. The wallet steps in for a coin at a live renewal contract only at half the window, so such a window left it no time to act before the coin was swept, and the coin was recovered only afterwards. Half of 180 s covers one 60 s settlement poll and a batch round. Both calls now throw `renewalWindow Ns must be at least 180s`, as for a window not shorter than the operator's VTXO expiry. A stored watch with such a window is no longer refreshed: `registerRenewal` skips it with a warning and the wallet renews its coins itself. `ExecutorWatchRegistration.address` is documented as the delegated address, onchain for boarding and an Arkade address for renewal.
