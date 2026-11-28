@@ -4,7 +4,7 @@ import { ArkadeCash } from ".";
 import type { VirtualCoin } from "../wallet";
 import type { IndexerProvider } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
-import type { ArkadeInfo } from "../providers/ark";
+import type { OperatorInfo } from "../providers/ark";
 import { classifyAgainstSignerSet, signerSetFromInfo } from "../wallet/signerRotation";
 import {
     getAllNormalizedVtxos,
@@ -44,7 +44,7 @@ function groupByTxid(coins: { txid: string; value: number }[]): ArkadeCashTx[] {
 export async function readArkadeCash(
     token: string,
     indexer: IndexerProvider,
-    info: ArkadeInfo,
+    info: OperatorInfo,
     onchain?: OnchainProvider,
 ): Promise<ArkadeCashStatusReport> {
     const cash = ArkadeCash.fromString(token);

@@ -338,7 +338,7 @@ describe("the deferred init", () => {
         let reads = 0;
         let offline = true;
         const wallet = await hdWallet({
-            getArkadeInfo: async () => {
+            getOperatorInfo: async () => {
                 reads += 1;
                 if (offline) throw new Error("operator unreachable");
                 return ARK_INFO;

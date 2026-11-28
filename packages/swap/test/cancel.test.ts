@@ -94,7 +94,7 @@ const wallet = {
     identity: {},
     getAddress: async () => "unused-before-a-vtxo-is-selected",
     getContractManager: async () => contractManager,
-    getArkadeInfo: async () => arkadeInfo,
+    getOperatorInfo: async () => arkadeInfo,
     getArkadeReader: async () => arkadeReader,
     getArkadeBroadcaster: async () => arkadeBroadcaster,
 } as unknown as IWallet;

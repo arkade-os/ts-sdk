@@ -1286,7 +1286,7 @@ export async function requestLightningSend(
     // with a different refund script.
     const [secrets, info] = await Promise.all([
         provisionRefundKey(wallet),
-        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getOperatorInfo({ requireLive: true }),
     ]);
     const senderPubkey = secrets.pubkey;
     const refundAddress = secrets.address;
@@ -1523,7 +1523,7 @@ export async function requestArkadeSwap(
     const info =
         receiveAddress === undefined
             ? undefined
-            : await wallet.getArkadeInfo({ requireLive: true });
+            : await wallet.getOperatorInfo({ requireLive: true });
     const makerPkScript =
         info === undefined
             ? ownPkScript
@@ -1595,7 +1595,7 @@ export async function requestArkadeSwap(
             );
         }
     }
-    const offerInfo = info ?? (await wallet.getArkadeInfo({ requireLive: true }));
+    const offerInfo = info ?? (await wallet.getOperatorInfo({ requireLive: true }));
     const carrierSats =
         params.offerAsset === undefined
             ? 0n
@@ -1898,7 +1898,7 @@ export async function requestOnchainSend(
     // the L1 claim leaf pins OP_SIZE 32, so any other length funds an unclaimable HTLC.
     const [secrets, info, refundAddress] = await Promise.all([
         provisionClaimSecret(wallet, { preimage: params.preimage }),
-        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getOperatorInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
     if (secrets.mustPersistPreimage) {
@@ -2252,7 +2252,7 @@ const provisionReceive = async (
 ) => {
     const [secrets, info, payoutAddress] = await Promise.all([
         provisionClaimSecret(wallet),
-        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getOperatorInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
     if (secrets.mustPersistPreimage) {

@@ -63,7 +63,7 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network, NetworkName } from "../networks";
 import { DEFAULT_NETWORK, getNetwork, networks, resolveEmulatorPubkey } from "../networks";
-import type { ArkadeInfo, OperatorProvider } from "../providers/ark";
+import type { OperatorInfo, OperatorProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
@@ -481,7 +481,7 @@ export class Arkade {
         let arkProvider: ArkadeServerProvider;
         let emulator: EmulatorProvider | undefined;
         let indexer: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs"> | undefined;
-        let info: ArkadeInfo;
+        let info: OperatorInfo;
         let resolved: ResolvedArkadeService | undefined;
         if (opts.service) {
             resolved = await resolveArkadeService(opts.service);

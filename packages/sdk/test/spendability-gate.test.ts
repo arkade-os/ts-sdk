@@ -22,7 +22,7 @@ import {
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { OperatorInfo } from "../src/providers/ark";
 import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
 import { scopedWalletRequest, testWalletBinding } from "./helpers/walletRequest";
 import {
@@ -49,7 +49,7 @@ const RECOVERY_SCRIPT = "5120000000000000000000000000000000000000000000000000000
 const RECOVERY_COMMITMENT = "d4".repeat(32);
 const ASSET_ID = "aa".repeat(32);
 
-const arkInfo = (): ArkadeInfo => ({
+const arkInfo = (): OperatorInfo => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",

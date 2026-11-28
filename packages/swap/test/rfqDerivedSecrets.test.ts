@@ -74,7 +74,7 @@ const hdWallet = async (): Promise<IWallet & HDWalletCapable> => {
     return {
         identity,
         getAddress: async () => REFUND_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getOperatorInfo: async () => ARK_INFO,
         // Both entrypoints register the lockup before returning an address to
         // fund; what they write is `rfqRegister.test.ts`'s subject.
         getContractManager: async () => ({ createContract: async () => ({}) }),
@@ -95,7 +95,7 @@ const staticWallet = (rows: { params: Record<string, string> }[] = []): IWallet 
     ({
         identity: SingleKey.fromHex(STATIC_WALLET_KEY),
         getAddress: async () => REFUND_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getOperatorInfo: async () => ARK_INFO,
         // Both entrypoints register the lockup before returning an address to
         // fund.
         getContractManager: async () => ({
@@ -298,7 +298,7 @@ describe("requestLightningSend and the corridor spread", () => {
 /**
  * The loop a persisting consumer depends on: what the entry point hands back
  * must rebuild the very covenant it just funded. Without it a consumer would
- * re-fetch `getArkadeInfo()` and re-derive the tree itself, and any drift
+ * re-fetch `getOperatorInfo()` and re-derive the tree itself, and any drift
  * between the two derivations is a lockup nobody can spend.
  */
 describe("contractParams round-trips to the funded script", () => {
@@ -360,7 +360,7 @@ describe("contractParams round-trips to the funded script", () => {
             invoice: INVOICE,
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
         });
-        // serverPubkey and claimDelay come from this wallet's own getArkadeInfo(),
+        // serverPubkey and claimDelay come from this wallet's own getOperatorInfo(),
         // emulatorPubkey from a per-network pin, refundPkScript from decoding an
         // address. None of them is on the quote.
         expect(result.contractParams.operatorPubkey).toHaveLength(32);

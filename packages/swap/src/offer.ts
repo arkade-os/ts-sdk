@@ -711,7 +711,7 @@ export async function restoreOfferCoverage(
     if (live.length === 0) return;
 
     const [info, contractManager] = await Promise.all([
-        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getOperatorInfo({ requireLive: true }),
         wallet.getContractManager(),
     ]);
     const operatorPubkey = hex.decode(toXOnlySignerHex(info.signerPubkey));
@@ -846,7 +846,7 @@ export interface OfferParams {
      * operator — as the only way back out. See the note on {@link createOffer}. */
     noExit?: boolean;
     /**
-     * A live `getArkadeInfo` the caller already made.
+     * A live `getOperatorInfo` the caller already made.
      *
      * Passing it is what lets one live read bind both the derivation and the
      * registration that follows it; omitting it makes the read here. It must be
@@ -932,7 +932,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
     const [info, maker] = await Promise.all([
         // requireLive: this binds signerPubkey into the covenant, and a snapshot could derive an
         // address the operator no longer co-signs for — fail closed instead
-        params.info ?? wallet.getArkadeInfo({ requireLive: true }),
+        params.info ?? wallet.getOperatorInfo({ requireLive: true }),
         params.maker ??
             (async () => {
                 const [address, publicKey] = await Promise.all([
@@ -1148,7 +1148,7 @@ export async function prepareOfferCancel(
 
     const [contractManager, info, reader, broadcaster] = await Promise.all([
         wallet.getContractManager(),
-        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getOperatorInfo({ requireLive: true }),
         wallet.getArkadeReader(),
         wallet.getArkadeBroadcaster(),
     ]);

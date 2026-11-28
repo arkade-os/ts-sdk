@@ -29,7 +29,7 @@ const setup = async (answer?: SolverAnswer) => {
     const fixture = await acceptWallet();
     const wallet = {
         ...fixture.wallet,
-        getArkadeInfo: async () => ({ ...ARK_INFO, dust: 330n }),
+        getOperatorInfo: async () => ({ ...ARK_INFO, dust: 330n }),
     } as unknown as IWallet;
     const repository = new InMemoryAssetSwapRepository();
     const transport = solverTransport(

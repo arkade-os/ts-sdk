@@ -250,7 +250,7 @@ beforeAll(async () => {
     execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
-    const info = await wallet.getArkadeInfo();
+    const info = await wallet.getOperatorInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;

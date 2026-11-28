@@ -181,7 +181,7 @@ beforeAll(async () => {
     // The stub solver has to derive the same script the maker will, so it reads
     // the server through the same seam `requestLightningSend` now uses — a
     // second provider built from a URL would only agree by coincidence.
-    const info = await wallet.getArkadeInfo();
+    const info = await wallet.getOperatorInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;

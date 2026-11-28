@@ -152,7 +152,7 @@ import { corridorSet, resolveCorridorBase } from "@arkade-os/swap/advanced";
 
 const broadcaster = await wallet.getArkadeBroadcaster();
 const operator = {
-    getInfo: () => wallet.getArkadeInfo({ requireLive: true }),
+    getInfo: () => wallet.getOperatorInfo({ requireLive: true }),
     submitTx: (signedArkTx: string, checkpointTxs: string[]) =>
         broadcaster.submitTx(signedArkTx, checkpointTxs),
     finalizeTx: (arkTxid: string, finalCheckpointTxs: string[]) =>
@@ -168,7 +168,7 @@ const corridors = corridorSet(base, {
 const claim = corridors.claim(to);
 ```
 
-`resolveCorridorBase` performs one live `wallet.getArkadeInfo({ requireLive:
+`resolveCorridorBase` performs one live `wallet.getOperatorInfo({ requireLive:
 true })` read and derives the network and signer set from it. A stale snapshot
 is not used for covenant derivation.
 

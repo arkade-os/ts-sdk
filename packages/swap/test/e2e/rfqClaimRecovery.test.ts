@@ -182,7 +182,7 @@ beforeAll(async () => {
     const note = execCommand(`${arkdExec} arkd note --amount 50000`);
     execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
 
-    const info = await wallet.getArkadeInfo();
+    const info = await wallet.getOperatorInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(await wallet.getAddress()).hrp;

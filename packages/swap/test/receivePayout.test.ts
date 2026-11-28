@@ -25,17 +25,17 @@ const params = {
 const fixture = () => {
     const getAddress = vi.fn(async () => makerAddress);
     const xOnlyPublicKey = vi.fn(async () => makerKey);
-    const getArkadeInfo = vi.fn(async () => info);
+    const getOperatorInfo = vi.fn(async () => info);
     const getContractManager = vi.fn(() => {
         throw new Error("derivation must not register");
     });
     const wallet = {
         getAddress,
-        getArkadeInfo,
+        getOperatorInfo,
         getContractManager,
         identity: { xOnlyPublicKey },
     } as unknown as IWallet;
-    return { wallet, getAddress, getArkadeInfo, getContractManager, xOnlyPublicKey };
+    return { wallet, getAddress, getOperatorInfo, getContractManager, xOnlyPublicKey };
 };
 
 describe("offer receive payout derivation", () => {
@@ -57,7 +57,7 @@ describe("offer receive payout derivation", () => {
         expect(decoded.makerPkScript).toEqual(ArkAddress.decode(recipientAddress).pkScript);
         expect(decoded.makerPublicKey).toEqual(makerKey);
         expect(derived.binding.makerPublicKey).toEqual(makerKey);
-        expect(f.getArkadeInfo).toHaveBeenCalledWith({ requireLive: true });
+        expect(f.getOperatorInfo).toHaveBeenCalledWith({ requireLive: true });
         expect(f.getContractManager).not.toHaveBeenCalled();
     });
 
@@ -75,7 +75,7 @@ describe("offer receive payout derivation", () => {
         expect(derived.info).toBe(info);
         expect(f.getAddress).not.toHaveBeenCalled();
         expect(f.xOnlyPublicKey).not.toHaveBeenCalled();
-        expect(f.getArkadeInfo).not.toHaveBeenCalled();
+        expect(f.getOperatorInfo).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -158,7 +158,7 @@ describe("RFQ offer receive payout", () => {
         const f = await setup("receiver");
         const buyerKey = await f.wallet.identity.xOnlyPublicKey();
         const getAddress = vi.spyOn(f.wallet, "getAddress");
-        const getInfo = vi.spyOn(f.wallet, "getArkadeInfo");
+        const getInfo = vi.spyOn(f.wallet, "getOperatorInfo");
         const publicKey = vi.spyOn(f.wallet.identity, "xOnlyPublicKey");
         const reply = await f.requestQuote();
         f.requestQuote.mockClear();

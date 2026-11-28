@@ -147,7 +147,7 @@ const COVERAGE = {
     AcceptConflict: { owner: "M4", thrownAt: "accept() vs incompatible durable evidence" },
     OperatorUnreachable: {
         owner: "M2/M3",
-        thrownAt: "covenant derivation, getArkadeInfo({ requireLive: true })",
+        thrownAt: "covenant derivation, getOperatorInfo({ requireLive: true })",
     },
     MissingCorridorDep: {
         owner: "M2/M4",

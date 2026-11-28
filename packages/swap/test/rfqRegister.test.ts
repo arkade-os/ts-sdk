@@ -175,7 +175,7 @@ const recordingWallet = (
         // identity is not a wallet these entrypoints can serve.
         identity: SingleKey.fromRandomBytes(),
         getAddress: async () => REFUND_ADDRESS,
-        getArkadeInfo: async () => operatorInfo(),
+        getOperatorInfo: async () => operatorInfo(),
         getContractManager: async () => ({
             createContract: async (params: Record<string, unknown>) => {
                 if (createContract) return createContract(params);

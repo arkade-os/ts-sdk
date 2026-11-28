@@ -46,7 +46,7 @@ const wallet = (): IWallet =>
     ({
         identity: SingleKey.fromHex(WALLET_KEY),
         getAddress: async () => REFUND_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getOperatorInfo: async () => ARK_INFO,
         getContractManager: async () => ({ createContract: async () => ({}) }),
     }) as unknown as IWallet;
 
@@ -145,7 +145,7 @@ describe("requestOnchainSend prices the trade that was asked for", () => {
         const registering = {
             identity: SingleKey.fromHex(WALLET_KEY),
             getAddress: async () => REFUND_ADDRESS,
-            getArkadeInfo: async () => ARK_INFO,
+            getOperatorInfo: async () => ARK_INFO,
             getContractManager: async () => ({
                 createContract: async (row: unknown) => {
                     rows.push(row);
