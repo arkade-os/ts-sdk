@@ -657,19 +657,19 @@ export class ArkadeProgramScript extends VtxoScript {
     }
 
     /**
-     * Hashes of the covenant scripts other than `spent`'s, which the emulator packet carries, for
-     * its input's `ArkadeTweak` field: arkd checks that every forfeit leaf names the server key,
-     * and recognises a tweaked key only by a script hash it knows. Empty unless some forfeit leaf
-     * names the server key only tweaked.
+     * Hashes of the contract's Arkade Scripts other than `spent`'s, which the emulator packet
+     * carries, for its input's `OperatorKeyTweak` field: the operator checks that every function
+     * without a CSV delay names its key, and recognizes a tweaked key only by a script hash it
+     * knows. Empty unless such a function names the operator key only tweaked.
      */
-    arkadeTweaks(spent: CompiledProgramFunction): Uint8Array[] {
+    operatorKeyTweaks(spent: CompiledProgramFunction): Uint8Array[] {
         if (spent.def.tapscript.csv) return [];
         const { serverKey } = this.keys;
         const scripts = new Map<string, Uint8Array>();
         for (const { arkadeScript } of this.compiled) {
             if (arkadeScript) scripts.set(hex.encode(arkadeScript), arkadeScript);
         }
-        // arkd accepts a leaf on its plain server key alone: only leaves without it need a tweak.
+        // A function that names the plain operator key needs no tweak revealed.
         const needed = new Map<string, Uint8Array>();
         for (const { def, leafScript } of this.compiled) {
             if (def.tapscript.csv) continue;
@@ -686,10 +686,11 @@ export class ArkadeProgramScript extends VtxoScript {
 }
 
 /**
- * For a co-signer that is the server itself: a covenant leaf naming `$server` beside the spliced
- * co-signer names only `tweak($server, covenant)`, in `$server`'s place. All else is unchanged.
+ * For an emulator key that is the operator's own: a function with Arkade Script that names
+ * `$server` beside the spliced emulator key names only `$server` tweaked by that script, in
+ * `$server`'s place. All else is unchanged.
  */
-export function tweakServerSigners<P extends Program>(program: P, keys: ProgramKeys): P {
+export function rewriteToTweakedOperatorKey<P extends Program>(program: P, keys: ProgramKeys): P {
     const { serverKey, emulatorKey } = keys;
     if (!emulatorKey || !equalBytes(toXOnly(emulatorKey, "emulator key"), serverKey)) {
         return program;
@@ -698,12 +699,13 @@ export function tweakServerSigners<P extends Program>(program: P, keys: ProgramK
     for (const [name, fn] of Object.entries(program.functions)) {
         const { emulatorIndex: _, ...tapscript } = fn.tapscript;
         const target = fn.group ? (tapscript.emulator ?? fn.group) : name;
-        // A splice naming another covenant stays, so compiling still checks it against this one.
-        const ownCovenant = target === name || target === fn.group;
+        // A splice naming another function's Arkade Script stays, so compiling still checks it
+        // against this one.
+        const ownScript = target === name || target === fn.group;
         functions[name] =
             fn.arkadeScript &&
             tapscript.emulator !== null &&
-            ownCovenant &&
+            ownScript &&
             tapscript.signers.includes("$server")
                 ? {
                       ...fn,
@@ -720,16 +722,19 @@ export function tweakServerSigners<P extends Program>(program: P, keys: ProgramK
     return { ...program, functions } as P;
 }
 
-/** Whether `key` in `fn`'s leaf is the server's own key or that key tweaked by `fn`'s covenant. */
-export function serverSignsKey(
+/**
+ * Whether `key`, named in `fn`'s Tapscript, is the operator key, plain or tweaked by `fn`'s
+ * Arkade Script.
+ */
+export function isOperatorKey(
     fn: Pick<CompiledProgramFunction, "arkadeScript">,
-    serverKey: Uint8Array,
+    operatorKey: Uint8Array,
     key: Uint8Array,
 ): boolean {
     return (
-        equalBytes(key, serverKey) ||
+        equalBytes(key, operatorKey) ||
         (fn.arkadeScript !== undefined &&
-            equalBytes(key, computeArkadeScriptPublicKey(serverKey, fn.arkadeScript)))
+            equalBytes(key, computeArkadeScriptPublicKey(operatorKey, fn.arkadeScript)))
     );
 }
 

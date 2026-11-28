@@ -627,20 +627,20 @@ describe("wallet.getBoardingUtxos", () => {
 });
 
 describe("wallet.cosignOnchainTx", () => {
-    function covenantSpend(externalScript: Uint8Array, otherKeys: Uint8Array[] = []) {
+    function arkadeScriptSpend(externalScript: Uint8Array, otherKeys: Uint8Array[] = []) {
         const script = new Uint8Array([0x51]);
         const tweakedKey = computeArkadeScriptPublicKey(
             hex.decode(SERVER_PUBKEY_HEX.slice(2)),
             script,
         );
         const leaf = MultisigTapscript.encode({ pubkeys: [tweakedKey, ...otherKeys] });
-        const covenant = new VtxoScript([leaf.script]);
+        const tree = new VtxoScript([leaf.script]);
         const tx = new Transaction({ version: 2 });
         tx.addInput({
             txid: hex.decode("bb".repeat(32)),
             index: 0,
-            witnessUtxo: { script: covenant.pkScript, amount: 50_000n },
-            tapLeafScript: [covenant.leaves[0]],
+            witnessUtxo: { script: tree.pkScript, amount: 50_000n },
+            tapLeafScript: [tree.leaves[0]],
         });
         tx.addOutput({ script: externalScript, amount: 40_000n });
         const packet = EmulatorPacket.create([{ vin: 0, script, witness: new Uint8Array(0) }]);
@@ -696,9 +696,9 @@ describe("wallet.cosignOnchainTx", () => {
         expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
     });
 
-    it("refuses more inputs than arkd cosigns when it co-signs only a packet input", async () => {
+    it("refuses more inputs than the operator cosigns when it cosigns only a packet input", async () => {
         const { wallet, arkProvider, externalScript } = await makeWallet();
-        const tx = covenantSpend(externalScript);
+        const tx = arkadeScriptSpend(externalScript);
         for (let i = 0; i < 64; i++) {
             tx.addInput({
                 txid: hex.decode(i.toString(16).padStart(64, "0")),
@@ -712,13 +712,13 @@ describe("wallet.cosignOnchainTx", () => {
         expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
     });
 
-    it("requires the other covenant co-signer's signature before asking arkd", async () => {
+    it("requires the other cosigner's signature before asking the operator", async () => {
         const { wallet, arkProvider, externalScript } = await makeWallet();
         const otherSigner = SingleKey.fromHex("22".repeat(32));
-        const tx = covenantSpend(externalScript, [await otherSigner.xOnlyPublicKey()]);
+        const tx = arkadeScriptSpend(externalScript, [await otherSigner.xOnlyPublicKey()]);
 
         await expect(wallet.cosignOnchainTx(tx.clone())).rejects.toThrow(
-            "input 0 requires a signature from co-signer",
+            "input 0 requires a signature from cosigner",
         );
         expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
 

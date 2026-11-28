@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { RawWitness, Script } from "@scure/btc-signer";
-import { ArkadeTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { OperatorKeyTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import {
     arkade,
     ArkadeContractHandler,
@@ -865,7 +865,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
         expect(captured.arkTx).toBeUndefined();
     });
 
-    describe("ArkadeTweak", () => {
+    describe("OperatorKeyTweak", () => {
         const user = xOnly();
         const out = new Uint8Array([0x51, 0x20, ...receiver]);
         const program = (pay: arkade.TapscriptSegment) =>
@@ -886,7 +886,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
         const tweakOnly = program({ signers: [{ tweak: "$server", fn: "pay" }], emulator: null });
         const payHash = arkade.arkadeScriptHash(arkade.resolveAsm(payTo, args));
 
-        it("reveals only the hashes of tweak-only leaves other than the spent one", async () => {
+        it("reveals the Arkade Script hash of each other function that names only the tweaked operator key", async () => {
             const { ark } = await connect();
             const contract = ark.contract(tweakOnly, { receiver, amount: AMOUNT, user });
             const { arkTx } = await ark
@@ -896,12 +896,12 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
                 .to(out, 2n * AMOUNT)
                 .build();
 
-            // `refund` keeps the plain server key, so arkd accepts it without its tweak.
-            expect(getArkPsbtFields(arkTx, 0, ArkadeTweak)).toEqual([[payHash]]);
-            expect(getArkPsbtFields(arkTx, 1, ArkadeTweak)).toEqual([[payHash]]);
+            // `refund` keeps the plain operator key, so the operator accepts it without its tweak.
+            expect(getArkPsbtFields(arkTx, 0, OperatorKeyTweak)).toEqual([[payHash]]);
+            expect(getArkPsbtFields(arkTx, 1, OperatorKeyTweak)).toEqual([[payHash]]);
         });
 
-        it("adds no field when every forfeit leaf names the plain server key", async () => {
+        it("adds no field when every function names the plain operator key", async () => {
             const { ark } = await connect();
             const contract = ark.contract(program({ signers: ["$server"] }), {
                 receiver,
@@ -910,10 +910,10 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             });
             const { arkTx } = await contract.functions.collab().from(COIN).to(out, AMOUNT).build();
 
-            expect(getArkPsbtFields(arkTx, 0, ArkadeTweak)).toEqual([]);
+            expect(getArkPsbtFields(arkTx, 0, OperatorKeyTweak)).toEqual([]);
         });
 
-        it("reads a spliced emulator key as the server's only when the emulator is the server", async () => {
+        it("reads a spliced emulator key as the operator's only when it is the operator's key", async () => {
             const { ark } = await connect();
             const tweaks = (emulator: Uint8Array) => {
                 const { vtxoScript } = new arkade.ArkadeContract(
@@ -922,7 +922,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
                     { receiver, amount: AMOUNT, server, user },
                     { serverKey: server, emulatorKey: emulator },
                 );
-                return vtxoScript.arkadeTweaks(vtxoScript.functionByName("collab")!);
+                return vtxoScript.operatorKeyTweaks(vtxoScript.functionByName("collab")!);
             };
 
             expect(tweaks(server)).toEqual([payHash]);
@@ -944,7 +944,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             };
 
             expect(() => ark.contract(program, { receiver, amount: AMOUNT, user })).toThrow(
-                "collab: a spend would reveal 17 arkade tweak hashes; arkd accepts at most 16",
+                "collab: a spend would reveal 17 Arkade Script hashes; the operator accepts at most 16",
             );
         });
     });
@@ -1084,7 +1084,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
         });
     });
 
-    describe("with the operator as co-signer", () => {
+    describe("with the operator's key as the emulator key", () => {
         const pub = (byte: number) => schnorr.getPublicKey(new Uint8Array(32).fill(byte));
         const operator = pub(0x11);
         const escrow = arkade.programFromArtifact(
@@ -1114,12 +1114,12 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
 
         async function connectToOperator(emulatorPubkey = "02" + hex.encode(operator)) {
             const { arkProvider, indexer, emulator, captured } = stubProviders(operator, operator);
-            const toArkd: { arkTx?: string } = {};
+            const toOperator: { arkTx?: string } = {};
             const ark = await arkade.Arkade.connect({
                 arkade: {
                     ...arkProvider,
                     async submitTx(arkTx: string, checkpointTxs: string[]) {
-                        toArkd.arkTx = arkTx;
+                        toOperator.arkTx = arkTx;
                         return {
                             arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
                             finalArkTx: arkTx,
@@ -1132,7 +1132,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
                 network: networks.regtest,
                 emulatorPubkey,
             });
-            return { ark, captured, toArkd };
+            return { ark, captured, toOperator };
         }
 
         it("persists the rewritten program, which a restore compiles as stored", async () => {
@@ -1174,8 +1174,8 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
             expect(ark.contract(escrow, escrowArgs).address).not.toBe(LEGACY_ADDRESS);
         });
 
-        it("spends a rewritten covenant through arkd, which holds its co-signer key", async () => {
-            const { ark, captured, toArkd } = await connectToOperator();
+        it("spends a rewritten contract through the operator, which holds its emulator key", async () => {
+            const { ark, captured, toOperator } = await connectToOperator();
             const contract = ark.contract(htlcProgram(), args);
             const leaf = ConditionMultisigTapscript.encode({
                 conditionScript: arkade.resolveAsm(["HASH160", "$hash", "EQUALVERIFY"], args),
@@ -1190,12 +1190,14 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
                 .claim({ tapscript: [new Uint8Array(32)] })
                 .to(out, AMOUNT)
                 .send();
-            expect(toArkd.arkTx).toBeDefined();
+            expect(toOperator.arkTx).toBeDefined();
             expect(captured.arkTx).toBeUndefined();
         });
 
-        it("sends a leaf naming only the server tweaked through arkd, whatever the contract's emulator key", async () => {
-            const { ark, captured, toArkd } = await connectToOperator("02" + hex.encode(pub(0x15)));
+        it("routes a function that names only the tweaked operator key to the operator, whatever the contract's emulator key", async () => {
+            const { ark, captured, toOperator } = await connectToOperator(
+                "02" + hex.encode(pub(0x15)),
+            );
             const program = htlcProgram();
             const contract = ark.contract(
                 {
@@ -1218,7 +1220,7 @@ contract Grid(int[2][3] grid, Board board, AssetGroupOutput expected) {
                 .claim({ tapscript: [new Uint8Array(32)] })
                 .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
                 .send();
-            expect(toArkd.arkTx).toBeDefined();
+            expect(toOperator.arkTx).toBeDefined();
             expect(captured.arkTx).toBeUndefined();
         });
     });

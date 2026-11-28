@@ -13,7 +13,7 @@ export enum ArkPsbtFieldKey {
     ConditionWitness = "condition",
     PrevArkTx = "prevarktx",
     PrevoutTx = "prevouttx",
-    ArkadeTweak = "arkadetweak",
+    OperatorKeyTweak = "arkadetweak",
 }
 
 /**
@@ -163,50 +163,51 @@ export const PrevoutTxField: ArkPsbtFieldCoder<Uint8Array> = {
         }),
 };
 
-const ARKADE_TWEAK_LENGTH = 32;
-export const MAX_ARKADE_TWEAKS = 16;
+const OPERATOR_KEY_TWEAK_LENGTH = 32;
+export const MAX_OPERATOR_KEY_TWEAKS = 16;
 
 /**
- * ArkadeTweak reveals the arkade script hashes tweaking the signer key in leaves the input does
- * not spend, so arkd validates the vtxo script without running those scripts.
+ * OperatorKeyTweak reveals the hashes of the Arkade Scripts that tweak the operator's signer key
+ * in functions the input does not spend through, so the operator can check the contract without
+ * running those scripts.
  *
  * Key: [0xde] || "arkadetweak". Value: 1 to 16 32-byte hashes, concatenated.
  */
-export const ArkadeTweak: ArkPsbtFieldCoder<Uint8Array[]> = {
-    key: ArkPsbtFieldKey.ArkadeTweak,
+export const OperatorKeyTweak: ArkPsbtFieldCoder<Uint8Array[]> = {
+    key: ArkPsbtFieldKey.OperatorKeyTweak,
     encode: (hashes) => {
-        if (hashes.length === 0 || hashes.length > MAX_ARKADE_TWEAKS) {
+        if (hashes.length === 0 || hashes.length > MAX_OPERATOR_KEY_TWEAKS) {
             throw new Error(
-                `invalid arkade tweaks count: got ${hashes.length}, expected 1 to ${MAX_ARKADE_TWEAKS}`,
+                `invalid operator key tweak count: got ${hashes.length}, expected 1 to ${MAX_OPERATOR_KEY_TWEAKS}`,
             );
         }
         hashes.forEach((hash, i) => {
-            if (hash.length !== ARKADE_TWEAK_LENGTH) {
+            if (hash.length !== OPERATOR_KEY_TWEAK_LENGTH) {
                 throw new Error(
-                    `invalid arkade tweak ${i} length: got ${hash.length}, expected ${ARKADE_TWEAK_LENGTH}`,
+                    `invalid operator key tweak ${i} length: got ${hash.length}, expected ${OPERATOR_KEY_TWEAK_LENGTH}`,
                 );
             }
         });
         return [
             {
                 type: ArkPsbtFieldKeyType,
-                key: encodedPsbtFieldKey[ArkPsbtFieldKey.ArkadeTweak],
+                key: encodedPsbtFieldKey[ArkPsbtFieldKey.OperatorKeyTweak],
             },
             concatBytes(...hashes),
         ];
     },
     decode: (unknown) => {
-        if (!checkKeyMatch(unknown[0], ArkPsbtFieldKey.ArkadeTweak)) return null;
+        if (!checkKeyMatch(unknown[0], ArkPsbtFieldKey.OperatorKeyTweak)) return null;
         const value = unknown[1];
         if (
             value.length === 0 ||
-            value.length % ARKADE_TWEAK_LENGTH !== 0 ||
-            value.length > MAX_ARKADE_TWEAKS * ARKADE_TWEAK_LENGTH
+            value.length % OPERATOR_KEY_TWEAK_LENGTH !== 0 ||
+            value.length > MAX_OPERATOR_KEY_TWEAKS * OPERATOR_KEY_TWEAK_LENGTH
         ) {
-            throw new Error(`invalid arkade tweak field length ${value.length}`);
+            throw new Error(`invalid operator key tweak field length ${value.length}`);
         }
-        return Array.from({ length: value.length / ARKADE_TWEAK_LENGTH }, (_, i) =>
-            value.slice(i * ARKADE_TWEAK_LENGTH, (i + 1) * ARKADE_TWEAK_LENGTH),
+        return Array.from({ length: value.length / OPERATOR_KEY_TWEAK_LENGTH }, (_, i) =>
+            value.slice(i * OPERATOR_KEY_TWEAK_LENGTH, (i + 1) * OPERATOR_KEY_TWEAK_LENGTH),
         );
     },
 };

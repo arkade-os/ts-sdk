@@ -34,13 +34,13 @@ function walletKeyFrom(context: PathContext): string | undefined {
     }
 }
 
-/** The `arkadetweak` field of a spend through `fn`, omitted when no leaf needs one. */
+/** The `arkadetweak` field of a spend through `fn`, omitted when no function needs one. */
 function tweaksOf(
     script: ArkadeProgramScript,
     fn: CompiledProgramFunction,
-): { arkadeTweaks?: Uint8Array[] } {
-    const arkadeTweaks = script.arkadeTweaks(fn);
-    return arkadeTweaks.length > 0 ? { arkadeTweaks } : {};
+): { operatorKeyTweaks?: Uint8Array[] } {
+    const operatorKeyTweaks = script.operatorKeyTweaks(fn);
+    return operatorKeyTweaks.length > 0 ? { operatorKeyTweaks } : {};
 }
 
 /**
@@ -113,7 +113,7 @@ function pathsFor(
         if (opts.checkTimelocks && cltv !== undefined && !isCltvSatisfied(context, cltv)) {
             continue;
         }
-        // No arkadeTweaks: arkd never sees a spend it doesn't co-sign.
+        // No operatorKeyTweaks: the operator never sees a spend it doesn't cosign.
         paths.push({
             leaf: fn.tapLeafScript,
             ...(sequence !== undefined ? { sequence } : {}),
@@ -215,7 +215,9 @@ export const ArkadeContractHandler: ContractHandler<ArkadeContractParams, Arkade
             forfeitTapLeafScript: selection.leaf,
             proofTapLeafScript: selection.leaf,
             tapTree: script.encode(),
-            ...(selection.arkadeTweaks ? { arkadeTweaks: selection.arkadeTweaks } : {}),
+            ...(selection.operatorKeyTweaks
+                ? { operatorKeyTweaks: selection.operatorKeyTweaks }
+                : {}),
         };
     },
 };

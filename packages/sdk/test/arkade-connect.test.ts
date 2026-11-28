@@ -175,7 +175,7 @@ describe("Arkade.connect with service", () => {
         expect(Arkade).toBe(arkade.Arkade);
     });
 
-    it("network arm resolves the emulator, and covenants commit to arkd's key", async () => {
+    it("network arm resolves the emulator, and new contracts use the operator's key", async () => {
         vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue(info());
         const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
         expect((ark.emulator as RestEmulatorProvider).serverUrl).toBe(DEFAULT_ARKADE_EMULATOR_URL);
@@ -183,7 +183,7 @@ describe("Arkade.connect with service", () => {
         expect(ark.contractManager).toBeUndefined();
     });
 
-    it("lets arkd co-sign covenants on any key it advertises, not an override's", async () => {
+    it("lets the operator cosign contracts on any key it advertises, not an override's", async () => {
         const deprecated = "02" + "22".repeat(32);
         vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue({
             ...info(),

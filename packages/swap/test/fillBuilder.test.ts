@@ -22,7 +22,7 @@ const state = vi.hoisted(() => ({
     vtxos: [] as unknown[],
     managed: null as unknown,
     emulatorSubmits: 0,
-    arkdFinalizes: 0,
+    operatorFinalizes: 0,
     deprecatedSigners: [] as { pubkey: string; cutoffDate: bigint }[],
     arkTx: undefined as string | undefined,
     prevTxs: new Map<string, string>(),
@@ -50,7 +50,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
                 };
             }
             async finalizeTx() {
-                state.arkdFinalizes += 1;
+                state.operatorFinalizes += 1;
             }
         },
         RestIndexerProvider: class {
@@ -150,7 +150,7 @@ const deposit = () => ({
 const reset = () => {
     state.managed = null;
     state.emulatorSubmits = 0;
-    state.arkdFinalizes = 0;
+    state.operatorFinalizes = 0;
     state.deprecatedSigners = [];
     state.arkTx = undefined;
     identity.sign.mockClear();
@@ -171,7 +171,7 @@ describe("fillOffer against the REAL Arkade builder", () => {
         expect(txid).toBe(built().id);
     });
 
-    it("goes to arkd, needing no emulator, once arkd holds the offer's co-signer key", async () => {
+    it("goes to the operator, needing no emulator, once it holds the offer's emulator key", async () => {
         reset();
         state.vtxos = [deposit()];
         state.deprecatedSigners = [{ pubkey: hex.encode(offer.emulatorPubkey), cutoffDate: 0n }];
@@ -180,7 +180,7 @@ describe("fillOffer against the REAL Arkade builder", () => {
             payoutScript: TAKER_PAYOUT,
         });
         expect(state.emulatorSubmits).toBe(0);
-        expect(state.arkdFinalizes).toBe(1);
+        expect(state.operatorFinalizes).toBe(1);
         expect(txid).toBe(built().id);
     });
 

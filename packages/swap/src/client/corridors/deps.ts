@@ -47,7 +47,7 @@ export interface CorridorBase {
     /** The operator's signer set, for the rotation-aware recipient check. */
     readonly signerSet: SignerSet;
     /** Override for the key of the operator's cosigner that emulates Arkade Script, 33-byte
-     * compressed hex. Defaults to arkd's signer key. */
+     * compressed hex. Defaults to the operator's signer key. */
     readonly emulatorPubkey?: string;
     /** For hosts without a global `fetch`, and for tests. */
     readonly fetchImpl?: typeof fetch;

@@ -58,7 +58,7 @@ export function extendCoinWithTapscript(
  */
 export type ContractTapscripts = Pick<
     ExtendedVirtualCoin,
-    "forfeitTapLeafScript" | "proofTapLeafScript" | "tapTree" | "arkadeTweaks"
+    "forfeitTapLeafScript" | "proofTapLeafScript" | "tapTree" | "operatorKeyTweaks"
 >;
 
 /**
@@ -90,7 +90,7 @@ export function deriveContractTapscripts(contract: Contract): ContractTapscripts
             forfeitTapLeafScript: derived.forfeitTapLeafScript,
             proofTapLeafScript: proofTapLeafScriptOf(derived),
             tapTree: derived.tapTree,
-            ...(derived.arkadeTweaks ? { arkadeTweaks: derived.arkadeTweaks } : {}),
+            ...(derived.operatorKeyTweaks ? { operatorKeyTweaks: derived.operatorKeyTweaks } : {}),
         };
     }
     const legacy = script as DefaultVtxo.Script | DelegateVtxo.Script;
@@ -120,8 +120,12 @@ function cloneContractTapscripts(tapscripts: ContractTapscripts): ContractTapscr
         forfeitTapLeafScript: cloneTapLeafScript(tapscripts.forfeitTapLeafScript),
         proofTapLeafScript: cloneTapLeafScript(tapscripts.proofTapLeafScript),
         tapTree: new Uint8Array(tapscripts.tapTree),
-        ...(tapscripts.arkadeTweaks
-            ? { arkadeTweaks: tapscripts.arkadeTweaks.map((hash) => new Uint8Array(hash)) }
+        ...(tapscripts.operatorKeyTweaks
+            ? {
+                  operatorKeyTweaks: tapscripts.operatorKeyTweaks.map(
+                      (hash) => new Uint8Array(hash),
+                  ),
+              }
             : {}),
     };
 }

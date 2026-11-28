@@ -24,7 +24,7 @@ import {
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
-// Compressed, as arkd reports it: the request must still name the x-only key.
+// Compressed, as the operator reports it: the request must still name the x-only key.
 const INFO = { ...ARK_INFO, signerPubkey: `02${hex.encode(OPERATOR_PUBKEY)}` };
 
 const ROUTES: [string, () => QuoteInput][] = [
@@ -55,11 +55,14 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
-describe("quote() names the covenant's co-signer key on every RFQ request", () => {
-    it.each(ROUTES)("%s: arkd's x-only key, or the override", async (_route, input) => {
-        const arkd = await clientOn();
-        await arkd.client.quote(input());
-        expect(arkd.sent[0].profile).toHaveProperty("emulator_pubkey", hex.encode(OPERATOR_PUBKEY));
+describe("quote() names the emulator key on every RFQ request", () => {
+    it.each(ROUTES)("%s: the operator's x-only key, or the override", async (_route, input) => {
+        const byDefault = await clientOn();
+        await byDefault.client.quote(input());
+        expect(byDefault.sent[0].profile).toHaveProperty(
+            "emulator_pubkey",
+            hex.encode(OPERATOR_PUBKEY),
+        );
 
         const own = await clientOn({ override: EMULATOR_PUBKEY_HEX });
         await own.client.quote(input());

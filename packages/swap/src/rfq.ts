@@ -19,7 +19,7 @@
  * Trust model: from a quote the user uses only the binding fields (`solver_pubkey`,
  * `refund_locktime`, `valid_until`, the amounts, and `profile.refund_without_receiver_delay` on
  * sends). Everything else is the user's own data or a trusted constant (the emulator key
- * defaults to arkd's signer key). Anything address-shaped from the solver is compare-only:
+ * defaults to the operator's signer key). Anything address-shaped from the solver is compare-only:
  * a mismatch means refuse-to-fund, never "use theirs".
  *
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
@@ -69,7 +69,12 @@ import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
-import { ASSET_CARRIER_SATS, covenantCosigner, createOffer, resolveReceivePkScript } from "./offer";
+import {
+    ASSET_CARRIER_SATS,
+    createOffer,
+    emulatorPubkeyFor,
+    resolveReceivePkScript,
+} from "./offer";
 import {
     ASSET_SWAP_CONTRACT_VERSIONS,
     type AssetSwapContractVersion,
@@ -329,7 +334,7 @@ export interface RfqStatus {
     [key: string]: unknown;
 }
 
-const namedCosigner = (key: Uint8Array | undefined) =>
+const namedEmulatorKey = (key: Uint8Array | undefined) =>
     key === undefined ? {} : { emulator_pubkey: hex.encode(key) };
 
 /** The rfq_request for the lightning send profile. BOLT11 is exact-out: the invoice fixes the
@@ -354,7 +359,7 @@ export const lightningSendRequest = (input: {
         invoice: input.invoice,
         refund_address: input.refundAddress,
         client_refund_pubkey: hex.encode(input.senderPubkey),
-        ...namedCosigner(input.emulatorPubkey),
+        ...namedEmulatorKey(input.emulatorPubkey),
     },
 });
 
@@ -411,7 +416,7 @@ export const arkadeSwapRequest = (input: {
         profile: {
             maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
             maker_public_key: normalizeMakerPublicKey(input.makerPublicKey),
-            ...namedCosigner(input.emulatorPubkey),
+            ...namedEmulatorKey(input.emulatorPubkey),
         },
     };
 };
@@ -1294,7 +1299,7 @@ export async function requestLightningSend(
     ]);
     const senderPubkey = secrets.pubkey;
     const refundAddress = secrets.address;
-    const emulatorPubkey = covenantCosigner(info, params.emulatorPubkey);
+    const emulatorPubkey = emulatorPubkeyFor(info, params.emulatorPubkey);
 
     const quote = await transport.requestQuote(
         lightningSendRequest({
@@ -1554,7 +1559,7 @@ export async function requestArkadeSwap(
             makerPkScript,
             makerPublicKey,
             contractVersions,
-            emulatorPubkey: covenantCosigner(info, params.emulatorPubkey),
+            emulatorPubkey: emulatorPubkeyFor(info, params.emulatorPubkey),
         }),
         contractVersions,
     );
@@ -1652,7 +1657,7 @@ const operatorTerms = (info: OperatorInfo, emulatorPubkey: string | undefined) =
     const network = networkFromOperatorInfo(info);
     return {
         operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: covenantCosigner(info, emulatorPubkey),
+        emulatorPubkey: emulatorPubkeyFor(info, emulatorPubkey),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         hrp: network.hrp,
     };
@@ -1686,7 +1691,7 @@ export const onchainSendRequest = (input: {
         payout_pubkey: hex.encode(input.payoutPubkey),
         refund_address: input.refundAddress,
         client_refund_pubkey: hex.encode(input.senderPubkey),
-        ...namedCosigner(input.emulatorPubkey),
+        ...namedEmulatorKey(input.emulatorPubkey),
     },
 });
 
@@ -1719,7 +1724,7 @@ export const lightningReceiveRequest = (input: {
         payout_address: input.payoutAddress,
         payout_pubkey: hex.encode(input.payoutPubkey),
         ...(input.claimPacket === undefined ? {} : { claim_packet: input.claimPacket }),
-        ...namedCosigner(input.emulatorPubkey),
+        ...namedEmulatorKey(input.emulatorPubkey),
     },
 });
 
@@ -2379,7 +2384,7 @@ export async function requestLightningReceive(
                 claimPacket: claimPacket?.packet,
                 amount: params.amount,
                 amountSide: params.amountSide,
-                emulatorPubkey: covenantCosigner(info, params.emulatorPubkey),
+                emulatorPubkey: emulatorPubkeyFor(info, params.emulatorPubkey),
             }),
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);

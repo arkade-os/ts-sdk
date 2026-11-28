@@ -5619,8 +5619,8 @@ export class Wallet
         for (let i = 0; i < tx.outputsLength; i++) outSum += tx.getOutput(i).amount ?? 0n;
         if (outSum > inSum) throw new Error(`outputs ${outSum} exceed inputs ${inSum}`);
 
-        // Includes deprecated keys past their cutoff, which arkd no longer signs with; the emulator
-        // can't sign them either, so routing one to arkd only changes the refusal.
+        // Includes deprecated keys past their cutoff, which the operator no longer signs with; the
+        // emulator can't sign them either, so routing one to the operator only changes the refusal.
         const operated = operatorCosignedInputs(tx, [
             this._arkServerPublicKey,
             ...[...this._deprecatedSigners.keys()].map((k) => hex.decode(k)),
@@ -5633,7 +5633,7 @@ export class Wallet
         }
         if (operated.size > 0 && !viaOperator) {
             throw new OnchainCosignPreflightError(
-                "covenants co-signed by arkd and by the emulator cannot share a transaction; spend them separately",
+                "inputs that need the emulator and inputs the operator cosigns itself cannot share a transaction; spend them separately",
             );
         }
         if (emulated.size > 0 && !viaOperator) await attachPrevoutTxs(tx, this.onchainProvider);

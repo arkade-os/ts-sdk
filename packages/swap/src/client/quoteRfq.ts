@@ -28,8 +28,8 @@ import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import {
     ASSET_CARRIER_SATS,
-    covenantCosigner,
     deriveOffer,
+    emulatorPubkeyFor,
     resolveReceivePkScript,
     type DerivedOffer,
 } from "../offer";
@@ -246,7 +246,7 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
     const arkade = input.corridors.get("arkade").deps;
     return {
         operatorPubkey: toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
-        emulatorPubkey: covenantCosigner(input.info, arkade.emulatorPubkey),
+        emulatorPubkey: emulatorPubkeyFor(input.info, arkade.emulatorPubkey),
         claimDelay: unilateralClaimDelay(Number(input.info.unilateralExitDelay)),
         hrp: network.hrp,
     };
@@ -397,7 +397,7 @@ const quoteArkadeAsset = async (
         makerPkScript: receivePkScript,
         makerPublicKey: maker.publicKey,
         contractVersions,
-        emulatorPubkey: covenantCosigner(
+        emulatorPubkey: emulatorPubkeyFor(
             input.info,
             input.corridors.get("arkade").deps.emulatorPubkey,
         ),

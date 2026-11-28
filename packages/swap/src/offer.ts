@@ -918,7 +918,8 @@ export function resolveReceivePkScript(
     return address.pkScript;
 }
 
-export function covenantCosigner(
+/** X-only emulator key for a swap contract's Arkade Script: `override`, else the operator's. */
+export function emulatorPubkeyFor(
     info: Pick<OperatorInfo, "signerPubkey">,
     override?: string,
 ): Uint8Array {
@@ -952,7 +953,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
     ]);
     const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
     const network = networkFromOperatorInfo(info);
-    const emuKey = covenantCosigner(info, params.emulatorPubkey);
+    const emuKey = emulatorPubkeyFor(info, params.emulatorPubkey);
 
     // the script derives from every other field, so build the binding first — an Offer value never
     // exists with an empty swapPkScript
@@ -1289,7 +1290,7 @@ export async function fillOffer(
 
         assetCarrierSats?: bigint;
 
-        /** Unneeded when arkd holds the offer's co-signer key: the fill then goes to arkd. */
+        /** Not needed when the operator holds the offer's emulator key: it cosigns the fill. */
         emulator?: EmulatorProvider | string;
 
         emulatorPubkey?: string;

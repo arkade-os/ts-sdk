@@ -851,7 +851,7 @@ export type TapLeaves = {
 export type ExtendedCoin = TapLeaves &
     EncodedVtxoScript &
     Coin &
-    ArkadeTweaks & { extraWitness?: Bytes[] };
+    OperatorKeyTweaks & { extraWitness?: Bytes[] };
 
 /**
  * Virtual output data enriched with tapscript and witness data.
@@ -862,13 +862,13 @@ export type ExtendedCoin = TapLeaves &
 export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin &
-    ArkadeTweaks & { extraWitness?: Bytes[] };
+    OperatorKeyTweaks & { extraWitness?: Bytes[] };
 
 /**
- * The arkade script hashes a spend of this coin must reveal, so arkd can recognise the tweaked
- * signer key of every covenant leaf it does not run. Absent when no leaf needs one.
+ * The Arkade Script hashes a spend of this coin must reveal, so the operator can recognize its key,
+ * tweaked by them, in the functions the spend does not use. Absent when no function needs one.
  */
-export type ArkadeTweaks = { arkadeTweaks?: Bytes[] };
+export type OperatorKeyTweaks = { operatorKeyTweaks?: Bytes[] };
 
 import type { NormalizedExtendedVirtualCoin, NormalizedVtxoPage } from "./vtxo";
 

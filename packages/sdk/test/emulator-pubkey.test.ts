@@ -172,7 +172,7 @@ describe("resolveEmulatorPubkey", () => {
 describe("Arkade.connect co-signer resolution", () => {
     const CLAIMED = "03" + "ab".repeat(32);
 
-    it("uses arkd's signer key and never asks the emulator who it is", async () => {
+    it("uses the operator's signer key and never asks the emulator who it is", async () => {
         const { arkProvider, emulator, emulatorInfoCalls } = stubProviders(CLAIMED);
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
@@ -183,7 +183,7 @@ describe("Arkade.connect co-signer resolution", () => {
         expect(emulatorInfoCalls()).toBe(0);
     });
 
-    it("lets the override replace arkd's key", async () => {
+    it("lets the override replace the operator's key", async () => {
         const custom = "02" + "cd".repeat(32);
         const { arkProvider, emulator } = stubProviders(CLAIMED);
         const ark = await arkade.Arkade.connect({

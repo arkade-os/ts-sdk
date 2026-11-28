@@ -5,7 +5,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { Transaction } from "../utils/transaction";
 import {
-    ArkadeTweak,
+    OperatorKeyTweak,
     ConditionWitness,
     PrevArkTxField,
     VtxoTaprootTree,
@@ -378,8 +378,8 @@ function prepareProofInput(coin: ProofInput | TransactionInput): TransactionInpu
     if (coin.extraWitness) {
         unknown.push(ConditionWitness.encode(coin.extraWitness));
     }
-    if (coin.arkadeTweaks?.length) {
-        unknown.push(ArkadeTweak.encode(coin.arkadeTweaks));
+    if (coin.operatorKeyTweaks?.length) {
+        unknown.push(OperatorKeyTweak.encode(coin.operatorKeyTweaks));
     }
     // Lands on proof input i+1 via craftToSignTx; the synthetic input 0 needs
     // no prevout tx, the emulator synthesises one for it.

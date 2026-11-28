@@ -6,7 +6,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import { arkade, CSVMultisigTapscript, networks, type VirtualCoin } from "../src";
 import { Transaction } from "../src/utils/transaction";
-import { ArkadeTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { OperatorKeyTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import { Extension } from "../src/extension";
 import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../src/extension/asset";
 import { SettlementEventType } from "../src/providers/ark";
@@ -56,7 +56,7 @@ const hashlocked = renewableWith({ asm: ["SHA256", "$hash", "EQUAL"], witness: [
 async function keeper(
     stream: (signal: AbortSignal) => AsyncIterableIterator<never>,
     info: Record<string, unknown> = {},
-    serverCosigns = false,
+    operatorCosigns = false,
 ) {
     const server = xOnly();
     const registerIntent = vi.fn(async () => "intent-1");
@@ -87,7 +87,7 @@ async function keeper(
         emulatorPubkey,
         indexer: { getVtxos: vi.fn(), getVirtualTxs },
         network: networks.regtest,
-        ...(serverCosigns ? { emulatorPubkey: "02" + hex.encode(server) } : {}),
+        ...(operatorCosigns ? { emulatorPubkey: "02" + hex.encode(server) } : {}),
     });
     const contract = ark.contract(renewable, { owner: xOnly() });
     const coin = {
@@ -176,7 +176,7 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).not.toHaveBeenCalled();
     });
 
-    it("renews a covenant whose leaf names the server only tweaked by it", async () => {
+    it("renews a contract whose function names the operator key only tweaked by its Arkade Script", async () => {
         const { ark, target, registerIntent } = await keeper(
             () =>
                 (async function* () {
@@ -320,7 +320,7 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 
-    it("registers without the emulator once arkd holds the covenant's co-signer", async () => {
+    it("registers without the emulator once the operator holds the emulator key", async () => {
         const { ark, target, registerIntent } = await keeper(
             () =>
                 (async function* () {
@@ -338,22 +338,22 @@ describe("renewProgramContractOutputs", () => {
 
     it.each([
         ["renew", "renew them separately"],
-        ["missing", "missing is not a covenant function"],
-        ["unilateral", "unilateral is not a covenant function"],
-    ])("rejects mixed co-signer targets with second function %s", async (fn, error) => {
+        ["missing", "missing has no Arkade Script"],
+        ["unilateral", "unilateral has no Arkade Script"],
+    ])("rejects mixed operator and emulator targets with second function %s", async (fn, error) => {
         const { ark, target, registerIntent } = await keeper(() => (async function* () {})());
-        const viaArkd = new arkade.ArkadeContract(ark, renewable, target.contract.args, {
+        const viaOperator = new arkade.ArkadeContract(ark, renewable, target.contract.args, {
             serverKey: ark.serverKey,
             emulatorKey: ark.serverKey,
         });
         const coin = {
             ...mintCoin(6000),
-            script: hex.encode(viaArkd.pkScript),
+            script: hex.encode(viaOperator.pkScript),
             status: { confirmed: true },
         } as unknown as VirtualCoin;
 
         await expect(
-            arkade.renewProgramContractOutputs(ark, [target, { contract: viaArkd, coin, fn }]),
+            arkade.renewProgramContractOutputs(ark, [target, { contract: viaOperator, coin, fn }]),
         ).rejects.toThrow(error);
         expect(registerIntent).not.toHaveBeenCalled();
     });
@@ -428,7 +428,7 @@ describe("renewProgramContractOutputs", () => {
         expect(getArkPsbtFields(tx, 1, ConditionWitness)).toEqual([[PREIMAGE]]);
     });
 
-    it("reveals the other covenants' hashes on the proof input of a tree with a tweak-only leaf", async () => {
+    it("reveals the other Arkade Script hashes on the proof input when a function names only the tweaked operator key", async () => {
         const { ark, target, registerIntent } = await keeper(() =>
             (async function* () {
                 throw new Error("stream closed");
@@ -459,8 +459,8 @@ describe("renewProgramContractOutputs", () => {
         ).rejects.toThrow(/stream closed/);
         const { proof } = (registerIntent.mock.calls[0] as unknown[])[0] as { proof: string };
         const tx = Transaction.fromPSBT(base64.decode(proof));
-        expect(getArkPsbtFields(tx, 1, ArkadeTweak)).toEqual([]);
-        expect(getArkPsbtFields(tx, 2, ArkadeTweak)).toEqual([
+        expect(getArkPsbtFields(tx, 1, OperatorKeyTweak)).toEqual([]);
+        expect(getArkPsbtFields(tx, 2, OperatorKeyTweak)).toEqual([
             [arkade.arkadeScriptHash(arkade.resolveAsm(sweep, {}))],
         ]);
     });
