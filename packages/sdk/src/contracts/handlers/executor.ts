@@ -104,9 +104,9 @@ export function executorKeysOf(p: ExecutorContractParams): ExecutorContractKeys 
  * from the bundled templates, the owner key, the params and the executor's keys, so a restored
  * wallet needs no round-trip to the executor.
  *
- * - forfeit: (Owner + Operator) multisig, the wallet's function that needs the operator's signature
- * - exit: (Owner) + CSV, the wallet's exit path
- * - renew/board: (Operator + Emulator) multisig with Arkade Script, the executor's; never offered
+ * - the wallet's function that needs the operator's signature: (Owner + Operator) multisig
+ * - the wallet's exit path: (Owner) + CSV
+ * - the executor's function with Arkade Script: (Operator + Emulator) multisig; never offered
  *
  * Restore probes every index under each of `deps.executorWatches`: an HD wallet registers a watch
  * per boarding key it rotates to.
@@ -115,7 +115,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
     Discoverable = {
     type: "executor",
 
-    /** The owner's forfeit and exit functions, then the executor's function with Arkade Script. */
+    /** The owner's default script, plus the executor's function with Arkade Script. */
     createScript(params: Record<string, string>): DefaultVtxo.Script {
         const p = this.deserializeParams(params);
         const derived = defaultContract(p.template, executorKeysOf(p), p.owner, p);
@@ -129,7 +129,7 @@ export const ExecutorContractHandler: ContractHandler<ExecutorContractParams, De
         );
         if (!equalBytes(script.pkScript, derived.pkScript)) {
             throw new Error(
-                `delegated ${p.template} contract is not forfeit, exit and a function with Arkade Script`,
+                `delegated ${p.template} contract is not the owner's default script plus a function with Arkade Script`,
             );
         }
         return script;

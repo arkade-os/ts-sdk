@@ -20,8 +20,9 @@ style and have not been backfilled.
 
 - **Messages write "executor" in lowercase.** Error and log messages said
   "Executor", as in `Invalid Executor info`. They now say "executor", as the
-  docs do. `ExecutorContractHandler`'s script check also says
-  `a function with Arkade Script` where it said `an emulator-enforced leaf`. Code that
+  docs do. `ExecutorContractHandler`'s script check now says the contract
+  `is not the owner's default script plus a function with Arkade Script`, where
+  it said `is not forfeit, exit and an emulator-enforced leaf`. Code that
   matches these messages case-sensitively must match the new text.
 
 ## [0.5.15] - 2026-11-26

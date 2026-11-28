@@ -168,7 +168,7 @@ describe("ExecutorContractHandler", () => {
     });
 
     it.each(["renewal", "boarding"] as const)(
-        "spends %s through forfeit with the operator and exit alone, never the function with Arkade Script",
+        "spends %s through the wallet's own functions, never the function with Arkade Script",
         (template) => {
             const contract = contractOf(template);
             const s = ExecutorContractHandler.createScript(contract.params);
